@@ -58,4 +58,7 @@ reviewer without a date.
 `content/merge-candidates.json` (nothing is merged automatically). A content change must bump the version of the lesson or pathway it
 touches and add a changelog line.
 
+A practice file has a `kind`: `tool` (the default, steps cited into a tool's documentation), `case` or `artifact` (written pages with no source;
+`tools/test_practice_kinds.py` imports two synthetic fixtures from `tools/fixtures/` into a temp copy of `content/` and builds them).
+
 Deploying: see `OPERATOR.md`.
