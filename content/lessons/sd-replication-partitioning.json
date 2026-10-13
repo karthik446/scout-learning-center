@@ -1,0 +1,154 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "sd-replication-partitioning",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Replication and partitioning",
+  "area": "software",
+  "primary_key": "replication",
+  "secondary_keys": [
+    "partitioning-sharding",
+    "data-systems",
+    "postgres",
+    "distributed-systems"
+  ],
+  "keys": [
+    "replication",
+    "partitioning-sharding",
+    "data-systems",
+    "postgres",
+    "distributed-systems"
+  ],
+  "summary": "Replication keeps copies of the same data on several machines for availability and read scale; partitioning splits data across machines so that no single node must hold or serve all of it. This lesson covers the replication modes and their durability tradeoffs, then how to choose a shard key and operate a sharded database.",
+  "detail": [],
+  "in_practice": "Most teams start with one primary and two or more streaming standbys across availability zones, with one synchronous standby and automated failover managed by a cluster manager that handles leader election and fencing. Read replicas absorb reporting and read-heavy endpoints, with lag monitored and alerted. Sharding is deferred until a single primary can no longer handle write volume or storage growth, then introduced by tenant key with many logical shards, application-level routing and a double-write, backfill, verify and cut-over migration rehearsed in staging.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "In PostgreSQL physical replication, a standby continuously replays the primary's write-ahead log, either from archived segment files or over a streaming connection that delivers records as they are generated. A hot standby also serves read-only queries. The standby is a byte-level copy of the whole cluster, so it must run the same major version and cannot be written to.",
+          "heading": "Standbys that replay the log"
+        },
+        {
+          "body": "Failover means promoting a standby to primary when the old primary is lost. The database does not decide this itself; external tooling must detect failure, pick the most advanced standby, redirect clients and make sure the old primary cannot keep accepting writes, a step called fencing. Without fencing, two primaries can diverge. The old primary must be rebuilt or rewound before rejoining as a standby.",
+          "heading": "Promoting a standby"
+        }
+      ],
+      "id": "physical-replication-and-failover",
+      "title": "Log shipping, streaming replication and failover"
+    },
+    {
+      "body": [
+        {
+          "body": "With asynchronous replication the primary acknowledges a commit once it is durable locally, and standbys catch up shortly after. Commits are fast, but a failover can lose the most recent transactions, and reads from a replica may be stale by the replication lag. With synchronous replication the primary waits until one or more standbys confirm receipt before acknowledging, so an acknowledged commit survives loss of the primary, at the price of added commit latency and of writes stalling if no synchronous standby is reachable. Teams commonly name several candidates and require any one or a quorum to confirm. Applications that read from replicas must handle staleness, for example by routing a user's reads to the primary shortly after that user writes.",
+          "heading": "Choosing what a commit means"
+        }
+      ],
+      "id": "sync-vs-async",
+      "title": "Synchronous versus asynchronous replication"
+    },
+    {
+      "body": [
+        {
+          "body": "Logical replication sends row-level changes decoded from the write-ahead log rather than raw disk blocks. A publisher defines publications over chosen tables, and a subscriber creates subscriptions that copy the initial data and then apply changes in commit order. Because it works on logical rows, the subscriber can run a different major version, hold a subset of tables, carry extra indexes and accept its own writes. This makes it the standard tool for near-zero-downtime major upgrades, for consolidating several databases into one, and for moving data during a shard split. Limits to plan for: schema changes are not replicated automatically, tables need a replica identity such as a primary key for updates and deletes, and conflicting local writes halt the apply process.",
+          "heading": "Publish and subscribe at table level"
+        }
+      ],
+      "id": "logical-replication",
+      "title": "Logical replication"
+    },
+    {
+      "body": [
+        {
+          "body": "The sharding pattern describes three strategies. Lookup keeps a directory mapping each key, such as a tenant, to a shard, which gives full control and easy rebalancing at the cost of an extra lookup. Range places contiguous key ranges together, which makes range queries efficient but risks hot shards when keys are sequential. Hash spreads keys evenly by hashing them, which removes hotspots but scatters range scans.",
+          "heading": "Three ways to map data to shards"
+        },
+        {
+          "body": "The key should be immutable, present in nearly every query, and should keep related rows that are read or changed together on one shard, because cross-shard joins and transactions are slow and complex. A tenant or workspace identifier is a common choice. Watch for skew from very large tenants, and avoid keys that force most queries to fan out to every shard.",
+          "heading": "What makes a good shard key"
+        }
+      ],
+      "id": "sharding-strategies",
+      "title": "Sharding strategies and shard keys"
+    },
+    {
+      "body": [
+        {
+          "body": "A widely used approach, described in Notion's account of sharding Postgres, is to create many more logical shards than physical hosts, for example as separate schemas, and map groups of them onto each database. Growth is then handled by moving whole logical shards to new hosts instead of re-hashing every row. Routing lives in the application or a proxy layer that computes the shard from the key. Migrating a live monolith typically follows four steps: write to both old and new stores, backfill historical data, verify that the two agree, then switch reads and writes over. Operational costs remain: schema changes must roll across every shard, unique constraints only hold within a shard, and cross-shard reporting usually moves to a separate analytics store.",
+          "heading": "Logical shards and online migration"
+        }
+      ],
+      "id": "operating-shards",
+      "title": "Operating and migrating to shards"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  A[Application] --> RT[Shard router by tenant key]\n  RT --> P1[Shard 1 primary]\n  RT --> P2[Shard 2 primary]\n  P1 -->|synchronous WAL stream| S1A[Shard 1 standby A]\n  P1 -->|asynchronous WAL stream| S1B[Shard 1 read replica]\n  P2 -->|synchronous WAL stream| S2A[Shard 2 standby A]\n  P2 -->|asynchronous WAL stream| S2B[Shard 2 read replica]\n  P1 -->|logical replication| AN[Analytics store]\n  P2 -->|logical replication| AN"
+  },
+  "code": [
+    {
+      "code": "import hashlib\n\nLOGICAL_SHARDS = 480\nHOSTS = ['db-00', 'db-01', 'db-02', 'db-03']\nPER_HOST = LOGICAL_SHARDS // len(HOSTS)\n\ndef logical_shard(tenant_id: str) -> int:\n    digest = hashlib.sha1(tenant_id.encode()).digest()\n    return int.from_bytes(digest[:8], 'big') % LOGICAL_SHARDS\n\ndef route(tenant_id: str) -> tuple[str, str]:\n    shard = logical_shard(tenant_id)\n    host = HOSTS[shard // PER_HOST]\n    return host, f'schema_{shard:03d}'\n\nprint(route('tenant-8f2c'))",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "PostgreSQL",
+    "Patroni",
+    "PgBouncer",
+    "Citus",
+    "Vitess",
+    "Apache Cassandra",
+    "Amazon Aurora",
+    "CockroachDB"
+  ],
+  "related": [
+    "sd-consistency-consensus",
+    "sd-storage-engines",
+    "sd-data-modelling",
+    "sd-outbox-cdc",
+    "sd-reliability-slos",
+    "sd-capacity"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "PostgreSQL high availability and replication",
+      "url": "https://www.postgresql.org/docs/current/high-availability.html"
+    },
+    {
+      "kind": "doc",
+      "title": "PostgreSQL log-shipping standby servers",
+      "url": "https://www.postgresql.org/docs/current/warm-standby.html"
+    },
+    {
+      "kind": "doc",
+      "title": "PostgreSQL logical replication",
+      "url": "https://www.postgresql.org/docs/current/logical-replication.html"
+    },
+    {
+      "kind": "doc",
+      "title": "Sharding pattern (Azure Architecture Center)",
+      "url": "https://learn.microsoft.com/en-us/azure/architecture/patterns/sharding"
+    },
+    {
+      "kind": "article",
+      "title": "Sharding Postgres at Notion",
+      "url": "https://www.notion.com/blog/sharding-postgres-at-notion"
+    }
+  ],
+  "practice": "practice/sd-replication-partitioning",
+  "provenance": {
+    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
+    "generated_on": "2026-10-13",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-13",
+      "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    }
+  ]
+}

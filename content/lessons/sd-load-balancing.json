@@ -1,0 +1,165 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "sd-load-balancing",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Load balancing and service discovery",
+  "area": "software",
+  "primary_key": "load-balancing",
+  "secondary_keys": [
+    "networking",
+    "microservices",
+    "scaling"
+  ],
+  "keys": [
+    "load-balancing",
+    "networking",
+    "microservices",
+    "scaling"
+  ],
+  "summary": "Load balancing spreads requests over a set of backends so that no single one is overloaded and failed ones are skipped. Service discovery is the companion problem: knowing which backends exist right now. Together with health checking they form the data path that every request crosses, so their failure modes shape the availability of the whole system.",
+  "detail": [],
+  "in_practice": "A typical team runs a managed L4 or L7 balancer at the edge and an L7 proxy such as Envoy or NGINX for internal traffic, often as a sidecar mesh fed by the orchestrator's endpoint data. They start with least request or power of two choices, add consistent hashing only for services that need affinity, enable both active health checks and outlier detection with a capped ejection percentage, and turn on zone-aware routing. Deploys are tested for clean draining by watching error rates during a rolling restart, and dashboards show per-host request rate and latency so that skew is visible. Retries are budgeted so that balancer-level retries cannot amplify an overload.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "A layer 4 balancer forwards TCP or UDP connections without reading the payload. It is cheap and fast, but it balances connections, not requests, so one long-lived HTTP/2 or gRPC connection can pin all its traffic to a single backend. A layer 7 balancer terminates the connection, parses each request, and picks a backend per request. That enables routing by path or header, retries, timeouts and per-request metrics, at the cost of more CPU and a more complex component on the path.",
+          "heading": "L4 versus L7"
+        },
+        {
+          "body": "Three placements are common. An edge proxy sits in front of the whole site and handles TLS and coarse routing. A middle proxy tier balances between internal services. Client-side balancing puts the logic in a library or a sidecar next to the caller, which removes a network hop and a shared bottleneck but means every client must have fresh endpoint and health data. Large systems usually combine them: L4 at the very edge for raw scale, L7 behind it, and client-side or sidecar balancing between services.",
+          "heading": "Where it runs"
+        }
+      ],
+      "id": "l4-l7-and-placement",
+      "title": "Layers and placement of the balancer"
+    },
+    {
+      "body": [
+        {
+          "body": "Round robin sends requests to each host in turn and, with weights, respects different capacities. It ignores how busy a host actually is, so slow requests pile up unevenly. Least request tracks active requests per host and prefers the least loaded. A cheap and robust variant is the power of two choices: pick two hosts at random and send to the one with fewer active requests. It avoids the herd effect where every client rushes to the same apparently idle host, and it needs no global state.",
+          "heading": "Stateless and load-aware policies"
+        },
+        {
+          "body": "When requests for the same key should land on the same host, for example for a local cache or session state, the balancer hashes a request attribute onto the host set. Ring hash places hosts on a hash ring with many virtual points per host, so adding or removing one host only moves a small fraction of keys. Maglev builds a fixed-size lookup table that gives faster lookups and more even spread, with somewhat more disruption when hosts change. Hashing trades even load for affinity, so watch for hot keys.",
+          "heading": "Consistent hashing"
+        }
+      ],
+      "id": "balancing-algorithms",
+      "title": "Balancing algorithms and when each fits"
+    },
+    {
+      "body": [
+        {
+          "body": "The balancer periodically probes each backend, typically with an HTTP request to a health path, a gRPC health call, or a plain TCP connect. Thresholds control how many consecutive failures mark a host unhealthy and how many successes bring it back, which prevents flapping. A health endpoint should reflect whether the process can serve, not the state of every dependency: if all hosts fail their check because a shared database is slow, the balancer removes the whole fleet and turns a degradation into an outage.",
+          "heading": "Active checking"
+        },
+        {
+          "body": "Outlier detection watches real traffic instead of probes. A host that returns several consecutive 5xx responses, or whose success rate is far below the rest of the cluster, is ejected for a period that grows with repeated ejections. It catches failures that a simple health path misses. A maximum ejection percentage caps how much of the cluster can be removed, and a panic threshold makes the balancer ignore health status altogether when too few hosts look healthy, on the reasoning that spreading load over everything beats overloading the few survivors.",
+          "heading": "Passive detection"
+        }
+      ],
+      "id": "health-checking-outlier-detection",
+      "title": "Active health checks and passive outlier detection"
+    },
+    {
+      "body": [
+        {
+          "body": "The simplest form is a static list of addresses. DNS-based discovery resolves a name periodically and uses the returned addresses, which works anywhere but is bounded by TTLs and resolver caching. A dedicated discovery API pushes endpoint lists to the balancers, along with metadata such as zone, weight and canary status; in Envoy this is the endpoint discovery service, and in Kubernetes the control plane derives endpoints from pod readiness. A registry such as Consul or ZooKeeper can also be the source, with instances registering themselves or being registered by the platform.",
+          "heading": "Mechanisms"
+        },
+        {
+          "body": "Discovery data is always slightly out of date, so treat it as a hint rather than the truth. The data plane decides with health checks: a host that discovery still lists but that fails checks gets no traffic, and a host removed from discovery but still passing checks can keep serving for a while. This makes the system tolerant of a slow or unavailable control plane. Balancers should keep serving with the last known endpoint set if the discovery service disappears.",
+          "heading": "Designing for staleness"
+        }
+      ],
+      "id": "service-discovery",
+      "title": "Service discovery as eventually consistent data"
+    },
+    {
+      "body": [
+        {
+          "body": "If every client connects to every backend, connection count grows as the product of the two fleets, wasting memory and health-check traffic. Subsetting gives each client a limited set of backends. A random subset spreads load poorly; deterministic subsetting assigns subsets so that every backend receives the same number of clients. Zone-aware routing keeps traffic in the caller's zone when the local zone has enough healthy capacity, which cuts latency and cross-zone cost, and spills over to other zones when it does not.",
+          "heading": "Limiting the connection mesh"
+        },
+        {
+          "body": "During a deploy, a backend should first stop accepting new work while finishing requests in flight. This lame duck state is signalled by failing the health check or by an explicit drain signal, so clients stop choosing the host before the process exits. Combined with connection draining timeouts and client retries on a different host, it makes rolling restarts invisible to callers. New hosts benefit from slow start, where their weight ramps up while caches and connection pools warm.",
+          "heading": "Removing a host cleanly"
+        }
+      ],
+      "id": "subsetting-zones-draining",
+      "title": "Subsetting, zone awareness and graceful draining"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  C[Client] --> E[Edge L7 proxy]\n  E --> S[Sidecar or client-side balancer]\n  S --> A[Backend A]\n  S --> B[Backend B]\n  S --> X[Backend C ejected]\n  D[Discovery service] -. endpoint list .-> S\n  S -. active health checks .-> A\n  S -. active health checks .-> B"
+  },
+  "code": [
+    {
+      "code": "clusters:\n- name: orders\n  type: EDS\n  lb_policy: LEAST_REQUEST\n  health_checks:\n  - timeout: 1s\n    interval: 5s\n    unhealthy_threshold: 3\n    healthy_threshold: 2\n    http_health_check:\n      path: /healthz\n  outlier_detection:\n    consecutive_5xx: 5\n    base_ejection_time: 30s\n    max_ejection_percent: 30",
+      "lang": "yaml"
+    }
+  ],
+  "technologies": [
+    "Envoy",
+    "NGINX",
+    "HAProxy",
+    "Kubernetes Services",
+    "Istio",
+    "Linkerd",
+    "Consul",
+    "ZooKeeper",
+    "gRPC client load balancing",
+    "AWS Elastic Load Balancing"
+  ],
+  "related": [
+    "sd-networking",
+    "sd-rate-limiting-overload",
+    "sd-idempotency-retries",
+    "sd-reliability-slos",
+    "sd-capacity"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Envoy load balancing",
+      "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/load_balancing/load_balancing"
+    },
+    {
+      "kind": "doc",
+      "title": "Envoy health checking",
+      "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/health_checking"
+    },
+    {
+      "kind": "doc",
+      "title": "Envoy outlier detection",
+      "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/outlier"
+    },
+    {
+      "kind": "doc",
+      "title": "Envoy service discovery",
+      "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/service_discovery"
+    },
+    {
+      "kind": "book",
+      "title": "Load balancing in the datacenter (SRE book)",
+      "url": "https://sre.google/sre-book/load-balancing-datacenter/"
+    }
+  ],
+  "practice": "practice/sd-load-balancing",
+  "provenance": {
+    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
+    "generated_on": "2026-10-13",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-13",
+      "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    }
+  ]
+}

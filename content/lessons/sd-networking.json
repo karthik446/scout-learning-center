@@ -1,0 +1,130 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "sd-networking",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Networking for designers",
+  "area": "software",
+  "primary_key": "http-and-transport-protocols",
+  "secondary_keys": [
+    "networking",
+    "low-latency"
+  ],
+  "keys": [
+    "http-and-transport-protocols",
+    "networking",
+    "low-latency"
+  ],
+  "summary": "Every distributed design is constrained by what happens between machines: name resolution, connection setup, encryption and the request protocol on top. This lesson covers the parts of the network stack a designer must reason about, with attention to where round trips, state and timeouts hide.",
+  "detail": [],
+  "in_practice": "Teams put a reverse proxy or managed load balancer at the edge that terminates TLS, speaks HTTP/2 to clients and keeps pooled upstream connections to services. Timeouts are set at every hop and made shorter the deeper the call goes, so a caller never waits longer than its own deadline. DNS names point at the load balancer with moderate TTLs, certificates are renewed automatically, and connection counts, handshake rates and upstream latency are tracked on dashboards alongside request metrics.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "DNS translates a hostname into IP addresses. A client asks a recursive resolver, which, on a cache miss, walks from a root server to the top-level domain server to the authoritative server for the zone, then caches the answer for the record's time to live. Common record types are A and AAAA for addresses and CNAME for aliases. For design, the TTL is the key knob: a short TTL lets traffic shift quickly during failover but increases lookup volume and latency, while a long TTL is cheap and slow to change. Clients and intermediate resolvers do not always honour TTLs, so DNS-based failover is coarse and should be paired with health-checked load balancers behind a stable name.",
+          "heading": "Resolution path and caching"
+        }
+      ],
+      "id": "dns-resolution",
+      "title": "DNS as the first hop"
+    },
+    {
+      "body": [
+        {
+          "body": "A new TCP connection costs one round trip for the handshake, and TLS adds one more with TLS 1.3 or two with TLS 1.2, plus CPU for the key exchange. On a 100 millisecond path that is several hundred milliseconds before the first byte of the request. Designs therefore reuse connections: keep-alive between clients and the edge, pooled connections between services and to databases, and TLS session resumption so returning clients skip the full handshake. TLS is usually terminated at a proxy or load balancer, which holds the certificate and private key, selects protocol versions and ciphers, and can cache sessions across worker processes. Decide explicitly whether traffic behind the terminator is re-encrypted.",
+          "heading": "The cost of a new connection"
+        }
+      ],
+      "id": "connection-setup-and-tls",
+      "title": "Connection setup, TLS and reuse"
+    },
+    {
+      "body": [
+        {
+          "body": "HTTP semantics are defined independently of the wire version. Safe methods such as GET and HEAD do not request state changes; idempotent methods, which include the safe ones plus PUT and DELETE, have the same intended effect when repeated, so intermediaries and clients may retry them. POST is neither by default. Status code classes tell callers how to react: 4xx means fix the request, 5xx means the server failed. Cache-related headers and conditional requests let caches and CDNs serve or revalidate responses.",
+          "heading": "Semantics that designs depend on"
+        },
+        {
+          "body": "HTTP/1.1 handles one request at a time per connection, so clients open several connections. HTTP/2 multiplexes many concurrent streams over one connection with header compression, which removes application-level head-of-line blocking and suits high-fanout service calls such as gRPC. A single lost TCP packet still stalls all streams on that connection. Proxies commonly speak HTTP/2 to clients and limit concurrent streams per connection.",
+          "heading": "HTTP/1.1 versus HTTP/2"
+        }
+      ],
+      "id": "http-semantics-and-versions",
+      "title": "HTTP semantics and protocol versions"
+    },
+    {
+      "body": [
+        {
+          "body": "A WebSocket starts as an HTTP/1.1 request carrying Upgrade and Connection headers; the server answers with status 101 and the connection becomes a bidirectional message channel. Upgrade and Connection are hop-by-hop headers, so a reverse proxy must be configured to pass them to the backend explicitly. Proxies also close connections that are idle longer than their read timeout, so either raise the timeout or send periodic ping frames. For capacity, long-lived connections change the model: the limit becomes concurrent connections and memory per connection rather than requests per second, each connection is pinned to one backend, deploys must drain or disconnect clients, and clients need reconnection with backoff to avoid a reconnect storm.",
+          "heading": "Upgrading and proxying"
+        }
+      ],
+      "id": "long-lived-connections",
+      "title": "WebSockets and long-lived connections"
+    }
+  ],
+  "diagram": {
+    "source": "sequenceDiagram\n  participant C as Client\n  participant R as DNS resolver\n  participant P as Edge proxy\n  participant S as Service\n  C->>R: Resolve hostname\n  R-->>C: IP address with TTL\n  C->>P: TCP handshake\n  C->>P: TLS handshake\n  C->>P: HTTP/2 request\n  P->>S: Request on pooled upstream connection\n  S-->>P: Response\n  P-->>C: Response on same stream"
+  },
+  "code": [],
+  "technologies": [
+    "nginx",
+    "Envoy",
+    "HAProxy",
+    "Cloudflare",
+    "gRPC",
+    "Let's Encrypt",
+    "curl",
+    "dig"
+  ],
+  "related": [
+    "sd-load-balancing",
+    "sd-api-design",
+    "sd-security-basics",
+    "sd-idempotency-retries",
+    "sd-numbers"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "nginx HTTP/2 module",
+      "url": "https://nginx.org/en/docs/http/ngx_http_v2_module.html"
+    },
+    {
+      "kind": "doc",
+      "title": "nginx WebSocket proxying",
+      "url": "https://nginx.org/en/docs/http/websocket.html"
+    },
+    {
+      "kind": "doc",
+      "title": "nginx SSL module",
+      "url": "https://nginx.org/en/docs/http/ngx_http_ssl_module.html"
+    },
+    {
+      "kind": "doc",
+      "title": "RFC 9110 HTTP Semantics",
+      "url": "https://www.rfc-editor.org/rfc/rfc9110.html"
+    },
+    {
+      "kind": "article",
+      "title": "What is DNS (Cloudflare Learning)",
+      "url": "https://www.cloudflare.com/learning/dns/what-is-dns/"
+    }
+  ],
+  "practice": "practice/sd-networking",
+  "provenance": {
+    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
+    "generated_on": "2026-10-13",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-13",
+      "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    }
+  ]
+}

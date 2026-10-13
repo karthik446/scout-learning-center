@@ -1,0 +1,160 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "sd-outbox-cdc",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Outbox and change data capture",
+  "area": "software",
+  "primary_key": "change-data-capture",
+  "secondary_keys": [
+    "message-queues-and-streams",
+    "data-pipelines",
+    "postgres",
+    "kafka"
+  ],
+  "keys": [
+    "change-data-capture",
+    "message-queues-and-streams",
+    "data-pipelines",
+    "postgres",
+    "kafka"
+  ],
+  "summary": "A service often needs to change its own database and tell other systems about it, and doing those as two separate writes will eventually leave them out of sync. The outbox pattern makes the message part of the same local transaction, and change data capture reads the database's own log to publish it reliably. Together they turn the database commit log into the single source of ordered truth that everything else derives from.",
+  "detail": [],
+  "in_practice": "A team adopting this starts with one service whose events others depend on. They add an outbox table, change the write path to insert the event in the same transaction, and deploy a Debezium connector on Kafka Connect with the outbox event router, capturing only the outbox table. Events get a stable schema in a registry and a version field. Consumers add an inbox table for deduplication. Operations monitor replication slot lag, connector status and end to end delay from commit to consumption, and schedule cleanup of old outbox rows. Raw table CDC is kept for internal uses such as search indexing and warehouse loading.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "A handler that commits to its database and then publishes to a broker has no transaction covering both. If the process crashes after the commit, the event is never sent and downstream systems never learn of the change. If it publishes first and the commit then fails, consumers act on something that did not happen. Retrying does not help, because the crash can occur between the two steps on any attempt. Concurrent requests can also publish in a different order than they committed. The result is silent drift that is found much later through reconciliation.",
+          "heading": "Why two writes fail"
+        },
+        {
+          "body": "The fix is to write to exactly one system synchronously and derive everything else from it. Since the service's database already provides atomic local transactions and an ordered commit log, it becomes the single place where the decision is recorded. Publishing becomes an asynchronous, retryable step driven from that record. This gives eventual consistency between services with a clear direction of flow, and no distributed transaction across the database and the broker.",
+          "heading": "The principle"
+        }
+      ],
+      "id": "dual-write-problem",
+      "title": "The dual write problem"
+    },
+    {
+      "body": [
+        {
+          "body": "The service adds an outbox table to its own database. In the same transaction that changes business tables, it inserts a row describing the event: a unique event id, the aggregate type and id, an event type and a payload. Either both the state change and the event row commit, or neither does. A separate relay then reads new outbox rows and publishes them to the broker. If the relay crashes after publishing but before recording progress, it publishes again, so delivery is at-least-once and consumers must deduplicate on the event id.",
+          "heading": "How it works"
+        },
+        {
+          "body": "A polling relay queries the table for unpublished rows, publishes and marks or deletes them. It is simple but adds latency and load, and ordering needs care when transactions commit out of sequence order. A log based relay uses change data capture to read the inserts from the database log in commit order with low latency and no polling queries. Either way the outbox table needs cleanup, since it is a transit buffer and not a history store. The payload is a deliberate public contract, decoupled from the internal table schema.",
+          "heading": "Relay options"
+        }
+      ],
+      "id": "transactional-outbox",
+      "title": "The transactional outbox table"
+    },
+    {
+      "body": [
+        {
+          "body": "Every database writes changes to a durable log before applying them: the write ahead log in PostgreSQL, the binlog in MySQL. Change data capture tails that log and emits one event per committed row change, in commit order, without touching application code. Debezium does this as a set of Kafka Connect source connectors. For PostgreSQL it uses logical decoding through a replication slot and an output plugin such as pgoutput, takes an initial snapshot of existing rows, then streams inserts, updates and deletes with before and after images of the row.",
+          "heading": "Reading the database log"
+        },
+        {
+          "body": "A replication slot makes the database retain log segments until the connector confirms it has consumed them. If the connector stops, the log accumulates and can fill the disk, so slot lag must be monitored and alerted on. The connector stores its log position as offsets and resumes from there after a restart, which gives at-least-once delivery. Schema changes flow through as changed event shapes, so consumers need a compatibility policy. Raw table CDC exposes internal schema to consumers; routing an outbox table through CDC avoids that coupling.",
+          "heading": "Operational concerns"
+        }
+      ],
+      "id": "log-based-cdc",
+      "title": "Log based change data capture"
+    },
+    {
+      "body": [
+        {
+          "body": "Debezium provides an outbox event router, a single message transform that reshapes captured outbox inserts into clean events. By default it expects columns for the event id, aggregate type, aggregate id, event type and payload. It routes each event to a topic derived from the aggregate type and uses the aggregate id as the record key, so all events for one aggregate go to one partition and keep their order. The event id is carried along so consumers can detect duplicates.",
+          "heading": "From outbox rows to topics"
+        },
+        {
+          "body": "Consumers treat delivery as at-least-once. The standard approach is an inbox: record each processed event id in the consumer's own database in the same transaction as the effect, and skip ids already present. Where possible make the effect naturally idempotent, such as an upsert keyed by aggregate id with a version check that ignores older versions. Because events are ordered per key only, a consumer must not assume order between different aggregates.",
+          "heading": "Consumer side"
+        }
+      ],
+      "id": "outbox-event-routing",
+      "title": "Routing outbox events and consuming them safely"
+    },
+    {
+      "body": [
+        {
+          "body": "A change stream generalizes beyond service integration. Caches, search indexes, analytics tables and read models are all derived data: each can be seen as a materialized view computed from an ordered log of changes. Instead of the application writing to the database, the cache and the index separately, it writes once, and stream consumers maintain each view. A view that is wrong or needs a new shape can be rebuilt by replaying the log from the start. The cost is that views lag the source, so readers must tolerate or work around staleness, for example by reading their own writes from the primary.",
+          "heading": "Turning the database inside out"
+        }
+      ],
+      "id": "derived-data-views",
+      "title": "The log as source of truth for derived data"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n    S[Order service] -->|one transaction| DB[(Orders table and outbox table)]\n    DB -->|write ahead log| CDC[Debezium connector]\n    CDC -->|outbox event router| K[Kafka topic keyed by aggregate id]\n    K --> C1[Shipping service with inbox]\n    K --> C2[Search indexer]\n    K --> C3[Cache invalidator]"
+  },
+  "code": [
+    {
+      "code": "BEGIN;\nUPDATE orders SET status = 'PAID' WHERE id = 4711;\nINSERT INTO outbox (id, aggregatetype, aggregateid, type, payload)\nVALUES (gen_random_uuid(), 'order', '4711', 'OrderPaid',\n        '{\"orderId\": 4711, \"amount\": 99.50}');\nCOMMIT;",
+      "lang": "sql"
+    },
+    {
+      "code": "{\n  \"connector.class\": \"io.debezium.connector.postgresql.PostgresConnector\",\n  \"plugin.name\": \"pgoutput\",\n  \"database.hostname\": \"HOST\",\n  \"database.dbname\": \"orders\",\n  \"topic.prefix\": \"shop\",\n  \"table.include.list\": \"public.outbox\",\n  \"transforms\": \"outbox\",\n  \"transforms.outbox.type\": \"io.debezium.transforms.outbox.EventRouter\"\n}",
+      "lang": "json"
+    }
+  ],
+  "technologies": [
+    "Debezium",
+    "Kafka Connect",
+    "Apache Kafka",
+    "PostgreSQL logical decoding",
+    "MySQL binlog",
+    "Amazon DynamoDB Streams",
+    "Schema Registry"
+  ],
+  "related": [
+    "sd-queues-streams",
+    "sd-consistency-consensus",
+    "sd-idempotency-retries",
+    "sd-caching",
+    "sd-data-modelling",
+    "sd-storage-engines"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Debezium connector for PostgreSQL",
+      "url": "https://debezium.io/documentation/reference/stable/connectors/postgresql.html"
+    },
+    {
+      "kind": "doc",
+      "title": "Debezium outbox event router",
+      "url": "https://debezium.io/documentation/reference/stable/transformations/outbox-event-router.html"
+    },
+    {
+      "kind": "article",
+      "title": "Reliable microservices data exchange with the outbox pattern (Debezium blog)",
+      "url": "https://debezium.io/blog/2019/02/19/reliable-microservices-data-exchange-with-the-outbox-pattern/"
+    },
+    {
+      "kind": "article",
+      "title": "Turning the database inside out (Kleppmann)",
+      "url": "https://martin.kleppmann.com/2015/03/04/turning-the-database-inside-out.html"
+    }
+  ],
+  "practice": "practice/sd-outbox-cdc",
+  "provenance": {
+    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
+    "generated_on": "2026-10-13",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-13",
+      "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    }
+  ]
+}

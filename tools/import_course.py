@@ -100,7 +100,7 @@ def public_keys(seed: dict, kmap: dict) -> dict:
     for (c, i), key in kmap.items():
         if i != key and check.get((c, i)) != key:
             raise SystemExit(f"refused: public key list loses the mapping {c}:{i} -> {key}")
-    return {"schema_version": "learning-center-concept-keys:1", "version": 1, "areas": seed["areas"], "keys": out}
+    return {"schema_version": "learning-center-concept-keys:1", "version": int(seed.get("version", 1)), "areas": seed["areas"], "keys": out}
 
 
 def map_ids(course: str, ids: list[str], kmap: dict, where: str) -> list[str]:
@@ -143,13 +143,176 @@ def jaccard(a: set, b: set) -> float:
     return len(a & b) / len(a | b) if a | b else 0.0
 
 
+def write_lesson(content: Path, lesson: dict, path: dict | None, mapped: list[str], key_by: dict, cat_entry: dict, *,
+                 generated_by: str, generated_on: str | None, import_date: str, change: str, practice_change: str,
+                 verified_by: str) -> int:
+    """Write content/lessons/<id>.json and, when ``path`` is given, content/practice/<id>.json (tool, case or artifact).
+
+    ``generated_on`` ``None`` takes the newest link-check date of the practice path (the shipped courses' rule), else
+    the given date (a pipeline run). Returns 1 when a practice file was written, else 0.
+    """
+    lid = lesson["id"]
+    if not mapped:
+        raise SystemExit(f"refused: lesson {lid} has no key")
+    primary, secondary = mapped[0], mapped[1:]
+    if path is not None and path.get("kind", "tool") not in ("tool", "case", "artifact"):
+        raise SystemExit(f"refused: practice {lid}: unknown kind {path.get('kind')!r}")
+    dates = path_dates(path) if path else []
+    if generated_on is None:
+        generated_on = max(dates) if dates else FALLBACK_DATE
+    prov = {"generated_by": generated_by, "generated_on": generated_on, "reviewed_by": None, "reviewed_on": None}
+    if [s["id"] for s in lesson["subtopics"]] != [s["id"] for s in cat_entry["subtopics"]]:
+        raise SystemExit(f"refused: lesson {lid}: course and catalog subtopic ids differ")
+    out = {
+        "schema_version": "learning-center-lesson:1",
+        "id": lid,
+        "version": 1,
+        "status": "published",
+        "superseded_by": None,
+        "title": lesson["title"],
+        "area": key_by[primary]["area"],
+        "primary_key": primary,
+        "secondary_keys": secondary,
+        "keys": mapped,
+        "summary": lesson["summary"],
+        "detail": lesson.get("detail", []),
+        "in_practice": lesson.get("in_practice", ""),
+        "subtopics": lesson["subtopics"],
+        "diagram": lesson.get("diagram") or None,
+        "code": lesson.get("code", []),
+        "technologies": lesson.get("technologies", []),
+        "related": lesson.get("related", []),
+        "sources": lesson.get("sources", []),
+        "practice": f"practice/{lid}" if path else None,
+        "provenance": prov,
+        "changelog": [{"version": 1, "date": import_date, "change": change}],
+    }
+    dump(content / f"lessons/{lid}.json", out)
+    if not path:
+        return 0
+    if path.get("kind", "tool") != "tool":
+        pr = {
+            "schema_version": "learning-center-practice:1",
+            "id": f"practice/{lid}",
+            "version": 1,
+            "lesson": lid,
+            **written_page(lid, path),
+            "provenance": prov,
+            "changelog": [{"version": 1, "date": import_date, "change": practice_change}],
+        }
+        dump(content / f"practice/{lid}.json", pr)
+        return 1
+    for field in ("why_this_tool", "alternatives", "tool"):
+        path[field] = strip_count_sentences(path.get(field) or "")
+        if POSTING_COUNT.search(path[field]):
+            raise SystemExit(f"refused: practice {lid}: {field} still speaks of postings")
+    tool = path.get("tool", "")
+    tool_key = next((k["key"] for k in key_by.values() if tool and k["display"].lower() == tool.lower()), None)
+    if not dates:
+        raise SystemExit(f"refused: practice {lid}: a tool path with no link-check date")
+    pr = {
+        "schema_version": "learning-center-practice:1",
+        "id": f"practice/{lid}",
+        "version": 1,
+        "lesson": lid,
+        "tool": tool,
+        "tool_key": tool_key,
+        "why_this_tool": path.get("why_this_tool", ""),
+        "alternatives": path.get("alternatives", ""),
+        "setup": path.get("setup", []),
+        "steps": path.get("steps", []),
+        "sources": path.get("sources", []),
+        "verified": {"checked": max(dates), "by": verified_by},
+        "provenance": prov,
+        "changelog": [{"version": 1, "date": import_date, "change": change}],
+    }
+    if "kind" in path:
+        pr["kind"] = path["kind"]
+    dump(content / f"practice/{lid}.json", pr)
+    return 1
+
+
+def import_module(args) -> int:
+    """``--module ID --export DIR``: a pipeline course exported by gigai's tools/learning_export_shipped.py, whose lesson
+    ids are entries of content/modules/<ID>.json, imported as published lessons of that module.
+
+    Every concept id must be a key of the site's own content/keys/concept-keys.json (replace that file first when the run
+    added keys). The module's entries flip to published; no pathway, no family, no key list and no merge candidates are
+    written. The hand-written entries of the module (sd-ex-*) are never touched: an export may only carry ids the
+    module lists, and a lesson file that already exists is refused unless --replace is given.
+    """
+    content: Path = args.content
+    export: Path = args.export
+    if export is None:
+        raise SystemExit("refused: --module needs --export DIR (the export folder: course.json, catalog.json, paths/)")
+    module_file = content / f"modules/{args.module}.json"
+    if not module_file.exists():
+        raise SystemExit(f"refused: {module_file} does not exist")
+    module = load(module_file)
+    entries = {l["id"]: l for l in module["lessons"]}
+    keys = load(content / "keys/concept-keys.json")
+    if keys.get("schema_version") != "learning-center-concept-keys:1":
+        raise SystemExit("refused: content/keys/concept-keys.json is not the site's public key list")
+    key_by = {k["key"]: k for k in keys["keys"]}
+    kmap = {(args.module, k): k for k in key_by}
+    course = load(export / "course.json")
+    catalog = load(export / "catalog.json")
+    paths = {p.stem: load(p) for p in sorted((export / "paths").glob("*.json"))}
+    cat_by = {l["id"]: l for l in catalog["lessons"]}
+    ids = [lesson["id"] for m in course["modules"] for lesson in m["concepts"]]
+    if len(set(ids)) != len(ids):
+        raise SystemExit("refused: a lesson id appears twice in the export")
+    for lid in ids:
+        if lid not in entries:
+            raise SystemExit(f"refused: lesson {lid} is not an entry of module {args.module}")
+        if (content / f"lessons/{lid}.json").exists() and not args.replace:
+            raise SystemExit(f"refused: content/lessons/{lid}.json exists; pass --replace to overwrite it")
+        if lid not in cat_by:
+            raise SystemExit(f"refused: lesson {lid} is not in the export's catalog")
+    for lid in cat_by:
+        if lid not in ids:
+            raise SystemExit(f"refused: catalog lesson {lid} is not in the course")
+    for lesson in (lesson for m in course["modules"] for lesson in m["concepts"]):
+        for r in lesson.get("related", []):
+            if r not in ids:
+                raise SystemExit(f"refused: lesson {lesson['id']} relates to {r}, which this export does not hold")
+    n_lessons = n_practice = 0
+    for lesson in (lesson for m in course["modules"] for lesson in m["concepts"]):
+        lid = lesson["id"]
+        mapped = map_ids(args.module, lesson.get("concept_keys", []), kmap, f"lesson {lid}")
+        n_practice += write_lesson(
+            content, lesson, paths.get(lid), mapped, key_by, cat_by[lid],
+            generated_by=args.generated_by, generated_on=args.date, import_date=args.date,
+            change=f"generated by the gigai learning pipeline from tools/curricula/{args.module}.json and imported into module {args.module}",
+            practice_change=f"generated by the gigai learning pipeline for module {args.module}",
+            verified_by=MODULE_VERIFIED_BY,
+        )
+        n_lessons += 1
+        entries[lid]["status"] = "published"
+    dump(module_file, module)
+    n_pub = sum(1 for l in module["lessons"] if l["status"] == "published")
+    print(f"module {args.module}: lessons {n_lessons} practice {n_practice}; module entries published {n_pub} of {len(module['lessons'])}")
+    return 0
+
+
+MODULE_GENERATED_BY = "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)"
+MODULE_VERIFIED_BY = "gigai learning pipeline link check (karthik446/gigai-learning-center 4c0cb514)"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--gigai", type=Path, default=DEFAULT_GIGAI)
     ap.add_argument("--keys", type=Path, default=DEFAULT_KEYS)
     ap.add_argument("--content", type=Path, default=ROOT / "content")
     ap.add_argument("--courses", nargs="+", default=list(COURSES), help="course folder names under the shipped folder")
+    ap.add_argument("--module", help="import a pipeline course's export folder as published lessons of content/modules/<ID>.json (with --export)")
+    ap.add_argument("--export", type=Path, help="--module: the export folder written by gigai's tools/learning_export_shipped.py")
+    ap.add_argument("--generated-by", default=MODULE_GENERATED_BY, help="--module: provenance.generated_by of every lesson and practice file")
+    ap.add_argument("--date", default=IMPORT_DATE, help="--module: provenance.generated_on and the changelog date")
+    ap.add_argument("--replace", action="store_true", help="--module: overwrite a lesson file that already exists")
     args = ap.parse_args()
+    if args.module:
+        return import_module(args)
     shipped = args.gigai / "src/gigai/scout/data/learning/shipped"
     content: Path = args.content
 
@@ -188,83 +351,16 @@ def main() -> int:
                     if pk not in key_by:
                         raise SystemExit(f"refused: override key {pk} is not in the key list")
                     mapped = [pk] + [k for k in mapped if k != pk]
-                if not mapped:
-                    raise SystemExit(f"refused: lesson {lid} has no key")
-                primary, secondary = mapped[0], mapped[1:]
-                path = paths.get(lid)
-                if path is not None and path.get("kind", "tool") not in ("tool", "case", "artifact"):
-                    raise SystemExit(f"refused: practice {lid}: unknown kind {path.get('kind')!r}")
-                dates = path_dates(path) if path else []
-                generated_on = max(dates) if dates else FALLBACK_DATE
-                prov = {"generated_by": GENERATED_BY, "generated_on": generated_on, "reviewed_by": None, "reviewed_on": None}
-                if [s["id"] for s in lesson["subtopics"]] != [s["id"] for s in cat_by[lid]["subtopics"]]:
-                    raise SystemExit(f"refused: lesson {lid}: course and catalog subtopic ids differ")
-                out = {
-                    "schema_version": "learning-center-lesson:1",
-                    "id": lid,
-                    "version": 1,
-                    "status": "published",
-                    "superseded_by": None,
-                    "title": lesson["title"],
-                    "area": key_by[primary]["area"],
-                    "primary_key": primary,
-                    "secondary_keys": secondary,
-                    "keys": mapped,
-                    "summary": lesson["summary"],
-                    "detail": lesson.get("detail", []),
-                    "in_practice": lesson.get("in_practice", ""),
-                    "subtopics": lesson["subtopics"],
-                    "diagram": lesson.get("diagram") or None,
-                    "code": lesson.get("code", []),
-                    "technologies": lesson.get("technologies", []),
-                    "related": lesson.get("related", []),
-                    "sources": lesson.get("sources", []),
-                    "practice": f"practice/{lid}" if path else None,
-                    "provenance": prov,
-                    "changelog": [{"version": 1, "date": IMPORT_DATE, "change": "imported from the gigai 0.1.11.10 shipped course " + course_id}],
-                }
-                dump(content / f"lessons/{lid}.json", out)
+                wrote_practice = write_lesson(
+                    content, lesson, paths.get(lid), mapped, key_by, cat_by[lid],
+                    generated_by=GENERATED_BY, generated_on=None, import_date=IMPORT_DATE,
+                    change="imported from the gigai 0.1.11.10 shipped course " + course_id,
+                    practice_change="imported from the gigai shipped course " + course_id,
+                    verified_by="gigai 0.1.11.10 release-time link check",
+                )
                 n_lessons += 1
+                n_practice += wrote_practice
                 lesson_keys[lid] = (course_id, set(mapped), lesson["title"])
-                if path and path.get("kind", "tool") != "tool":
-                    pr = {
-                        "schema_version": "learning-center-practice:1",
-                        "id": f"practice/{lid}",
-                        "version": 1,
-                        "lesson": lid,
-                        **written_page(lid, path),
-                        "provenance": prov,
-                        "changelog": [{"version": 1, "date": IMPORT_DATE, "change": "imported from the gigai shipped course " + course_id}],
-                    }
-                    dump(content / f"practice/{lid}.json", pr)
-                    n_practice += 1
-                elif path:
-                    for field in ("why_this_tool", "alternatives", "tool"):
-                        path[field] = strip_count_sentences(path.get(field) or "")
-                        if POSTING_COUNT.search(path[field]):
-                            raise SystemExit(f"refused: practice {lid}: {field} still speaks of postings")
-                    tool = path.get("tool", "")
-                    tool_key = next((k["key"] for k in keys["keys"] if tool and k["display"].lower() == tool.lower()), None)
-                    pr = {
-                        "schema_version": "learning-center-practice:1",
-                        "id": f"practice/{lid}",
-                        "version": 1,
-                        "lesson": lid,
-                        "tool": tool,
-                        "tool_key": tool_key,
-                        "why_this_tool": path.get("why_this_tool", ""),
-                        "alternatives": path.get("alternatives", ""),
-                        "setup": path.get("setup", []),
-                        "steps": path.get("steps", []),
-                        "sources": path.get("sources", []),
-                        "verified": {"checked": max(dates), "by": "gigai 0.1.11.10 release-time link check"},
-                        "provenance": prov,
-                        "changelog": [{"version": 1, "date": IMPORT_DATE, "change": "imported from the gigai 0.1.11.10 shipped course " + course_id}],
-                    }
-                    if "kind" in path:
-                        pr["kind"] = path["kind"]
-                    dump(content / f"practice/{lid}.json", pr)
-                    n_practice += 1
                 n += 1
                 steps.append({
                     "n": n, "lesson": lid, "module": module["title"], "depth": "L2",

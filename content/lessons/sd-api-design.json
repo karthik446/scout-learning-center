@@ -1,0 +1,164 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "sd-api-design",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "API design",
+  "area": "software",
+  "primary_key": "apis",
+  "secondary_keys": [
+    "rest-apis",
+    "microservices"
+  ],
+  "keys": [
+    "apis",
+    "rest-apis",
+    "microservices"
+  ],
+  "summary": "An API is a long-lived contract: once clients depend on it, every field and status code is hard to change. Good design models the domain as resources with a small set of consistent operations, writes the contract down in a machine-readable form, and plans for evolution, large result sets, failures and slow operations from the start.",
+  "detail": [],
+  "in_practice": "A team writes the OpenAPI description in a pull request before any handler code, and reviewers from consuming teams comment on names, error cases and pagination. A linter enforces the house style guide, and a diff tool in continuous integration fails the build on a breaking change to a published version. Documentation, client libraries and a mock server are generated from the same file, and contract tests check the deployed service against it. An API gateway handles authentication, quotas and per-version routing, while usage metrics per operation and version guide deprecation decisions.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "Start from the nouns of the domain, not from the screens or the database tables. Each resource has a stable identifier and lives in a collection, and collections can nest to show ownership, such as orders under a customer. A small set of standard methods covers most needs: list, get, create, update and delete, mapped to GET, POST, PUT or PATCH, and DELETE. Operations that do not fit, such as cancel or publish, become explicit custom actions rather than being forced into an update of a status field.",
+          "heading": "Resources, collections and standard methods"
+        },
+        {
+          "body": "Use the protocol as intended, because intermediaries and client libraries rely on it. GET is safe and cacheable; PUT and DELETE are idempotent; POST is neither by default. PUT replaces the whole resource while PATCH changes part of it. Status codes carry meaning: 201 with a location for a create, 204 for success with no body, 400 for a malformed request, 404 for a missing resource, 409 for a conflict, 429 for throttling. Avoid deep URI nesting; beyond collection, item, collection it becomes rigid.",
+          "heading": "HTTP semantics"
+        }
+      ],
+      "id": "resource-oriented-design",
+      "title": "Resource-oriented modelling"
+    },
+    {
+      "body": [
+        {
+          "body": "An OpenAPI description is a JSON or YAML document that states what an HTTP API offers. Its paths object lists each URL template and the operations on it; every operation declares parameters, a request body, and responses by status code. Reusable schemas, parameters and responses live under components and are referenced, which keeps the document small and consistent. Security schemes describe how callers authenticate. Because the format is machine-readable, the same file drives documentation, client and server code generation, mock servers, and request validation.",
+          "heading": "What the description contains"
+        },
+        {
+          "body": "In a design-first workflow the description is written and reviewed before the implementation, so consumers can comment and build against a mock while the service is developed. The alternative, generating the description from code, tends to expose whatever the framework produced. Either way, keep exactly one authoritative description in source control, lint it in continuous integration, and test that the running service conforms to it. Large descriptions are split into several files joined by references, and operations are tagged so generated documentation stays navigable.",
+          "heading": "Design first, single source of truth"
+        }
+      ],
+      "id": "contract-first-openapi",
+      "title": "Contract-first design with OpenAPI"
+    },
+    {
+      "body": [
+        {
+          "body": "Every list method needs pagination from its first release, because adding it later breaks clients that assumed a complete result. Offset and limit is simple but slows down on deep pages and skips or repeats items when data changes between calls. Cursor pagination returns an opaque token for the next page; the server encodes the position, typically the last sort key seen, so each page is an index seek. Enforce a maximum page size on the server and return the next token only when more data exists.",
+          "heading": "Bounding list responses"
+        },
+        {
+          "body": "Filtering and sorting belong in query parameters, restricted to fields the store can serve from an index, since an unrestricted filter language becomes a way to run arbitrary scans. Field selection lets a client ask for only the attributes it needs, which reduces payload size for mobile clients; a field mask on update states exactly which fields to change. Keep parameter names and behaviour identical across all collections so that a client learns the conventions once.",
+          "heading": "Narrowing the payload"
+        }
+      ],
+      "id": "pagination-filtering",
+      "title": "Pagination, filtering and partial responses"
+    },
+    {
+      "body": [
+        {
+          "body": "Adding an optional request field, a new response field, a new resource or a new method is normally compatible, provided clients ignore fields they do not recognise. Removing or renaming a field, changing a type, making an optional field required, tightening validation, or changing the meaning of an existing value breaks clients. Adding a value to an enumeration is a common trap, because generated clients often reject unknown values. Default behaviour must also stay stable: changing a default page size or sort order is a behaviour break even if the schema is unchanged.",
+          "heading": "What counts as breaking"
+        },
+        {
+          "body": "The major version can be carried in the path, in a header, in a query parameter, or through media type negotiation. Path versioning is the most visible and the easiest to route and cache. Only breaking changes justify a new major version; everything else evolves in place. Running two versions costs real effort, so publish a deprecation policy with dates, mark deprecated operations in the description, measure remaining traffic per version, and contact the remaining callers before removal.",
+          "heading": "Version mechanisms and deprecation"
+        }
+      ],
+      "id": "versioning-compatibility",
+      "title": "Versioning and backwards compatibility"
+    },
+    {
+      "body": [
+        {
+          "body": "Clients need to decide in code whether to retry, fix the request or give up. Return the correct status code plus a structured body with a stable machine-readable code, a human-readable message, and details such as which field failed validation. Use one error shape across the whole API and document it in the contract. Never leak stack traces or internal identifiers. Indicate retryable conditions clearly, and on throttling tell the client how long to wait.",
+          "heading": "A consistent error model"
+        },
+        {
+          "body": "When an operation takes longer than a reasonable request timeout, accept it, return 202 with a reference to an operation resource, and let the client poll that resource for status and result. For events that originate on the server, webhooks push a notification to an endpoint the consumer registered. Webhook delivery is at least once, so payloads carry an event id for deduplication, requests are signed so receivers can verify the sender, and failed deliveries are retried with backoff.",
+          "heading": "Work that outlives the request"
+        }
+      ],
+      "id": "errors-async-webhooks",
+      "title": "Errors, long-running operations and webhooks"
+    }
+  ],
+  "diagram": {
+    "source": "sequenceDiagram\n  participant C as Client\n  participant A as API\n  participant W as Worker\n  C->>A: POST /exports\n  A->>W: enqueue job\n  A-->>C: 202 Accepted with operation id\n  C->>A: GET /operations/id\n  A-->>C: 200 done false\n  W-->>A: result stored\n  C->>A: GET /operations/id\n  A-->>C: 200 done true with result link"
+  },
+  "code": [
+    {
+      "code": "openapi: 3.1.0\ninfo: {title: Orders API, version: 1.0.0}\npaths:\n  /v1/orders:\n    get:\n      operationId: listOrders\n      parameters:\n      - {name: page_size, in: query, schema: {type: integer, maximum: 100}}\n      - {name: page_token, in: query, schema: {type: string}}\n      responses:\n        '200':\n          description: One page of orders\n          content:\n            application/json:\n              schema: {$ref: '#/components/schemas/OrderPage'}\ncomponents:\n  schemas:\n    OrderPage:\n      type: object\n      properties: {next_page_token: {type: string}}",
+      "lang": "yaml"
+    }
+  ],
+  "technologies": [
+    "OpenAPI",
+    "Swagger UI",
+    "Spectral",
+    "OpenAPI Generator",
+    "gRPC",
+    "Protocol Buffers",
+    "GraphQL",
+    "JSON Schema",
+    "Kong",
+    "Apigee",
+    "Postman"
+  ],
+  "related": [
+    "sd-idempotency-retries",
+    "sd-rate-limiting-overload",
+    "sd-data-modelling",
+    "sd-security-basics",
+    "sd-caching"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "OpenAPI Specification (latest)",
+      "url": "https://spec.openapis.org/oas/latest.html"
+    },
+    {
+      "kind": "doc",
+      "title": "OpenAPI specification explained (learn.openapis.org)",
+      "url": "https://learn.openapis.org/specification/"
+    },
+    {
+      "kind": "doc",
+      "title": "OpenAPI best practices (learn.openapis.org)",
+      "url": "https://learn.openapis.org/best-practices.html"
+    },
+    {
+      "kind": "doc",
+      "title": "Google API design guide",
+      "url": "https://docs.cloud.google.com/apis/design"
+    },
+    {
+      "kind": "doc",
+      "title": "RESTful web API design (Azure Architecture Center)",
+      "url": "https://learn.microsoft.com/en-us/azure/architecture/best-practices/api-design"
+    }
+  ],
+  "practice": "practice/sd-api-design",
+  "provenance": {
+    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
+    "generated_on": "2026-10-13",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-13",
+      "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    }
+  ]
+}

@@ -1,0 +1,419 @@
+{
+  "schema_version": "learning-center-practice:1",
+  "id": "practice/sd-reliability-slos",
+  "version": 1,
+  "lesson": "sd-reliability-slos",
+  "tool": "Prometheus",
+  "tool_key": null,
+  "why_this_tool": "Prometheus lets you build an SLO by hand from raw counters to recording rules, burn-rate alerts and Alertmanager routing on a laptop, so every part of the reliability loop is visible.",
+  "alternatives": "Sloth and Pyrra generate the same Prometheus recording and alerting rules from a short SLO spec instead of hand-written ones; Datadog SLOs and Google Cloud Monitoring are hosted services with built-in SLO objects and burn-rate alerts but run in a paid cloud; Thanos adds long-term storage and a global query view on top of Prometheus for long SLO windows; Grafana only visualises SLOs, OpenTelemetry only produces the telemetry, and PagerDuty only receives the pages.",
+  "setup": [
+    {
+      "do": "Download the pre-compiled Prometheus release for your platform and unpack it into a working directory, which also gives you promtool.",
+      "done_when": "Running the prometheus and promtool binaries with the version flag prints a version.",
+      "n": 1,
+      "source": {
+        "title": "Installation | Prometheus",
+        "url": "https://prometheus.io/docs/prometheus/latest/installation/#using-pre-compiled-binaries",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Using pre-compiled binaries"
+        }
+      },
+      "why": "A single binary with no dependencies is the fastest way to get a real server on a laptop. The same archive ships promtool, which you need later to check and test rules."
+    },
+    {
+      "do": "Write a minimal configuration file in which Prometheus scrapes itself, then start the server with it.",
+      "done_when": "The Targets page in the web UI on port 9090 shows the prometheus job in state UP.",
+      "n": 2,
+      "source": {
+        "title": "Getting started | Prometheus",
+        "url": "https://prometheus.io/docs/prometheus/latest/getting_started/#configuring-prometheus-to-monitor-itself",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Configuring Prometheus to monitor itself"
+        }
+      },
+      "why": "Prometheus exposes its own HTTP request counters and latency histograms, which give you a real service to define an SLI on without writing any application."
+    },
+    {
+      "do": "Start the three sample targets from the getting started guide on local ports (this needs a Go toolchain).",
+      "done_when": "Opening the metrics path of each of the three ports in a browser returns metric text.",
+      "n": 3,
+      "source": {
+        "title": "Getting started | Prometheus",
+        "url": "https://prometheus.io/docs/prometheus/latest/getting_started/#starting-up-some-sample-targets",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Starting up some sample targets"
+        }
+      },
+      "why": "An SLO is only interesting with several instances that behave differently. The sample targets give you multiple instances with request latency metrics to aggregate over."
+    },
+    {
+      "do": "Add a scrape job for the sample targets with a group label separating production from canary instances, then reload the configuration.",
+      "done_when": "The Targets page lists the new job with three UP endpoints carrying the group label.",
+      "n": 4,
+      "source": {
+        "title": "Getting started | Prometheus",
+        "url": "https://prometheus.io/docs/prometheus/latest/getting_started/#configure-prometheus-to-monitor-the-sample-targets",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Configure Prometheus to monitor the sample targets"
+        }
+      },
+      "why": "Labels on targets are what later let you scope an SLO to the instances users actually hit. Reloading without a restart is how you will apply every later change."
+    }
+  ],
+  "steps": [
+    {
+      "do": "Run your first queries in the expression browser: look up the HTTP request counter of the server and the up series for every target.",
+      "done_when": "The table view returns one row per handler and status code for the request counter and a value of 1 for each healthy target.",
+      "n": 1,
+      "source": {
+        "title": "Getting started | Prometheus",
+        "url": "https://prometheus.io/docs/prometheus/latest/getting_started/#using-the-expression-browser",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Using the expression browser"
+        }
+      },
+      "why": "Every SLI starts as a raw series you can see and trust. The up series is also your first failure signal: it shows a target that is not being scraped at all."
+    },
+    {
+      "do": "Write a one-page problem statement in the style of the Prometheus design documents that lists the failure modes of the service you are measuring and of the monitoring path itself.",
+      "done_when": "You have a document with at least six failure modes, each marked as detected by an SLI, detected by another signal, or undetected.",
+      "n": 2,
+      "source": {
+        "title": "Design documents | Prometheus",
+        "url": "https://prometheus.io/docs/introduction/design-doc/#problem-statements-and-exploratory-documents",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Problem statements and exploratory documents"
+        }
+      },
+      "why": "Enumerating failure modes before choosing indicators shows which failures an SLI catches and which stay invisible, such as a dead scrape, a missing series or a down Alertmanager. The problem statement format forces you to state the problem before a solution."
+    },
+    {
+      "do": "Write an availability SLI as a ratio query: the rate of non-5xx requests divided by the rate of all requests, summed across instances, then write down the SLO target and the looser SLA you would promise on it.",
+      "done_when": "The query returns one number between 0 and 1 and you have noted an SLO such as 99.9 percent over 30 days next to a lower SLA.",
+      "n": 3,
+      "source": {
+        "title": "Query examples | Prometheus",
+        "url": "https://prometheus.io/docs/prometheus/latest/querying/examples/#using-functions-operators-etc",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Using functions, operators, etc."
+        }
+      },
+      "why": "An SLI is a ratio of good events to valid events measured where users feel it. The SLO is the internal target for that ratio and the SLA is the weaker external promise with consequences."
+    },
+    {
+      "do": "Query the error budget: use increase over the SLO window to count failed and total requests, and compute the fraction of the allowed failures already spent.",
+      "done_when": "You can state the budget spent so far as a percentage and say which decision that number implies.",
+      "n": 4,
+      "source": {
+        "title": "Query functions | Prometheus",
+        "url": "https://prometheus.io/docs/prometheus/latest/querying/functions/#increase",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "increase()"
+        }
+      },
+      "why": "The error budget is one minus the SLO, turned into a number of requests the service may fail. How much is left decides whether the team ships risky changes or stops to work on reliability."
+    },
+    {
+      "do": "Compare the error ratio over a 5 minute, 1 hour and 6 hour range window, and divide each by the budget fraction to get a burn rate.",
+      "done_when": "Three queries return three burn rates and you can explain why the 5 minute one moves most when you generate a few failed requests.",
+      "n": 5,
+      "source": {
+        "title": "Querying basics | Prometheus",
+        "url": "https://prometheus.io/docs/prometheus/latest/querying/basics/#range-vector-selectors",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Range Vector Selectors"
+        }
+      },
+      "why": "A short window reacts fast but is noisy, a long window is stable but slow. Burn rate normalises them: a value of 1 spends exactly the budget over the SLO window."
+    },
+    {
+      "do": "Create a rule file with recording rules that precompute the error ratio for each window, validate it with promtool check rules, and load it through rule_files.",
+      "done_when": "promtool reports the file is valid and the recorded series for each window return values in the expression browser.",
+      "n": 6,
+      "source": {
+        "title": "Defining recording rules | Prometheus",
+        "url": "https://prometheus.io/docs/prometheus/latest/configuration/recording_rules/#recording-rules",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Recording rules"
+        }
+      },
+      "why": "Burn-rate alerts evaluate the same ratios constantly, and a 30 day ratio is expensive to compute on every evaluation. Recording rules persist them as new series you can graph and compare over time."
+    },
+    {
+      "do": "Write multiwindow burn-rate alerting rules on the recorded series: a page when both the 1 hour and 5 minute burn rates exceed 14.4, and a ticket for a slower burn over 6 hours, with severity labels and annotations.",
+      "done_when": "The Alerts page in the web UI lists both rules as inactive, and they move to pending then firing when you force errors.",
+      "n": 7,
+      "source": {
+        "title": "Alerting rules | Prometheus",
+        "url": "https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/#defining-alerting-rules",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Defining alerting rules"
+        }
+      },
+      "why": "Alerting on budget spend rate pages only when the SLO is truly at risk. Requiring a long and a short window together makes the alert both significant and quick to reset."
+    },
+    {
+      "do": "Write a promtool unit test file that feeds synthetic request series with a fast burn, a slow burn and no burn, and asserts which alerts fire at which time.",
+      "done_when": "promtool test rules reports success for all three scenarios, and fails when you change a threshold.",
+      "n": 8,
+      "source": {
+        "title": "Unit testing for rules | Prometheus",
+        "url": "https://prometheus.io/docs/prometheus/latest/configuration/unit_testing_rules/#example",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Example"
+        }
+      },
+      "why": "Burn-rate thresholds are easy to get wrong and you cannot wait for a real outage to find out. Tests make the SLO rules reviewable and safe to change in CI."
+    },
+    {
+      "do": "Start a local Alertmanager, point Prometheus at it in the alerting section, and configure grouping by service plus an inhibition so the page silences the ticket for the same SLO.",
+      "done_when": "A forced fast burn shows up in the Alertmanager UI as one group containing the page while the ticket alert is shown as inhibited.",
+      "n": 9,
+      "source": {
+        "title": "Alertmanager | Prometheus",
+        "url": "https://prometheus.io/docs/alerting/latest/alertmanager/#grouping",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Grouping"
+        }
+      },
+      "why": "Prometheus only decides that an alert fires; Alertmanager decides who is told and how often. Grouping and inhibition keep one incident from becoming many notifications."
+    },
+    {
+      "do": "Query the rules and alerts endpoints of the HTTP API from a script and save the output, so rule health and alert state can be checked without the UI.",
+      "done_when": "The script prints every SLO rule with health ok and lists the currently firing alerts as JSON.",
+      "n": 10,
+      "source": {
+        "title": "HTTP API | Prometheus",
+        "url": "https://prometheus.io/docs/prometheus/latest/querying/api/#rules",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Rules"
+        }
+      },
+      "why": "Automation such as a CI check or an SLO report needs the machine-readable state. The rules endpoint also exposes the last evaluation error and duration, which reveal a silently broken SLO."
+    },
+    {
+      "do": "Compare time-based retention with compaction as a storage decision for a 30 day SLO: set the retention time flag above the SLO window, read how compaction merges blocks, and decide what each one does and does not give you.",
+      "done_when": "You have written down a retention value, the reason it exceeds the SLO window, and one sentence on why compaction does not reduce what you must retain.",
+      "n": 11,
+      "source": {
+        "title": "Storage | Prometheus",
+        "url": "https://prometheus.io/docs/prometheus/latest/storage/#compaction",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Compaction"
+        }
+      },
+      "why": "Retention deletes whole old blocks by age, so it must exceed the longest SLO window or the budget query loses data. Compaction in Prometheus merges blocks for efficiency and does not keep a latest value per key the way log compaction does, so it cannot substitute for retention or for recording rules."
+    },
+    {
+      "do": "Run the whole setup from a pinned Prometheus container image tag with the configuration and rule files bind-mounted and a named volume for the data.",
+      "done_when": "Removing and recreating the container brings back the same targets, rules and previously recorded SLI history.",
+      "n": 12,
+      "source": {
+        "title": "Installation | Prometheus",
+        "url": "https://prometheus.io/docs/prometheus/latest/installation/#volumes--bind-mount",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Volumes & bind-mount"
+        }
+      },
+      "why": "A pinned image and mounted files make the SLO stack reproducible on any laptop or CI runner. The data volume keeps the history that the 30 day budget depends on across restarts."
+    },
+    {
+      "do": "Configure a production-like server: replace static targets with file-based service discovery, keep global intervals, rule_files and the alerting section in one reviewed configuration file, and add a second target file entry without restarting.",
+      "done_when": "Editing the target file adds a new UP target within the refresh interval and the SLI and burn-rate rules include it with no reload.",
+      "n": 13,
+      "source": {
+        "title": "Configuration | Prometheus",
+        "url": "https://prometheus.io/docs/prometheus/latest/configuration/configuration/#file_sd_config",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "<file_sd_config>"
+        }
+      },
+      "why": "In production, targets come and go, and an instance missing from discovery silently vanishes from the SLI, which is itself a failure mode. Keeping scrape, rule and alerting configuration in one versioned file is what makes the SLO auditable."
+    }
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Installation | Prometheus",
+      "url": "https://prometheus.io/docs/prometheus/latest/installation/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Using pre-compiled binaries / Volumes & bind-mount"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Getting started | Prometheus",
+      "url": "https://prometheus.io/docs/prometheus/latest/getting_started/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Configuring Prometheus to monitor itself / Starting up some sample targets / Configure Prometheus to monitor the sample targets / Using the expression browser"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Design documents | Prometheus",
+      "url": "https://prometheus.io/docs/introduction/design-doc/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Problem statements and exploratory documents"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Query examples | Prometheus",
+      "url": "https://prometheus.io/docs/prometheus/latest/querying/examples/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Using functions, operators, etc."
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Query functions | Prometheus",
+      "url": "https://prometheus.io/docs/prometheus/latest/querying/functions/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "increase()"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Querying basics | Prometheus",
+      "url": "https://prometheus.io/docs/prometheus/latest/querying/basics/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Range Vector Selectors"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Defining recording rules | Prometheus",
+      "url": "https://prometheus.io/docs/prometheus/latest/configuration/recording_rules/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Recording rules"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Alerting rules | Prometheus",
+      "url": "https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Defining alerting rules"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Unit testing for rules | Prometheus",
+      "url": "https://prometheus.io/docs/prometheus/latest/configuration/unit_testing_rules/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Example"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Alertmanager | Prometheus",
+      "url": "https://prometheus.io/docs/alerting/latest/alertmanager/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Grouping"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "HTTP API | Prometheus",
+      "url": "https://prometheus.io/docs/prometheus/latest/querying/api/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Rules"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Storage | Prometheus",
+      "url": "https://prometheus.io/docs/prometheus/latest/storage/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Compaction"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Configuration | Prometheus",
+      "url": "https://prometheus.io/docs/prometheus/latest/configuration/configuration/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "<file_sd_config>"
+      }
+    }
+  ],
+  "verified": {
+    "checked": "2026-10-13",
+    "by": "gigai learning pipeline link check (karthik446/gigai-learning-center 4c0cb514)"
+  },
+  "provenance": {
+    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
+    "generated_on": "2026-10-13",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-13",
+      "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    }
+  ],
+  "kind": "tool"
+}

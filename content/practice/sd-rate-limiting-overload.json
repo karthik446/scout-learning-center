@@ -1,0 +1,359 @@
+{
+  "schema_version": "learning-center-practice:1",
+  "id": "practice/sd-rate-limiting-overload",
+  "version": 1,
+  "lesson": "sd-rate-limiting-overload",
+  "tool": "Envoy",
+  "tool_key": null,
+  "why_this_tool": "Envoy puts token bucket local limits, a global rate limit service, priority-aware circuit breakers and retry budgets in one proxy you can run in containers on a laptop, so every pattern in this lesson can be observed through its own stats.",
+  "alternatives": "NGINX offers simpler leaky bucket limits per instance without a first-class global limit service; Kong gateway packages rate limiting as plugins backed by Redis; Istio configures these same Envoy features through mesh resources instead of raw proxy config; Resilience4j and Sentinel put limiters, bulkheads and circuit breakers inside the application process rather than at the proxy; a managed cloud API gateway gives usage plans and throttling with no proxy to operate but far less control.",
+  "setup": [
+    {
+      "do": "Install a container runtime with Compose, pull the official Envoy image, and read the terminology used throughout the path (downstream, upstream, listener, cluster, filter).",
+      "done_when": "Running the Envoy image with its version flag prints a version, and you can define downstream, upstream, listener and cluster from memory.",
+      "n": 1,
+      "source": {
+        "title": "Life of a Request — envoy 1.40.0-dev-b8182b documentation",
+        "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/life_of_a_request#terminology",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Terminology"
+        }
+      },
+      "why": "Every rate limiting and circuit breaking setting attaches to one of these objects, so the vocabulary has to be exact before you configure anything."
+    },
+    {
+      "do": "Write a minimal static bootstrap file with one listener, an HTTP connection manager with the router filter, one cluster, and the admin interface enabled.",
+      "done_when": "Envoy validates the bootstrap file and starts without config errors.",
+      "n": 2,
+      "source": {
+        "title": "Life of a Request — envoy 1.40.0-dev-b8182b documentation",
+        "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/life_of_a_request#configuration",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Configuration"
+        }
+      },
+      "why": "This single file is the base that every later step edits, and the admin interface is where you will read the stats that prove each pattern works."
+    },
+    {
+      "do": "Start the stack with Compose: one Envoy container in front of two small HTTP echo containers, one of which can be made slow or stopped on demand.",
+      "done_when": "A request to the Envoy listener port returns the echo response and the admin stats page lists the upstream cluster.",
+      "n": 3,
+      "source": {
+        "title": "Life of a Request — envoy 1.40.0-dev-b8182b documentation",
+        "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/life_of_a_request#network-topology",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Network topology"
+        }
+      },
+      "why": "Overload patterns only show themselves when there is a real upstream that can be slowed or removed, so the test backends are part of the lab."
+    }
+  ],
+  "steps": [
+    {
+      "do": "Run a single request through the proxy and trace it in the access log and admin stats from listener to HTTP filter chain to router to cluster.",
+      "done_when": "You can point at the place in the filter chain where a rate limit filter would sit and name the stats counters that moved for your one request.",
+      "n": 1,
+      "source": {
+        "title": "Life of a Request — envoy 1.40.0-dev-b8182b documentation",
+        "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/life_of_a_request#http-filter-chain-processing",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "6. HTTP filter chain processing"
+        }
+      },
+      "why": "Rate limit filters reject in the HTTP filter chain before routing, while circuit breakers act later at the cluster, and knowing that order explains which protection fires first."
+    },
+    {
+      "do": "Configure the local rate limit HTTP filter with a token bucket of small size, for example five tokens refilled once per second, then send a burst of fifty requests.",
+      "done_when": "Roughly five requests of the burst succeed, the rest return status 429, and the local rate limit rate limited counter in admin stats matches the rejected count.",
+      "n": 2,
+      "source": {
+        "title": "Local rate limit — envoy 1.40.0-dev-b8182b documentation",
+        "url": "https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/local_rate_limit_filter#example-configuration",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Example configuration"
+        }
+      },
+      "why": "The token bucket is the rate limiting algorithm Envoy implements locally, and changing max tokens, tokens per fill and fill interval shows directly how burst size and sustained rate are separate knobs."
+    },
+    {
+      "do": "Configure local rate limit descriptors so that one route or one client header value gets its own smaller token bucket than the default.",
+      "done_when": "Requests carrying the chosen header value are rejected at the lower limit while other requests still pass under the default bucket.",
+      "n": 3,
+      "source": {
+        "title": "Local rate limit — envoy 1.40.0-dev-b8182b documentation",
+        "url": "https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/local_rate_limit_filter#using-rate-limit-descriptors-for-local-rate-limiting",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Using rate limit descriptors for local rate limiting"
+        }
+      },
+      "why": "Real limits are per caller or per endpoint, not one bucket for everything, and descriptors are how Envoy keys a bucket to request attributes."
+    },
+    {
+      "do": "Start the reference rate limit service and a Redis container in the Compose stack, and add a cluster plus the global rate limit HTTP filter that calls the service over gRPC.",
+      "done_when": "The rate limit service logs show a request per proxied call, and the rate limit filter ok counter in Envoy admin stats increases.",
+      "n": 4,
+      "source": {
+        "title": "Rate limit service — envoy 1.40.0-dev-b8182b documentation",
+        "url": "https://www.envoyproxy.io/docs/envoy/latest/configuration/other_features/rate_limit#rate-limit-service",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Rate limit service"
+        }
+      },
+      "why": "A global limit needs shared counters outside any one proxy, and this is the external service contract Envoy uses for that decision."
+    },
+    {
+      "do": "Write route level rate limit actions that compose a descriptor from the destination cluster and a client identity header, and add a matching limit in the rate limit service config.",
+      "done_when": "One client identity is rejected with status 429 after exceeding its limit while a second identity on the same route is still served.",
+      "n": 5,
+      "source": {
+        "title": "Rate limit — envoy 1.40.0-dev-b8182b documentation",
+        "url": "https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/rate_limit_filter#composing-actions",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Composing Actions"
+        }
+      },
+      "why": "The proxy only sends descriptors and the service owns the limits, so you need to see how actions build the key the service matches on."
+    },
+    {
+      "do": "Run two Envoy containers against the same upstream and compare behaviour with only the local limit, only the global limit, and then both together with the local limit set looser than the global one.",
+      "done_when": "You have a small table showing total allowed requests per second in each of the three modes, and during a flood the rate limit service receives far fewer calls when the local limit is on.",
+      "n": 6,
+      "source": {
+        "title": "Local rate limiting — envoy 1.40.0-dev-b8182b documentation",
+        "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/other_features/local_rate_limiting#local-rate-limiting",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Local rate limiting"
+        }
+      },
+      "why": "Local limits are cheap but multiply with the number of proxies, global limits are accurate but add a network call, and combining them lets the local bucket absorb floods before they reach the limit service."
+    },
+    {
+      "do": "Configure a retry policy on the route and a retry budget on the cluster thresholds, then slow one upstream and send steady load.",
+      "done_when": "With the budget in place the upstream retry overflow counter increases and total upstream request volume stays near the incoming rate instead of multiplying.",
+      "n": 7,
+      "source": {
+        "title": "Circuit breakers (proto) — envoy 1.40.0-dev-b8182b documentation",
+        "url": "https://www.envoyproxy.io/docs/envoy/latest/api-v3/config/cluster/v3/circuit_breaker.proto#config-cluster-v3-circuitbreakers-thresholds-retrybudget",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "config.cluster.v3.CircuitBreakers.Thresholds.RetryBudget"
+        }
+      },
+      "why": "A proxy acting as a client must throttle itself when the backend struggles, and a budget that caps retries as a fraction of active requests is how Envoy stops retry storms from amplifying an overload."
+    },
+    {
+      "do": "Configure circuit breaker thresholds for max connections, max pending requests and max requests on two separate clusters, then slow the upstream of one cluster under load.",
+      "done_when": "Requests to the slow cluster get fast 503 responses with the overloaded header and its pending overflow counter rises, while the healthy cluster shows no errors.",
+      "n": 8,
+      "source": {
+        "title": "Circuit breaking — envoy 1.40.0-dev-b8182b documentation",
+        "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/circuit_breaking#circuit-breaking",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Circuit breaking"
+        }
+      },
+      "why": "Per cluster limits are the bulkhead at the proxy: a slow dependency fills only its own pool and fails fast, so the other cluster keeps serving."
+    },
+    {
+      "do": "Configure separate threshold entries for default and high routing priority on one cluster, mark a critical route as high priority, and overload the cluster.",
+      "done_when": "Under overload the default priority route is shed with 503 responses while the high priority route continues to return 200.",
+      "n": 9,
+      "source": {
+        "title": "Circuit breakers (proto) — envoy 1.40.0-dev-b8182b documentation",
+        "url": "https://www.envoyproxy.io/docs/envoy/latest/api-v3/config/cluster/v3/circuit_breaker.proto#config-cluster-v3-circuitbreakers-thresholds",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "config.cluster.v3.CircuitBreakers.Thresholds"
+        }
+      },
+      "why": "Load shedding by criticality means the important traffic keeps its own capacity reservation when the default pool is exhausted, which is what graceful degradation looks like at the proxy."
+    },
+    {
+      "do": "Reproduce the overload test as a scripted run with a pinned Envoy image tag: once with thresholds raised so high they never trip as a baseline, and once with your tuned thresholds.",
+      "done_when": "One command runs both scenarios from a clean stack and writes latency and error counts for each, and a second run gives comparable numbers.",
+      "n": 10,
+      "source": {
+        "title": "Is there a way to disable circuit breaking? — envoy 1.40.0-dev-b8182b documentation",
+        "url": "https://www.envoyproxy.io/docs/envoy/latest/faq/load_balancing/disable_circuit_breaking#is-there-a-way-to-disable-circuit-breaking",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Is there a way to disable circuit breaking?"
+        }
+      },
+      "why": "Circuit breakers cannot be switched off, only set very high, and a repeatable baseline versus protected comparison is the evidence that your numbers help rather than hurt."
+    },
+    {
+      "do": "Enable the global rate limit filter in shadow mode using its runtime keys so limits are evaluated but not enforced, then raise enforcement gradually to full.",
+      "done_when": "With enforcement off the over limit counter increases while clients still get 200 responses, and after raising enforcement the same traffic receives 429.",
+      "n": 11,
+      "source": {
+        "title": "Rate limit — envoy 1.40.0-dev-b8182b documentation",
+        "url": "https://www.envoyproxy.io/docs/envoy/latest/configuration/listeners/network_filters/rate_limit_filter#runtime",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Runtime"
+        }
+      },
+      "why": "A wrong limit rejects real customers, so teams roll out limits by observing over limit counts first and enforcing only after the numbers look right."
+    },
+    {
+      "do": "Deploy a production-like stack locally: several upstream replicas discovered through strict DNS, two Envoy replicas, local plus global limits, priority thresholds and the retry budget all enabled, then stop one upstream replica and the rate limit service in turn during load.",
+      "done_when": "After a replica is stopped Envoy drops it from the cluster membership and high priority traffic stays healthy, and with the rate limit service down requests follow the failure mode you configured while the local limit still caps the flood.",
+      "n": 12,
+      "source": {
+        "title": "Service discovery — envoy 1.40.0-dev-b8182b documentation",
+        "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/service_discovery#strict-dns",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Strict DNS"
+        }
+      },
+      "why": "Capacity is lost in production through failed hosts and failed dependencies, and the full setup must degrade gracefully when either disappears, including a deliberate choice of whether the limit filter fails open or closed."
+    }
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Life of a Request — envoy 1.40.0-dev-b8182b documentation",
+      "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/life_of_a_request",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Terminology / Configuration / Network topology / 6. HTTP filter chain processing"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Local rate limit — envoy 1.40.0-dev-b8182b documentation",
+      "url": "https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/local_rate_limit_filter",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Example configuration / Using rate limit descriptors for local rate limiting"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Rate limit service — envoy 1.40.0-dev-b8182b documentation",
+      "url": "https://www.envoyproxy.io/docs/envoy/latest/configuration/other_features/rate_limit",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Rate limit service"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Rate limit — envoy 1.40.0-dev-b8182b documentation",
+      "url": "https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/rate_limit_filter",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Composing Actions"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Local rate limiting — envoy 1.40.0-dev-b8182b documentation",
+      "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/other_features/local_rate_limiting",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Local rate limiting"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Circuit breakers (proto) — envoy 1.40.0-dev-b8182b documentation",
+      "url": "https://www.envoyproxy.io/docs/envoy/latest/api-v3/config/cluster/v3/circuit_breaker.proto",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "config.cluster.v3.CircuitBreakers.Thresholds.RetryBudget / config.cluster.v3.CircuitBreakers.Thresholds"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Circuit breaking — envoy 1.40.0-dev-b8182b documentation",
+      "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/circuit_breaking",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Circuit breaking"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Is there a way to disable circuit breaking? — envoy 1.40.0-dev-b8182b documentation",
+      "url": "https://www.envoyproxy.io/docs/envoy/latest/faq/load_balancing/disable_circuit_breaking",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Is there a way to disable circuit breaking?"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Rate limit — envoy 1.40.0-dev-b8182b documentation",
+      "url": "https://www.envoyproxy.io/docs/envoy/latest/configuration/listeners/network_filters/rate_limit_filter",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Runtime"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Service discovery — envoy 1.40.0-dev-b8182b documentation",
+      "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/service_discovery",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Strict DNS"
+      }
+    }
+  ],
+  "verified": {
+    "checked": "2026-10-13",
+    "by": "gigai learning pipeline link check (karthik446/gigai-learning-center 4c0cb514)"
+  },
+  "provenance": {
+    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
+    "generated_on": "2026-10-13",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-13",
+      "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    }
+  ],
+  "kind": "tool"
+}

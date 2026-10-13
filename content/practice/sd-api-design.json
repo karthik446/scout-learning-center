@@ -1,0 +1,319 @@
+{
+  "schema_version": "learning-center-practice:1",
+  "id": "practice/sd-api-design",
+  "version": 1,
+  "lesson": "sd-api-design",
+  "tool": "OpenAPI",
+  "tool_key": null,
+  "why_this_tool": "OpenAPI is the machine-readable contract format in which resources, parameters, error responses, callbacks and version metadata are all written down in one document, so every subtopic of this lesson can be practised by editing a single file on a laptop.",
+  "alternatives": "gRPC with Protocol Buffers gives a binary, strongly typed RPC contract instead of resource-style HTTP; GraphQL lets clients pick fields through one typed query endpoint rather than many resource paths; JSON Schema alone describes payload shapes but not paths, operations or status codes.",
+  "setup": [
+    {
+      "do": "Choose the specification version you will write against and note its exact number for the rest of the path.",
+      "done_when": "You have written down one published specification version number that the whole practice contract will declare.",
+      "n": 1,
+      "source": {
+        "title": "OpenAPI Specification",
+        "url": "https://spec.openapis.org/oas/#specification-versions",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Specification Versions"
+        }
+      },
+      "why": "Every object and field you use later depends on the version you target. Fixing it first prevents mixing features from different releases."
+    },
+    {
+      "do": "Create a new folder under version control with one empty YAML file that will hold the contract for a small orders API.",
+      "done_when": "A repository exists with one committed, empty YAML contract file.",
+      "n": 2,
+      "source": {
+        "title": "OpenAPI Specification v3.2.1",
+        "url": "https://spec.openapis.org/oas/latest.html#x3-1-json-and-yaml-compatibility",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "3.1 JSON and YAML Compatibility"
+        }
+      },
+      "why": "The contract is a text artefact that lives next to code and is reviewed like code. Starting in version control makes later comparisons possible."
+    },
+    {
+      "do": "Download the published schema for your chosen specification version and wire it into a YAML-aware editor or a JSON Schema validator of your choice.",
+      "done_when": "Your editor or validator reports an error on the empty file because required fields are missing.",
+      "n": 3,
+      "source": {
+        "title": "OpenAPI Specification",
+        "url": "https://spec.openapis.org/oas/#schema-iterations",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Schema Iterations"
+        }
+      },
+      "why": "The published schema lets a local validator tell you at once when the document is structurally wrong. It is the fastest feedback loop for contract-first work."
+    }
+  ],
+  "steps": [
+    {
+      "do": "Write the smallest valid document: the specification version field, an info block and an empty paths block.",
+      "done_when": "The validator reports no errors on the three-field document.",
+      "n": 1,
+      "source": {
+        "title": "OpenAPI Specification v3.2.1",
+        "url": "https://spec.openapis.org/oas/latest.html#x4-1-1-fixed-fields",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "4.1.1 Fixed Fields"
+        }
+      },
+      "why": "Contract-first design starts with a document that validates before any code exists. The root object shows which fields are required and which are optional."
+    },
+    {
+      "do": "Write the info object with a title, a summary and an API version string that is separate from the specification version.",
+      "done_when": "The document validates and shows two different version values, one for the specification and one for your API.",
+      "n": 2,
+      "source": {
+        "title": "OpenAPI Specification v3.2.1",
+        "url": "https://spec.openapis.org/oas/latest.html#x4-2-1-fixed-fields",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "4.2.1 Fixed Fields"
+        }
+      },
+      "why": "The info version is the version of your contract, the number clients will see and depend on. Keeping it distinct from the specification version is the basis of every later versioning decision."
+    },
+    {
+      "do": "Create two templated paths for the orders resource: one for the collection and one for a single order identified by a path variable.",
+      "done_when": "The paths block holds a collection path and an item path with one named variable, and the validator accepts both.",
+      "n": 3,
+      "source": {
+        "title": "OpenAPI Specification v3.2.1",
+        "url": "https://spec.openapis.org/oas/latest.html#x4-8-2-path-templating",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "4.8.2 Path Templating"
+        }
+      },
+      "why": "Resource-oriented modelling means the paths name nouns in the domain, not actions. Path templating is how one entry stands for every instance of a resource."
+    },
+    {
+      "do": "Create the operations on each path item: list and create on the collection, then fetch, update and delete on the single order.",
+      "done_when": "Five operations exist across the two paths, each with a unique operation identifier, and the document validates.",
+      "n": 4,
+      "source": {
+        "title": "OpenAPI Specification v3.1.0",
+        "url": "https://spec.openapis.org/oas/v3.1.0.html#x4-8-9-path-item-object",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "4.8.9 Path Item Object"
+        }
+      },
+      "why": "A small, consistent set of operations per resource is what makes an API predictable. The path item object shows which operations can hang off one path and what they share."
+    },
+    {
+      "do": "Define the order schema, an order list schema and a shared error schema once in the components block and reference them from the operations.",
+      "done_when": "No operation contains an inline copy of the order shape; each one points at a named component and the references resolve.",
+      "n": 5,
+      "source": {
+        "title": "OpenAPI Specification v3.2.1",
+        "url": "https://spec.openapis.org/oas/latest.html#x4-7-1-fixed-fields",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "4.7.1 Fixed Fields"
+        }
+      },
+      "why": "Reusable components keep the contract consistent and make a change to a resource shape happen in one place. They are also what code generators and reviewers read first."
+    },
+    {
+      "do": "Configure query parameters on the list operation for a page cursor, a page size limit, a status filter and a field selection list for partial responses.",
+      "done_when": "The list operation declares four optional query parameters with types and defaults, and the list schema carries a next cursor field.",
+      "n": 6,
+      "source": {
+        "title": "OpenAPI Specification v3.1.0",
+        "url": "https://spec.openapis.org/oas/v3.1.0.html#x4-8-12-parameter-object",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "4.8.12 Parameter Object"
+        }
+      },
+      "why": "Large result sets must be bounded from the first release because adding pagination later breaks clients. The parameter object fixes each one's location, type, default and whether it is required."
+    },
+    {
+      "do": "Define the responses for every operation: the success codes, the specific client error codes and a default response that returns the shared error schema.",
+      "done_when": "Every operation lists at least one success code and a default error response that references the shared error component.",
+      "n": 7,
+      "source": {
+        "title": "OpenAPI Specification v3.1.0",
+        "url": "https://spec.openapis.org/oas/v3.1.0.html#x4-8-16-responses-object",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "4.8.16 Responses Object"
+        }
+      },
+      "why": "Status codes and the error body are part of the contract and are as hard to change as any field. A single error shape lets clients write one handler for every failure."
+    },
+    {
+      "do": "Write a long-running export operation that returns an accepted status with a job resource, and attach a callback that describes the webhook request your API sends when the job finishes.",
+      "done_when": "The export operation shows an accepted response, a job status path exists, and a callback keyed on a client-supplied address validates.",
+      "n": 8,
+      "source": {
+        "title": "OpenAPI Specification v3.1.0",
+        "url": "https://spec.openapis.org/oas/v3.1.0.html#x4-8-18-callback-object",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "4.8.18 Callback Object"
+        }
+      },
+      "why": "Slow work should not hold a request open, so the contract must say how the client learns the outcome. The callback object documents the request your server makes to the client, which is the webhook half of the contract."
+    },
+    {
+      "do": "Configure the server entry with a base path variable for the major version, giving it a default and an allowed list of values.",
+      "done_when": "The server address contains one variable whose default and allowed values name your supported major versions.",
+      "n": 9,
+      "source": {
+        "title": "OpenAPI Specification v3.2.1",
+        "url": "https://spec.openapis.org/oas/latest.html#x4-6-1-fixed-fields",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "4.6.1 Fixed Fields"
+        }
+      },
+      "why": "Where the version lives in the address is a design decision clients feel directly. A server variable makes that choice explicit and limits it to the versions you actually support."
+    },
+    {
+      "do": "Compare two saved revisions of your contract after adding an optional field and removing a required one, and label each change as patch, minor or major using the specification's own versioning scheme as the model.",
+      "done_when": "The repository holds two tagged revisions and a short change note that marks the removed field as breaking and the added optional field as compatible.",
+      "n": 10,
+      "source": {
+        "title": "OpenAPI Specification v3.2.0",
+        "url": "https://spec.openapis.org/oas/v3.2.0.html#x2-1-versions-and-deprecation",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "2.1 Versions and Deprecation"
+        }
+      },
+      "why": "Backwards compatibility is judged change by change, and the specification applies the same major, minor and patch discipline to itself. Practising the classification on your own diff is what turns the rule into a habit."
+    },
+    {
+      "do": "Check every format value used in your schemas against the registered formats and replace any invented or ambiguous one, such as a money amount typed as a floating number.",
+      "done_when": "Each format in the document appears in the registry list, and money amounts use a registered fixed-point format.",
+      "n": 11,
+      "source": {
+        "title": "Format Registry",
+        "url": "https://spec.openapis.org/registry/format/#values",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Values"
+        }
+      },
+      "why": "Registered formats are the shared vocabulary that tools and other teams understand. A contract that only uses registered values is one that can be published and consumed without private explanations."
+    },
+    {
+      "do": "Write a small check that parses the contract, confirms the pinned specification version, validates it against the published schema, and run it locally the same way a CI job would on every commit.",
+      "done_when": "The check passes on the current contract and fails with a clear message when you deliberately break a reference or change the pinned version.",
+      "n": 12,
+      "source": {
+        "title": "OpenAPI Specification v3.1.2",
+        "url": "https://spec.openapis.org/oas/v3.1.2.html#x4-3-1-parsing-documents",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "4.3.1 Parsing Documents"
+        }
+      },
+      "why": "A contract that is only checked by hand drifts from the rules within weeks. Parsing the document the way the specification describes, on every change, makes the result reproducible on any machine."
+    }
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "OpenAPI Specification",
+      "url": "https://spec.openapis.org/oas/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Specification Versions / Schema Iterations"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "OpenAPI Specification v3.2.1",
+      "url": "https://spec.openapis.org/oas/latest.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "3.1 JSON and YAML Compatibility / 4.1.1 Fixed Fields / 4.2.1 Fixed Fields / 4.8.2 Path Templating / 4.7.1 Fixed Fields / 4.6.1 Fixed Fields"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "OpenAPI Specification v3.1.0",
+      "url": "https://spec.openapis.org/oas/v3.1.0.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "4.8.9 Path Item Object / 4.8.12 Parameter Object / 4.8.16 Responses Object / 4.8.18 Callback Object"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "OpenAPI Specification v3.2.0",
+      "url": "https://spec.openapis.org/oas/v3.2.0.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "2.1 Versions and Deprecation"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Format Registry",
+      "url": "https://spec.openapis.org/registry/format/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Values"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "OpenAPI Specification v3.1.2",
+      "url": "https://spec.openapis.org/oas/v3.1.2.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "4.3.1 Parsing Documents"
+      }
+    }
+  ],
+  "verified": {
+    "checked": "2026-10-13",
+    "by": "gigai learning pipeline link check (karthik446/gigai-learning-center 4c0cb514)"
+  },
+  "provenance": {
+    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
+    "generated_on": "2026-10-13",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-13",
+      "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    }
+  ],
+  "kind": "tool"
+}

@@ -1,0 +1,128 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "sd-numbers",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Latency, throughput and back-of-envelope numbers",
+  "area": "software",
+  "primary_key": "latency-and-estimation",
+  "secondary_keys": [
+    "low-latency",
+    "capacity-planning",
+    "scaling"
+  ],
+  "keys": [
+    "latency-and-estimation",
+    "low-latency",
+    "capacity-planning",
+    "scaling"
+  ],
+  "summary": "System design starts with numbers: how many requests arrive, how long each takes, and how much data accumulates. This lesson covers the latency figures worth memorising, why percentiles matter more than averages, and how to turn a vague requirement into a machine count using simple arithmetic and queueing relationships.",
+  "detail": [],
+  "in_practice": "A team writes the estimate at the top of the design document: stated assumptions for users, request mix, payload sizes and retention, then derived peak rates, storage growth and node counts with headroom. The numbers are checked against load test results and production dashboards showing percentile latency, and revised when measurement disagrees. Reviewers challenge the assumptions and the first bottleneck rather than the arithmetic, and the same sheet later becomes the baseline for capacity planning.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "The classic latency table is useful for its ratios, not its exact values. A main memory reference costs around 100 nanoseconds. A random 4 KB read from SSD is around 150 microseconds, roughly a thousand times slower. A round trip inside one datacenter is about half a millisecond. A spinning disk seek is about 10 milliseconds, and a packet crossing an ocean and back is about 150 milliseconds. Sequential access is far cheaper per byte than random access on every medium. The design consequences follow directly: keep hot data in memory, batch and sequentialise disk writes, count network round trips per request, and never put a cross-region call on a path that needs a low-millisecond budget.",
+          "heading": "The ladder from nanoseconds to milliseconds"
+        }
+      ],
+      "id": "orders-of-magnitude",
+      "title": "Latency orders of magnitude"
+    },
+    {
+      "body": [
+        {
+          "body": "Latency distributions are skewed, so the mean describes almost no real request. Teams report p50, p95, p99 and sometimes p99.9, and set targets on the high percentiles because heavy users and large requests live there. Percentiles cannot be averaged across hosts; aggregate histograms instead.",
+          "heading": "Why the average hides the problem"
+        },
+        {
+          "body": "When one user request fans out to many backends and waits for all of them, the slowest reply sets the response time. If each backend is slow one time in a hundred, a request touching 100 backends hits at least one slow reply about 63 percent of the time. The Tail at Scale describes mitigations: hedged requests sent to a second replica after a short delay, tied requests that cancel each other, good-enough partial results, and steering traffic away from temporarily slow machines.",
+          "heading": "Fan-out amplifies the tail"
+        }
+      ],
+      "id": "percentiles-and-tail",
+      "title": "Percentiles and tail latency"
+    },
+    {
+      "body": [
+        {
+          "body": "Start from users and behaviour, then derive rates. Daily requests divided by 86,400 gives average requests per second; multiply by a peak factor, often 2 to 10, to get the design load. Multiply the rate by payload size for bandwidth, and by retention time for storage, then by the replication factor. Divide peak load by measured per-node capacity and add headroom for failure of a node or a zone. Round aggressively: one day is about 100,000 seconds, and powers of ten are enough. The aim is to find which resource runs out first, such as disk IOPS, memory, network or CPU, and to iterate the design until the numbers fit, as the non-abstract design approach recommends.",
+          "heading": "From requirement to resource count"
+        }
+      ],
+      "id": "back-of-envelope",
+      "title": "Back-of-envelope estimation"
+    },
+    {
+      "body": [
+        {
+          "body": "Little's law states that the average number of items in a stable system equals the average arrival rate multiplied by the average time each item spends in it: L equals lambda times W. It holds regardless of arrival distribution. At 2,000 requests per second and 50 milliseconds per request, about 100 requests are in flight, which sizes thread pools, connection pools and memory per request. It also runs backwards: a pool of 100 connections with 50 millisecond queries caps throughput near 2,000 per second. If latency doubles under a fixed arrival rate, concurrency doubles too, which is how a slow dependency exhausts pools upstream. Queueing delay grows sharply as utilisation approaches 100 percent, so plan to run well below saturation.",
+          "heading": "One equation that links the three"
+        }
+      ],
+      "id": "littles-law-and-utilisation",
+      "title": "Throughput, concurrency and Little's law"
+    }
+  ],
+  "diagram": null,
+  "code": [
+    {
+      "code": "dau = 20_000_000\nreqs_per_user = 30\npeak_factor = 4\navg_rps = dau * reqs_per_user / 86_400\npeak_rps = avg_rps * peak_factor\n\nlatency_s = 0.05\nin_flight = peak_rps * latency_s          # Little's law: L = lambda * W\n\nper_node_rps = 1_500\nnodes = peak_rps / per_node_rps * 1.5     # 50 percent headroom\n\nwrite_bytes = 2_000\nwrites_per_day = dau * 5\nstorage_tb_year = writes_per_day * write_bytes * 365 * 3 / 1e12  # 3 replicas\n\nprint(round(avg_rps), round(peak_rps), round(in_flight), round(nodes))\nprint(round(storage_tb_year, 1), 'TB per year')",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "Prometheus",
+    "Grafana",
+    "HdrHistogram",
+    "k6",
+    "wrk",
+    "Locust"
+  ],
+  "related": [
+    "sd-capacity",
+    "sd-reliability-slos",
+    "sd-observability",
+    "sd-caching",
+    "sd-cost"
+  ],
+  "sources": [
+    {
+      "kind": "article",
+      "title": "The Tail at Scale (Dean and Barroso)",
+      "url": "https://research.google/pubs/the-tail-at-scale/"
+    },
+    {
+      "kind": "article",
+      "title": "Latency Numbers Every Programmer Should Know",
+      "url": "https://gist.github.com/jboner/2841832"
+    },
+    {
+      "kind": "book",
+      "title": "Non-Abstract Large System Design (SRE workbook)",
+      "url": "https://sre.google/workbook/non-abstract-design/"
+    },
+    {
+      "kind": "article",
+      "title": "Little's law",
+      "url": "https://en.wikipedia.org/wiki/Little%27s_law"
+    }
+  ],
+  "practice": null,
+  "provenance": {
+    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
+    "generated_on": "2026-10-13",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-13",
+      "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    }
+  ]
+}

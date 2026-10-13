@@ -1,0 +1,141 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "sd-consistency-consensus",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Consistency models, transactions and consensus in plain words",
+  "area": "software",
+  "primary_key": "consistency-models",
+  "secondary_keys": [
+    "consensus",
+    "distributed-systems"
+  ],
+  "keys": [
+    "consistency-models",
+    "consensus",
+    "distributed-systems"
+  ],
+  "summary": "A consistency model is the contract between a data store and its clients about which reads can follow which writes. Transactions group operations so they succeed or fail together under a chosen isolation level, and consensus lets several machines agree on one ordered history despite crashes. In practice most teams do not write consensus code; they rent it from a coordination store and must use leases and fencing correctly.",
+  "detail": [],
+  "in_practice": "Teams rarely implement consensus themselves. They run a three or five node coordination cluster such as etcd or ZooKeeper, or use a database that embeds Raft, and keep only small critical state there: leader identity, shard assignments, feature configuration. Design reviews go through each piece of data and write down the required guarantee, then pick the cheapest store that meets it. Leader election uses a leased key with keep-alives, and anything the leader writes carries a fencing token or uses a compare-and-set on a revision. Correctness is tested with fault injection: killing leaders, partitioning nodes and pausing processes to confirm that no stale writer gets through.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "Linearizability means the system behaves like a single copy: once a write completes, every later read sees it, and operations appear in an order consistent with real time. Serializability is about transactions: the result equals some serial order of the transactions, though not necessarily the real time order. Strict serializability combines both. Eventual consistency promises only that replicas converge if writes stop, so a read may return stale data. Between them sit session guarantees such as read-your-writes and monotonic reads, which are often enough for user facing features.",
+          "heading": "The spectrum"
+        },
+        {
+          "body": "Stronger models cost latency and availability, because a node that cannot reach a quorum must refuse the request instead of answering from local state. The practical question per data item is: what breaks if a client reads an old value? Account balances, uniqueness constraints and leader election need linearizable operations. Feeds, counters, search indexes and recommendations usually tolerate staleness measured in seconds. Good designs mix models: a small strongly consistent core for decisions, with eventually consistent copies for reads at scale.",
+          "heading": "Choosing a model"
+        }
+      ],
+      "id": "consistency-models",
+      "title": "Consistency models from linearizable to eventual"
+    },
+    {
+      "body": [
+        {
+          "body": "A transaction provides atomicity (all writes apply or none do), isolation (concurrent transactions do not see each other's partial work) and durability (committed data survives a crash). Isolation is a dial, not a switch. Read committed prevents dirty reads but allows a value to change between two reads. Snapshot isolation gives each transaction a consistent view but allows write skew, where two transactions each read a condition, then both write in ways that jointly violate it. Serializable isolation removes these anomalies at the cost of more aborts or locking.",
+          "heading": "What a transaction gives you"
+        },
+        {
+          "body": "A single database transaction cannot span two services with separate stores. Two-phase commit can do it but blocks participants if the coordinator fails, so most systems avoid it on request paths. The common alternatives are sagas, where each step commits locally and failures trigger compensating actions, and the outbox pattern, where a state change and its event commit in one local transaction. Both accept temporary inconsistency in exchange for availability, and both require idempotent steps because steps get retried.",
+          "heading": "Across services"
+        }
+      ],
+      "id": "transactions-isolation",
+      "title": "Transactions and isolation levels"
+    },
+    {
+      "body": [
+        {
+          "body": "Consensus algorithms such as Raft and Paxos let a group of nodes agree on an ordered log of commands. In Raft one node is elected leader for a term, clients send writes to it, and the leader appends each entry to its log and replicates it. An entry is committed once a majority has stored it, so any later majority must contain at least one node that knows it. This overlap is why a cluster of 2f+1 nodes survives f failures: three nodes tolerate one failure, five tolerate two.",
+          "heading": "How agreement works"
+        },
+        {
+          "body": "Every write needs a round trip to a majority and a durable disk write, so consensus stores are sized for small, critical data such as configuration, membership and locks, not bulk application data. Adding members raises fault tolerance but slows writes, which is why clusters are usually three or five nodes and odd sized. During a partition the minority side cannot commit and must reject writes. A store like etcd exposes this as a key-value API with a global revision counter that increases on every change.",
+          "heading": "What it costs"
+        }
+      ],
+      "id": "consensus-raft-quorums",
+      "title": "Consensus, quorums and Raft"
+    },
+    {
+      "body": [
+        {
+          "body": "A distributed lock is usually a key attached to a lease: a time to live that the holder must keep refreshing. If the holder crashes, the lease expires and the key disappears so another client can acquire it. The danger is a holder that is paused, by garbage collection or a slow network, past its lease expiry. It wakes up still believing it holds the lock while another client has taken it, and both write. Clocks and timeouts alone cannot prevent this.",
+          "heading": "Why a lock is not enough"
+        },
+        {
+          "body": "The fix is a fencing token: a number that increases each time the lock is granted, taken from the lock service, for example a store revision. The client sends the token with every write to the protected resource, and the resource rejects any write whose token is lower than the highest it has already seen. Safety then depends on the resource checking tokens, not on timing assumptions. If the resource cannot check tokens, treat the lock as an efficiency optimization only, never as a correctness guarantee.",
+          "heading": "Fencing"
+        }
+      ],
+      "id": "leases-locks-fencing",
+      "title": "Leases, distributed locks and fencing tokens"
+    }
+  ],
+  "diagram": {
+    "source": "sequenceDiagram\n    participant C as Client\n    participant L as Leader\n    participant F1 as Follower 1\n    participant F2 as Follower 2\n    C->>L: write x=5\n    L->>L: append to log\n    L->>F1: replicate entry\n    L->>F2: replicate entry\n    F1-->>L: ack\n    Note over L: majority stored, entry committed\n    L-->>C: ok with revision\n    F2-->>L: ack later"
+  },
+  "code": [
+    {
+      "code": "# grant a 30 second lease, attach a lock key to it\netcdctl lease grant 30\n# lease 694d81417acd4754 granted with TTL(30s)\netcdctl put --lease=694d81417acd4754 /locks/report-job worker-a\n# keep it alive while working; key vanishes if this stops\netcdctl lease keep-alive 694d81417acd4754",
+      "lang": "bash"
+    },
+    {
+      "code": "# resource side check of a fencing token\nhighest_seen = 0\n\ndef write(token, data, store):\n    global highest_seen\n    if token < highest_seen:\n        raise PermissionError('stale lock holder')\n    highest_seen = token\n    store.append(data)",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "etcd",
+    "ZooKeeper",
+    "Consul",
+    "Raft",
+    "Paxos",
+    "PostgreSQL",
+    "CockroachDB",
+    "Spanner"
+  ],
+  "related": [
+    "sd-replication-partitioning",
+    "sd-storage-engines",
+    "sd-outbox-cdc",
+    "sd-idempotency-retries",
+    "sd-reliability-slos"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "etcd learning: data model, API guarantees",
+      "url": "https://etcd.io/docs/v3.5/learning/"
+    },
+    {
+      "kind": "doc",
+      "title": "etcd tutorial: create a lease",
+      "url": "https://etcd.io/docs/v3.5/tutorials/how-to-create-lease/"
+    },
+    {
+      "kind": "article",
+      "title": "How to do distributed locking (Kleppmann)",
+      "url": "https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html"
+    }
+  ],
+  "practice": "practice/sd-consistency-consensus",
+  "provenance": {
+    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
+    "generated_on": "2026-10-13",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-13",
+      "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    }
+  ]
+}

@@ -1,0 +1,349 @@
+{
+  "schema_version": "learning-center-practice:1",
+  "id": "practice/sd-capacity",
+  "version": 1,
+  "lesson": "sd-capacity",
+  "tool": "Locust",
+  "tool_key": null,
+  "why_this_tool": "Locust lets you write the demand model as ordinary Python user classes and then push the same file from a laptop smoke run to a distributed, headless, pass-or-fail run, which is the full capacity planning loop of this lesson.",
+  "alternatives": "k6 scripts tests in JavaScript and runs them from a single Go binary with built-in thresholds, JMeter drives XML test plans from a GUI on a thread-per-user model, Gatling writes simulations in a Scala, Java or Kotlin DSL with rich static reports, and Vegeta or wrk fire a fixed request rate at one endpoint with no user-behaviour model, whereas Locust describes users in plain Python and scales out through a master and workers.",
+  "setup": [
+    {
+      "do": "Install Locust into a fresh Python virtual environment and check that the locust command reports its version.",
+      "done_when": "Running the locust command with the version flag prints a version number.",
+      "n": 1,
+      "source": {
+        "title": "Installation — Locust 2.46.8.dev0 documentation",
+        "url": "https://docs.locust.io/en/stable/installation.html#installation",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Installation"
+        }
+      },
+      "why": "Every later step runs through the locust command, and a dedicated environment keeps the version you measure with fixed."
+    },
+    {
+      "do": "Raise the maximum number of open files for your shell before generating any load.",
+      "done_when": "Your shell reports an open files limit well above the number of users you plan to simulate.",
+      "n": 2,
+      "source": {
+        "title": "Installation — Locust 2.46.8.dev0 documentation",
+        "url": "https://docs.locust.io/en/stable/installation.html#increasing-maximum-number-of-open-files-limit",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Increasing Maximum Number of Open Files Limit"
+        }
+      },
+      "why": "Each simulated user holds connections, and a low limit makes the load generator fail first, which looks like a capacity limit in the target but is not one."
+    },
+    {
+      "do": "Start a small HTTP service you own on your laptop, with a fixed CPU and memory allowance, and note its address as the host Locust will target.",
+      "done_when": "The service answers a request in a browser and you have written down the base address to use as the host.",
+      "n": 3,
+      "source": {
+        "title": "Writing a locustfile — Locust 2.46.8.dev0 documentation",
+        "url": "https://docs.locust.io/en/stable/writing-a-locustfile.html#host-attribute",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "host attribute"
+        }
+      },
+      "why": "Capacity numbers only mean something for a target of known size, and you must only load test systems you control."
+    }
+  ],
+  "steps": [
+    {
+      "do": "Write a minimal locustfile with one user and one request, start Locust, and run a small test from the web interface.",
+      "done_when": "The web interface shows live request rate and response time charts for your endpoint with zero failures.",
+      "n": 1,
+      "source": {
+        "title": "Your first test — Locust 2.46.8.dev0 documentation",
+        "url": "https://docs.locust.io/en/stable/quickstart.html#your-first-test",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Your first test"
+        }
+      },
+      "why": "This is the shortest path to seeing requests per second, response times and failures for your own service. It gives you a baseline before you model anything."
+    },
+    {
+      "do": "Write your demand forecast into the locustfile by choosing a wait time that makes each user produce the per-user request pace you expect, including a constant throughput variant.",
+      "done_when": "With a fixed number of users, the total request rate in the statistics matches the rate you calculated on paper within a few percent.",
+      "n": 2,
+      "source": {
+        "title": "Writing a locustfile — Locust 2.46.8.dev0 documentation",
+        "url": "https://docs.locust.io/en/stable/writing-a-locustfile.html#wait-time-attribute",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "wait_time attribute"
+        }
+      },
+      "why": "A resource plan starts from a demand model, and the wait time is where peak users and requests per user become a concrete arrival rate. Without it the user count on the screen means nothing."
+    },
+    {
+      "do": "Write several tasks with weights that match the real traffic mix, for example many reads, fewer writes and a rare expensive call.",
+      "done_when": "The per-endpoint request counts in the statistics table follow the ratios you set in the weights.",
+      "n": 3,
+      "source": {
+        "title": "Writing a locustfile — Locust 2.46.8.dev0 documentation",
+        "url": "https://docs.locust.io/en/stable/writing-a-locustfile.html#task-decorator",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "@task decorator"
+        }
+      },
+      "why": "Capacity depends on the mix as much as the volume, because one heavy endpoint can consume most of the resources. Weighted tasks make the test load look like production load."
+    },
+    {
+      "do": "Write response checks that mark a request as failed when the status, the body or the response time breaks your service level target.",
+      "done_when": "A deliberately broken or slow endpoint shows up in the failures tab with the message you wrote.",
+      "n": 4,
+      "source": {
+        "title": "Writing a locustfile — Locust 2.46.8.dev0 documentation",
+        "url": "https://docs.locust.io/en/stable/writing-a-locustfile.html#validating-responses",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Validating responses"
+        }
+      },
+      "why": "A server under stress often returns fast errors or slow successes, and both would otherwise count as healthy throughput. The sustainable limit is the load at which the checks still pass."
+    },
+    {
+      "do": "Run the same test without the web interface for a fixed duration and save the statistics as CSV files, once per instance size.",
+      "done_when": "Two sets of CSV files exist on disk and you can state the difference in throughput and high-percentile latency between them.",
+      "n": 5,
+      "source": {
+        "title": "Configuration — Locust 2.46.8.dev0 documentation",
+        "url": "https://docs.locust.io/en/stable/configuration.html#save-test-statistics-in-csv-format",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Save test statistics in CSV format"
+        }
+      },
+      "why": "Saved results are what let you compare one run with another instead of trusting memory. They are the evidence behind the per-instance number in your plan."
+    },
+    {
+      "do": "Write a custom load shape that raises the user count in steps and holds each step, then run it against one instance to find where latency bends upward.",
+      "done_when": "You can name the step at which response time or failures rise sharply and write down the instances needed for peak plus headroom.",
+      "n": 6,
+      "source": {
+        "title": "Configuration — Locust 2.46.8.dev0 documentation",
+        "url": "https://docs.locust.io/en/stable/configuration.html#custom-load-shapes",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Custom load shapes"
+        }
+      },
+      "why": "The knee of the curve is what one instance can sustain, and dividing forecast peak demand by it, plus headroom, gives the instance count. A stepped shape makes the knee visible and repeatable."
+    },
+    {
+      "do": "Compare the stepped run against the checks in the request rate guide to decide whether the limit is in the load generator or in the system under test.",
+      "done_when": "You have one written sentence naming the limiting resource, backed by the Locust process CPU staying below its limit while the target's resource is saturated.",
+      "n": 7,
+      "source": {
+        "title": "Increasing the request rate — Locust 2.46.8.dev0 documentation",
+        "url": "https://docs.locust.io/en/stable/increasing-request-rate.html#actual-issues-with-the-system-under-test",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Actual issues with the system under test"
+        }
+      },
+      "why": "Finding the bottleneck starts with ruling out your own tooling, since a saturated Locust process flattens throughput exactly as a saturated server does. Only then is it worth looking at the target's CPU, memory, connections or database."
+    },
+    {
+      "do": "Create a configuration file that pins the host, user count, spawn rate, run time and CSV prefix, and commit it next to the locustfile.",
+      "done_when": "Running the locust command with no extra options reproduces the earlier headless run and writes the same set of CSV files.",
+      "n": 8,
+      "source": {
+        "title": "Configuration — Locust 2.46.8.dev0 documentation",
+        "url": "https://docs.locust.io/en/stable/configuration.html#configuration-file",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Configuration File"
+        }
+      },
+      "why": "A test whose parameters live in shell history cannot be repeated by a colleague or by a pipeline. A committed configuration file turns the run into a versioned artifact."
+    },
+    {
+      "do": "Run Locust as one master and several workers with Docker Compose on your laptop, and repeat the stepped test.",
+      "done_when": "The workers tab lists every worker as connected and the peak request rate the generator can produce is higher than with a single process.",
+      "n": 9,
+      "source": {
+        "title": "Running in Docker — Locust 2.46.8.dev0 documentation",
+        "url": "https://docs.locust.io/en/stable/running-in-docker.html#docker-compose",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Docker Compose"
+        }
+      },
+      "why": "One Python process uses one core, so real load needs several workers. Containers also pin the Locust version so the result is reproducible on any machine."
+    },
+    {
+      "do": "Configure the headless run to exit with a failing code when the failure ratio or a response time percentile breaks your budget, and run it as a pipeline job.",
+      "done_when": "The job passes against the healthy service and fails with a non-zero exit code when you lower the service's CPU allowance.",
+      "n": 10,
+      "source": {
+        "title": "Running without the web UI — Locust 2.46.8.dev0 documentation",
+        "url": "https://docs.locust.io/en/stable/running-without-web-ui.html#controlling-the-exit-code-of-the-locust-process",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Controlling the exit code of the Locust process"
+        }
+      },
+      "why": "Capacity regresses silently as code changes, so the check must run on every change and fail by itself. An exit code is the contract a CI system understands."
+    },
+    {
+      "do": "Deploy the Locust operator on a local cluster such as kind or minikube, run the test as a cluster resource, and send a sudden spike shape at a target scaled by a HorizontalPodAutoscaler.",
+      "done_when": "You can state the seconds between the start of the spike and the new replicas taking traffic, and the failures or latency seen in that window.",
+      "n": 11,
+      "source": {
+        "title": "Kubernetes Operator — Locust 2.46.8.dev0 documentation",
+        "url": "https://docs.locust.io/en/stable/kubernetes-operator.html#quickstart",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Quickstart"
+        }
+      },
+      "why": "Autoscaling reacts only after metrics are scraped and new pods become ready, so a spike faster than that delay is served by the old replica count. Watching the spike tells you how much standing headroom autoscaling cannot replace. No paid cloud is needed."
+    },
+    {
+      "do": "Write event hooks that record the worker count and the final statistics and set the process exit code, then run the full distributed, headless, stepped and spike test on the local cluster as one production-like capacity check.",
+      "done_when": "One command runs the whole test on the cluster, logs the worker count and the verdict from your hooks, and ends with a pass or fail exit code you can trace to a stated budget.",
+      "n": 12,
+      "source": {
+        "title": "API — Locust 2.46.8.dev0 documentation",
+        "url": "https://docs.locust.io/en/stable/api.html#event-hooks",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Event hooks"
+        }
+      },
+      "why": "A production-like run must prove that the load was really generated and must judge itself without a person watching charts. Event hooks are where Locust lets you add those guarantees in code."
+    }
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Installation — Locust 2.46.8.dev0 documentation",
+      "url": "https://docs.locust.io/en/stable/installation.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Installation / Increasing Maximum Number of Open Files Limit"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Writing a locustfile — Locust 2.46.8.dev0 documentation",
+      "url": "https://docs.locust.io/en/stable/writing-a-locustfile.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "host attribute / wait_time attribute / @task decorator / Validating responses"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Your first test — Locust 2.46.8.dev0 documentation",
+      "url": "https://docs.locust.io/en/stable/quickstart.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Your first test"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Configuration — Locust 2.46.8.dev0 documentation",
+      "url": "https://docs.locust.io/en/stable/configuration.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Save test statistics in CSV format / Custom load shapes / Configuration File"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Increasing the request rate — Locust 2.46.8.dev0 documentation",
+      "url": "https://docs.locust.io/en/stable/increasing-request-rate.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Actual issues with the system under test"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Running in Docker — Locust 2.46.8.dev0 documentation",
+      "url": "https://docs.locust.io/en/stable/running-in-docker.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Docker Compose"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Running without the web UI — Locust 2.46.8.dev0 documentation",
+      "url": "https://docs.locust.io/en/stable/running-without-web-ui.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Controlling the exit code of the Locust process"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Kubernetes Operator — Locust 2.46.8.dev0 documentation",
+      "url": "https://docs.locust.io/en/stable/kubernetes-operator.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Quickstart"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "API — Locust 2.46.8.dev0 documentation",
+      "url": "https://docs.locust.io/en/stable/api.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Event hooks"
+      }
+    }
+  ],
+  "verified": {
+    "checked": "2026-10-13",
+    "by": "gigai learning pipeline link check (karthik446/gigai-learning-center 4c0cb514)"
+  },
+  "provenance": {
+    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
+    "generated_on": "2026-10-13",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-13",
+      "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    }
+  ],
+  "kind": "tool"
+}

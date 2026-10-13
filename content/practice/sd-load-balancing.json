@@ -1,0 +1,349 @@
+{
+  "schema_version": "learning-center-practice:1",
+  "id": "practice/sd-load-balancing",
+  "version": 1,
+  "lesson": "sd-load-balancing",
+  "tool": "Envoy",
+  "tool_key": null,
+  "why_this_tool": "Envoy exposes every concept in this lesson (balancing policy, active and passive health checking, discovery type, subsets, zone awareness and draining) as an explicit, documented setting you can change and observe on a laptop with containers.",
+  "alternatives": "NGINX and HAProxy are standalone proxies configured mainly through files rather than discovery APIs; Kubernetes Services give simple built-in virtual IP balancing; Istio and Linkerd are service meshes that manage sidecar proxies for you (Istio uses Envoy underneath); Consul and ZooKeeper are registries that supply discovery data but do not balance traffic; gRPC client load balancing puts the balancer inside the caller with no proxy hop; a managed cloud load balancer is operated by the provider and cannot run on a laptop.",
+  "setup": [
+    {
+      "do": "Install a container runtime with a compose tool, pull a pinned Envoy image, and read the load balancing introduction to learn the terms cluster, host and endpoint.",
+      "done_when": "The Envoy container prints its version and you can explain in one sentence each what a cluster and a host are.",
+      "n": 1,
+      "source": {
+        "title": "Load Balancing — envoy 1.40.0-dev-b8182b documentation",
+        "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/load_balancing/load_balancing#load-balancing",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Load Balancing"
+        }
+      },
+      "why": "Everything in this path runs as local containers, and the vocabulary in the introduction is used by every later configuration section."
+    },
+    {
+      "do": "Create three tiny HTTP backend containers that each return their own name, plus a way to make one of them slow or return errors on demand.",
+      "done_when": "Calling each backend directly returns a different name, and you can switch one into a slow or failing mode.",
+      "n": 2,
+      "source": {
+        "title": "Overview — envoy 1.40.0-dev-b8182b documentation",
+        "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/load_balancing/overview#what-is-load-balancing",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "What is Load Balancing?"
+        }
+      },
+      "why": "You can only see balancing, ejection and draining when responses are attributable to a backend and you can break one deliberately."
+    },
+    {
+      "do": "Start Envoy from a bootstrap file with one listener, one route and one cluster that lists the three backends as static endpoints, with the admin interface enabled.",
+      "done_when": "The admin clusters view lists three hosts and a request to the listener returns a backend name.",
+      "n": 3,
+      "source": {
+        "title": "Service discovery — envoy 1.40.0-dev-b8182b documentation",
+        "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/service_discovery#static",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Static"
+        }
+      },
+      "why": "A static cluster is the simplest discovery type and gives a known baseline before anything dynamic is added."
+    }
+  ],
+  "steps": [
+    {
+      "do": "Run a few hundred requests through the Envoy listener and count how many each backend answered, then change the endpoint weights and repeat.",
+      "done_when": "Counts are near equal with equal weights and follow the ratio you set after changing weights.",
+      "n": 1,
+      "source": {
+        "title": "Supported load balancers — envoy 1.40.0-dev-b8182b documentation",
+        "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/load_balancing/load_balancers#weighted-round-robin",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Weighted round robin"
+        }
+      },
+      "why": "This is the first run: it shows the default round robin behavior and how weights shift the split."
+    },
+    {
+      "do": "Read the distributed and global load balancing sections and write down where your Envoy sits (edge proxy or sidecar, connection level or request level) and which decisions it makes locally.",
+      "done_when": "You have a short note naming the layer and position of your proxy and one decision that a global control plane would make instead.",
+      "n": 2,
+      "source": {
+        "title": "Overview — envoy 1.40.0-dev-b8182b documentation",
+        "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/load_balancing/overview#distributed-load-balancing",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Distributed Load Balancing"
+        }
+      },
+      "why": "Placement and layer decide what the balancer can see and which failures it can hide, so this covers the lesson's layers and placement subtopic before you tune anything."
+    },
+    {
+      "do": "Configure the cluster to use least request, make one backend slow, and compare the per-backend counts with the round robin run.",
+      "done_when": "The slow backend receives clearly fewer requests than under round robin for the same test.",
+      "n": 3,
+      "source": {
+        "title": "Supported load balancers — envoy 1.40.0-dev-b8182b documentation",
+        "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/load_balancing/load_balancers#weighted-least-request",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Weighted least request"
+        }
+      },
+      "why": "Least request reacts to in-flight load, so it steers away from a slow host where round robin keeps feeding it."
+    },
+    {
+      "do": "Configure ring hash with a hash policy on a request header, send requests with a fixed set of header values, then remove one backend and send them again.",
+      "done_when": "Each header value always lands on the same backend, and only the keys of the removed backend move.",
+      "n": 4,
+      "source": {
+        "title": "Supported load balancers — envoy 1.40.0-dev-b8182b documentation",
+        "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/load_balancing/load_balancers#ring-hash",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Ring hash"
+        }
+      },
+      "why": "Consistent hashing fits caches and sticky workloads, and you should see for yourself how few keys move when the host set changes."
+    },
+    {
+      "do": "Configure an active HTTP health check on the cluster, stop one backend, and watch its health flags in the admin clusters view while traffic continues.",
+      "done_when": "The stopped backend is marked as failing its active check and no client request returns an error after the unhealthy threshold is reached.",
+      "n": 5,
+      "source": {
+        "title": "Health checking — envoy 1.40.0-dev-b8182b documentation",
+        "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/health_checking#health-checking",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Health checking"
+        }
+      },
+      "why": "Active checks remove a dead host without spending user requests on it, and the interval and thresholds set how long that takes."
+    },
+    {
+      "do": "Enable outlier detection with consecutive 5xx ejection, make one backend answer its health check normally but fail real requests, and run traffic.",
+      "done_when": "The failing backend is ejected after the configured run of errors and returns to rotation after the ejection time.",
+      "n": 6,
+      "source": {
+        "title": "Outlier detection — envoy 1.40.0-dev-b8182b documentation",
+        "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/outlier#consecutive-5xx",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Consecutive 5xx"
+        }
+      },
+      "why": "Passive detection catches a host that passes its probe but fails real traffic, which active checks alone miss."
+    },
+    {
+      "do": "Configure the cluster as strict DNS pointing at the compose service name, scale the backend service up and down, and watch the host list change.",
+      "done_when": "The admin clusters view gains and loses hosts as you scale, with no Envoy restart.",
+      "n": 7,
+      "source": {
+        "title": "Service discovery — envoy 1.40.0-dev-b8182b documentation",
+        "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/service_discovery#strict-dns",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Strict DNS"
+        }
+      },
+      "why": "This replaces the hand-written endpoint list with real discovery, so membership now changes without touching the Envoy configuration."
+    },
+    {
+      "do": "Reproduce stale discovery data: stop a backend that DNS still lists, then remove a healthy backend from DNS, and record how Envoy treats each case.",
+      "done_when": "You can state from your own run which combinations of discovered or absent and healthy or unhealthy still receive traffic.",
+      "n": 8,
+      "source": {
+        "title": "Service discovery — envoy 1.40.0-dev-b8182b documentation",
+        "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/service_discovery#on-eventually-consistent-service-discovery",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "On eventually consistent service discovery"
+        }
+      },
+      "why": "Discovery is eventually consistent, so the proxy must combine it with health data rather than trust it as truth."
+    },
+    {
+      "do": "Configure load balancer subsets by adding version metadata to the endpoints and a metadata match on a route, then send requests for each version.",
+      "done_when": "Requests on the matched route reach only backends carrying the matching metadata value.",
+      "n": 9,
+      "source": {
+        "title": "Load Balancer Subsets — envoy 1.40.0-dev-b8182b documentation",
+        "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/load_balancing/subsets#load-balancer-subsets",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Load Balancer Subsets"
+        }
+      },
+      "why": "Subsetting limits which hosts a request may reach, which is the basis for canaries and for shrinking connection fan-out."
+    },
+    {
+      "do": "Configure zone aware routing by giving the Envoy node and the backends locality labels for two simulated zones on the laptop, then send traffic and check the zone routing statistics.",
+      "done_when": "Most requests go to same-zone backends, and removing local hosts causes spillover to the other zone.",
+      "n": 10,
+      "source": {
+        "title": "Zone aware routing — envoy 1.40.0-dev-b8182b documentation",
+        "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/load_balancing/zone_aware#zone-aware-routing",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Zone aware routing"
+        }
+      },
+      "why": "Keeping traffic in the local zone cuts latency and cross-zone cost, but it only engages when the documented preconditions hold."
+    },
+    {
+      "do": "Enable the HTTP health checking filter on a backend-side Envoy, put it into failing mode through its admin interface while traffic runs, then stop the backend.",
+      "done_when": "The drained backend stops receiving new requests and the load test shows zero errors when the backend is stopped.",
+      "n": 11,
+      "source": {
+        "title": "Health checking — envoy 1.40.0-dev-b8182b documentation",
+        "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/health_checking#http-health-checking-filter",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "HTTP health checking filter"
+        }
+      },
+      "why": "Failing the health check first lets upstream balancers stop sending new requests before the process exits, which is graceful draining."
+    },
+    {
+      "do": "Configure a production-like cluster: explicit outlier detection intervals, base ejection time, a maximum ejection percent and success rate thresholds, combined with the active health check, kept in a version-pinned compose file, then rerun every failure test.",
+      "done_when": "From a clean start the stack survives a dead host, an erroring host and a drain with no client-visible errors, and never ejects more hosts than the limit you set.",
+      "n": 12,
+      "source": {
+        "title": "Outlier detection (proto) — envoy 1.40.0-dev-b8182b documentation",
+        "url": "https://www.envoyproxy.io/docs/envoy/latest/api-v3/config/cluster/v3/outlier_detection.proto#config-cluster-v3-outlierdetection",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "config.cluster.v3.OutlierDetection"
+        }
+      },
+      "why": "Defaults are rarely right for real traffic, and capping ejections stops a bad deploy from ejecting the whole fleet."
+    }
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Load Balancing — envoy 1.40.0-dev-b8182b documentation",
+      "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/load_balancing/load_balancing",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Load Balancing"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Overview — envoy 1.40.0-dev-b8182b documentation",
+      "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/load_balancing/overview",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "What is Load Balancing? / Distributed Load Balancing"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Service discovery — envoy 1.40.0-dev-b8182b documentation",
+      "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/service_discovery",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Static / Strict DNS / On eventually consistent service discovery"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Supported load balancers — envoy 1.40.0-dev-b8182b documentation",
+      "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/load_balancing/load_balancers",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Weighted round robin / Weighted least request / Ring hash"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Health checking — envoy 1.40.0-dev-b8182b documentation",
+      "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/health_checking",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Health checking / HTTP health checking filter"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Outlier detection — envoy 1.40.0-dev-b8182b documentation",
+      "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/outlier",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Consecutive 5xx"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Load Balancer Subsets — envoy 1.40.0-dev-b8182b documentation",
+      "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/load_balancing/subsets",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Load Balancer Subsets"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Zone aware routing — envoy 1.40.0-dev-b8182b documentation",
+      "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/load_balancing/zone_aware",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Zone aware routing"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Outlier detection (proto) — envoy 1.40.0-dev-b8182b documentation",
+      "url": "https://www.envoyproxy.io/docs/envoy/latest/api-v3/config/cluster/v3/outlier_detection.proto",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "config.cluster.v3.OutlierDetection"
+      }
+    }
+  ],
+  "verified": {
+    "checked": "2026-10-13",
+    "by": "gigai learning pipeline link check (karthik446/gigai-learning-center 4c0cb514)"
+  },
+  "provenance": {
+    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
+    "generated_on": "2026-10-13",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-13",
+      "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    }
+  ],
+  "kind": "tool"
+}

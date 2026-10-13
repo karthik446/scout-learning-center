@@ -1,0 +1,148 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "sd-capacity",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Capacity planning and performance",
+  "area": "software",
+  "primary_key": "capacity-planning",
+  "secondary_keys": [
+    "scaling",
+    "workload-scheduling",
+    "kubernetes"
+  ],
+  "keys": [
+    "capacity-planning",
+    "scaling",
+    "workload-scheduling",
+    "kubernetes"
+  ],
+  "summary": "Capacity planning turns a demand forecast into a resource plan with known headroom, and performance work finds the limit of each component before production traffic does. The loop is: model the load, measure what one instance can sustain, find the bottleneck, then decide how the system grows, by hand or by autoscaling. Estimates start the conversation, but load tests settle it.",
+  "detail": [],
+  "in_practice": "A team keeps a short capacity document per service: demand assumptions, measured throughput per instance, the known bottleneck, and the headroom policy. Before a launch or a major change they run ramp and soak tests from a distributed load generator against a production-like environment, with dashboards open on every tier. The results set replica minimums, autoscaler targets and pool sizes. Quarterly, the forecast is compared with production metrics and procurement or quota requests are raised for tiers with long lead times.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "Start from business drivers: active users, actions per user, payload sizes and growth rate. Convert them into peak request rate per endpoint, not the daily average, since peak hour is commonly several times the mean and launches or batch jobs add spikes. Split reads from writes and cheap calls from expensive ones, because one heavy endpoint can dominate. For each tier, derive throughput, storage growth per month, memory for working sets and caches, and network transfer. Record the assumptions so they can be checked against production metrics later.",
+          "heading": "Modelling the load"
+        },
+        {
+          "body": "Divide peak demand by the measured sustainable throughput of one instance to get a base count, then add headroom. Plan for N plus one or N plus two: the fleet must carry peak load with a node, or a whole zone, gone, and during a deploy that takes instances out of rotation. Run at a target utilisation well below saturation, since latency rises sharply as utilisation approaches one hundred percent. Stateful tiers need longer lead time than stateless ones, as adding a database shard or replica involves data movement.",
+          "heading": "Headroom and failure"
+        }
+      ],
+      "id": "demand-model-and-headroom",
+      "title": "From demand model to resource plan"
+    },
+    {
+      "body": [
+        {
+          "body": "A load test is only as good as its workload model. In Locust, behaviour is plain Python: a user class holds tasks, weights set how often each task runs relative to the others, and a wait time between tasks models think time. Each simulated user runs in a lightweight greenlet, so one process can drive many concurrent users. Use realistic data variety, since hitting one cached key measures the cache and nothing else. Run the test against an environment with production-like data volume and the same topology, including the load balancer and connection pools.",
+          "heading": "Shaping a realistic test"
+        },
+        {
+          "body": "Run several shapes: a ramp to find the breaking point, a soak at expected peak for hours to expose leaks and slow growth, and a spike to see recovery. Watch the load generator itself, as a saturated generator under-reports throughput and distorts latency. Locust scales out with one master process that coordinates and aggregates statistics and many worker processes that generate the load, typically one worker per CPU core across several machines. Run it headless in CI with a fixed user count, spawn rate and duration to catch regressions.",
+          "heading": "Kinds of test and scaling the generator"
+        }
+      ],
+      "id": "load-testing-with-locust",
+      "title": "Load testing"
+    },
+    {
+      "body": [
+        {
+          "body": "Plot throughput and latency percentiles against offered load. In the healthy region throughput rises linearly and latency is flat. At the knee, throughput flattens and tail latency climbs: some resource is saturated. Identify it by checking utilisation, saturation and errors for each resource: CPU, memory, disk IO, network, and also software limits such as thread pools, connection pools, file descriptors and locks. The limiting resource is frequently a downstream dependency or a pool size, not CPU. Report the ninety-ninth percentile, not the mean, and note that fan-out calls inherit the tail of every backend they touch.",
+          "heading": "Reading the results"
+        },
+        {
+          "body": "Fix the one bottleneck, retest, and expect the next one to appear. Typical remedies in order of cost: remove wasted work such as N plus one queries or chatty calls, add caching or batching, tune pool sizes and timeouts, scale the tier out, and finally change the architecture by partitioning or moving work to asynchronous processing. Keep the per-instance sustainable throughput figure from each test, as it is the main input to the capacity model.",
+          "heading": "Acting on it"
+        }
+      ],
+      "id": "bottlenecks-and-saturation",
+      "title": "Finding the bottleneck"
+    },
+    {
+      "body": [
+        {
+          "body": "The Kubernetes HorizontalPodAutoscaler is a control loop that periodically compares an observed metric with a target and sets the replica count to roughly the current replicas multiplied by the ratio of current to desired metric value, rounded up. Metrics can be resource based, such as average CPU utilisation relative to requests, or custom and external, such as requests per second or queue length. A tolerance band avoids reacting to small deviations, and a scale-down stabilisation window prevents flapping by using the highest recent recommendation. Minimum and maximum replica bounds cap the behaviour.",
+          "heading": "How horizontal autoscaling decides"
+        },
+        {
+          "body": "Autoscaling reacts after load arrives, and new capacity takes time: scheduling, image pull, startup, warm-up and readiness. Keep enough headroom to absorb a spike for that long, or scale on a leading signal such as queue depth. Scaling a stateless tier can simply move the bottleneck to a database that does not scale the same way, exhausting its connections. Set correct resource requests, since utilisation targets are computed from them, and pair autoscaling with load shedding for demand beyond the maximum.",
+          "heading": "Design consequences"
+        }
+      ],
+      "id": "autoscaling",
+      "title": "Autoscaling and its limits"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  F[Demand forecast] --> M[Capacity model]\n  M --> T[Load test]\n  T --> B[Find bottleneck]\n  B --> X[Fix or scale]\n  X --> T\n  T --> P[Per instance throughput]\n  P --> M\n  M --> A[Autoscaler targets and replica bounds]\n  A --> O[Production metrics]\n  O --> F"
+  },
+  "code": [
+    {
+      "code": "from locust import HttpUser, task, between\n\nclass Shopper(HttpUser):\n    wait_time = between(1, 3)\n\n    @task(5)\n    def browse(self):\n        self.client.get(\"/items\")\n\n    @task(1)\n    def checkout(self):\n        self.client.post(\"/orders\", json={\"sku\": \"A1\", \"qty\": 1})\n\n# locust -f locustfile.py --headless -u 500 -r 50 -t 10m --host HOST",
+      "lang": "python"
+    },
+    {
+      "code": "apiVersion: autoscaling/v2\nkind: HorizontalPodAutoscaler\nmetadata:\n  name: api\nspec:\n  scaleTargetRef:\n    apiVersion: apps/v1\n    kind: Deployment\n    name: api\n  minReplicas: 4\n  maxReplicas: 40\n  metrics:\n    - type: Resource\n      resource:\n        name: cpu\n        target:\n          type: Utilization\n          averageUtilization: 60",
+      "lang": "yaml"
+    }
+  ],
+  "technologies": [
+    "Locust",
+    "Kubernetes HorizontalPodAutoscaler",
+    "Kubernetes metrics-server",
+    "Prometheus",
+    "Grafana",
+    "k6",
+    "KEDA"
+  ],
+  "related": [
+    "sd-numbers",
+    "sd-load-balancing",
+    "sd-rate-limiting-overload",
+    "sd-observability",
+    "sd-cost",
+    "sd-caching"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Locust documentation",
+      "url": "https://docs.locust.io/en/stable/"
+    },
+    {
+      "kind": "doc",
+      "title": "Writing a locustfile",
+      "url": "https://docs.locust.io/en/stable/writing-a-locustfile.html"
+    },
+    {
+      "kind": "doc",
+      "title": "Locust distributed load generation",
+      "url": "https://docs.locust.io/en/stable/running-distributed.html"
+    },
+    {
+      "kind": "doc",
+      "title": "Kubernetes Horizontal Pod Autoscaling",
+      "url": "https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/"
+    }
+  ],
+  "practice": "practice/sd-capacity",
+  "provenance": {
+    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
+    "generated_on": "2026-10-13",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-13",
+      "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    }
+  ]
+}

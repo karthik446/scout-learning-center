@@ -1,0 +1,364 @@
+{
+  "schema_version": "learning-center-practice:1",
+  "id": "practice/sd-outbox-cdc",
+  "version": 1,
+  "lesson": "sd-outbox-cdc",
+  "tool": "Debezium",
+  "tool_key": null,
+  "why_this_tool": "Debezium reads the database's own commit log and ships an outbox event router, so one tool lets you practise log based capture, outbox routing and rebuilding derived data on a laptop.",
+  "alternatives": "Polling outbox publisher in the application (simple, but adds latency and load, and ordering is harder to guarantee); Kafka Connect JDBC source (query based, misses deletes and intermediate states); Maxwell or Canal (MySQL binlog only); DynamoDB Streams (managed change stream tied to one cloud database); PostgreSQL logical replication consumed directly (no connector framework, you write offset handling yourself).",
+  "setup": [
+    {
+      "do": "Read what Debezium is and sketch the pipeline you will build: PostgreSQL, Kafka, Kafka Connect with Debezium, and one consumer.",
+      "done_when": "You have a one-page diagram naming each container and the direction the data flows.",
+      "n": 1,
+      "source": {
+        "title": "Debezium Documentation :: Debezium Documentation",
+        "url": "https://debezium.io/documentation/reference/stable/#_what_is_it",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "What is it?"
+        }
+      },
+      "why": "A clear picture of the moving parts makes every later step easier to debug. It also fixes where the log, the connector and the topics sit."
+    },
+    {
+      "do": "Install a container runtime and start Kafka plus a Kafka Connect container with the Debezium connector plugins on its plugin path.",
+      "done_when": "The Connect REST interface lists the Debezium PostgreSQL connector class among its installed plugins.",
+      "n": 2,
+      "source": {
+        "title": "Installing Debezium Kafka Connect Connectors :: Debezium Documentation",
+        "url": "https://debezium.io/documentation/reference/stable/install-kafka-connect.html#_using_a_debezium_connector",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Using a Debezium Connector"
+        }
+      },
+      "why": "Debezium connectors run inside Kafka Connect, so the plugins must be visible to the worker before any connector can be registered."
+    },
+    {
+      "do": "Start a PostgreSQL container with logical WAL level and decide to use the built-in pgoutput plugin.",
+      "done_when": "A query of the WAL level setting returns logical and the database accepts connections from the Connect container.",
+      "n": 3,
+      "source": {
+        "title": "Debezium connector for PostgreSQL :: Debezium Documentation",
+        "url": "https://debezium.io/documentation/reference/stable/connectors/postgresql.html#postgresql-pgoutput",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "PostgreSQL 10+ logical decoding support (pgoutput)"
+        }
+      },
+      "why": "Logical decoding is what exposes committed changes to Debezium. The pgoutput plugin needs no extra installation in the database."
+    },
+    {
+      "do": "Decide how Debezium topics are created in your local Kafka: broker auto creation or explicit topics with chosen partitions and retention.",
+      "done_when": "You can state, for your stack, who creates the change topics and with what partition count and cleanup policy.",
+      "n": 4,
+      "source": {
+        "title": "Installing Debezium Kafka Connect Connectors :: Debezium Documentation",
+        "url": "https://debezium.io/documentation/reference/stable/install-kafka-connect.html#configuring-debezium-topics",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Configuring Debezium Topics"
+        }
+      },
+      "why": "Topic settings decide ordering and how long history is kept. Both matter once the log is treated as the source of truth."
+    }
+  ],
+  "steps": [
+    {
+      "do": "Run your first PostgreSQL connector against a small orders table that already holds a few rows, and watch the initial snapshot.",
+      "done_when": "A topic for the orders table exists and holds one read event per existing row.",
+      "n": 1,
+      "source": {
+        "title": "Debezium connector for PostgreSQL :: Debezium Documentation",
+        "url": "https://debezium.io/documentation/reference/stable/connectors/postgresql.html#postgresql-snapshots",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Snapshots"
+        }
+      },
+      "why": "The snapshot shows how Debezium gets a consistent starting point before it follows the log. This is the first run every team does."
+    },
+    {
+      "do": "Run an insert, an update and a delete on the orders table and query the topic to read the three streamed change events.",
+      "done_when": "You see three new events in commit order, each with an operation type, before and after state, and a log position.",
+      "n": 2,
+      "source": {
+        "title": "Debezium connector for PostgreSQL :: Debezium Documentation",
+        "url": "https://debezium.io/documentation/reference/stable/connectors/postgresql.html#postgresql-streaming-changes",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Streaming changes"
+        }
+      },
+      "why": "This is log based change data capture in action: committed changes arrive in commit order without the application publishing anything."
+    },
+    {
+      "do": "Compare the architecture of the CockroachDB connector with your running PostgreSQL connector, mapping source log, connector task, topic, event key, event value and offsets in both.",
+      "done_when": "You have a two-column table that names the equivalent of each object for both connectors.",
+      "n": 3,
+      "source": {
+        "title": "Debezium connector for CockroachDB :: Debezium Documentation",
+        "url": "https://debezium.io/documentation/reference/stable/connectors/cockroachdb.html#cockroachdb-architecture",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Architecture"
+        }
+      },
+      "why": "The same object model recurs in every Debezium connector. Seeing it against a second database separates the concepts from PostgreSQL details."
+    },
+    {
+      "do": "Run the MySQL connector against a local MySQL container with the same orders table and compare how it persists schema history with what the PostgreSQL connector does.",
+      "done_when": "You can show the schema history topic for MySQL and explain why the PostgreSQL connector has no such topic.",
+      "n": 4,
+      "source": {
+        "title": "Debezium connector for MySQL :: Debezium Documentation",
+        "url": "https://debezium.io/documentation/reference/stable/connectors/mysql.html#mysql-schema-history-topic",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Schema history topic"
+        }
+      },
+      "why": "Binlog capture needs a persisted schema history topic to interpret old log entries, where logical decoding does not. The difference affects how you operate and recover each connector."
+    },
+    {
+      "do": "Reproduce the dual write problem with a script that commits an order row and then publishes to Kafka as a separate write, kill it between the two, then write down the outbox message that should replace the second write.",
+      "done_when": "You have one order in the database with no matching Kafka message, and a written outbox message with id, aggregate type, aggregate id, type and payload.",
+      "n": 5,
+      "source": {
+        "title": "Outbox Event Router :: Debezium Documentation",
+        "url": "https://debezium.io/documentation/reference/stable/transformations/outbox-event-router.html#example-outbox-message",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Example outbox message"
+        }
+      },
+      "why": "Seeing the database and the topic disagree makes the failure concrete. The example message shows what must instead travel inside the transaction."
+    },
+    {
+      "do": "Create the outbox table with the expected columns and change the script to insert the order row and the outbox row in one local transaction.",
+      "done_when": "Killing the script at any point never leaves an order without an outbox row or an outbox row without an order.",
+      "n": 6,
+      "source": {
+        "title": "Outbox Event Router :: Debezium Documentation",
+        "url": "https://debezium.io/documentation/reference/stable/transformations/outbox-event-router.html#basic-outbox-table",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Basic outbox table"
+        }
+      },
+      "why": "The transactional outbox table makes the business change and the event atomic. A crash now loses both or neither."
+    },
+    {
+      "do": "Configure the outbox event router transformation on a connector that captures only the outbox table, and run the script again.",
+      "done_when": "An order event topic receives messages whose key is the order id and whose value is only the payload.",
+      "n": 7,
+      "source": {
+        "title": "Outbox Event Router :: Debezium Documentation",
+        "url": "https://debezium.io/documentation/reference/stable/transformations/outbox-event-router.html#basic-outbox-configuration",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Basic configuration"
+        }
+      },
+      "why": "The router turns raw outbox row changes into clean domain events, routed to a topic per aggregate type and keyed by aggregate id. This preserves per-aggregate ordering."
+    },
+    {
+      "do": "Run the Debezium JDBC sink in upsert mode from the routed topic into a second database, then restart the Connect worker mid-stream to force redelivery.",
+      "done_when": "After the restart the target table has exactly one row per order, with no duplicates and no errors in the sink status.",
+      "n": 8,
+      "source": {
+        "title": "Debezium connector for JDBC :: Debezium Documentation",
+        "url": "https://debezium.io/documentation/reference/stable/connectors/jdbc.html#jdbc-idempotent-writes",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Idempotent writes"
+        }
+      },
+      "why": "Delivery is at least once, so a safe consumer must be idempotent. Upserts keyed on the primary key make replays harmless."
+    },
+    {
+      "do": "Enable signaling, drop the derived orders table in the second database and trigger an incremental snapshot of the source table to rebuild it while streaming continues.",
+      "done_when": "The derived table is repopulated to match the source row count while new live changes keep arriving.",
+      "n": 9,
+      "source": {
+        "title": "Debezium connector for PostgreSQL :: Debezium Documentation",
+        "url": "https://debezium.io/documentation/reference/stable/connectors/postgresql.html#postgresql-triggering-an-incremental-snapshot",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Triggering an incremental snapshot"
+        }
+      },
+      "why": "Derived data is disposable when the log and the source remain the truth. Rebuilding on demand without stopping capture is how teams repair or add downstream views."
+    },
+    {
+      "do": "Read how the Oracle connector mines from a downstream mining database; this needs a licensed database setup, so use your local PostgreSQL replication slot as the closest substitute and note the parallels.",
+      "done_when": "You can explain in three sentences where the log is read in that topology and what load it removes from the primary.",
+      "n": 10,
+      "source": {
+        "title": "Debezium Connector for Oracle :: Debezium Documentation",
+        "url": "https://debezium.io/documentation/reference/stable/connectors/oracle.html#oracle-downstream-mining-database",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Using a downstream mining database"
+        }
+      },
+      "why": "Promoting capture off the primary onto a dedicated log reader is a common step before production. It shows how the capture path is moved without changing the events."
+    },
+    {
+      "do": "Package a pinned Connect image that includes the scripting libraries for content-based routing, keep connector configurations as files in version control, and recreate the whole stack from scratch with a routing rule applied.",
+      "done_when": "A fresh checkout brings the stack up with one command and events matching your expression land in the alternate topic.",
+      "n": 11,
+      "source": {
+        "title": "Content-based routing :: Debezium Documentation",
+        "url": "https://debezium.io/documentation/reference/stable/transformations/content-based-routing.html#set-up-content-based-routing",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Set up"
+        }
+      },
+      "why": "A pinned image plus configuration in files makes the pipeline reproducible in CI and on any laptop. Content-based routing only works when its extra libraries are baked in."
+    },
+    {
+      "do": "Configure a dedicated least-privilege replication role for the connector, switch the connector to it, and rerun the outbox flow end to end.",
+      "done_when": "The connector status is running under the restricted role and a new order still produces exactly one routed event and one derived row.",
+      "n": 12,
+      "source": {
+        "title": "Debezium connector for PostgreSQL :: Debezium Documentation",
+        "url": "https://debezium.io/documentation/reference/stable/connectors/postgresql.html#postgresql-security",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Security"
+        }
+      },
+      "why": "Production databases do not hand superuser credentials to a connector. Running with only replication and select privileges is the baseline for a production-like setup."
+    }
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Debezium Documentation :: Debezium Documentation",
+      "url": "https://debezium.io/documentation/reference/stable/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "What is it?"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Installing Debezium Kafka Connect Connectors :: Debezium Documentation",
+      "url": "https://debezium.io/documentation/reference/stable/install-kafka-connect.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Using a Debezium Connector / Configuring Debezium Topics"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Debezium connector for PostgreSQL :: Debezium Documentation",
+      "url": "https://debezium.io/documentation/reference/stable/connectors/postgresql.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "PostgreSQL 10+ logical decoding support (pgoutput) / Snapshots / Streaming changes / Triggering an incremental snapshot / Security"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Debezium connector for CockroachDB :: Debezium Documentation",
+      "url": "https://debezium.io/documentation/reference/stable/connectors/cockroachdb.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Architecture"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Debezium connector for MySQL :: Debezium Documentation",
+      "url": "https://debezium.io/documentation/reference/stable/connectors/mysql.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Schema history topic"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Outbox Event Router :: Debezium Documentation",
+      "url": "https://debezium.io/documentation/reference/stable/transformations/outbox-event-router.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Example outbox message / Basic outbox table / Basic configuration"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Debezium connector for JDBC :: Debezium Documentation",
+      "url": "https://debezium.io/documentation/reference/stable/connectors/jdbc.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Idempotent writes"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Debezium Connector for Oracle :: Debezium Documentation",
+      "url": "https://debezium.io/documentation/reference/stable/connectors/oracle.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Using a downstream mining database"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Content-based routing :: Debezium Documentation",
+      "url": "https://debezium.io/documentation/reference/stable/transformations/content-based-routing.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Set up"
+      }
+    }
+  ],
+  "verified": {
+    "checked": "2026-10-13",
+    "by": "gigai learning pipeline link check (karthik446/gigai-learning-center 4c0cb514)"
+  },
+  "provenance": {
+    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
+    "generated_on": "2026-10-13",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-13",
+      "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    }
+  ],
+  "kind": "tool"
+}

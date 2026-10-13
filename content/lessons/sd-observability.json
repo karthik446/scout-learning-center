@@ -1,0 +1,160 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "sd-observability",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Observability for designers",
+  "area": "infra",
+  "primary_key": "observability",
+  "secondary_keys": [
+    "logs-metrics-tracing",
+    "telemetry",
+    "monitoring"
+  ],
+  "keys": [
+    "observability",
+    "logs-metrics-tracing",
+    "telemetry",
+    "monitoring"
+  ],
+  "summary": "Observability is the ability to understand what a system is doing internally from the telemetry it emits, without shipping new code to ask a new question. A designer decides up front which signals each component emits, how request context travels across service boundaries, and how telemetry is collected and stored. Those choices determine whether an incident is diagnosed in minutes or in hours.",
+  "detail": [],
+  "in_practice": "A platform team publishes a small instrumentation library and a collector configuration, so every service gets request metrics, trace propagation and structured logs with trace ids by default. Services export OTLP to a node-local collector, which forwards to a gateway pool that samples traces and fans out to a metrics store, a trace store and a log store. Design reviews include a telemetry section: key metrics per component, label sets checked for cardinality, the SLO alerts, and the dashboards that exist before launch. After incidents the team asks which question could not be answered from telemetry and adds that signal.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "A metric is a numeric measurement aggregated over time, cheap to store and ideal for dashboards and alerts: request rate, error rate, latency distribution, queue depth. A log is a timestamped record of a discrete event, best for the detail of one occurrence. A trace records the path of one request through many services as a tree of spans, each with a start time, a duration and attributes. Metrics tell you that something is wrong, traces tell you where, and logs tell you why. OpenTelemetry treats these as separate signals that share a common resource description and a common context, plus baggage for passing key-value pairs along a request.",
+          "heading": "What each signal answers"
+        },
+        {
+          "body": "The signals are most useful when joined. Put the trace id and span id into every structured log line so a slow span leads straight to its logs. Use the same service name, version and environment attributes on all three signals so that a dashboard panel, a trace search and a log query can be filtered identically. Decide these naming conventions once, in a shared library or collector configuration, because fixing inconsistent attribute names across fifty services later is expensive.",
+          "heading": "Correlating signals"
+        }
+      ],
+      "id": "signals-traces-metrics-logs",
+      "title": "The signals: traces, metrics and logs"
+    },
+    {
+      "body": [
+        {
+          "body": "Prometheus offers counters (only go up, queried as a rate), gauges (go up and down, such as in-flight requests), and histograms (observations counted into buckets, from which quantiles are estimated on the server). For online serving systems, instrument request count, error count and latency per endpoint. For offline or batch systems, track items in, items out, time of last success and the age of the oldest unprocessed item. For queues and pools, track size, saturation and wait time. Measure latency with histograms rather than averages, since averages hide the tail that users actually feel.",
+          "heading": "Metric types and what to measure"
+        },
+        {
+          "body": "Every unique combination of label values is a separate time series that the server must hold in memory and on disk. A label for HTTP method or status code is safe; a label for user id, request id or raw URL path creates unbounded series and can take the monitoring system down. Keep label values to a small, bounded set, use route templates instead of raw paths, and send high-cardinality detail to traces or logs instead. Prometheus scrapes targets over HTTP on an interval, so each instance exposes its current values and the server computes rates and aggregations with PromQL.",
+          "heading": "Cardinality is the cost driver"
+        }
+      ],
+      "id": "metric-design-and-cardinality",
+      "title": "Designing metrics: types, labels and cardinality"
+    },
+    {
+      "body": [
+        {
+          "body": "A trace only works if every hop forwards the context. On an outgoing call the client injects the trace id, the parent span id and sampling flags into request headers, and the server extracts them and starts a child span. The same must happen through message queues, where context goes into message headers, and across thread pools and async tasks inside a process. One service that drops the headers splits a trace in two, so propagation is a platform requirement, usually met with auto-instrumentation libraries and a shared middleware.",
+          "heading": "Propagation across boundaries"
+        },
+        {
+          "body": "Recording every span at high request rates is too expensive, so systems sample. Head sampling decides at the start of the request, for example keep one percent, and is cheap but blind to the outcome. Tail sampling buffers the spans of a trace and decides after it completes, so all errors and slow requests can be kept while most fast successes are dropped. Tail sampling needs all spans of a trace to reach the same collector instance, which shapes the collection topology.",
+          "heading": "Sampling"
+        }
+      ],
+      "id": "trace-context-and-sampling",
+      "title": "Trace context propagation and sampling"
+    },
+    {
+      "body": [
+        {
+          "body": "The OpenTelemetry Collector is a vendor-neutral process that receives, processes and exports telemetry. Receivers accept data in formats such as OTLP or scrape Prometheus endpoints. Processors batch, filter, sample, redact sensitive attributes and add resource metadata. Exporters send the result to one or more backends. Putting a collector between applications and backends means services export one protocol and never need redeploying when the backend changes, and that retries, batching and credentials live in one place.",
+          "heading": "Receivers, processors, exporters"
+        },
+        {
+          "body": "Two patterns are common and often combined. An agent runs next to the workload, as a sidecar or one per node, receives telemetry over the local network and enriches it with host and orchestrator metadata. A gateway is a horizontally scaled pool of collectors per cluster or region that handles heavier work such as tail sampling and fan-out to several backends. Size the pipeline like any other data path: it needs memory limits, back-pressure handling and its own monitoring, or it will fail during the very incident it is meant to explain.",
+          "heading": "Deployment patterns"
+        }
+      ],
+      "id": "collector-pipeline",
+      "title": "The telemetry pipeline and the OpenTelemetry Collector"
+    },
+    {
+      "body": [
+        {
+          "body": "Page a human for user-visible symptoms: error ratio above the objective, latency above the objective, or work not completing. Cause-level signals such as CPU, disk or one replica restarting belong on dashboards and tickets unless they predict an imminent outage, such as a disk filling. For each component in the design, write down the handful of metrics that prove it is healthy, the alert that fires when it is not, and the first query an on-call engineer runs. If that list cannot be written, the component is not yet observable enough to ship.",
+          "heading": "Alert on symptoms, diagnose with causes"
+        }
+      ],
+      "id": "alerting-on-symptoms",
+      "title": "Alerting and dashboards that follow the design"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  A[Service A with SDK] -->|OTLP| AG[Node agent collector]\n  B[Service B with SDK] -->|OTLP| AG\n  AG --> GW[Gateway collector pool]\n  GW -->|metrics| M[Metrics store]\n  GW -->|sampled traces| T[Trace store]\n  GW -->|logs| L[Log store]\n  M --> D[Dashboards and alerts]\n  T --> D\n  L --> D"
+  },
+  "code": [
+    {
+      "code": "import time\nfrom prometheus_client import Counter, Histogram, start_http_server\n\nREQS = Counter(\"http_requests_total\", \"Requests\", [\"route\", \"code\"])\nLAT = Histogram(\"http_request_duration_seconds\", \"Latency\", [\"route\"])\n\ndef handle(route, work):\n    start = time.perf_counter()\n    code = \"200\"\n    try:\n        return work()\n    except Exception:\n        code = \"500\"\n        raise\n    finally:\n        REQS.labels(route, code).inc()\n        LAT.labels(route).observe(time.perf_counter() - start)\n\nstart_http_server(8000)  # exposes /metrics for scraping",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "OpenTelemetry",
+    "OpenTelemetry Collector",
+    "OTLP",
+    "Prometheus",
+    "PromQL",
+    "Alertmanager",
+    "Grafana",
+    "Jaeger",
+    "Grafana Tempo",
+    "Grafana Loki"
+  ],
+  "related": [
+    "sd-reliability-slos",
+    "sd-capacity",
+    "sd-rate-limiting-overload",
+    "sd-cost"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "OpenTelemetry signals",
+      "url": "https://opentelemetry.io/docs/concepts/signals/"
+    },
+    {
+      "kind": "doc",
+      "title": "OpenTelemetry observability primer",
+      "url": "https://opentelemetry.io/docs/concepts/observability-primer/"
+    },
+    {
+      "kind": "doc",
+      "title": "OpenTelemetry Collector",
+      "url": "https://opentelemetry.io/docs/collector/"
+    },
+    {
+      "kind": "doc",
+      "title": "Prometheus overview",
+      "url": "https://prometheus.io/docs/introduction/overview/"
+    },
+    {
+      "kind": "doc",
+      "title": "Prometheus instrumentation practices",
+      "url": "https://prometheus.io/docs/practices/instrumentation/"
+    }
+  ],
+  "practice": "practice/sd-observability",
+  "provenance": {
+    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
+    "generated_on": "2026-10-13",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-13",
+      "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    }
+  ]
+}

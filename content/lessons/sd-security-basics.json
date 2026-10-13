@@ -1,0 +1,136 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "sd-security-basics",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Security basics in designs",
+  "area": "software",
+  "primary_key": "threat-modeling",
+  "secondary_keys": [
+    "security",
+    "identity-and-access",
+    "security-governance"
+  ],
+  "keys": [
+    "threat-modeling",
+    "security",
+    "identity-and-access",
+    "security-governance"
+  ],
+  "summary": "Security in a design means identifying what an attacker could do at each trust boundary and placing controls there on purpose. The baseline covers who the caller is, what the caller may do, how data and secrets are protected, and how misuse is detected. Getting these into the first design is far cheaper than retrofitting them.",
+  "detail": [],
+  "in_practice": "Design documents carry a security section with the data flow diagram, trust boundaries and the top threats with their mitigations, reviewed by a security engineer for anything exposed or sensitive. Identity is centralised in one provider; services validate tokens through a shared middleware and check object-level permissions in the handler or a policy layer. Secrets come from a manager, TLS is terminated and re-established by the platform, and the pipeline runs dependency and image scans. Audit logs flow into the same observability stack with separate retention and access.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "Draw the data flow diagram: external actors, processes, data stores and the flows between them, then mark trust boundaries where data crosses between zones of different privilege, such as internet to edge, edge to service, service to database, and tenant to tenant. For each element crossing a boundary, walk through STRIDE: spoofing of identity, tampering with data, repudiation of actions, information disclosure, denial of service and elevation of privilege. Each category maps to a control family: authentication, integrity checks, audit logging, encryption and access control, rate limiting and quotas, and authorization.",
+          "heading": "Method"
+        },
+        {
+          "body": "The result is a ranked list of threats with a decision for each: mitigate, accept, transfer or remove the feature. Rank by likelihood and impact rather than trying to fix everything. Revisit the model when a new boundary appears, such as a new third-party integration or a new public endpoint. Catalogues such as the OWASP Top Ten are a useful checklist of the weaknesses most often found in real web applications, and attacker-behaviour frameworks help when planning detection.",
+          "heading": "Output"
+        }
+      ],
+      "id": "threat-modelling",
+      "title": "Threat modelling a design"
+    },
+    {
+      "body": [
+        {
+          "body": "Applications should not store passwords or build login flows themselves. They delegate to an identity provider using OpenID Connect, an identity layer on top of OAuth 2.0. In the authorization code flow the browser is redirected to the provider, the user authenticates there, and the application receives a short-lived code that it exchanges on a back channel for tokens. Public clients such as single-page and mobile apps add PKCE so an intercepted code is useless. The ID token says who the user is, the access token is presented to APIs, and the refresh token obtains new access tokens.",
+          "heading": "Delegating identity"
+        },
+        {
+          "body": "An API validates each access token: signature against the provider's published keys, issuer, audience, expiry and required scopes or roles. Keep access tokens short-lived, since a signed token cannot easily be revoked before it expires. Service-to-service calls use the client credentials grant or mutual TLS with workload identities instead of shared static keys. In Keycloak, a realm holds users, roles and clients; each application is registered as a client with its redirect URIs and allowed flows, and the server handles login, federation, multi-factor authentication and sessions.",
+          "heading": "Validating tokens and service identity"
+        }
+      ],
+      "id": "authentication-oidc",
+      "title": "Authentication with OpenID Connect"
+    },
+    {
+      "body": [
+        {
+          "body": "Broken access control sits at the top of the OWASP Top Ten: authenticated users reaching data or actions that are not theirs, often by changing an identifier in a request. Enforce authorization on the server for every request and check ownership of the specific object, not only the role. Deny by default. Role-based access control assigns permissions to roles, and attribute-based rules add conditions such as tenant, resource owner or environment. In multi-tenant systems, carry the tenant id from the verified token, never from a client-supplied field, and apply it in every query.",
+          "heading": "Enforcing access on every request"
+        },
+        {
+          "body": "Give each service its own identity with only the permissions it needs: a read-only database role for a read service, a narrow cloud role per workload, and network policy that allows only the declared call paths. Separate administrative paths from user paths and require stronger authentication for them. Small blast radius is the goal: when one component is compromised, the design should limit what the attacker can reach next.",
+          "heading": "Least privilege for machines"
+        }
+      ],
+      "id": "authorization-least-privilege",
+      "title": "Authorization and least privilege"
+    },
+    {
+      "body": [
+        {
+          "body": "Encrypt in transit with TLS on every hop, including internal ones, and encrypt at rest with keys held in a key management service so that key access is itself controlled and audited. Classify data and keep sensitive fields out of logs, traces and caches. Secrets such as database passwords and API keys belong in a secret manager, injected at runtime, rotated regularly and never committed to source control or baked into images. Prefer short-lived, automatically issued credentials over long-lived static ones.",
+          "heading": "Encryption and secrets"
+        },
+        {
+          "body": "Treat all input as untrusted: use parameterised queries to prevent injection, validate against a schema at the edge, and encode output. Many breaches come from misconfiguration and outdated components, so harden defaults, close unused ports, and scan dependencies and images in the build pipeline. Log security-relevant events such as logins, permission changes and access denials with enough context to investigate, send them to a store the application cannot alter, and alert on them. Rate limits and quotas at the edge address the denial of service category.",
+          "heading": "Inputs, configuration and detection"
+        }
+      ],
+      "id": "data-protection-and-secrets",
+      "title": "Protecting data, secrets and inputs"
+    }
+  ],
+  "diagram": {
+    "source": "sequenceDiagram\n  participant U as User browser\n  participant A as Application\n  participant I as Identity provider\n  participant S as API service\n  U->>A: Open protected page\n  A->>U: Redirect to login with code challenge\n  U->>I: Authenticate\n  I->>U: Redirect back with authorization code\n  U->>A: Deliver code\n  A->>I: Exchange code and verifier for tokens\n  I->>A: ID token, access token, refresh token\n  A->>S: Call API with access token\n  S->>S: Verify signature, issuer, audience, expiry, scope\n  S->>A: Response"
+  },
+  "code": [],
+  "technologies": [
+    "Keycloak",
+    "OpenID Connect",
+    "OAuth 2.0",
+    "JSON Web Tokens",
+    "TLS",
+    "HashiCorp Vault",
+    "AWS KMS",
+    "Open Policy Agent",
+    "OWASP Top Ten",
+    "STRIDE"
+  ],
+  "related": [
+    "sd-api-design",
+    "sd-networking",
+    "sd-rate-limiting-overload",
+    "sd-observability",
+    "sd-data-modelling"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Keycloak server administration guide",
+      "url": "https://www.keycloak.org/docs/latest/server_admin/index.html"
+    },
+    {
+      "kind": "doc",
+      "title": "Keycloak: securing applications with OpenID Connect",
+      "url": "https://www.keycloak.org/securing-apps/oidc-layers"
+    },
+    {
+      "kind": "doc",
+      "title": "OWASP Top Ten",
+      "url": "https://owasp.org/projects/top-ten"
+    }
+  ],
+  "practice": "practice/sd-security-basics",
+  "provenance": {
+    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
+    "generated_on": "2026-10-13",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-13",
+      "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    }
+  ]
+}

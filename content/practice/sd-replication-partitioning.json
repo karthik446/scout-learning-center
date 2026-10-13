@@ -1,0 +1,354 @@
+{
+  "schema_version": "learning-center-practice:1",
+  "id": "practice/sd-replication-partitioning",
+  "version": 1,
+  "lesson": "sd-replication-partitioning",
+  "tool": "PostgreSQL",
+  "tool_key": "postgres",
+  "why_this_tool": "PostgreSQL exposes every replication mode in this lesson as plain configuration you can run as several instances on one laptop, so you see each durability and sharding tradeoff directly instead of behind a managed layer.",
+  "alternatives": "Patroni automates PostgreSQL failover and leader election, PgBouncer pools and reroutes connections but replicates nothing, Citus adds distributed tables and shard rebalancing as a PostgreSQL extension, Vitess does the same for MySQL, Apache Cassandra is leaderless with tunable consistency and hash partitioning built in, CockroachDB shards by range and replicates by consensus automatically, and Amazon Aurora replicates at a shared storage layer as a paid cloud service.",
+  "setup": [
+    {
+      "do": "Install PostgreSQL 18 with your package installer, or pull the official container image, and start one instance that will act as the primary.",
+      "done_when": "You can connect with psql and a version query reports major version 18.",
+      "n": 1,
+      "source": {
+        "title": "PostgreSQL: Documentation: 18: Chapter 26. High Availability, Load Balancing, and Replication",
+        "url": "https://www.postgresql.org/docs/current/high-availability.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "PostgreSQL: Documentation: 18: Chapter 26. High Availability, Load Balancing, and Replication"
+        }
+      },
+      "why": "Every later step needs a running primary to replicate from. The chapter overview shows which replication features ship with the server, so you know nothing extra is needed."
+    },
+    {
+      "do": "Prepare two more empty instances on the same laptop, each with its own data directory and port, or as two more containers on one network.",
+      "done_when": "Three instances are listed as running, each reachable on its own port.",
+      "n": 2,
+      "source": {
+        "title": "PostgreSQL: Documentation: 18: 26.2. Log-Shipping Standby Servers",
+        "url": "https://www.postgresql.org/docs/current/warm-standby.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "PostgreSQL: Documentation: 18: 26.2. Log-Shipping Standby Servers"
+        }
+      },
+      "why": "Replication and sharding only make sense with more than one server. Separate ports or containers stand in for separate machines."
+    },
+    {
+      "do": "Set wal_level to logical on the primary, create a role with the replication attribute, allow it in the host based authentication file, and restart.",
+      "done_when": "A show command for wal_level returns logical and the new role can log in from the other instances.",
+      "n": 3,
+      "source": {
+        "title": "PostgreSQL: Documentation: 18: Chapter 29. Logical Replication",
+        "url": "https://www.postgresql.org/docs/current/logical-replication.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "PostgreSQL: Documentation: 18: Chapter 29. Logical Replication"
+        }
+      },
+      "why": "Logical replication needs extra detail in the write-ahead log, and both physical and logical replication connect through a replication role."
+    }
+  ],
+  "steps": [
+    {
+      "do": "Create an orders table with a primary key and a tenant id column on the primary, load a few thousand rows, and create a publication for that table.",
+      "done_when": "The publication tables catalog view lists the orders table under your publication.",
+      "n": 1,
+      "source": {
+        "title": "PostgreSQL: Documentation: 18: 29.1. Publication",
+        "url": "https://www.postgresql.org/docs/current/logical-replication-publication.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "PostgreSQL: Documentation: 18: 29.1. Publication"
+        }
+      },
+      "why": "A publication is the unit that decides which tables and which operations leave a node. It is the first object in the logical replication model."
+    },
+    {
+      "do": "Create the same table definition on the second instance and create a subscription that points at the publication on the primary.",
+      "done_when": "The row count on the second instance matches the primary, and a row inserted on the primary appears there within a second.",
+      "n": 2,
+      "source": {
+        "title": "PostgreSQL: Documentation: 18: 29.2. Subscription",
+        "url": "https://www.postgresql.org/docs/current/logical-replication-subscription.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "PostgreSQL: Documentation: 18: 29.2. Subscription"
+        }
+      },
+      "why": "A subscription is the receiving side: it creates a replication slot on the publisher, copies the existing rows, then applies changes. This completes a working logical replication pair."
+    },
+    {
+      "do": "Query the activity view on both nodes to find the walsender process and the apply worker, and query the replication slots view to see the slot the subscription created.",
+      "done_when": "You can name the walsender on the publisher, the apply worker on the subscriber, and the active logical slot that links them.",
+      "n": 3,
+      "source": {
+        "title": "PostgreSQL: Documentation: 18: 29.9. Architecture",
+        "url": "https://www.postgresql.org/docs/current/logical-replication-architecture.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "PostgreSQL: Documentation: 18: 29.9. Architecture"
+        }
+      },
+      "why": "Knowing which process decodes the log, which one applies it, and how the initial snapshot hands over to streaming is the model you debug with later."
+    },
+    {
+      "do": "Create two publications with row filters on the tenant id shard key, one per half of the key space, and subscribe the second and third instances to one each, first with a range split and then with a modulo split.",
+      "done_when": "Each shard instance holds only the rows for its key range, the two counts add up to the primary total, and you can compare how evenly each strategy split the data.",
+      "n": 4,
+      "source": {
+        "title": "PostgreSQL: Documentation: 18: 29.4. Row Filters",
+        "url": "https://www.postgresql.org/docs/current/logical-replication-row-filter.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "PostgreSQL: Documentation: 18: 29.4. Row Filters"
+        }
+      },
+      "why": "Row filters let you route rows by key to different nodes, which is a small hand-built version of sharding. Trying range and hash-style splits shows how the shard key choice decides data balance and which queries stay on one node."
+    },
+    {
+      "do": "Write a row directly on a shard instance with a primary key that the primary then inserts, and watch replication stop on the conflict, then resolve it.",
+      "done_when": "The subscriber log shows the conflict, and after you remove the offending row or skip the transaction new changes flow again.",
+      "n": 5,
+      "source": {
+        "title": "PostgreSQL: Documentation: 18: 29.7. Conflicts",
+        "url": "https://www.postgresql.org/docs/current/logical-replication-conflicts.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "PostgreSQL: Documentation: 18: 29.7. Conflicts"
+        }
+      },
+      "why": "Subscribers are writable, so stray writes on a shard break the apply worker. Recognising and clearing a conflict is a routine operating task on sharded data."
+    },
+    {
+      "do": "Run a migration rehearsal: add a column and a sequence-backed id on the primary, check what does and does not reach the shards, then write the cutover checklist that the restrictions demand.",
+      "done_when": "You have seen apply fail or lag after the schema change, fixed it by applying the change on the shard, and listed the manual steps for a real cutover.",
+      "n": 6,
+      "source": {
+        "title": "PostgreSQL: Documentation: 18: 29.8. Restrictions",
+        "url": "https://www.postgresql.org/docs/current/logical-replication-restrictions.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "PostgreSQL: Documentation: 18: 29.8. Restrictions"
+        }
+      },
+      "why": "Moving live data onto shards by logical replication only works if you handle what it does not carry, such as schema changes and sequence values. Finding these gaps in a rehearsal is cheaper than at cutover."
+    },
+    {
+      "do": "Query the subscription statistics view on each shard and the replication statistics view on the primary while a bulk load runs.",
+      "done_when": "You can state the current lag for each shard and see the error counters that rose during the earlier conflict.",
+      "n": 7,
+      "source": {
+        "title": "PostgreSQL: Documentation: 18: 29.10. Monitoring",
+        "url": "https://www.postgresql.org/docs/current/logical-replication-monitoring.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "PostgreSQL: Documentation: 18: 29.10. Monitoring"
+        }
+      },
+      "why": "Lag and apply errors are the signals that tell you whether a shard is safe to read from or cut over to."
+    },
+    {
+      "do": "Create a physical standby from a base backup of the primary and start it with streaming replication, and write the whole sequence as a script or a compose file pinned to one PostgreSQL version.",
+      "done_when": "Deleting the standby and rerunning the script brings back a standby that reports it is in recovery and shows as streaming in the replication view on the primary.",
+      "n": 8,
+      "source": {
+        "title": "PostgreSQL: Documentation: 18: 26.2. Log-Shipping Standby Servers",
+        "url": "https://www.postgresql.org/docs/current/warm-standby.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "PostgreSQL: Documentation: 18: 26.2. Log-Shipping Standby Servers"
+        }
+      },
+      "why": "Streaming replication ships the write-ahead log continuously to an identical copy, which is the base of availability and read scaling. Scripting it against a pinned version means you or a CI job can rebuild the same pair from nothing."
+    },
+    {
+      "do": "Configure synchronous_standby_names on the primary to name the standby, then compare commit behaviour with the standby running and stopped, and again with the setting cleared.",
+      "done_when": "A commit hangs while the synchronous standby is stopped and returns at once after you restart it or switch back to asynchronous.",
+      "n": 9,
+      "source": {
+        "title": "PostgreSQL: Documentation: 18: 26.2. Log-Shipping Standby Servers",
+        "url": "https://www.postgresql.org/docs/current/warm-standby.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "PostgreSQL: Documentation: 18: 26.2. Log-Shipping Standby Servers"
+        }
+      },
+      "why": "Synchronous commit waits for the standby and so loses no confirmed transaction, but a commit blocks when the standby is gone. Asynchronous commit stays fast and available but can lose the last moments of writes."
+    },
+    {
+      "do": "Run a failover drill: stop the primary, promote the standby, write to it, and decide how the old primary rejoins.",
+      "done_when": "The promoted server accepts writes and reports it is no longer in recovery, and the old primary stays down until rebuilt as a standby.",
+      "n": 10,
+      "source": {
+        "title": "PostgreSQL: Documentation: 18: 26.2. Log-Shipping Standby Servers",
+        "url": "https://www.postgresql.org/docs/current/warm-standby.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "PostgreSQL: Documentation: 18: 26.2. Log-Shipping Standby Servers"
+        }
+      },
+      "why": "Failover is the reason the standby exists, and PostgreSQL itself does not detect failure or fence the old primary. Doing it by hand shows what a tool like Patroni automates."
+    },
+    {
+      "do": "Enable failover on the shard subscriptions and slot synchronisation on the standby, rebuild the pair, repeat the failover drill, and repoint the subscriptions at the promoted server.",
+      "done_when": "After promotion the shards keep receiving new rows from the new primary with no resync and no missing changes.",
+      "n": 11,
+      "source": {
+        "title": "PostgreSQL: Documentation: 18: 29.3. Logical Replication Failover",
+        "url": "https://www.postgresql.org/docs/current/logical-replication-failover.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "PostgreSQL: Documentation: 18: 29.3. Logical Replication Failover"
+        }
+      },
+      "why": "In production the publisher itself must survive a node loss, so logical slots have to exist on the standby before it is promoted. This combines physical and logical replication into the topology a real sharded deployment runs."
+    }
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "PostgreSQL: Documentation: 18: Chapter 26. High Availability, Load Balancing, and Replication",
+      "url": "https://www.postgresql.org/docs/current/high-availability.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "PostgreSQL: Documentation: 18: Chapter 26. High Availability, Load Balancing, and Replication"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "PostgreSQL: Documentation: 18: 26.2. Log-Shipping Standby Servers",
+      "url": "https://www.postgresql.org/docs/current/warm-standby.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "PostgreSQL: Documentation: 18: 26.2. Log-Shipping Standby Servers"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "PostgreSQL: Documentation: 18: Chapter 29. Logical Replication",
+      "url": "https://www.postgresql.org/docs/current/logical-replication.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "PostgreSQL: Documentation: 18: Chapter 29. Logical Replication"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "PostgreSQL: Documentation: 18: 29.1. Publication",
+      "url": "https://www.postgresql.org/docs/current/logical-replication-publication.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "PostgreSQL: Documentation: 18: 29.1. Publication"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "PostgreSQL: Documentation: 18: 29.2. Subscription",
+      "url": "https://www.postgresql.org/docs/current/logical-replication-subscription.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "PostgreSQL: Documentation: 18: 29.2. Subscription"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "PostgreSQL: Documentation: 18: 29.9. Architecture",
+      "url": "https://www.postgresql.org/docs/current/logical-replication-architecture.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "PostgreSQL: Documentation: 18: 29.9. Architecture"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "PostgreSQL: Documentation: 18: 29.4. Row Filters",
+      "url": "https://www.postgresql.org/docs/current/logical-replication-row-filter.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "PostgreSQL: Documentation: 18: 29.4. Row Filters"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "PostgreSQL: Documentation: 18: 29.7. Conflicts",
+      "url": "https://www.postgresql.org/docs/current/logical-replication-conflicts.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "PostgreSQL: Documentation: 18: 29.7. Conflicts"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "PostgreSQL: Documentation: 18: 29.8. Restrictions",
+      "url": "https://www.postgresql.org/docs/current/logical-replication-restrictions.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "PostgreSQL: Documentation: 18: 29.8. Restrictions"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "PostgreSQL: Documentation: 18: 29.10. Monitoring",
+      "url": "https://www.postgresql.org/docs/current/logical-replication-monitoring.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "PostgreSQL: Documentation: 18: 29.10. Monitoring"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "PostgreSQL: Documentation: 18: 29.3. Logical Replication Failover",
+      "url": "https://www.postgresql.org/docs/current/logical-replication-failover.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "PostgreSQL: Documentation: 18: 29.3. Logical Replication Failover"
+      }
+    }
+  ],
+  "verified": {
+    "checked": "2026-10-13",
+    "by": "gigai learning pipeline link check (karthik446/gigai-learning-center 4c0cb514)"
+  },
+  "provenance": {
+    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
+    "generated_on": "2026-10-13",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-13",
+      "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    }
+  ],
+  "kind": "tool"
+}

@@ -1,0 +1,162 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "sd-idempotency-retries",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Timeouts, retries and idempotency",
+  "area": "software",
+  "primary_key": "timeouts-retries-idempotency",
+  "secondary_keys": [
+    "reliability",
+    "distributed-systems",
+    "apis"
+  ],
+  "keys": [
+    "timeouts-retries-idempotency",
+    "reliability",
+    "distributed-systems",
+    "apis"
+  ],
+  "summary": "Remote calls fail in ways local calls do not: they can be slow, lost, or completed without the caller learning the outcome. Timeouts bound how long a caller waits, retries hide transient failures, and idempotency makes those retries safe. Applied carelessly, the same tools amplify an outage, so each needs limits: backoff, jitter, retry budgets and circuit breakers.",
+  "detail": [],
+  "in_practice": "Teams put these policies in a shared client library or a service mesh sidecar rather than in each call site, so every outbound call gets a timeout, a bounded jittered retry and a breaker by default. Timeouts are derived from dashboards of dependency latency and revisited when the dependency changes. Mutating APIs accept an idempotency key, stored in the same database transaction as the business write, with a unique constraint doing the deduplication. Retry counts, breaker state and timeout rates are emitted as metrics, and game days or fault injection confirm that a slow dependency produces fast failures, not a retry storm.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "A call without a timeout ties up a thread, a connection and memory for as long as the remote side stays silent. Under a slow dependency those held resources pile up until the caller itself stops serving, which is how one slow service takes down its callers. Set both a connection timeout and a request timeout on every client. A common way to pick the request timeout is to start from the measured latency distribution of the dependency and choose a high percentile, such as p99.9, so that the rate of false timeouts is a known, accepted number rather than a guess.",
+          "heading": "Why every remote call needs a timeout"
+        },
+        {
+          "body": "In a chain of services, independent per-hop timeouts waste work: a downstream service keeps computing an answer the original caller has already abandoned. Deadline propagation fixes this. The edge sets an absolute deadline, each hop passes the remaining time along with the request, and each service checks it before starting expensive work and cancels when it expires. Timeouts should also shrink toward the leaves, so an inner call cannot outlive the outer one. Watch for two traps: timeouts set too low cause retry storms when latency rises slightly, and timeouts that exclude DNS or TLS handshake time are not real bounds.",
+          "heading": "Deadlines across a call chain"
+        }
+      ],
+      "id": "timeouts-and-deadlines",
+      "title": "Timeouts and deadline propagation"
+    },
+    {
+      "body": [
+        {
+          "body": "Retry only failures that are likely transient: connection resets, timeouts, throttling responses and server-side unavailable errors. Do not retry validation or authorization errors, since the result will not change. Immediate retries hit a struggling service at its worst moment, so wait between attempts and grow the wait exponentially, for example base times two to the power of the attempt, up to a cap. Always bound the number of attempts, and stop early when the overall deadline is too close to fit another try.",
+          "heading": "What to retry and how to space it"
+        },
+        {
+          "body": "Plain exponential backoff still synchronizes clients. If a thousand clients fail at the same instant, they all retry at one base interval, then two, then four, producing spikes of load separated by idle gaps. Jitter adds randomness to spread the retries out. With full jitter, the sleep is a uniform random value between zero and the capped exponential delay. Analysis of competing clients shows this cuts both the total number of calls and the time to complete the work compared with unjittered backoff. The same idea applies to any periodic work: timers, cache expiry and scheduled jobs should be jittered too.",
+          "heading": "Why jitter matters"
+        }
+      ],
+      "id": "backoff-and-jitter",
+      "title": "Retries with exponential backoff and jitter"
+    },
+    {
+      "body": [
+        {
+          "body": "Retries are selfish: each client spends more of the server's capacity to raise its own chance of success. When a failure is caused by overload, that makes it worse. The effect compounds across layers. If each of five layers in a call stack retries three times, a failure at the bottom can produce up to 243 times the normal load on the deepest service. The usual fix is to retry at a single layer of the stack, typically the one closest to the failing call or the one that owns the user-facing request, and let other layers pass failures through.",
+          "heading": "How retries multiply load"
+        },
+        {
+          "body": "A per-request attempt limit does not cap fleet-wide retry load. A retry budget does. One form is a local token bucket: each success adds a fraction of a token, each retry spends one, and when the bucket is empty retries stop. Another is a ratio: retries may be at most a set fraction of total requests. During a real outage the budget drains quickly and the client falls back to roughly normal load, while isolated transient failures still get retried. Servers can help by returning an explicit signal that distinguishes overload from other failures.",
+          "heading": "Budgets instead of fixed counts"
+        }
+      ],
+      "id": "retry-amplification",
+      "title": "Retry amplification and retry budgets"
+    },
+    {
+      "body": [
+        {
+          "body": "When a request times out, the caller cannot tell whether the server never saw it, failed partway, or finished and lost the response. Retrying a read is harmless, but retrying a create or a charge may apply it twice. An idempotent operation is one where repeating it has the same effect as doing it once. Some operations are naturally idempotent, such as setting a value or deleting by identifier. Others, such as appending, incrementing or charging, must be made idempotent by design.",
+          "heading": "The problem"
+        },
+        {
+          "body": "The client generates a unique key, usually a random UUID, and sends it with the mutating request, commonly in a header. The server records the key together with the outcome. If the same key arrives again, the server returns the stored result without redoing the work. Important details: the key lookup and the side effect must commit atomically, or a crash between them breaks the guarantee. A second request arriving while the first is in flight should be rejected or made to wait. The server should check that the parameters match the original request. Keys expire after a retention window, so clients must not retry beyond it.",
+          "heading": "How the key mechanism works"
+        }
+      ],
+      "id": "idempotency-keys",
+      "title": "Idempotency keys for safe retries"
+    },
+    {
+      "body": [
+        {
+          "body": "A circuit breaker wraps calls to a dependency and tracks failures. In the closed state calls pass through. When failures cross a threshold, the breaker opens and calls fail immediately without touching the dependency, which frees caller resources and gives the dependency room to recover. After a reset timeout the breaker goes half-open and lets a trial call through: success closes it, failure reopens it. Thresholds can be consecutive failures or an error ratio over a window. Decide what the caller does while the breaker is open: return a cached or default value, queue the work, or fail fast with a clear error. Breaker state changes should be logged and exposed as metrics.",
+          "heading": "States and transitions"
+        }
+      ],
+      "id": "circuit-breakers",
+      "title": "Circuit breakers"
+    }
+  ],
+  "diagram": {
+    "source": "sequenceDiagram\n    participant C as Client\n    participant S as API server\n    participant D as Database\n    C->>S: POST charge, key K1\n    S->>D: begin, insert key K1, apply charge, commit\n    D-->>S: committed\n    S--xC: response lost, client times out\n    Note over C: sleep random 0 to capped backoff\n    C->>S: POST charge, key K1 again\n    S->>D: look up key K1\n    D-->>S: stored result\n    S-->>C: same response, no second charge"
+  },
+  "code": [
+    {
+      "code": "import random, time\n\nRETRYABLE = (TimeoutError, ConnectionError)\n\ndef call_with_retry(fn, deadline_s=2.0, base=0.05, cap=1.0, attempts=4):\n    start = time.monotonic()\n    for attempt in range(attempts):\n        remaining = deadline_s - (time.monotonic() - start)\n        if remaining <= 0:\n            break\n        try:\n            return fn(timeout=remaining)\n        except RETRYABLE:\n            # full jitter: uniform between 0 and capped exponential delay\n            sleep = random.uniform(0, min(cap, base * 2 ** attempt))\n            time.sleep(min(sleep, max(0.0, remaining)))\n    raise TimeoutError(\"deadline exceeded or retries exhausted\")",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "gRPC deadlines",
+    "Envoy",
+    "Istio",
+    "Resilience4j",
+    "Polly",
+    "Tenacity",
+    "AWS SDK retry modes",
+    "Finagle",
+    "PostgreSQL unique constraints",
+    "Redis"
+  ],
+  "related": [
+    "sd-rate-limiting-overload",
+    "sd-reliability-slos",
+    "sd-api-design",
+    "sd-networking",
+    "sd-queues-streams",
+    "sd-outbox-cdc"
+  ],
+  "sources": [
+    {
+      "kind": "article",
+      "title": "Timeouts, retries and backoff with jitter (Amazon Builders' Library)",
+      "url": "https://builder.aws.com/content/3EumjoZascWd1oZiEgL8ORlv3qE/timeouts-retries-and-backoff-with-jitter"
+    },
+    {
+      "kind": "article",
+      "title": "Exponential backoff and jitter (AWS Architecture Blog)",
+      "url": "https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/"
+    },
+    {
+      "kind": "article",
+      "title": "Designing robust and predictable APIs with idempotency (Stripe)",
+      "url": "https://stripe.com/blog/idempotency"
+    },
+    {
+      "kind": "doc",
+      "title": "Retry pattern (Azure Architecture Center)",
+      "url": "https://learn.microsoft.com/en-us/azure/architecture/patterns/retry"
+    },
+    {
+      "kind": "article",
+      "title": "CircuitBreaker (Martin Fowler)",
+      "url": "https://martinfowler.com/bliki/CircuitBreaker.html"
+    }
+  ],
+  "practice": null,
+  "provenance": {
+    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
+    "generated_on": "2026-10-13",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-13",
+      "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    }
+  ]
+}

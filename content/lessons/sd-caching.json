@@ -1,0 +1,156 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "sd-caching",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Caching",
+  "area": "software",
+  "primary_key": "caching",
+  "secondary_keys": [
+    "low-latency",
+    "scaling"
+  ],
+  "keys": [
+    "caching",
+    "low-latency",
+    "scaling"
+  ],
+  "summary": "A cache trades freshness for speed and reduced load by keeping a copy of data closer to where it is read. The design work is not in adding the cache but in deciding how it is filled, how it goes stale, what gets evicted and what happens when it is empty or down. A cache that the system cannot survive without has become a hidden dependency.",
+  "detail": [],
+  "in_practice": "A team adds a cache only after measuring that a dependency is too slow or too expensive, and writes down the allowed staleness for each cached object. The usual first step is cache-aside against a managed Redis cluster with a time to live plus jitter and delete on write. They watch hit ratio, latency, memory use and evictions on dashboards, and alert on sudden drops in hit ratio. Before launch they run a load test with the cache flushed to confirm the backend survives a cold start, and they wrap cache calls in short timeouts so the service degrades to direct reads instead of failing.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "In cache-aside the application owns the logic: read the cache, and on a miss load from the source of truth, store the result with a time to live and return it. On a write, update the database and then delete the cached key, so the next read repopulates it. Deleting is safer than updating the cache in place, because two concurrent writers can otherwise leave the older value in the cache. Even so, a slow reader can write a stale value after an invalidation, which is why a time to live remains as a backstop.",
+          "heading": "Cache-aside"
+        },
+        {
+          "body": "Read-through moves the loading logic into the cache layer or a library, so callers only see a get. Write-through writes to the cache and the store together, keeping the cache warm at the cost of slower writes and caching data that may never be read. Write-behind acknowledges after writing the cache and flushes to the store asynchronously, which is fast but loses data if the cache node dies before the flush. Most services start with cache-aside because it fails safely: a cache outage degrades to slower reads.",
+          "heading": "Alternatives"
+        }
+      ],
+      "id": "cache-read-write-patterns",
+      "title": "Cache-aside and other read and write patterns"
+    },
+    {
+      "body": [
+        {
+          "body": "A time to live sets the maximum age of an entry and is the simplest staleness control. Pick it from the business tolerance for stale data, not from habit: seconds for prices or permissions, minutes or hours for profile data or rendered fragments. Add random jitter to the value so that entries created together do not all expire in the same instant. In Redis a key gets an expiry with EXPIRE or with SET and the EX option, and the remaining time can be read with TTL.",
+          "heading": "Bounding staleness"
+        },
+        {
+          "body": "When staleness must be shorter than any practical time to live, invalidate on change: delete the key when the source record is written, or publish change events that a consumer uses to evict keys. Versioned keys are another option: include a version or updated timestamp in the key so that new data lands under a new key and old entries simply age out. Invalidation is hard when one change affects many derived entries, such as lists and aggregates, so keep cached objects close to the shape of the source records where possible.",
+          "heading": "Explicit invalidation"
+        }
+      ],
+      "id": "expiry-invalidation",
+      "title": "Expiry, TTLs and invalidation"
+    },
+    {
+      "body": [
+        {
+          "body": "A cache has a memory limit, and the eviction policy decides which keys are removed when it is reached. Redis sets the limit with maxmemory and the behavior with maxmemory-policy. The noeviction policy rejects writes that need more memory. The allkeys policies consider every key, using approximated least recently used, least frequently used or random selection. The volatile policies consider only keys that have an expiry set, and volatile-ttl prefers keys closest to expiring. For a pure cache an allkeys policy is the usual choice.",
+          "heading": "What happens when memory is full"
+        },
+        {
+          "body": "Size the cache from the working set, not the whole data set: access is usually skewed, so a small fraction of keys serves most requests. Estimate entries times average value size plus per key overhead, then validate with the hit ratio and eviction rate in production. A rising eviction rate with a falling hit ratio means the cache is too small or keys are too large. Do not mix durable data and cache entries in one instance with an allkeys policy, because eviction will silently delete the durable keys.",
+          "heading": "Sizing"
+        }
+      ],
+      "id": "eviction-memory",
+      "title": "Eviction policies and memory sizing"
+    },
+    {
+      "body": [
+        {
+          "body": "A stampede happens when a hot key expires and many requests miss at once, all recomputing the same value and overloading the backend. A cold start is the same effect across all keys after a restart or flush. Negative lookups cause a third problem: requests for keys that do not exist always miss and always hit the database. The deeper risk is modal behavior: a system sized for a high hit ratio may not survive the load when the cache is empty, so a cache failure becomes a full outage.",
+          "heading": "Failure modes"
+        },
+        {
+          "body": "Coalesce requests so only one caller per key recomputes while others wait or get the old value. Refresh hot entries before they expire, or serve stale data while a background refresh runs. Cache negative results with a short time to live. Use jitter on expiry. Put timeouts and a circuit breaker on cache calls so a slow cache does not stall every request. Finally, load test with the cache empty and make sure rate limiting protects the backend in that state.",
+          "heading": "Mitigations"
+        }
+      ],
+      "id": "cache-failure-modes",
+      "title": "Stampedes, cold starts and cache as a dependency"
+    },
+    {
+      "body": [
+        {
+          "body": "An in-process cache is the fastest, with no network hop, but each instance has its own copy, so entries are inconsistent between instances, lost on every deploy and multiplied in memory by the instance count. A distributed cache such as Redis or Memcached is shared, survives application deploys and gives one place to invalidate, at the cost of a network round trip and a new service to operate. Edge caches and CDNs sit in front of the service and cache whole responses, controlled by HTTP cache headers. Many systems layer them: a small short lived local cache in front of a shared cache in front of the database.",
+          "heading": "Where the cache lives"
+        }
+      ],
+      "id": "cache-placement",
+      "title": "Local, distributed and edge caches"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart TD\n    A[Request] --> B{Key in cache?}\n    B -- hit --> C[Return cached value]\n    B -- miss --> D[Read from database]\n    D --> E[Set key with TTL plus jitter]\n    E --> C\n    W[Write request] --> X[Update database]\n    X --> Y[Delete cache key]"
+  },
+  "code": [
+    {
+      "code": "import json, random\n\ndef get_user(r, db, user_id):\n    key = f'user:{user_id}'\n    cached = r.get(key)\n    if cached is not None:\n        return json.loads(cached)\n    user = db.load_user(user_id)          # source of truth\n    ttl = 300 + random.randint(0, 60)     # jitter against mass expiry\n    r.set(key, json.dumps(user), ex=ttl)\n    return user\n\ndef update_user(r, db, user_id, fields):\n    db.save_user(user_id, fields)\n    r.delete(f'user:{user_id}')           # invalidate, do not overwrite",
+      "lang": "python"
+    },
+    {
+      "code": "# redis.conf for a pure cache\nmaxmemory 2gb\nmaxmemory-policy allkeys-lru",
+      "lang": "text"
+    }
+  ],
+  "technologies": [
+    "Redis",
+    "Memcached",
+    "Valkey",
+    "Caffeine",
+    "Amazon ElastiCache",
+    "Varnish",
+    "CDN"
+  ],
+  "related": [
+    "sd-consistency-consensus",
+    "sd-rate-limiting-overload",
+    "sd-capacity",
+    "sd-numbers",
+    "sd-observability",
+    "sd-cost"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Redis key eviction",
+      "url": "https://redis.io/docs/latest/develop/reference/eviction/"
+    },
+    {
+      "kind": "doc",
+      "title": "Redis keyspace: expiry and TTL",
+      "url": "https://redis.io/docs/latest/develop/using-commands/keyspace/"
+    },
+    {
+      "kind": "article",
+      "title": "Caching challenges and strategies (Amazon Builders' Library)",
+      "url": "https://builder.aws.com/content/3K9TeXp6strMiJ4vhakpRD7BQWO/caching-challenges-and-strategies"
+    },
+    {
+      "kind": "doc",
+      "title": "Cache-Aside pattern (Azure Architecture Center)",
+      "url": "https://learn.microsoft.com/en-us/azure/architecture/patterns/cache-aside"
+    }
+  ],
+  "practice": "practice/sd-caching",
+  "provenance": {
+    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
+    "generated_on": "2026-10-13",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-13",
+      "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    }
+  ]
+}

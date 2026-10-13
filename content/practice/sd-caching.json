@@ -1,0 +1,354 @@
+{
+  "schema_version": "learning-center-practice:1",
+  "id": "practice/sd-caching",
+  "version": 1,
+  "lesson": "sd-caching",
+  "tool": "Redis",
+  "tool_key": null,
+  "why_this_tool": "Redis exposes every caching decision in this lesson as something you can set and observe on a laptop: per-key TTLs, a memory limit, selectable eviction policies and hit and miss counters.",
+  "alternatives": "Memcached is a simpler multi-threaded key-value cache with no rich data types or persistence; Valkey is the open source fork that keeps the same commands and protocol; Caffeine is an in-process local cache for the JVM with no network hop; ElastiCache is a managed cloud service that runs Redis-compatible engines for you; Varnish caches whole HTTP responses in front of a service; a CDN caches responses at the edge, close to users.",
+  "setup": [
+    {
+      "do": "Install Docker and start a single Redis Open Source container on the default port.",
+      "done_when": "The container shows as running and the server answers PONG to a PING.",
+      "n": 1,
+      "source": {
+        "title": "Install Redis Open Source | Docs",
+        "url": "https://redis.io/docs/latest/operate/oss_and_stack/install/install-stack/#quick-start-with-docker",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Quick start with Docker"
+        }
+      },
+      "why": "A container gives you a disposable cache server that you can stop, wipe and restart, which the later cold start and outage steps rely on."
+    },
+    {
+      "do": "Install the redis-py client library into a fresh Python virtual environment.",
+      "done_when": "Importing the redis module in a Python session raises no error.",
+      "n": 2,
+      "source": {
+        "title": "redis-py guide (Python) | Docs",
+        "url": "https://redis.io/docs/latest/develop/clients/redis-py/#install",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Install"
+        }
+      },
+      "why": "The read and write patterns live in application code, so you need a client to write them rather than only typing commands by hand."
+    },
+    {
+      "do": "Install Redis Insight and connect it to the local server.",
+      "done_when": "Redis Insight lists your local database and shows an empty key list.",
+      "n": 3,
+      "source": {
+        "title": "Client tools | Docs",
+        "url": "https://redis.io/docs/latest/develop/tools/#redis-insight",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Redis Insight"
+        }
+      },
+      "why": "A visual key browser lets you watch keys appear, expire and get evicted while your scripts run."
+    },
+    {
+      "do": "Check the Redis Data Integration quickstart prerequisites against your laptop so the last step is ready to run.",
+      "done_when": "You have a written note of which prerequisites you already meet and which you must install before the last step.",
+      "n": 4,
+      "source": {
+        "title": "Quickstart | Docs",
+        "url": "https://redis.io/docs/latest/integrate/redis-data-integration/quick-start-guide/#prerequisites",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Prerequisites"
+        }
+      },
+      "why": "The final production-like step keeps a cache in sync with a source database and needs a local VM or local cluster plus PostgreSQL, which is worth confirming early."
+    }
+  ],
+  "steps": [
+    {
+      "do": "Run your first SET and GET against the local server with the Redis command line interface.",
+      "done_when": "A value you stored under a key comes back unchanged from a GET.",
+      "n": 1,
+      "source": {
+        "title": "Client tools | Docs",
+        "url": "https://redis.io/docs/latest/develop/tools/#redis-command-line-interface-cli",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Redis command line interface (CLI)"
+        }
+      },
+      "why": "A cache is first of all a fast key lookup, and typing the commands by hand shows the request and reply model before any library hides it."
+    },
+    {
+      "do": "Create a key naming scheme for cached objects, with an entity name, an identifier and a version segment, and store a few entries under it.",
+      "done_when": "Redis Insight shows your sample keys grouped under the prefixes you designed.",
+      "n": 2,
+      "source": {
+        "title": "Keys and values | Docs",
+        "url": "https://redis.io/docs/latest/develop/using-commands/keyspace/#content-of-keys",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Content of keys"
+        }
+      },
+      "why": "Key design decides what you can invalidate together and how you roll out a changed value format without reading stale shapes."
+    },
+    {
+      "do": "Read the LangCache architecture section to see a cache modelled as lookup, miss, fill and store; it is a hosted cloud service, so the local substitute is the exact-match string cache you build in the next step.",
+      "done_when": "You can sketch the hit path and the miss path from memory and name where the entry is written.",
+      "n": 3,
+      "source": {
+        "title": "Redis LangCache | Docs",
+        "url": "https://redis.io/docs/latest/develop/ai/context-engine/langcache/#langcache-architecture",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "LangCache architecture"
+        }
+      },
+      "why": "The same hit, miss and fill flow underlies every cache, and seeing it for semantic matching makes clear which parts are general and which are specific to one use."
+    },
+    {
+      "do": "Write a cache-aside read function with redis-py that checks Redis first, falls back to a slow stand-in data source on a miss and then stores the result.",
+      "done_when": "The first call for an identifier takes the slow path and the second call returns quickly from Redis.",
+      "n": 4,
+      "source": {
+        "title": "redis-py guide (Python) | Docs",
+        "url": "https://redis.io/docs/latest/develop/clients/redis-py/#connect-and-test",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Connect and test"
+        }
+      },
+      "why": "Cache-aside is the most common read pattern, and writing it yourself exposes the miss path that write-through and write-behind move elsewhere."
+    },
+    {
+      "do": "Configure a TTL on every entry your function writes, and delete the key whenever the stand-in source is updated.",
+      "done_when": "The remaining time to live on a key counts down, the key disappears at zero, and an update to the source removes it at once.",
+      "n": 5,
+      "source": {
+        "title": "Keys and values | Docs",
+        "url": "https://redis.io/docs/latest/develop/using-commands/keyspace/#key-expiration",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Key expiration"
+        }
+      },
+      "why": "Expiry bounds how stale a value can get without any coordination, while explicit deletion on write is the invalidation path for data that must be fresh sooner."
+    },
+    {
+      "do": "Write a short-lived lock key with an expiry so that only one caller rebuilds a missed entry, then run twenty concurrent readers against an expired hot key.",
+      "done_when": "Your stand-in source logs a single rebuild for the twenty concurrent readers instead of twenty.",
+      "n": 6,
+      "source": {
+        "title": "Keys and values | Docs",
+        "url": "https://redis.io/docs/latest/develop/using-commands/keyspace/#key-expiration",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Key expiration"
+        }
+      },
+      "why": "When a popular key expires, every reader misses at once and stampedes the source; a lock that expires on its own lets one caller refill without risking a stuck lock."
+    },
+    {
+      "do": "Configure a small maxmemory limit on the server and load more cached entries than fit.",
+      "done_when": "The reported memory use stays at or under the limit while you keep writing.",
+      "n": 7,
+      "source": {
+        "title": "Key eviction | Docs",
+        "url": "https://redis.io/docs/latest/develop/reference/eviction/#maxmem",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Using the maxmemory configuration directive"
+        }
+      },
+      "why": "Sizing a cache means deciding how much of the working set to hold, and a deliberately small limit lets you watch what happens at the boundary."
+    },
+    {
+      "do": "Compare the noeviction, allkeys-lru, allkeys-lfu and volatile-ttl policies by replaying the same skewed read and write workload under each.",
+      "done_when": "You have a small table of hit rate and write errors per policy for the same workload.",
+      "n": 8,
+      "source": {
+        "title": "Key eviction | Docs",
+        "url": "https://redis.io/docs/latest/develop/reference/eviction/#eviction-policies",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Eviction policies"
+        }
+      },
+      "why": "The policy decides which data survives memory pressure and whether writes fail instead, so the right choice depends on your access pattern and on whether every key has a TTL."
+    },
+    {
+      "do": "Run a cold start by emptying the cache and replaying the workload while reading the hit, miss and evicted key counters from INFO.",
+      "done_when": "You can plot the miss count rising steeply after the wipe and flattening as the cache warms.",
+      "n": 9,
+      "source": {
+        "title": "Key eviction | Docs",
+        "url": "https://redis.io/docs/latest/develop/reference/eviction/#using-the-info-command",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Using the INFO command"
+        }
+      },
+      "why": "An empty cache sends the full read load to the source, and the counters show how long the warm-up lasts and how much load the source must absorb during it."
+    },
+    {
+      "do": "Reproduce the whole experiment from a pinned Redis image tag, then stop the container mid-run and add a timeout and fallback so reads still succeed from the source.",
+      "done_when": "A fresh machine reproduces your numbers from the pinned image, and reads keep returning correct values while the container is stopped.",
+      "n": 10,
+      "source": {
+        "title": "Install Redis Open Source | Docs",
+        "url": "https://redis.io/docs/latest/operate/oss_and_stack/install/install-stack/#docker",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Docker"
+        }
+      },
+      "why": "A pinned image makes your results repeatable on any machine or in CI, and stopping the server proves whether the cache is an optimisation or a hidden dependency."
+    },
+    {
+      "do": "Compare an in-process dictionary cache placed in front of Redis with Redis-only reads, then read how eviction behaves across replicated databases to reason about distributed and edge copies.",
+      "done_when": "You have latency figures for both layouts and a one-paragraph note on which copy can be stale and for how long.",
+      "n": 11,
+      "source": {
+        "title": "Data eviction | Docs",
+        "url": "https://redis.io/docs/latest/operate/rc/databases/configuration/data-eviction-policies/#active-passive-replication-considerations",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Active-Passive replication considerations"
+        }
+      },
+      "why": "A local cache removes the network hop but each process holds its own possibly stale copy, while a shared or replicated cache trades latency for consistency across instances."
+    },
+    {
+      "do": "Deploy the Redis Data Integration quickstart pipeline on a local VM or local cluster so changes in PostgreSQL flow into Redis, then change a source row.",
+      "done_when": "A row you update in PostgreSQL shows its new value in the matching Redis key without your application writing it.",
+      "n": 12,
+      "source": {
+        "title": "Quickstart | Docs",
+        "url": "https://redis.io/docs/latest/integrate/redis-data-integration/quick-start-guide/#deploy-the-pipeline",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Deploy the pipeline"
+        }
+      },
+      "why": "Feeding the cache from the database change stream is a production-grade alternative to cache-aside: the cache is kept warm and current without application invalidation code."
+    }
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Install Redis Open Source | Docs",
+      "url": "https://redis.io/docs/latest/operate/oss_and_stack/install/install-stack/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Quick start with Docker / Docker"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "redis-py guide (Python) | Docs",
+      "url": "https://redis.io/docs/latest/develop/clients/redis-py/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Install / Connect and test"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Client tools | Docs",
+      "url": "https://redis.io/docs/latest/develop/tools/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Redis Insight / Redis command line interface (CLI)"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Quickstart | Docs",
+      "url": "https://redis.io/docs/latest/integrate/redis-data-integration/quick-start-guide/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Prerequisites / Deploy the pipeline"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Keys and values | Docs",
+      "url": "https://redis.io/docs/latest/develop/using-commands/keyspace/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Content of keys / Key expiration"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Redis LangCache | Docs",
+      "url": "https://redis.io/docs/latest/develop/ai/context-engine/langcache/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "LangCache architecture"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Key eviction | Docs",
+      "url": "https://redis.io/docs/latest/develop/reference/eviction/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Using the maxmemory configuration directive / Eviction policies / Using the INFO command"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Data eviction | Docs",
+      "url": "https://redis.io/docs/latest/operate/rc/databases/configuration/data-eviction-policies/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Active-Passive replication considerations"
+      }
+    }
+  ],
+  "verified": {
+    "checked": "2026-10-13",
+    "by": "gigai learning pipeline link check (karthik446/gigai-learning-center 4c0cb514)"
+  },
+  "provenance": {
+    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
+    "generated_on": "2026-10-13",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-13",
+      "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    }
+  ],
+  "kind": "tool"
+}

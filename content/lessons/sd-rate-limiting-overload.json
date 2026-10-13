@@ -1,0 +1,162 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "sd-rate-limiting-overload",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Rate limiting, overload and resilience patterns",
+  "area": "software",
+  "primary_key": "rate-limiting",
+  "secondary_keys": [
+    "reliability",
+    "scaling",
+    "production-systems"
+  ],
+  "keys": [
+    "rate-limiting",
+    "reliability",
+    "scaling",
+    "production-systems"
+  ],
+  "summary": "Every service has a finite capacity, and demand will sometimes exceed it through traffic spikes, misbehaving clients or lost capacity. Rate limiting controls how much any one caller may send, while load shedding and circuit breaking protect the service as a whole when total demand is too high. The goal is graceful degradation: keep serving the most important requests at full quality and reject the rest cheaply and early.",
+  "detail": [],
+  "in_practice": "A typical setup layers the defenses. The edge gateway applies per-tenant rate and concurrency limits backed by a shared counter store. Sidecar proxies apply local token buckets and per-upstream circuit breaking limits. Services themselves shed load by criticality when utilization passes a threshold. Limits are rolled out in a shadow mode first, logging what would have been rejected, then enforced once the false positive rate is acceptable. Teams load test past saturation to confirm that goodput stays flat under overload, alert on rejection and overflow counters, and document for API consumers what a throttling response means and how to back off.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "The token bucket is the most common algorithm. Each caller has a bucket that refills at a steady rate up to a maximum size. A request takes a token, and if none are left it is rejected. The refill rate sets the sustained limit and the bucket size sets the allowed burst. Fixed window counters are simpler but allow double the limit across a window boundary. Sliding window logs or counters smooth that out at more memory or compute cost. Leaky bucket queues requests and drains them at a constant rate, which shapes traffic instead of rejecting it.",
+          "heading": "Token bucket and its relatives"
+        },
+        {
+          "body": "A rate limit counts requests per unit of time, but requests differ widely in cost. A concurrent request limiter caps how many requests a caller may have in flight at once. It handles expensive, slow endpoints well: a client that sends few but heavy requests is contained, and clients that retry on timeout cannot stack up work. Rejections should carry a clear status such as HTTP 429, with enough information for a well-behaved client to back off.",
+          "heading": "Limiting concurrency, not just rate"
+        }
+      ],
+      "id": "rate-limit-algorithms",
+      "title": "Rate limiting algorithms"
+    },
+    {
+      "body": [
+        {
+          "body": "Local rate limiting is enforced inside each proxy or service instance using an in-memory token bucket. It is fast, has no external dependency and keeps working during partitions, but the limit applies per instance, so the effective fleet-wide limit scales with instance count. Global rate limiting enforces one shared limit across the fleet: each proxy calls a central rate limit service, which keeps counters in a shared store and answers allow or deny for a set of descriptors such as caller identity, route or header values.",
+          "heading": "Two enforcement points"
+        },
+        {
+          "body": "The global service is on the request path, so it adds latency and becomes a dependency that needs its own failure policy: fail open and risk overload, or fail closed and reject traffic. A common design uses both layers. A coarse local limit absorbs large bursts and cuts load on the global service, and the global limit then applies precise per-tenant quotas. Quota-based variants cut round trips further by having the central service hand each proxy an allocation for a period of time instead of a decision per request.",
+          "heading": "Combining them"
+        }
+      ],
+      "id": "local-vs-global-limits",
+      "title": "Local and global rate limiting"
+    },
+    {
+      "body": [
+        {
+          "body": "Rate limits protect against individual callers. Load shedding protects against total demand exceeding capacity, even when every caller is within its limit. The server watches a utilization signal and, past a threshold, rejects requests before doing expensive work. Shedding should be ordered by importance. Requests are tagged with a criticality level, for example critical, sheddable and best-effort tiers, and the lowest tier is dropped first. One approach reserves a share of fleet capacity for critical traffic. Another sheds progressively as worker utilization rises: test traffic first, then non-critical methods, and critical ones last.",
+          "heading": "Shedding by priority"
+        },
+        {
+          "body": "Requests per second is a poor capacity measure because request cost varies. Measuring capacity in resource terms, such as CPU consumed or in-flight requests, tracks real load better. Rejection must be much cheaper than serving. Otherwise a server that spends most of its time saying no still collapses. That means shedding as early as possible, before parsing large payloads or taking locks. Criticality should propagate through the call chain so backends make consistent decisions about the same user request. Bounded queues with short timeouts stop a server from spending effort on requests whose callers have already given up.",
+          "heading": "Choosing the signal and cost of rejection"
+        }
+      ],
+      "id": "load-shedding-criticality",
+      "title": "Load shedding and request criticality"
+    },
+    {
+      "body": [
+        {
+          "body": "When a backend is heavily overloaded, even cheap rejections consume capacity. Client-side throttling lets clients drop requests locally before they reach the network. In adaptive throttling, each client tracks, over a recent window, how many requests it attempted and how many the backend accepted. When attempts grow beyond a multiple K of accepts, the client starts rejecting new requests locally, with probability rising in proportion to the gap. A K of 2 means the client lets through about twice what the backend accepts, which wastes some backend effort but tracks recovery quickly. This pairs with retry budgets so that an overloaded backend sees shrinking demand, not growing demand.",
+          "heading": "Stopping load at the source"
+        }
+      ],
+      "id": "client-side-throttling",
+      "title": "Client-side adaptive throttling"
+    },
+    {
+      "body": [
+        {
+          "body": "In a mesh proxy, circuit breaking is a set of hard limits per upstream cluster. They cover maximum connections, maximum pending requests waiting for a connection, maximum in-flight requests and maximum concurrent retries. When a limit is hit, the proxy fails the request immediately instead of queueing it, and increments an overflow counter. This is a bulkhead: one slow upstream can consume only its own allotment of connections and queue slots, so it cannot starve calls to healthy upstreams. Limits can be set separately per routing priority, so high-priority traffic has its own pool.",
+          "heading": "Resource limits per upstream"
+        },
+        {
+          "body": "Limits set too high never trip and offer no protection. Limits set too low reject healthy traffic at peak. Start from observed peak concurrency per upstream plus headroom, then watch overflow counters and adjust. The concurrent retry limit, or a retry budget expressed as a fraction of active requests, is the guard against retry storms at the mesh layer. Outlier detection complements these limits by ejecting individual unhealthy hosts from the load balancing pool, while circuit breaking bounds the load on the cluster as a whole.",
+          "heading": "Tuning"
+        }
+      ],
+      "id": "circuit-breaking-bulkheads",
+      "title": "Circuit breaking and bulkheads at the proxy"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n    C[Clients] --> G[Edge gateway]\n    G -->|descriptors| R[Global rate limit service]\n    R --> K[(Shared counter store)]\n    G --> P[Sidecar proxy: local token bucket]\n    P --> B{Circuit breaker limits ok?}\n    B -->|no| F[Fail fast with overflow]\n    B -->|yes| S[Service]\n    S --> L{Utilization high?}\n    L -->|yes, low criticality| X[Shed request]\n    L -->|no or critical| W[Do the work]"
+  },
+  "code": [
+    {
+      "code": "import time\n\nclass TokenBucket:\n    def __init__(self, rate_per_s, burst):\n        self.rate, self.burst = rate_per_s, burst\n        self.tokens, self.last = burst, time.monotonic()\n\n    def allow(self, cost=1):\n        now = time.monotonic()\n        self.tokens = min(self.burst, self.tokens + (now - self.last) * self.rate)\n        self.last = now\n        if self.tokens >= cost:\n            self.tokens -= cost\n            return True\n        return False  # caller responds 429\n\nbucket = TokenBucket(rate_per_s=100, burst=200)\nprint(bucket.allow())",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "Envoy",
+    "Envoy ratelimit service",
+    "Istio",
+    "NGINX",
+    "Redis",
+    "Kong",
+    "AWS API Gateway",
+    "Resilience4j",
+    "Sentinel",
+    "gRPC"
+  ],
+  "related": [
+    "sd-idempotency-retries",
+    "sd-reliability-slos",
+    "sd-load-balancing",
+    "sd-capacity",
+    "sd-api-design",
+    "sd-queues-streams"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Envoy global rate limiting",
+      "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/other_features/global_rate_limiting"
+    },
+    {
+      "kind": "doc",
+      "title": "Envoy local rate limiting",
+      "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/other_features/local_rate_limiting"
+    },
+    {
+      "kind": "doc",
+      "title": "Envoy circuit breaking",
+      "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/circuit_breaking"
+    },
+    {
+      "kind": "article",
+      "title": "Scaling your API with rate limiters (Stripe)",
+      "url": "https://stripe.com/blog/rate-limiters"
+    },
+    {
+      "kind": "book",
+      "title": "Handling overload (SRE book)",
+      "url": "https://sre.google/sre-book/handling-overload/"
+    }
+  ],
+  "practice": "practice/sd-rate-limiting-overload",
+  "provenance": {
+    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
+    "generated_on": "2026-10-13",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-13",
+      "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    }
+  ]
+}

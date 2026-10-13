@@ -1,0 +1,294 @@
+{
+  "schema_version": "learning-center-practice:1",
+  "id": "practice/sd-storage-engines",
+  "version": 1,
+  "lesson": "sd-storage-engines",
+  "tool": "PostgreSQL",
+  "tool_key": "postgres",
+  "why_this_tool": "PostgreSQL runs free on a laptop, offers several index types on one heap-based B-tree engine, and exposes both its multiversion behaviour and its real query plans through EXPLAIN, so every claim in the lesson can be checked by hand.",
+  "alternatives": "MySQL InnoDB is also a B-tree engine but clusters rows by primary key; RocksDB and Apache Cassandra use LSM-trees that favour write throughput and pay with compaction and slower reads; SQLite is an embedded single-file B-tree engine with no server process; Amazon S3 is object storage with no secondary indexes or query planner.",
+  "setup": [
+    {
+      "do": "Install PostgreSQL 18 on your laptop with your package manager or as a local container; no cloud account or GPU is needed.",
+      "done_when": "Asking the server for its version returns a PostgreSQL 18 version string.",
+      "n": 1,
+      "source": {
+        "title": "PostgreSQL: Documentation: 18: PostgreSQL 18.6 Documentation",
+        "url": "https://www.postgresql.org/docs/18/index.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "PostgreSQL: Documentation: 18: PostgreSQL 18.6 Documentation"
+        }
+      },
+      "why": "Every later step runs against a local server whose version matches the documentation you will cite."
+    },
+    {
+      "do": "Start the server, connect with the psql client, and create an empty practice database for this lesson.",
+      "done_when": "The psql prompt shows the practice database name and listing its tables returns none.",
+      "n": 2,
+      "source": {
+        "title": "PostgreSQL: Documentation: 18: PostgreSQL 18.6 Documentation",
+        "url": "https://www.postgresql.org/docs/18/index.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "PostgreSQL: Documentation: 18: PostgreSQL 18.6 Documentation"
+        }
+      },
+      "why": "A dedicated database lets you drop and rebuild tables and indexes freely without touching anything else."
+    },
+    {
+      "do": "Create an orders table with an id, a customer id, a status, a timestamp and a text column, load a few million generated rows, then run ANALYZE on it.",
+      "done_when": "A row count on the table returns the number of rows you generated and the load took long enough to notice.",
+      "n": 3,
+      "source": {
+        "title": "PostgreSQL: Documentation: 18: 14.1. Using EXPLAIN",
+        "url": "https://www.postgresql.org/docs/current/using-explain.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "PostgreSQL: Documentation: 18: 14.1. Using EXPLAIN"
+        }
+      },
+      "why": "Plans only become interesting when the table is too big to scan cheaply, and the planner needs fresh statistics to estimate row counts."
+    }
+  ],
+  "steps": [
+    {
+      "do": "Run EXPLAIN on a query that selects one customer's orders from the table while it has no index.",
+      "done_when": "The output shows a Seq Scan node with a startup cost, a total cost and an estimated row count that you can each explain.",
+      "n": 1,
+      "source": {
+        "title": "PostgreSQL: Documentation: 18: 14.1. Using EXPLAIN",
+        "url": "https://www.postgresql.org/docs/current/using-explain.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "PostgreSQL: Documentation: 18: 14.1. Using EXPLAIN"
+        }
+      },
+      "why": "This is the first run: you see the plan tree, the sequential scan node and the cost and row estimates before any tuning."
+    },
+    {
+      "do": "Create a default B-tree index on the customer id column and run the same EXPLAIN again.",
+      "done_when": "The plan switches from a Seq Scan to an Index Scan or Bitmap Heap Scan and the total cost estimate drops.",
+      "n": 2,
+      "source": {
+        "title": "PostgreSQL: Documentation: 18: 11.2. Index Types",
+        "url": "https://www.postgresql.org/docs/current/indexes-types.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "PostgreSQL: Documentation: 18: 11.2. Index Types"
+        }
+      },
+      "why": "The B-tree is the default index structure and the core of this engine family, so you should watch it change the access path."
+    },
+    {
+      "do": "Run a timed bulk insert into the table with no secondary indexes, then repeat it with four B-tree indexes in place, and compare the timings.",
+      "done_when": "You have two recorded timings and can state in one sentence why an LSM-tree engine would absorb the same writes differently and what it pays on reads.",
+      "n": 3,
+      "source": {
+        "title": "PostgreSQL: Documentation: 18: Chapter 11. Indexes",
+        "url": "https://www.postgresql.org/docs/current/indexes.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "PostgreSQL: Documentation: 18: Chapter 11. Indexes"
+        }
+      },
+      "why": "Every B-tree index is updated in place on each write, which is the cost that LSM-tree engines such as RocksDB and Cassandra avoid by appending and compacting later."
+    },
+    {
+      "do": "Create a hash index, a GIN index on a text search or array column, and a BRIN index on the timestamp column, then compare their sizes with the B-tree.",
+      "done_when": "You have a small table of index type, size on disk and which query operators it can serve, filled in from your own database.",
+      "n": 4,
+      "source": {
+        "title": "PostgreSQL: Documentation: 18: 11.2. Index Types",
+        "url": "https://www.postgresql.org/docs/current/indexes-types.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "PostgreSQL: Documentation: 18: 11.2. Index Types"
+        }
+      },
+      "why": "Each index type supports different operators and has a very different size and maintenance cost, so the choice is part of design."
+    },
+    {
+      "do": "Create a multicolumn index, a partial index on one status value, an expression index on lowercased text, and a covering index with an included column.",
+      "done_when": "For each of the four indexes you have one query whose plan uses it and one similar query whose plan does not, and you can say why.",
+      "n": 5,
+      "source": {
+        "title": "PostgreSQL: Documentation: 18: Chapter 11. Indexes",
+        "url": "https://www.postgresql.org/docs/current/indexes.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "PostgreSQL: Documentation: 18: Chapter 11. Indexes"
+        }
+      },
+      "why": "Index design is about matching the shape of real queries: column order, predicates and included columns decide whether an index is usable at all."
+    },
+    {
+      "do": "Run EXPLAIN with the ANALYZE and BUFFERS options on your queries and compare estimated rows with actual rows at every node.",
+      "done_when": "You can point to one node where the estimate and the actual row count differ and one where buffer counts show the work done.",
+      "n": 6,
+      "source": {
+        "title": "PostgreSQL: Documentation: 18: 14.1. Using EXPLAIN",
+        "url": "https://www.postgresql.org/docs/current/using-explain.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "PostgreSQL: Documentation: 18: 14.1. Using EXPLAIN"
+        }
+      },
+      "why": "Estimates are guesses; only the executed plan shows real timings, loop counts and how many pages were read from cache or disk."
+    },
+    {
+      "do": "Query the table with a very selective filter, a moderately selective filter and a filter matching most rows, and compare the three plans.",
+      "done_when": "You have seen all three scan types on the same column and can say roughly at what selectivity the planner switched.",
+      "n": 7,
+      "source": {
+        "title": "PostgreSQL: Documentation: 18: 14.1. Using EXPLAIN",
+        "url": "https://www.postgresql.org/docs/current/using-explain.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "PostgreSQL: Documentation: 18: 14.1. Using EXPLAIN"
+        }
+      },
+      "why": "The planner picks an index scan, a bitmap scan or a sequential scan depending on selectivity, and reading that choice is the heart of plan reading."
+    },
+    {
+      "do": "Start two psql sessions, open a repeatable read transaction in one, update and commit rows in the other, and query from both.",
+      "done_when": "The first session still returns the old values until its transaction ends, and neither session waited on the other.",
+      "n": 8,
+      "source": {
+        "title": "PostgreSQL: Documentation: 18: Chapter 13. Concurrency Control",
+        "url": "https://www.postgresql.org/docs/current/mvcc.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "PostgreSQL: Documentation: 18: Chapter 13. Concurrency Control"
+        }
+      },
+      "why": "Multiversion concurrency means readers see a snapshot and do not block writers, and watching two sessions disagree makes that concrete."
+    },
+    {
+      "do": "Run a large update across the table while an old transaction stays open, then measure the table and index sizes and check the dead tuple count before and after a VACUUM.",
+      "done_when": "You see the table grow, dead tuples that VACUUM cannot remove while the old transaction is open, and their removal once it is closed.",
+      "n": 9,
+      "source": {
+        "title": "PostgreSQL: Documentation: 18: Chapter 13. Concurrency Control",
+        "url": "https://www.postgresql.org/docs/current/mvcc.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "PostgreSQL: Documentation: 18: Chapter 13. Concurrency Control"
+        }
+      },
+      "why": "The cost of multiversion storage is that old row versions stay on disk until no snapshot needs them, which bloats tables and indexes."
+    },
+    {
+      "do": "Run a query that should be an index-only scan right after heavy updates and again after VACUUM, comparing the Heap Fetches figure in each plan.",
+      "done_when": "The Heap Fetches number is high after the updates and near zero after VACUUM for the same query.",
+      "n": 10,
+      "source": {
+        "title": "PostgreSQL: Documentation: 18: 14.1. Using EXPLAIN",
+        "url": "https://www.postgresql.org/docs/current/using-explain.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "PostgreSQL: Documentation: 18: 14.1. Using EXPLAIN"
+        }
+      },
+      "why": "This ties the subtopics together: row versions force the engine back to the heap for visibility checks, and the plan output proves it."
+    },
+    {
+      "do": "Configure a production-like run: start a sustained concurrent read and write load with pgbench, build a new index concurrently while it runs, then query the index usage statistics and drop any index that was never scanned.",
+      "done_when": "The load kept committing transactions during the index build, and you have a list of indexes with their scan counts and at least one keep or drop decision justified by it.",
+      "n": 11,
+      "source": {
+        "title": "PostgreSQL: Documentation: 18: Chapter 11. Indexes",
+        "url": "https://www.postgresql.org/docs/current/indexes.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "PostgreSQL: Documentation: 18: Chapter 11. Indexes"
+        }
+      },
+      "why": "In production you add indexes without blocking writers and you prune the ones that cost writes without serving reads."
+    }
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "PostgreSQL: Documentation: 18: PostgreSQL 18.6 Documentation",
+      "url": "https://www.postgresql.org/docs/18/index.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "PostgreSQL: Documentation: 18: PostgreSQL 18.6 Documentation"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "PostgreSQL: Documentation: 18: 14.1. Using EXPLAIN",
+      "url": "https://www.postgresql.org/docs/current/using-explain.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "PostgreSQL: Documentation: 18: 14.1. Using EXPLAIN"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "PostgreSQL: Documentation: 18: 11.2. Index Types",
+      "url": "https://www.postgresql.org/docs/current/indexes-types.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "PostgreSQL: Documentation: 18: 11.2. Index Types"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "PostgreSQL: Documentation: 18: Chapter 11. Indexes",
+      "url": "https://www.postgresql.org/docs/current/indexes.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "PostgreSQL: Documentation: 18: Chapter 11. Indexes"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "PostgreSQL: Documentation: 18: Chapter 13. Concurrency Control",
+      "url": "https://www.postgresql.org/docs/current/mvcc.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "PostgreSQL: Documentation: 18: Chapter 13. Concurrency Control"
+      }
+    }
+  ],
+  "verified": {
+    "checked": "2026-10-13",
+    "by": "gigai learning pipeline link check (karthik446/gigai-learning-center 4c0cb514)"
+  },
+  "provenance": {
+    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
+    "generated_on": "2026-10-13",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-13",
+      "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    }
+  ],
+  "kind": "tool"
+}

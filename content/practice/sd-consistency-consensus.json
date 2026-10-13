@@ -1,0 +1,369 @@
+{
+  "schema_version": "learning-center-practice:1",
+  "id": "practice/sd-consistency-consensus",
+  "version": 1,
+  "lesson": "sd-consistency-consensus",
+  "tool": "etcd",
+  "tool_key": null,
+  "why_this_tool": "etcd is a small single-binary Raft store that runs as a three-member cluster on a laptop, so linearizable reads, revisions, quorum loss, leases and locks can all be observed directly instead of only read about.",
+  "alternatives": "ZooKeeper offers the same coordination primitives through ephemeral znodes and its own Zab protocol, with a heavier JVM footprint; Consul bundles a Raft key-value store with service discovery and health checks; CockroachDB and Spanner put consensus under full SQL transactions with serializable isolation; PostgreSQL gives rich isolation levels on a single primary without built-in consensus.",
+  "setup": [
+    {
+      "do": "Install the etcd server and the etcdctl client from a release archive and confirm both report the same version.",
+      "done_when": "Asking etcd and etcdctl for their version prints matching v3 version numbers.",
+      "n": 1,
+      "source": {
+        "title": "Reading from etcd | etcd",
+        "url": "https://etcd.io/docs/v3.8/tasks/developer/reading-from-etcd/#prerequisites",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Prerequisites"
+        }
+      },
+      "why": "Every later item is driven through etcdctl against a local server, and the reading guide lists exactly what must be in place first."
+    },
+    {
+      "do": "Start the three-member demo etcd cluster on your laptop, each member with its own name, data directory and ports.",
+      "done_when": "The member list shows three started members and endpoint status shows exactly one leader.",
+      "n": 2,
+      "source": {
+        "title": "How to Set Up a Demo etcd Cluster | etcd",
+        "url": "https://etcd.io/docs/v3.5/tutorials/how-to-setup-cluster/",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "How to Set Up a Demo etcd Cluster | etcd"
+        }
+      },
+      "why": "Consensus and quorum only become visible with several members; a single node hides every interesting failure."
+    },
+    {
+      "do": "Open the latest documentation landing page and confirm it matches the version you installed.",
+      "done_when": "The version shown in the docs matches the version printed by your etcd binary.",
+      "n": 3,
+      "source": {
+        "title": "latest | etcd",
+        "url": "https://etcd.io/docs/v3.8/metrics/etcd-metrics-latest/",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "latest | etcd"
+        }
+      },
+      "why": "Flags and behaviour differ between minor versions, so following the wrong version of the docs wastes time."
+    }
+  ],
+  "steps": [
+    {
+      "do": "Write your first key and value to the cluster with etcdctl put.",
+      "done_when": "The client prints OK and the same key can be written again with a new value.",
+      "n": 1,
+      "source": {
+        "title": "Writing to etcd | etcd",
+        "url": "https://etcd.io/docs/v3.8/tasks/developer/writing-to-etcd/#procedure",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Procedure"
+        }
+      },
+      "why": "A write is the smallest operation that must go through the Raft leader and be accepted by a majority before it is acknowledged."
+    },
+    {
+      "do": "Read the key back, then read a whole key prefix, and print one result in JSON output so the header and key metadata are visible.",
+      "done_when": "You can point at the cluster revision, the create revision, the mod revision and the version of your key in the output.",
+      "n": 2,
+      "source": {
+        "title": "Reading from etcd | etcd",
+        "url": "https://etcd.io/docs/v3.8/tasks/developer/reading-from-etcd/#procedure",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Procedure"
+        }
+      },
+      "why": "The core object model of etcd is a flat key space where every key carries a create revision, a mod revision and a version, all under one cluster-wide revision counter."
+    },
+    {
+      "do": "Write the same key several more times, then read it at an older revision while a second terminal keeps writing new values.",
+      "done_when": "A read pinned to an old revision keeps returning the old value while an unpinned read returns the newest one.",
+      "n": 3,
+      "source": {
+        "title": "Reading from etcd | etcd",
+        "url": "https://etcd.io/docs/v3.7/tasks/developer/reading-from-etcd/#procedure",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Procedure"
+        }
+      },
+      "why": "This is the subtopic on transactions and isolation levels: multi-version storage lets a reader see one consistent snapshot, which is the mechanism behind snapshot and serializable isolation and behind compare-and-swap on a revision."
+    },
+    {
+      "do": "Compare a linearizable read with a serializable read of one key, sending each to a single follower endpoint.",
+      "done_when": "You can state which read mode is the default, which one is faster, and which one could return an old value.",
+      "n": 4,
+      "source": {
+        "title": "Benchmarking etcd v3 | etcd",
+        "url": "https://etcd.io/docs/v3.8/benchmarks/etcd-3-demo-benchmarks/#reading-one-single-key",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "reading one single key"
+        }
+      },
+      "why": "This is the consistency-model subtopic: a linearizable read is confirmed through the quorum and never goes back in time, while a serializable read is answered from the local member and may be stale, which is the etcd version of the strong-to-eventual spectrum."
+    },
+    {
+      "do": "Stop one member of the demo cluster and write a key, then stop a second member and try both a write and the two read modes.",
+      "done_when": "With two members up the write succeeds, with one member up the write and the linearizable read time out and the serializable read still returns, and restarting a member restores writes.",
+      "n": 5,
+      "source": {
+        "title": "How to Set Up a Demo etcd Cluster | etcd",
+        "url": "https://etcd.io/docs/v3.5/tutorials/how-to-setup-cluster/",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "How to Set Up a Demo etcd Cluster | etcd"
+        }
+      },
+      "why": "This is the consensus, quorums and Raft subtopic: two of three members form a majority and keep working, one of three cannot commit anything, and only the local serializable read still answers."
+    },
+    {
+      "do": "Create a lease with a short time to live, attach a key to it, and let it expire without keeping it alive.",
+      "done_when": "The key is readable while the lease lives and disappears on its own after the time to live passes.",
+      "n": 6,
+      "source": {
+        "title": "How to create lease | etcd",
+        "url": "https://etcd.io/docs/v3.5/tutorials/how-to-create-lease/",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "How to create lease | etcd"
+        }
+      },
+      "why": "A lease is a time-bounded promise from the cluster; it is how a crashed client loses its claims without anyone cleaning up by hand."
+    },
+    {
+      "do": "Create a named lock in one terminal and try to acquire the same lock name from a second terminal.",
+      "done_when": "The second terminal blocks until the first releases the lock, then prints its own lock key.",
+      "n": 7,
+      "source": {
+        "title": "How to create locks | etcd",
+        "url": "https://etcd.io/docs/v3.8/tasks/developer/how-to-create-locks/#creating-a-lock",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Creating a lock"
+        }
+      },
+      "why": "A distributed lock in etcd is a leased key plus an ordering by revision, so seeing the second client wait shows what the store actually guarantees."
+    },
+    {
+      "do": "Configure the lock with a short session time to live, kill the holder process abruptly, and time how long the waiter takes to get the lock.",
+      "done_when": "The waiter acquires the lock roughly one time to live after the kill, and you can explain why a paused holder is dangerous in that window.",
+      "n": 8,
+      "source": {
+        "title": "How to create locks | etcd",
+        "url": "https://etcd.io/docs/v3.8/tasks/developer/how-to-create-locks/#options",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Options"
+        }
+      },
+      "why": "The lock is only as safe as its lease: a paused or dead holder keeps the lock until the lease runs out, and a paused holder may still believe it owns it afterwards."
+    },
+    {
+      "do": "Query the ownership key that the lock command printed, in JSON output, and record its create revision as a fencing token for two successive holders.",
+      "done_when": "The second holder has a strictly higher create revision than the first, and you can describe the check the protected resource must perform.",
+      "n": 9,
+      "source": {
+        "title": "Reading from etcd | etcd",
+        "url": "https://etcd.io/docs/v3.8/tasks/developer/reading-from-etcd/#procedure",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Procedure"
+        }
+      },
+      "why": "This completes the leases, locks and fencing subtopic: a downstream resource that rejects any request carrying a token lower than the highest it has seen is what makes a lease-based lock safe."
+    },
+    {
+      "do": "Reproduce the storage memory usage benchmark at laptop scale, writing down your own testing environment in the same form the page uses and loading a much smaller number of keys.",
+      "done_when": "You have a short note with your environment, key count and measured memory that a colleague could rerun and compare with the published table.",
+      "n": 10,
+      "source": {
+        "title": "Storage Memory Usage Benchmark | etcd",
+        "url": "https://etcd.io/docs/v3.8/benchmarks/etcd-storage-memory-benchmark/#testing-environment",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Testing Environment"
+        }
+      },
+      "why": "A result that names its machine, version and data shape can be rerun by anyone, and it shows how every key and revision costs memory in the index."
+    },
+    {
+      "do": "Run a rolling upgrade of the three-member cluster, replacing one member binary at a time while a client keeps writing.",
+      "done_when": "All three members report the new version, the cluster version has moved up, and the writing client saw no lost acknowledged writes.",
+      "n": 11,
+      "source": {
+        "title": "Upgrading etcd clusters and applications | etcd",
+        "url": "https://etcd.io/docs/v3.8/upgrades/upgrading-etcd/#upgrading-an-etcd-v3x-cluster",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Upgrading an etcd v3.x cluster"
+        }
+      },
+      "why": "Production clusters are changed while serving traffic, and a rolling change only works because the quorum survives one member being down."
+    },
+    {
+      "do": "Run the documented downgrade procedure on the same cluster to return it to the previous minor version, checking health after every member.",
+      "done_when": "Every member reports the earlier version, endpoint health is green on all three, and the keys written before the downgrade are still readable.",
+      "n": 12,
+      "source": {
+        "title": "Downgrading etcd clusters and applications | etcd",
+        "url": "https://etcd.io/docs/v3.8/downgrades/downgrading-etcd/#downgrading-an-etcd-v3x-cluster",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Downgrading an etcd v3.x cluster"
+        }
+      },
+      "why": "A production-like setup needs a tested way back, and downgrading exercises the same quorum and version-agreement rules under more constraints."
+    }
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Reading from etcd | etcd",
+      "url": "https://etcd.io/docs/v3.8/tasks/developer/reading-from-etcd/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Prerequisites / Procedure"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "How to Set Up a Demo etcd Cluster | etcd",
+      "url": "https://etcd.io/docs/v3.5/tutorials/how-to-setup-cluster/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "How to Set Up a Demo etcd Cluster | etcd"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "latest | etcd",
+      "url": "https://etcd.io/docs/v3.8/metrics/etcd-metrics-latest/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "latest | etcd"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Writing to etcd | etcd",
+      "url": "https://etcd.io/docs/v3.8/tasks/developer/writing-to-etcd/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Procedure"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Reading from etcd | etcd",
+      "url": "https://etcd.io/docs/v3.7/tasks/developer/reading-from-etcd/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Procedure"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Benchmarking etcd v3 | etcd",
+      "url": "https://etcd.io/docs/v3.8/benchmarks/etcd-3-demo-benchmarks/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "reading one single key"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "How to create lease | etcd",
+      "url": "https://etcd.io/docs/v3.5/tutorials/how-to-create-lease/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "How to create lease | etcd"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "How to create locks | etcd",
+      "url": "https://etcd.io/docs/v3.8/tasks/developer/how-to-create-locks/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Creating a lock / Options"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Storage Memory Usage Benchmark | etcd",
+      "url": "https://etcd.io/docs/v3.8/benchmarks/etcd-storage-memory-benchmark/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Testing Environment"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Upgrading etcd clusters and applications | etcd",
+      "url": "https://etcd.io/docs/v3.8/upgrades/upgrading-etcd/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Upgrading an etcd v3.x cluster"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Downgrading etcd clusters and applications | etcd",
+      "url": "https://etcd.io/docs/v3.8/downgrades/downgrading-etcd/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Downgrading an etcd v3.x cluster"
+      }
+    }
+  ],
+  "verified": {
+    "checked": "2026-10-13",
+    "by": "gigai learning pipeline link check (karthik446/gigai-learning-center 4c0cb514)"
+  },
+  "provenance": {
+    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
+    "generated_on": "2026-10-13",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-13",
+      "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    }
+  ],
+  "kind": "tool"
+}

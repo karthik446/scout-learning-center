@@ -1,0 +1,164 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "sd-data-modelling",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Data modelling across stores",
+  "area": "data",
+  "primary_key": "data-modeling",
+  "secondary_keys": [
+    "data-stores",
+    "data-systems"
+  ],
+  "keys": [
+    "data-modeling",
+    "data-stores",
+    "data-systems"
+  ],
+  "summary": "The same business data is modelled differently depending on the store that holds it. Relational systems start from entities and normalise; distributed key-value and wide-column stores start from the queries and denormalise; analytical warehouses organise data as facts and dimensions. Choosing the model means knowing the access patterns first and accepting the write-side cost of the read-side shape.",
+  "detail": [],
+  "in_practice": "A team keeps a written list of access patterns with expected request rates next to the schema and reviews both together. The transactional source of truth usually stays in a relational database; high-volume or key-based read paths get a purpose-built table in a wide-column or key-value store; and analytics run on a warehouse with star schemas loaded from change streams. Before launch they estimate partition sizes and key skew with realistic data, load test the hottest queries, and write the backfill and reconciliation jobs for every denormalised copy. Schema changes go through migrations that are compatible with both the old and the new application version.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "In a relational database you model the entities and their relationships, normalise to remove duplication, and let joins and secondary indexes answer queries that were not foreseen. The schema is flexible and writes are simple, at the cost of read-time work. In a distributed store without joins, such as Cassandra or DynamoDB, you begin with the list of queries the application will run and design one table or item layout per query. Data is duplicated on purpose, so reads are a single partition lookup, and new access patterns may need a new table and a backfill.",
+          "heading": "Two starting points"
+        },
+        {
+          "body": "Work in three steps. The conceptual model names entities and relationships independent of any store. The application workflow lists every query, with its filter, sort order and expected volume. The logical model then assigns each query to a table, and the physical model adds types, key definitions and size estimates. Skipping the workflow step is the usual cause of a model that looks tidy but needs scans or cross-partition reads for its most frequent request.",
+          "heading": "A repeatable process"
+        }
+      ],
+      "id": "entity-first-vs-query-first",
+      "title": "Entity-first versus query-first modelling"
+    },
+    {
+      "body": [
+        {
+          "body": "In Cassandra the primary key has two parts. The partition key is hashed to choose the nodes that hold the row, so all rows with the same partition key live together and can be read in one request. Clustering columns order the rows inside a partition and support range queries on that order. A query must supply the full partition key; filtering on other columns without it means a cluster-wide scan. The key therefore encodes both the data placement and the only efficient query for the table.",
+          "heading": "What the primary key decides"
+        },
+        {
+          "body": "A good partition key spreads load evenly and keeps each partition bounded. Estimate rows per partition and bytes per partition before going live: a partition that grows without limit, such as all events for a device forever, eventually hurts read latency and repair. The standard fix is bucketing, adding a time component like a day or month to the partition key. A key with low cardinality or heavy skew produces hot partitions that one replica set must serve alone.",
+          "heading": "Sizing and hot partitions"
+        }
+      ],
+      "id": "partition-and-clustering-keys",
+      "title": "Partition keys and clustering columns in wide-column stores"
+    },
+    {
+      "body": [
+        {
+          "body": "DynamoDB guidance is to avoid designing the schema until the questions it must answer are known. Each item has a partition key and optionally a sort key; a query reads items of one partition in sort key order, optionally with a range condition on the sort key. Related items of different types can share a partition key, with sort key prefixes that distinguish them, so one query returns a parent together with its children. This item collection technique replaces the join, and it lets many applications use few tables.",
+          "heading": "Design from access patterns"
+        },
+        {
+          "body": "Secondary indexes provide additional access paths. A global secondary index has its own partition and sort key and is updated asynchronously, so reads from it are eventually consistent; a local secondary index shares the table partition key with a different sort key. Sparse indexes, which contain only items carrying the indexed attribute, are a cheap way to find a small subset. Throughput is tied to partitions, so keys should have high cardinality and uniform access, and a key that concentrates traffic causes throttling.",
+          "heading": "Indexes and key distribution"
+        }
+      ],
+      "id": "dynamodb-access-patterns",
+      "title": "Key-value design in DynamoDB"
+    },
+    {
+      "body": [
+        {
+          "body": "Analytical stores answer aggregate questions over history, so they use a different shape. A fact table records measurements of a business process, such as an order line with quantity and amount, and holds foreign keys to dimension tables that describe the context: customer, product, date, store. The first design decision is the grain, the exact meaning of one fact row; mixing grains in one table makes sums wrong. Dimensions are wide and denormalised, which gives the star schema that query engines and analysts handle well.",
+          "heading": "Facts, dimensions and grain"
+        },
+        {
+          "body": "Dimension attributes change, for example a customer moves to another region. Slowly changing dimension techniques define the response: overwrite the value and lose history, or add a new dimension row with validity dates and a new surrogate key so that old facts keep pointing at the old description. Conformed dimensions, shared with identical keys and meaning across fact tables, allow results from different business processes to be combined in one report.",
+          "heading": "Handling change over time"
+        }
+      ],
+      "id": "dimensional-modelling",
+      "title": "Dimensional modelling for analytics"
+    },
+    {
+      "body": [
+        {
+          "body": "Once the same fact is stored in several tables or several stores, every write must reach every copy. Stores without multi-table transactions give no automatic guarantee here, so the design must state which copy is the source of truth and how the others catch up. Options include writing all copies in one atomic batch where the store offers it, store-maintained copies such as secondary indexes or materialised views, and asynchronous propagation from a change stream. Each has a different window during which readers see divergent data.",
+          "heading": "The cost of duplicated data"
+        },
+        {
+          "body": "Duplicate data that is read often and changes rarely; a product name copied into order lines is cheap, while a frequently updated counter copied into thousands of rows is not. Sometimes the copy should be a deliberate snapshot, such as the price at time of purchase. Plan a backfill and a reconciliation job for each derived table, because a new access pattern needs historical data and silent drift between copies is otherwise found only by users.",
+          "heading": "Choosing what to duplicate"
+        }
+      ],
+      "id": "denormalisation-consistency",
+      "title": "Denormalisation and keeping copies consistent"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart TD\n  A[List access patterns and volumes] --> B[Conceptual model of entities]\n  B --> C[Logical model with one table per query]\n  C --> D[Physical model with keys and types]\n  D --> E[Estimate partition size and key skew]\n  E -->|too large or skewed| C\n  E -->|within limits| F[Plan backfill and reconciliation]"
+  },
+  "code": [
+    {
+      "code": "-- Query: latest readings for one sensor on one day\nCREATE TABLE readings_by_sensor_day (\n  sensor_id  uuid,\n  day        date,\n  ts         timestamp,\n  value      double,\n  PRIMARY KEY ((sensor_id, day), ts)\n) WITH CLUSTERING ORDER BY (ts DESC);\n\nSELECT ts, value\nFROM readings_by_sensor_day\nWHERE sensor_id = ? AND day = ?\nLIMIT 100;",
+      "lang": "sql"
+    }
+  ],
+  "technologies": [
+    "PostgreSQL",
+    "MySQL",
+    "Apache Cassandra",
+    "CQL",
+    "Amazon DynamoDB",
+    "MongoDB",
+    "Snowflake",
+    "BigQuery",
+    "dbt",
+    "Debezium"
+  ],
+  "related": [
+    "sd-storage-engines",
+    "sd-replication-partitioning",
+    "sd-consistency-consensus",
+    "sd-outbox-cdc",
+    "sd-api-design",
+    "sd-caching"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Cassandra data modelling introduction",
+      "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/data-modeling/intro.html"
+    },
+    {
+      "kind": "doc",
+      "title": "Cassandra logical data modelling",
+      "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/data-modeling/data-modeling_logical.html"
+    },
+    {
+      "kind": "doc",
+      "title": "Cassandra Query Language (CQL)",
+      "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/cql/index.html"
+    },
+    {
+      "kind": "doc",
+      "title": "NoSQL design for DynamoDB",
+      "url": "https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/bp-general-nosql-design.html"
+    },
+    {
+      "kind": "article",
+      "title": "Kimball dimensional modelling techniques",
+      "url": "https://www.kimballgroup.com/data-warehouse-business-intelligence-resources/kimball-techniques/dimensional-modeling-techniques/"
+    }
+  ],
+  "practice": "practice/sd-data-modelling",
+  "provenance": {
+    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
+    "generated_on": "2026-10-13",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-13",
+      "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    }
+  ]
+}

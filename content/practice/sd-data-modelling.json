@@ -1,0 +1,364 @@
+{
+  "schema_version": "learning-center-practice:1",
+  "id": "practice/sd-data-modelling",
+  "version": 1,
+  "lesson": "sd-data-modelling",
+  "tool": "Apache Cassandra",
+  "tool_key": null,
+  "why_this_tool": "Apache Cassandra runs on a laptop in a container and rejects queries that the primary key does not serve, so it makes you design tables from the access patterns and feel the write-side cost of every denormalised copy.",
+  "alternatives": "PostgreSQL or MySQL model entities first and normalise with joins; Amazon DynamoDB is a managed key-value store with a hash key and a sort key per item; MongoDB nests related data inside documents; Snowflake and BigQuery hold facts and dimensions for analytics, often built with dbt; Debezium streams changes out of a source store to keep copies in step.",
+  "setup": [
+    {
+      "do": "Start a single-node Apache Cassandra in a local container (Docker or Podman is the prerequisite) and open a cqlsh session against it.",
+      "done_when": "The cqlsh prompt appears and a query on the system keyspaces returns rows.",
+      "n": 1,
+      "source": {
+        "title": "The Cassandra Query Language (CQL) | Apache Cassandra Documentation",
+        "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/cql/index.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "The Cassandra Query Language (CQL) | Apache Cassandra Documentation"
+        }
+      },
+      "why": "Every later step is typed as CQL into this shell, so you need one running node and a working prompt first. One node is enough until the last step."
+    },
+    {
+      "do": "Read the CQL conventions and statement basics so you can follow the grammar notation used in the reference pages.",
+      "done_when": "You can explain what the optional and repeated parts of a statement grammar mean.",
+      "n": 2,
+      "source": {
+        "title": "Definitions | Apache Cassandra Documentation",
+        "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/cql/definitions.html#conventions",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Conventions"
+        }
+      },
+      "why": "The reference pages describe each statement with a compact grammar. Knowing how to read it saves time on every later step."
+    },
+    {
+      "do": "Create a practice keyspace with SimpleStrategy and a replication factor of one, then switch to it with USE.",
+      "done_when": "DESCRIBE KEYSPACES lists the practice keyspace and the prompt shows it as the current keyspace.",
+      "n": 3,
+      "source": {
+        "title": "Data Definition | Apache Cassandra Documentation",
+        "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/cql/ddl.html#replication-strategy",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "SimpleStrategy"
+        }
+      },
+      "why": "A keyspace is the container for all tables and sets replication. SimpleStrategy is the simplest choice for a single laptop node."
+    }
+  ],
+  "steps": [
+    {
+      "do": "Write the list of queries a hotel booking application must answer, in plain words, before drawing any table.",
+      "done_when": "You have a written list of at least five queries, each naming what it filters by and how the results are ordered.",
+      "n": 1,
+      "source": {
+        "title": "Introduction | Apache Cassandra Documentation",
+        "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/data-modeling/intro.html#query-driven-modeling",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Query-driven modeling"
+        }
+      },
+      "why": "Query-first modelling starts from access patterns, not entities. This list drives every table you create in the following steps."
+    },
+    {
+      "do": "Compare an entity-first, normalised sketch of the same hotel domain with the query-first one, and note where joins are replaced by duplicated columns.",
+      "done_when": "You have a two-column note that lists, for each query, the joins in the relational sketch and the single table that answers it in the query-first sketch.",
+      "n": 2,
+      "source": {
+        "title": "Introduction | Apache Cassandra Documentation",
+        "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/data-modeling/intro.html#comparing-with-relational-data-model",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Comparing with Relational Data Model"
+        }
+      },
+      "why": "Seeing both shapes side by side shows what a relational design assumes that Cassandra does not offer: joins and referential integrity."
+    },
+    {
+      "do": "Create one table per query with a partition key that groups the rows read together and clustering columns that set their order inside the partition.",
+      "done_when": "DESCRIBE TABLE shows each table with its partition key and clustering order, and rows selected from one partition come back sorted by the clustering column.",
+      "n": 3,
+      "source": {
+        "title": "Data Definition | Apache Cassandra Documentation",
+        "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/cql/ddl.html#clustering-columns",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Clustering columns"
+        }
+      },
+      "why": "The partition key decides which node holds the data and the clustering columns decide the sort order on disk. Together they are the core of wide-column modelling."
+    },
+    {
+      "do": "Create a single-table key-value design as you would for DynamoDB (a paid cloud service, so use Cassandra as the local substitute): one partition key as the hash key, one clustering column as the sort key, and static columns for attributes shared by the whole item collection.",
+      "done_when": "One partition holds several item types distinguished by the sort key, and a static column shows the same value on every row of that partition.",
+      "n": 4,
+      "source": {
+        "title": "Data Definition | Apache Cassandra Documentation",
+        "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/cql/ddl.html#static-column",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Static columns"
+        }
+      },
+      "why": "DynamoDB key design follows the same hash key plus sort key idea, so practising it here teaches item collections and overloaded keys without a cloud account."
+    },
+    {
+      "do": "Query each table through its partition key, then run a query that filters on a non-key column and read the error before trying it with ALLOW FILTERING.",
+      "done_when": "The key-based query returns rows, the non-key query is rejected with a filtering warning, and you can say why forcing it would scan the whole table.",
+      "n": 5,
+      "source": {
+        "title": "Data Manipulation | Apache Cassandra Documentation",
+        "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/cql/dml.html#allow-filtering",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Allowing filtering"
+        }
+      },
+      "why": "The WHERE clause rules are how Cassandra enforces query-first design. The rejected query shows exactly which access pattern your model does not serve."
+    },
+    {
+      "do": "Create a storage-attached index on the non-key column and run the previously rejected query again, then compare it with building a second denormalised table for the same query.",
+      "done_when": "The query on the non-key column returns rows without ALLOW FILTERING, and you have noted when you would choose the index and when the extra table.",
+      "n": 6,
+      "source": {
+        "title": "Working with Storage-attached indexing (SAI) | Apache Cassandra Documentation",
+        "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/cql/indexing/sai/sai-working-with.html#create-sai-index",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Create SAI index"
+        }
+      },
+      "why": "An index is the alternative to another copy of the data. Comparing the two makes the trade-off between write cost and read flexibility concrete."
+    },
+    {
+      "do": "Read how an indexed write goes through the memtable, the flush and compaction, so you know what each extra index costs on the write path.",
+      "done_when": "You can describe in three sentences what happens to index data at write, at flush and at compaction.",
+      "n": 7,
+      "source": {
+        "title": "Storage-attached indexing (SAI) concepts | Apache Cassandra Documentation",
+        "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/cql/indexing/sai/sai-concepts.html#when-compaction-is-triggered",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "When compaction is triggered"
+        }
+      },
+      "why": "Every read-side shape is paid for at write time. This section shows where that cost lands on disk and when compaction rebuilds index data."
+    },
+    {
+      "do": "Write the same booking into two denormalised tables with a logged BATCH, then repeat it as two separate inserts and note what a failure between them would leave behind.",
+      "done_when": "Both tables return the same booking after the batch, and you can explain which copy would be stale if the second separate insert never ran.",
+      "n": 8,
+      "source": {
+        "title": "Data Manipulation | Apache Cassandra Documentation",
+        "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/cql/dml.html#batch_statement",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "BATCH"
+        }
+      },
+      "why": "Denormalised copies drift apart unless the writes are grouped. A batch is the basic tool for keeping copies consistent, and it has a cost you should know."
+    },
+    {
+      "do": "Create a materialized view that re-keys one base table for a second query (enable materialized views in the node configuration first if the statement is refused), update the base row and query the view.",
+      "done_when": "A change to a base row appears in the view under its new primary key, and you can name two limitations of views from the same page.",
+      "n": 9,
+      "source": {
+        "title": "Materialized Views | Apache Cassandra Documentation",
+        "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/cql/mvs.html#create-materialized-view-statement",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "CREATE MATERIALIZED VIEW"
+        }
+      },
+      "why": "A materialized view lets the server maintain a denormalised copy for you. Its limitations explain why many teams still prefer application-managed copies."
+    },
+    {
+      "do": "Create a fact-style table of nightly bookings partitioned by hotel and a day bucket, with dimension attributes copied onto each row, using the datetime functions to derive the bucket.",
+      "done_when": "Rows for different days land in different partitions and a query for one hotel and one day returns only that day's bookings.",
+      "n": 10,
+      "source": {
+        "title": "Functions | Apache Cassandra Documentation",
+        "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/cql/functions.html#datetime-functions",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Datetime functions"
+        }
+      },
+      "why": "Dimensional modelling separates facts from dimensions. In Cassandra the time bucket becomes part of the partition key, so the window of data read is bounded."
+    },
+    {
+      "do": "Run count, sum and average over one day bucket of the fact table and compare the result with what a warehouse star schema would compute across all days.",
+      "done_when": "The aggregate over one partition returns the expected totals, and you have noted which analytical questions would need a warehouse instead.",
+      "n": 11,
+      "source": {
+        "title": "Functions | Apache Cassandra Documentation",
+        "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/cql/functions.html#native-aggregates",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Native aggregates"
+        }
+      },
+      "why": "Aggregates in Cassandra work well inside one partition and poorly across many. That limit is the reason analytics usually moves to a warehouse."
+    },
+    {
+      "do": "Reproduce the whole model by saving every statement in one CQL file, dropping the keyspace and replaying the file with the source command in cqlsh.",
+      "done_when": "After a drop and a replay, DESCRIBE KEYSPACE shows the same tables, index and view as before.",
+      "n": 12,
+      "source": {
+        "title": "Definitions | Apache Cassandra Documentation",
+        "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/cql/definitions.html#statements",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Statements"
+        }
+      },
+      "why": "A schema that exists only in shell history cannot be reviewed or run in CI. A single replayable file is the pinned, repeatable form of your model."
+    },
+    {
+      "do": "Configure a production-like setup: start a three-node local cluster in containers and recreate the keyspace with NetworkTopologyStrategy and a replication factor of three for the datacenter.",
+      "done_when": "The node status shows three nodes up, the keyspace description shows NetworkTopologyStrategy with three replicas, and a read still succeeds with one node stopped.",
+      "n": 13,
+      "source": {
+        "title": "Data Definition | Apache Cassandra Documentation",
+        "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/cql/ddl.html#networktopologystrategy",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "NetworkTopologyStrategy"
+        }
+      },
+      "why": "Production keyspaces name their datacenters and replicate each partition to several nodes. This is where partition key choices start to affect load and availability."
+    }
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "The Cassandra Query Language (CQL) | Apache Cassandra Documentation",
+      "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/cql/index.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "The Cassandra Query Language (CQL) | Apache Cassandra Documentation"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Definitions | Apache Cassandra Documentation",
+      "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/cql/definitions.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Conventions / Statements"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Data Definition | Apache Cassandra Documentation",
+      "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/cql/ddl.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "SimpleStrategy / Clustering columns / Static columns / NetworkTopologyStrategy"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Introduction | Apache Cassandra Documentation",
+      "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/data-modeling/intro.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Query-driven modeling / Comparing with Relational Data Model"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Data Manipulation | Apache Cassandra Documentation",
+      "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/cql/dml.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Allowing filtering / BATCH"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Working with Storage-attached indexing (SAI) | Apache Cassandra Documentation",
+      "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/cql/indexing/sai/sai-working-with.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Create SAI index"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Storage-attached indexing (SAI) concepts | Apache Cassandra Documentation",
+      "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/cql/indexing/sai/sai-concepts.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "When compaction is triggered"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Materialized Views | Apache Cassandra Documentation",
+      "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/cql/mvs.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "CREATE MATERIALIZED VIEW"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Functions | Apache Cassandra Documentation",
+      "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/cql/functions.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Datetime functions / Native aggregates"
+      }
+    }
+  ],
+  "verified": {
+    "checked": "2026-10-13",
+    "by": "gigai learning pipeline link check (karthik446/gigai-learning-center 4c0cb514)"
+  },
+  "provenance": {
+    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
+    "generated_on": "2026-10-13",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-13",
+      "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    }
+  ],
+  "kind": "tool"
+}

@@ -1,0 +1,384 @@
+{
+  "schema_version": "learning-center-practice:1",
+  "id": "practice/sd-observability",
+  "version": 1,
+  "lesson": "sd-observability",
+  "tool": "OpenTelemetry",
+  "tool_key": null,
+  "why_this_tool": "OpenTelemetry is the one vendor-neutral standard that makes a designer decide signals, attributes, context propagation, sampling and the collection pipeline in a single model, so every subtopic of this lesson can be practised with it on a laptop.",
+  "alternatives": "Prometheus client libraries cover metrics only with a pull model and no traces, Jaeger or Zipkin native clients cover tracing only, Micrometer is a JVM-centred metrics and tracing facade, and vendor agents give turnkey collection but tie instrumentation to one backend, whereas OpenTelemetry is vendor-neutral across traces, metrics and logs.",
+  "setup": [
+    {
+      "do": "Install the .NET SDK that the getting started guide lists and confirm the dotnet command works in a terminal.",
+      "done_when": "Asking dotnet for its version prints a version that meets the listed prerequisite.",
+      "n": 1,
+      "source": {
+        "title": "Getting started with traces - Console | OpenTelemetry",
+        "url": "https://opentelemetry.io/docs/languages/dotnet/traces/getting-started-console/#prerequisites",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Prerequisites"
+        }
+      },
+      "why": "The fetched hands-on guides for OpenTelemetry use .NET, so one SDK install lets you run every example in this path locally."
+    },
+    {
+      "do": "Install and start Prometheus locally with the OTLP receiver enabled as the guide describes.",
+      "done_when": "The Prometheus web page opens in a browser on your laptop.",
+      "n": 2,
+      "source": {
+        "title": "Export to Prometheus and Grafana | OpenTelemetry",
+        "url": "https://opentelemetry.io/docs/languages/dotnet/metrics/getting-started-prometheus-grafana/#installing-and-running-prometheus",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Installing and running Prometheus"
+        }
+      },
+      "why": "You need a local metrics backend so the metrics you design can be queried and charted without any paid cloud."
+    },
+    {
+      "do": "Install and start Jaeger locally, as a container or a downloaded binary, with OTLP ingestion enabled.",
+      "done_when": "The Jaeger search page opens in a browser on your laptop.",
+      "n": 3,
+      "source": {
+        "title": "Export to Jaeger | OpenTelemetry",
+        "url": "https://opentelemetry.io/docs/languages/dotnet/traces/jaeger/#installing-and-running-jaeger",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Installing and running Jaeger"
+        }
+      },
+      "why": "A local trace backend lets you see whole distributed traces instead of console output, which is what the later propagation and sampling steps need."
+    },
+    {
+      "do": "Install and start Grafana locally and add Prometheus as a data source.",
+      "done_when": "Grafana reports that the Prometheus data source test succeeded.",
+      "n": 4,
+      "source": {
+        "title": "Export to Prometheus and Grafana | OpenTelemetry",
+        "url": "https://opentelemetry.io/docs/languages/dotnet/metrics/getting-started-prometheus-grafana/#configuring-prometheus-as-a-data-source",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Configuring Prometheus as a data source"
+        }
+      },
+      "why": "Dashboards are part of the design, and Grafana over your local Prometheus is the free way to practise them."
+    }
+  ],
+  "steps": [
+    {
+      "do": "Create a console application, add OpenTelemetry tracing with the console exporter, and run it.",
+      "done_when": "The terminal prints one activity with a trace id, a span id and the tags you set.",
+      "n": 1,
+      "source": {
+        "title": "Getting started with traces - Console | OpenTelemetry",
+        "url": "https://opentelemetry.io/docs/languages/dotnet/traces/getting-started-console/#adding-opentelemetry-traces",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Adding OpenTelemetry traces"
+        }
+      },
+      "why": "This is the shortest possible first run: one tracer provider, one source, one span printed to the terminal. It shows the tracing pipeline before any backend is involved."
+    },
+    {
+      "do": "Write a one-page signal map for a small two-service design that lists which traces, metrics and logs each component emits and which question each one answers.",
+      "done_when": "Every component in your sketch has at least one named trace, metric and log with the question it answers.",
+      "n": 2,
+      "source": {
+        "title": "Signals | OpenTelemetry",
+        "url": "https://opentelemetry.io/docs/concepts/signals/",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Signals | OpenTelemetry"
+        }
+      },
+      "why": "A designer chooses signals up front. Mapping each signal to a diagnostic question keeps you from emitting telemetry nobody will query."
+    },
+    {
+      "do": "Create nested spans in the application and set span kind, attributes, an event and an error status on them.",
+      "done_when": "The output shows a parent and a child span sharing one trace id, with the kind, attributes and status you set.",
+      "n": 3,
+      "source": {
+        "title": "Traces | OpenTelemetry",
+        "url": "https://opentelemetry.io/docs/concepts/signals/traces/#spans",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Spans"
+        }
+      },
+      "why": "Spans, their context and their attributes are the core object model of tracing, and the attribute choices you make here decide what you can filter on during an incident."
+    },
+    {
+      "do": "Enable the OpenTelemetry log bridge for the application logger and emit structured log records inside an active span.",
+      "done_when": "An exported log record shows named fields plus the same trace id as the span it was written in.",
+      "n": 4,
+      "source": {
+        "title": "Logs | OpenTelemetry",
+        "url": "https://opentelemetry.io/docs/concepts/signals/logs/#log-appender--bridge",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Log Appender / Bridge"
+        }
+      },
+      "why": "Logs become far more useful when they carry the trace and span ids of the request that produced them. The bridge is how existing logging joins the other two signals."
+    },
+    {
+      "do": "Create a counter, a histogram and a gauge on one meter, with a small fixed set of attributes on each.",
+      "done_when": "The exported metrics show three instruments with the expected types and one series per attribute combination.",
+      "n": 5,
+      "source": {
+        "title": "Metrics | OpenTelemetry",
+        "url": "https://opentelemetry.io/docs/concepts/signals/metrics/#metric-instruments",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Metric Instruments"
+        }
+      },
+      "why": "Choosing the instrument type decides what aggregations are possible later: rates from counters, percentiles from histograms, current values from gauges."
+    },
+    {
+      "do": "Configure a cardinality limit on the meter provider, then record a metric with an unbounded attribute such as a user id and observe the result.",
+      "done_when": "Once the limit is reached, new attribute combinations are folded into an overflow series instead of creating new ones.",
+      "n": 6,
+      "source": {
+        "title": "Metrics | OpenTelemetry",
+        "url": "https://opentelemetry.io/docs/concepts/signals/metrics/#cardinality-limits",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Cardinality limits"
+        }
+      },
+      "why": "High cardinality attributes are the most common way a metrics design blows up storage cost. Seeing the limit engage teaches you which attributes belong on spans instead."
+    },
+    {
+      "do": "Run two local services where the first calls the second over HTTP, and inspect the trace context header that travels between them.",
+      "done_when": "Spans from both services share one trace id and the second service's span lists the first service's span as its parent.",
+      "n": 7,
+      "source": {
+        "title": "Context propagation | OpenTelemetry",
+        "url": "https://opentelemetry.io/docs/concepts/context-propagation/#propagation",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Propagation"
+        }
+      },
+      "why": "A trace only spans services when context is propagated on every hop. Verifying the header yourself shows exactly where a broken trace would break."
+    },
+    {
+      "do": "Start a local OpenTelemetry Collector in a container, point both services at it over OTLP, and have it forward to your backends.",
+      "done_when": "Telemetry still reaches the backends while the services are configured with only the Collector address.",
+      "n": 8,
+      "source": {
+        "title": "Collector | OpenTelemetry",
+        "url": "https://opentelemetry.io/docs/collector/#when-to-use-a-collector",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "When to use a collector"
+        }
+      },
+      "why": "Putting a Collector between applications and backends moves batching, retries, filtering and backend choice out of application code, which is the central pipeline decision in the design."
+    },
+    {
+      "do": "Configure OTLP metrics export to Prometheus using environment variables only, so the same build runs unchanged with a different endpoint.",
+      "done_when": "Restarting with only the environment changed makes the metrics appear in the Prometheus query page.",
+      "n": 9,
+      "source": {
+        "title": "OTLP metrics export to Prometheus | OpenTelemetry",
+        "url": "https://opentelemetry.io/docs/compatibility/prometheus/otlp-metrics-export/#use-environment-variables",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Use environment variables"
+        }
+      },
+      "why": "Keeping exporter settings in the environment makes the setup reproducible across laptops and CI, and keeps backend choice out of the code."
+    },
+    {
+      "do": "Run the tail-based sampling example so that failed requests are always kept while successful ones are mostly dropped.",
+      "done_when": "Under mixed traffic the exported traces include every failed request and only a fraction of the successful ones.",
+      "n": 10,
+      "source": {
+        "title": "Tail-based sampling | OpenTelemetry",
+        "url": "https://opentelemetry.io/docs/languages/dotnet/traces/tail-based-sampling/#implementation-approach",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Implementation approach"
+        }
+      },
+      "why": "Sampling decides which traces you still have during an incident. A tail decision keeps the errors that a head decision made at request start would have thrown away."
+    },
+    {
+      "do": "Create a Grafana dashboard over the exported metrics with one panel per service level indicator you would alert on, such as request rate, error ratio and latency percentile.",
+      "done_when": "The dashboard shows live panels that move when you send traffic, and each panel has a written alert threshold next to it.",
+      "n": 11,
+      "source": {
+        "title": "Export to Prometheus and Grafana | OpenTelemetry",
+        "url": "https://opentelemetry.io/docs/languages/dotnet/metrics/getting-started-prometheus-grafana/#creating-a-dashboard",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Creating a dashboard"
+        }
+      },
+      "why": "Dashboards and alerts should follow the design: each panel maps to a metric you chose on purpose and to a threshold someone would be paged for."
+    },
+    {
+      "do": "Configure the trace export to Jaeger the way the production usage notes describe, with batching and an explicit endpoint, and run the whole stack end to end.",
+      "done_when": "Jaeger shows complete multi-service traces from the full stack, and your configuration matches each point in the production usage notes.",
+      "n": 12,
+      "source": {
+        "title": "Export to Jaeger | OpenTelemetry",
+        "url": "https://opentelemetry.io/docs/languages/dotnet/traces/jaeger/#production-usage",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Production usage"
+        }
+      },
+      "why": "The quick-start defaults are not what you would ship. Finishing with the production guidance shows what changes between a demo and a deployment you could defend in a design review."
+    }
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Getting started with traces - Console | OpenTelemetry",
+      "url": "https://opentelemetry.io/docs/languages/dotnet/traces/getting-started-console/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Prerequisites / Adding OpenTelemetry traces"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Export to Prometheus and Grafana | OpenTelemetry",
+      "url": "https://opentelemetry.io/docs/languages/dotnet/metrics/getting-started-prometheus-grafana/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Installing and running Prometheus / Configuring Prometheus as a data source / Creating a dashboard"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Export to Jaeger | OpenTelemetry",
+      "url": "https://opentelemetry.io/docs/languages/dotnet/traces/jaeger/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Installing and running Jaeger / Production usage"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Signals | OpenTelemetry",
+      "url": "https://opentelemetry.io/docs/concepts/signals/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Signals | OpenTelemetry"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Traces | OpenTelemetry",
+      "url": "https://opentelemetry.io/docs/concepts/signals/traces/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Spans"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Logs | OpenTelemetry",
+      "url": "https://opentelemetry.io/docs/concepts/signals/logs/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Log Appender / Bridge"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Metrics | OpenTelemetry",
+      "url": "https://opentelemetry.io/docs/concepts/signals/metrics/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Metric Instruments / Cardinality limits"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Context propagation | OpenTelemetry",
+      "url": "https://opentelemetry.io/docs/concepts/context-propagation/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Propagation"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Collector | OpenTelemetry",
+      "url": "https://opentelemetry.io/docs/collector/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "When to use a collector"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "OTLP metrics export to Prometheus | OpenTelemetry",
+      "url": "https://opentelemetry.io/docs/compatibility/prometheus/otlp-metrics-export/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Use environment variables"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Tail-based sampling | OpenTelemetry",
+      "url": "https://opentelemetry.io/docs/languages/dotnet/traces/tail-based-sampling/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Implementation approach"
+      }
+    }
+  ],
+  "verified": {
+    "checked": "2026-10-13",
+    "by": "gigai learning pipeline link check (karthik446/gigai-learning-center 4c0cb514)"
+  },
+  "provenance": {
+    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
+    "generated_on": "2026-10-13",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-13",
+      "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    }
+  ],
+  "kind": "tool"
+}

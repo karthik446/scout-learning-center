@@ -1,0 +1,374 @@
+{
+  "schema_version": "learning-center-practice:1",
+  "id": "practice/sd-networking",
+  "version": 1,
+  "lesson": "sd-networking",
+  "tool": "nginx",
+  "tool_key": null,
+  "why_this_tool": "nginx puts name resolution, connection reuse, TLS termination, HTTP versions and WebSocket upgrades into one small readable config file, so each network round trip and timeout in the lesson becomes a directive you can change and observe on a laptop.",
+  "alternatives": "Envoy (dynamic API-driven configuration and first-class gRPC and observability, heavier to operate), HAProxy (very strong load balancing and connection-level statistics, less of a web server), Caddy (automatic certificates and a simpler config, fewer tuning knobs), Traefik (discovers routes from containers and orchestrators, less explicit control).",
+  "setup": [
+    {
+      "do": "Install a current stable nginx on your laptop with your package manager or as the official container image, and make sure curl, dig and openssl are available alongside it.",
+      "done_when": "Asking nginx for its version prints a stable release number that matches one on the download page.",
+      "n": 1,
+      "source": {
+        "title": "nginx: download",
+        "url": "https://nginx.org/en/download.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "nginx: download"
+        }
+      },
+      "why": "Every later step changes nginx configuration and observes the effect from a client, so you need a known nginx version and the three client tools."
+    },
+    {
+      "do": "Open the main configuration file, find the main, events and http contexts, set the error log to a file you can tail and start nginx.",
+      "done_when": "nginx is running, its pid file exists and a deliberately broken directive shows up as an error in the log you configured.",
+      "n": 2,
+      "source": {
+        "title": "Core functionality",
+        "url": "https://nginx.org/en/docs/ngx_core_module.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Core functionality"
+        }
+      },
+      "why": "Knowing where the top-level directives live and where errors are written is what makes every later experiment quick to debug."
+    },
+    {
+      "do": "Start a tiny local backend on a high port, for example a small echo server that also accepts WebSocket connections, to act as the upstream nginx will proxy to.",
+      "done_when": "A direct curl request to the backend port returns its response without nginx involved.",
+      "n": 3,
+      "source": {
+        "title": "Module ngx_http_proxy_module",
+        "url": "https://nginx.org/en/docs/http/ngx_http_proxy_module.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Module ngx_http_proxy_module"
+        }
+      },
+      "why": "The proxying, timeout and WebSocket steps need something behind nginx, and the proxy module page explains what nginx expects from a proxied server."
+    }
+  ],
+  "steps": [
+    {
+      "do": "Write a first server block that listens on a local port and returns a fixed response from one location, then request it with curl in verbose mode.",
+      "done_when": "curl verbose output shows the connection being opened and a 200 response carrying your fixed body.",
+      "n": 1,
+      "source": {
+        "title": "Module ngx_http_core_module",
+        "url": "https://nginx.org/en/docs/http/ngx_http_core_module.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Module ngx_http_core_module"
+        }
+      },
+      "why": "This is the first run: you see the TCP connect, the request line, the response status and headers that every later step will change."
+    },
+    {
+      "do": "Create two virtual servers on the same port with different server names, map both names to loopback in your hosts file, and query each name with dig and curl.",
+      "done_when": "Each name returns a different body from the same address and port, and an unknown name lands on the default server.",
+      "n": 2,
+      "source": {
+        "title": "Server names",
+        "url": "https://nginx.org/en/docs/http/server_names.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Server names"
+        }
+      },
+      "why": "DNS only gets the client to an address; the Host header then picks the server block, and seeing both halves separately is the core object model of nginx."
+    },
+    {
+      "do": "Configure the resolver directive with a short validity time and proxy to an upstream named through a variable so nginx resolves the name at request time rather than at startup.",
+      "done_when": "Changing what the upstream name resolves to takes effect after the validity time without reloading nginx, and a failing resolver produces a visible error in the log.",
+      "n": 3,
+      "source": {
+        "title": "Module ngx_http_core_module",
+        "url": "https://nginx.org/en/docs/http/ngx_http_core_module.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Module ngx_http_core_module"
+        }
+      },
+      "why": "DNS is the first hop for the proxy too: a name resolved once at startup goes stale, and the resolver settings decide when that lookup round trip and its timeout happen."
+    },
+    {
+      "do": "Configure a location that proxies to your local backend and passes the original Host and client address in request headers.",
+      "done_when": "The backend echo shows the Host and client address headers you set, and the response arrives through the nginx port.",
+      "n": 4,
+      "source": {
+        "title": "Module ngx_http_proxy_module",
+        "url": "https://nginx.org/en/docs/http/ngx_http_proxy_module.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Module ngx_http_proxy_module"
+        }
+      },
+      "why": "A reverse proxy means two separate connections, client to nginx and nginx to backend, and a designer must know what information crosses that boundary."
+    },
+    {
+      "do": "Set short proxy connect, send and read timeouts, then reproduce each one by pointing at a closed port and at a backend that sleeps before answering.",
+      "done_when": "You get a 502 for the refused connection and a 504 for the slow backend, each with a matching error log line.",
+      "n": 5,
+      "source": {
+        "title": "Module ngx_http_proxy_module",
+        "url": "https://nginx.org/en/docs/http/ngx_http_proxy_module.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Module ngx_http_proxy_module"
+        }
+      },
+      "why": "Timeouts are where hidden state lives in a design; triggering each one tells you which phase failed and what status the client sees."
+    },
+    {
+      "do": "Configure the client keepalive timeout and the keepalive request limit, then send several requests in one curl invocation and compare with keepalive disabled.",
+      "done_when": "curl verbose output reports reusing the existing connection with keepalive on and opening a new connection per request with it off.",
+      "n": 6,
+      "source": {
+        "title": "Module ngx_http_core_module",
+        "url": "https://nginx.org/en/docs/http/ngx_http_core_module.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Module ngx_http_core_module"
+        }
+      },
+      "why": "Connection reuse removes the TCP handshake from every request after the first, and the limits decide how long that idle state is held on the server."
+    },
+    {
+      "do": "Create a self-signed certificate for your local name and configure an HTTPS server on a second port with that certificate and key.",
+      "done_when": "curl with the certificate trusted completes a TLS handshake and returns your response, and it fails with a name mismatch when you use the wrong host name.",
+      "n": 7,
+      "source": {
+        "title": "Configuring HTTPS servers",
+        "url": "https://nginx.org/en/docs/http/configuring_https_servers.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Configuring HTTPS servers"
+        }
+      },
+      "why": "Terminating TLS at the proxy adds handshake round trips and a certificate that must match the name, which is the cost you reason about in a design."
+    },
+    {
+      "do": "Configure the allowed TLS protocol versions and a shared session cache with a session timeout, then reconnect with the openssl client to compare a full handshake with a resumed one.",
+      "done_when": "The openssl client reports a reused session on reconnect with the cache enabled and a new session each time with it disabled.",
+      "n": 8,
+      "source": {
+        "title": "Module ngx_http_ssl_module",
+        "url": "https://nginx.org/en/docs/http/ngx_http_ssl_module.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Module ngx_http_ssl_module"
+        }
+      },
+      "why": "Session resumption is the TLS form of reuse: it cuts the handshake cost for returning clients and is shared state across worker processes."
+    },
+    {
+      "do": "Enable HTTP/2 on the HTTPS server and compare the same set of requests made with curl forced to HTTP/1.1 and to HTTP/2.",
+      "done_when": "curl reports HTTP/2 as the negotiated protocol and several requests travel on a single connection, while the forced HTTP/1.1 run shows the older version in the status line.",
+      "n": 9,
+      "source": {
+        "title": "Module ngx_http_v2_module",
+        "url": "https://nginx.org/en/docs/http/ngx_http_v2_module.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Module ngx_http_v2_module"
+        }
+      },
+      "why": "The protocol version changes how requests share a connection: HTTP/2 multiplexes many streams on one connection where HTTP/1.1 needs one request at a time per connection."
+    },
+    {
+      "do": "Configure a location that proxies WebSocket traffic by passing the Upgrade and Connection headers to the backend over HTTP/1.1, then connect with a WebSocket client.",
+      "done_when": "The client receives a 101 Switching Protocols response and messages echo in both directions through nginx.",
+      "n": 10,
+      "source": {
+        "title": "WebSocket proxying",
+        "url": "https://nginx.org/en/docs/http/websocket.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "WebSocket proxying"
+        }
+      },
+      "why": "The upgrade is a hop-by-hop handshake that a proxy drops unless told to forward it, which is the most common reason WebSockets fail behind a proxy."
+    },
+    {
+      "do": "Reproduce the idle close of a silent WebSocket connection at the default proxy read timeout, then fix it by raising the timeout or by having the backend send periodic pings.",
+      "done_when": "A silent connection is closed after about a minute before the change and stays open well past that after it.",
+      "n": 11,
+      "source": {
+        "title": "WebSocket proxying",
+        "url": "https://nginx.org/en/docs/http/websocket.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "WebSocket proxying"
+        }
+      },
+      "why": "Long-lived connections are held open by timers on every hop, so a design must choose between longer timeouts and heartbeats."
+    },
+    {
+      "do": "Check the security advisories for your nginx version, pin a non-vulnerable release in your container image tag or package version, and keep the whole configuration in one versioned file.",
+      "done_when": "A fresh container or install built from the pinned version and your config file passes all earlier checks, and no listed advisory applies to that version.",
+      "n": 12,
+      "source": {
+        "title": "nginx security advisories",
+        "url": "https://nginx.org/en/security_advisories.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "nginx security advisories"
+        }
+      },
+      "why": "A pinned version and a single config file make the setup reproducible on another machine and tell you when an upgrade is required."
+    },
+    {
+      "do": "Configure a production-like process model with automatic worker processes, an explicit worker connection limit and open file limit, then reload the configuration while a WebSocket connection is open.",
+      "done_when": "Several worker processes are running, the reload applies new settings without dropping the open WebSocket, and the old worker exits once that connection closes.",
+      "n": 13,
+      "source": {
+        "title": "Core functionality",
+        "url": "https://nginx.org/en/docs/ngx_core_module.html",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Core functionality"
+        }
+      },
+      "why": "Worker and connection limits cap how many concurrent and long-lived connections one machine holds, and a graceful reload shows how old workers drain them."
+    }
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "nginx: download",
+      "url": "https://nginx.org/en/download.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "nginx: download"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Core functionality",
+      "url": "https://nginx.org/en/docs/ngx_core_module.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Core functionality"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Module ngx_http_proxy_module",
+      "url": "https://nginx.org/en/docs/http/ngx_http_proxy_module.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Module ngx_http_proxy_module"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Module ngx_http_core_module",
+      "url": "https://nginx.org/en/docs/http/ngx_http_core_module.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Module ngx_http_core_module"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Server names",
+      "url": "https://nginx.org/en/docs/http/server_names.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Server names"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Configuring HTTPS servers",
+      "url": "https://nginx.org/en/docs/http/configuring_https_servers.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Configuring HTTPS servers"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Module ngx_http_ssl_module",
+      "url": "https://nginx.org/en/docs/http/ngx_http_ssl_module.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Module ngx_http_ssl_module"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Module ngx_http_v2_module",
+      "url": "https://nginx.org/en/docs/http/ngx_http_v2_module.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Module ngx_http_v2_module"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "WebSocket proxying",
+      "url": "https://nginx.org/en/docs/http/websocket.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "WebSocket proxying"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "nginx security advisories",
+      "url": "https://nginx.org/en/security_advisories.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "nginx security advisories"
+      }
+    }
+  ],
+  "verified": {
+    "checked": "2026-10-13",
+    "by": "gigai learning pipeline link check (karthik446/gigai-learning-center 4c0cb514)"
+  },
+  "provenance": {
+    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
+    "generated_on": "2026-10-13",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-13",
+      "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    }
+  ],
+  "kind": "tool"
+}

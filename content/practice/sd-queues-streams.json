@@ -1,0 +1,284 @@
+{
+  "schema_version": "learning-center-practice:1",
+  "id": "practice/sd-queues-streams",
+  "version": 1,
+  "lesson": "sd-queues-streams",
+  "tool": "Apache Kafka",
+  "tool_key": null,
+  "why_this_tool": "Apache Kafka runs as a single local broker and exposes the log, partitions, offsets and consumer groups directly through its console tools, so every delivery guarantee in this lesson can be observed by hand.",
+  "alternatives": "RabbitMQ and Amazon SQS are queues that hand each message to one worker and then delete it, Amazon Kinesis and Google Pub/Sub are managed cloud streams with less to operate but no laptop install, Apache Pulsar combines queue and log semantics with tiered storage, NATS is a lighter broker with optional persistence, and Azure Service Bus is a managed queue with built-in dead lettering.",
+  "setup": [
+    {
+      "do": "Install a current Java runtime, then download and extract the latest Kafka release into a new empty directory.",
+      "done_when": "The extracted Kafka directory exists and its bin folder lists the topic, console producer and console consumer tools.",
+      "n": 1,
+      "source": {
+        "title": "Quickstart | Apache Kafka",
+        "url": "https://kafka.apache.org/quickstart/#step-1-get-kafka",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Step 1: Get Kafka"
+        }
+      },
+      "why": "The broker and all the console tools used in this path ship in that one archive and run on the JVM."
+    },
+    {
+      "do": "Generate a cluster id, format the log directory and start a single local broker from the downloaded files.",
+      "done_when": "The broker log prints that the Kafka server started and the terminal stays attached without errors.",
+      "n": 2,
+      "source": {
+        "title": "Quickstart | Apache Kafka",
+        "url": "https://kafka.apache.org/quickstart/#using-downloaded-files",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Using downloaded files"
+        }
+      },
+      "why": "A single local broker is enough to practise every concept in this lesson without any cloud account."
+    },
+    {
+      "do": "Read the Getting Started landing page to see which guides exist and where the quickstart sits among them.",
+      "done_when": "You can name the getting started guides and say which one each later step of this path draws on.",
+      "n": 3,
+      "source": {
+        "title": "Getting Started | Apache Kafka",
+        "url": "https://kafka.apache.org/43/getting-started/",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Getting Started | Apache Kafka"
+        }
+      },
+      "why": "Knowing the layout of the documentation saves time when a later step sends you back for an option or a concept."
+    }
+  ],
+  "steps": [
+    {
+      "do": "Create a first topic named quickstart-events and describe it with the topic tool.",
+      "done_when": "The describe output shows the topic name, its partition count, its replication factor and a leader for each partition.",
+      "n": 1,
+      "source": {
+        "title": "Quickstart | Apache Kafka",
+        "url": "https://kafka.apache.org/quickstart/#step-3-create-a-topic-to-store-your-events",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Step 3: Create a topic to store your events"
+        }
+      },
+      "why": "A topic is the named log that every producer and consumer in this path will share, so it must exist before anything else."
+    },
+    {
+      "do": "Write a handful of events into the topic with the console producer, one event per line.",
+      "done_when": "Each line you type is accepted without error and the producer waits for the next one.",
+      "n": 2,
+      "source": {
+        "title": "Quickstart | Apache Kafka",
+        "url": "https://kafka.apache.org/quickstart/#step-4-write-some-events-into-the-topic",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Step 4: Write some events into the topic"
+        }
+      },
+      "why": "Producing by hand shows that the producer only appends to the log and knows nothing about who will read it."
+    },
+    {
+      "do": "Run the console consumer with the from-beginning option in a second terminal and keep it open while you produce more events.",
+      "done_when": "The consumer prints every event written so far in order, and each new line typed in the producer appears within a second.",
+      "n": 3,
+      "source": {
+        "title": "Quickstart | Apache Kafka",
+        "url": "https://kafka.apache.org/quickstart/#step-5-read-the-events",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Step 5: Read the events"
+        }
+      },
+      "why": "Seeing old and new events arrive in order is the first proof that the broker stored them instead of handing them off and forgetting them."
+    },
+    {
+      "do": "Read the main concepts section and map events, topics, partitions, producers and consumers onto what you just ran.",
+      "done_when": "You can explain in your own words how an event key selects a partition and what ordering a consumer of that partition is promised.",
+      "n": 4,
+      "source": {
+        "title": "Introduction | Apache Kafka",
+        "url": "https://kafka.apache.org/intro/#main-concepts-and-terminology",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Main Concepts and Terminology"
+        }
+      },
+      "why": "The object model explains why ordering holds only inside one partition and why consumers track a position instead of deleting messages."
+    },
+    {
+      "do": "Create a second topic with three partitions using the partitions option of the topic tool, then describe it.",
+      "done_when": "The describe output lists three partitions, each with its own leader.",
+      "n": 5,
+      "source": {
+        "title": "Quickstart | Apache Kafka",
+        "url": "https://kafka.apache.org/quickstart/#step-3-create-a-topic-to-store-your-events",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Step 3: Create a topic to store your events"
+        }
+      },
+      "why": "Partitions are the unit of parallelism and of ordering, so you need a topic with more than one to see how work is spread."
+    },
+    {
+      "do": "Start two console consumers that share one group name on the three-partition topic, then a third consumer with a different group name, and produce events.",
+      "done_when": "Each event appears in exactly one of the two same-group consumers and also in the consumer of the other group.",
+      "n": 6,
+      "source": {
+        "title": "Quickstart | Apache Kafka",
+        "url": "https://kafka.apache.org/quickstart/#step-5-read-the-events",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Step 5: Read the events"
+        }
+      },
+      "why": "Consumers in one group split the partitions between them like workers on a queue, while a separate group reads the whole log independently from its own offsets."
+    },
+    {
+      "do": "Compare queue and log behaviour by stopping every consumer, then starting a new one with a fresh group name and the from-beginning option on the same topic.",
+      "done_when": "The new consumer prints all events that earlier consumers had already processed, and you can state which use cases need that replay.",
+      "n": 7,
+      "source": {
+        "title": "Uses | Apache Kafka",
+        "url": "https://kafka.apache.org/uses/#messaging",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Messaging"
+        }
+      },
+      "why": "A traditional queue would be empty after the first read, whereas the log keeps events so a new subscriber can replay them, which is the central trade-off of this lesson."
+    },
+    {
+      "do": "Reproduce a duplicate delivery by stopping a consumer partway through, restarting it from the beginning, and counting how often each event was printed.",
+      "done_when": "You have a list of events that were printed twice and can say what the consumer would need to change to get at-most-once or exactly-once processing instead.",
+      "n": 8,
+      "source": {
+        "title": "Introduction | Apache Kafka",
+        "url": "https://kafka.apache.org/intro/#main-concepts-and-terminology",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Main Concepts and Terminology"
+        }
+      },
+      "why": "Where the consumer position is recorded relative to the work decides between at-most-once, at-least-once and exactly-once, and replaying makes the at-least-once case visible."
+    },
+    {
+      "do": "Write a burst of several hundred events while every consumer of one group is stopped, then restart one consumer and watch it catch up.",
+      "done_when": "The restarted consumer prints the whole backlog in order without any event lost, and you can say how the backlog would be measured as lag.",
+      "n": 9,
+      "source": {
+        "title": "Quickstart | Apache Kafka",
+        "url": "https://kafka.apache.org/quickstart/#step-4-write-some-events-into-the-topic",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Step 4: Write some events into the topic"
+        }
+      },
+      "why": "The gap between the newest event and the group position is consumer lag, and a broker that absorbs the burst is how a log gives backpressure relief to a slow consumer."
+    },
+    {
+      "do": "Create a retry topic and a dead letter topic, then move one event you declare as failing from the main topic into each with the console tools.",
+      "done_when": "All three topics appear in the topic list and a consumer on the dead letter topic prints the failed event.",
+      "n": 10,
+      "source": {
+        "title": "Quickstart | Apache Kafka",
+        "url": "https://kafka.apache.org/quickstart/#step-3-create-a-topic-to-store-your-events",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Step 3: Create a topic to store your events"
+        }
+      },
+      "why": "Kafka has no built-in dead letter queue for plain consumers, so retries and poison messages are handled by routing them to further topics that you design."
+    },
+    {
+      "do": "Terminate the environment, delete its local data, and start the broker again from the JVM based Docker image pinned to one exact version, then repeat the topic, produce and consume steps.",
+      "done_when": "The container reports the broker started, the old topics are gone, and the recreated topic accepts and returns events as before.",
+      "n": 11,
+      "source": {
+        "title": "Quickstart | Apache Kafka",
+        "url": "https://kafka.apache.org/quickstart/#using-jvm-based-apache-kafka-docker-image",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Using JVM Based Apache Kafka Docker Image"
+        }
+      },
+      "why": "A pinned container image makes the whole exercise reproducible on any laptop or CI runner, which is the closest local stand-in for a managed deployment."
+    }
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Quickstart | Apache Kafka",
+      "url": "https://kafka.apache.org/quickstart/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Step 1: Get Kafka / Using downloaded files / Step 3: Create a topic to store your events / Step 4: Write some events into the topic / Step 5: Read the events / Using JVM Based Apache Kafka Docker Imag"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Getting Started | Apache Kafka",
+      "url": "https://kafka.apache.org/43/getting-started/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Getting Started | Apache Kafka"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Introduction | Apache Kafka",
+      "url": "https://kafka.apache.org/intro/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Main Concepts and Terminology"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Uses | Apache Kafka",
+      "url": "https://kafka.apache.org/uses/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Messaging"
+      }
+    }
+  ],
+  "verified": {
+    "checked": "2026-10-13",
+    "by": "gigai learning pipeline link check (karthik446/gigai-learning-center 4c0cb514)"
+  },
+  "provenance": {
+    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
+    "generated_on": "2026-10-13",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-13",
+      "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    }
+  ],
+  "kind": "tool"
+}

@@ -1,0 +1,319 @@
+{
+  "schema_version": "learning-center-practice:1",
+  "id": "practice/sd-security-basics",
+  "version": 1,
+  "lesson": "sd-security-basics",
+  "tool": "Keycloak",
+  "tool_key": null,
+  "why_this_tool": "Keycloak runs in one container on a laptop and puts OpenID Connect login, token validation, role and policy based authorization, key rotation and TLS configuration in one place, so every control in the lesson can be placed and tested on a real trust boundary.",
+  "alternatives": "Auth0 and Okta are hosted identity services with no server to run but paid tiers and less control; Dex is a lightweight OpenID Connect broker without user management or fine-grained authorization; Ory Hydra with Kratos splits the token server and identity store into separate services you compose yourself; Open Policy Agent handles only the policy decision and needs a separate identity provider; HashiCorp Vault and AWS KMS cover secrets and key management rather than login.",
+  "setup": [
+    {
+      "do": "Install a container runtime such as Docker or Podman and confirm the prerequisites listed for the Keycloak container guide.",
+      "done_when": "The container runtime reports its version and can pull an image.",
+      "n": 1,
+      "source": {
+        "title": "Docker - Keycloak",
+        "url": "https://www.keycloak.org/getting-started/getting-started-docker#_before_you_start",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Before you start"
+        }
+      },
+      "why": "The whole path runs Keycloak as a local container, so nothing else has to be installed and no paid cloud or GPU is needed."
+    },
+    {
+      "do": "Start the Keycloak container in development mode with a bootstrap admin username and password.",
+      "done_when": "The container log shows that Keycloak started and is listening on the local port.",
+      "n": 2,
+      "source": {
+        "title": "Docker - Keycloak",
+        "url": "https://www.keycloak.org/getting-started/getting-started-docker#_start_keycloak",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Start Keycloak"
+        }
+      },
+      "why": "Development mode gives a working server in seconds with relaxed defaults, which is the baseline you will later harden."
+    },
+    {
+      "do": "Log in to the Admin Console with the bootstrap admin account.",
+      "done_when": "The Admin Console opens and shows the master realm.",
+      "n": 3,
+      "source": {
+        "title": "Docker - Keycloak",
+        "url": "https://www.keycloak.org/getting-started/getting-started-docker#_log_in_to_the_admin_console",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Log in to the Admin Console"
+        }
+      },
+      "why": "The Admin Console is where realms, clients, roles and keys are managed, and seeing it confirms the admin credentials work."
+    }
+  ],
+  "steps": [
+    {
+      "do": "Create a new realm and a test user in it, leaving the master realm for administration only.",
+      "done_when": "The realm selector lists your new realm and the test user can sign in to that realm's Account Console.",
+      "n": 1,
+      "source": {
+        "title": "Docker - Keycloak",
+        "url": "https://www.keycloak.org/getting-started/getting-started-docker#_create_a_realm",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Create a realm"
+        }
+      },
+      "why": "A realm is the first trust boundary in Keycloak: users, clients and keys in one realm are isolated from another. Keeping application users out of the master realm is a least privilege decision made on day one."
+    },
+    {
+      "do": "Write a one-page STRIDE threat model of your realm that lists every OpenID Connect endpoint as a trust boundary, who calls it, and what an attacker could spoof, tamper with or disclose there.",
+      "done_when": "You have a table with one row per endpoint, each with a caller, at least one named threat and the control you plan to apply.",
+      "n": 2,
+      "source": {
+        "title": "Securing applications and services with OpenID Connect - Keycloak",
+        "url": "https://www.keycloak.org/securing-apps/oidc-layers#_endpoints",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Endpoints"
+        }
+      },
+      "why": "Each endpoint is a place where a browser, an application or an API crosses into Keycloak, so the endpoint list is a ready-made map of boundaries. Naming the threats first tells you which controls the later steps must put in place."
+    },
+    {
+      "do": "Register an OpenID Connect client in your realm and run the authorization code flow end to end with the test user.",
+      "done_when": "After logging in you hold an ID token and an access token, and the decoded ID token names your test user and your realm as issuer.",
+      "n": 3,
+      "source": {
+        "title": "Securing applications and services with OpenID Connect - Keycloak",
+        "url": "https://www.keycloak.org/securing-apps/oidc-layers#_authorization_code",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Authorization code"
+        }
+      },
+      "why": "The authorization code flow is the standard way a design answers who the caller is, and it keeps user credentials away from the application. Seeing the code and token exchange makes the roles of browser, client and identity provider concrete."
+    },
+    {
+      "do": "Query the realm certificate endpoint and validate the signature, issuer, audience and expiry of the access token from the previous step.",
+      "done_when": "A valid token passes your check, and a token with one altered character or an expired token is rejected.",
+      "n": 4,
+      "source": {
+        "title": "Securing applications and services with OpenID Connect - Keycloak",
+        "url": "https://www.keycloak.org/securing-apps/oidc-layers#_validating_access_tokens",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Validating access tokens"
+        }
+      },
+      "why": "An API must verify a JSON Web Token itself and never trust it because it parses. This is the control for spoofing and tampering at the boundary between the application and the API."
+    },
+    {
+      "do": "Configure the client with exact redirect URIs and no wildcards, then run a login request that uses an unregistered redirect address.",
+      "done_when": "Login with the registered address succeeds and the request with the unregistered address is refused with an invalid redirect error.",
+      "n": 5,
+      "source": {
+        "title": "Securing applications and services with OpenID Connect - Keycloak",
+        "url": "https://www.keycloak.org/securing-apps/oidc-layers#_redirect_uris",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Redirect URIs"
+        }
+      },
+      "why": "The redirect URI is attacker-controlled input to the login flow, and a loose pattern lets authorization codes leak to another site. Strict input validation at this boundary is one of the cheapest controls in the design."
+    },
+    {
+      "do": "Enable authorization services on a confidential client so that it acts as a resource server.",
+      "done_when": "The client shows an Authorization tab with default resource, policy and permission entries.",
+      "n": 6,
+      "source": {
+        "title": "Authorization Services Guide",
+        "url": "https://www.keycloak.org/docs/26.8.1/authorization_services/#_resource_server_enable_authorization",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Enabling authorization services"
+        }
+      },
+      "why": "Authentication says who the caller is; a resource server with its own policies decides what that caller may do. Centralising that decision keeps permission logic out of scattered application code."
+    },
+    {
+      "do": "Create a resource with scopes, two realm roles and a role-based policy that grants only one role access, then evaluate it for a user in each role.",
+      "done_when": "The evaluation result shows permit for the user with the required role and deny for the user without it.",
+      "n": 7,
+      "source": {
+        "title": "Authorization Services Guide",
+        "url": "https://www.keycloak.org/docs/26.8.1/authorization_services/#_policy_rbac",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Role-based policy"
+        }
+      },
+      "why": "Least privilege means each role gets only the scopes it needs and everything else is denied by default. Evaluating both users proves the policy denies as well as permits."
+    },
+    {
+      "do": "Configure a rotation of the realm signing key by adding a generated key pair with higher priority and making the old key passive, then compare the key id in tokens issued before and after.",
+      "done_when": "A new token carries the new key id, a token issued before the rotation still validates, and the certificate endpoint lists both keys.",
+      "n": 8,
+      "source": {
+        "title": "Server Administration Guide",
+        "url": "https://www.keycloak.org/docs/latest/server_admin/index.html#rotating-keys",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Rotating keys"
+        }
+      },
+      "why": "Signing keys are the secret that every token's trust rests on, so a design needs a way to replace them without logging everyone out. Passive keys keep old tokens verifiable while new tokens use the new key."
+    },
+    {
+      "do": "Run an export of the resource server's authorization configuration to a file, change a policy in the console, and compare the new export with the saved one.",
+      "done_when": "You have two exported files and the difference between them shows exactly the policy change you made.",
+      "n": 9,
+      "source": {
+        "title": "Authorization Services Guide",
+        "url": "https://www.keycloak.org/docs/26.8.1/authorization_services/#exporting-a-configuration-file",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Exporting a configuration file"
+        }
+      },
+      "why": "Authorization rules that live only in a console cannot be reviewed or reproduced. An exported file can be kept under version control and diffed like any other design artefact."
+    },
+    {
+      "do": "Create a dedicated client with a service account that has only the admin roles it needs, and run an Admin REST API call with its token to list the clients of your realm.",
+      "done_when": "The call returns the realm's client list using a client credentials token, and a call outside the granted roles is rejected as forbidden.",
+      "n": 10,
+      "source": {
+        "title": "Server Developer Guide",
+        "url": "https://www.keycloak.org/docs/26.8.1/server_development/#authenticating-with-a-service-account",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Authenticating with a service account"
+        }
+      },
+      "why": "Automation and pipelines should never use a human admin password. A narrowly scoped service account makes scripted changes repeatable and limits the damage if its secret leaks."
+    },
+    {
+      "do": "Start Keycloak in production mode on your laptop with a hostname and a locally generated TLS certificate instead of development mode.",
+      "done_when": "The server answers only over HTTPS with your certificate and plain HTTP access to the login page no longer works.",
+      "n": 11,
+      "source": {
+        "title": "Configuring Keycloak - Keycloak",
+        "url": "https://www.keycloak.org/server/configuration#_starting_keycloak_in_production_mode",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Starting Keycloak in production mode"
+        }
+      },
+      "why": "Production mode refuses to start without TLS and a hostname, which shows the secure defaults a real deployment enforces. Tokens and passwords must never cross a boundary in clear text."
+    },
+    {
+      "do": "Create an optimized Keycloak build, then start the server from it using the optimized flag while supplying the database and keystore passwords from a Java KeyStore file rather than the command line.",
+      "done_when": "The server starts from the optimized build without a rebuild step, no password appears in the start command, and login to your realm still works over HTTPS.",
+      "n": 12,
+      "source": {
+        "title": "Configuring Keycloak - Keycloak",
+        "url": "https://www.keycloak.org/server/configuration#_creating_an_optimized_keycloak_build",
+        "verified": {
+          "checked": "2026-10-13",
+          "http": 200,
+          "section_found": "Creating an optimized Keycloak build"
+        }
+      },
+      "why": "A pinned, pre-built server with secrets kept out of process arguments and shell history is the shape a production deployment takes. It makes startup reproducible and removes the easiest way to leak credentials."
+    }
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Docker - Keycloak",
+      "url": "https://www.keycloak.org/getting-started/getting-started-docker",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Before you start / Start Keycloak / Log in to the Admin Console / Create a realm"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Securing applications and services with OpenID Connect - Keycloak",
+      "url": "https://www.keycloak.org/securing-apps/oidc-layers",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Endpoints / Authorization code / Validating access tokens / Redirect URIs"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Authorization Services Guide",
+      "url": "https://www.keycloak.org/docs/26.8.1/authorization_services/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Enabling authorization services / Role-based policy / Exporting a configuration file"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Server Administration Guide",
+      "url": "https://www.keycloak.org/docs/latest/server_admin/index.html",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Rotating keys"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Server Developer Guide",
+      "url": "https://www.keycloak.org/docs/26.8.1/server_development/",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Authenticating with a service account"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Configuring Keycloak - Keycloak",
+      "url": "https://www.keycloak.org/server/configuration",
+      "verified": {
+        "checked": "2026-10-13",
+        "http": 200,
+        "section_found": "Starting Keycloak in production mode / Creating an optimized Keycloak build"
+      }
+    }
+  ],
+  "verified": {
+    "checked": "2026-10-13",
+    "by": "gigai learning pipeline link check (karthik446/gigai-learning-center 4c0cb514)"
+  },
+  "provenance": {
+    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
+    "generated_on": "2026-10-13",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-13",
+      "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    }
+  ],
+  "kind": "tool"
+}

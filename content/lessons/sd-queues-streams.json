@@ -1,0 +1,146 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "sd-queues-streams",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Queues, streams and delivery guarantees",
+  "area": "software",
+  "primary_key": "message-queues-and-streams",
+  "secondary_keys": [
+    "kafka",
+    "batch-and-real-time",
+    "distributed-systems"
+  ],
+  "keys": [
+    "message-queues-and-streams",
+    "kafka",
+    "batch-and-real-time",
+    "distributed-systems"
+  ],
+  "summary": "Messaging decouples the service that produces work from the services that process it, in time and in capacity. Queues hand each message to one worker and forget it, while streams keep an ordered, replayable log that many independent consumers read at their own pace. The guarantees that matter are ordering, durability and how many times a message can be processed, and each is a deliberate configuration choice.",
+  "detail": [],
+  "in_practice": "Teams decide first whether the payload is a command for one worker or an event many systems will read, then pick a queue service or a Kafka topic accordingly. For Kafka they choose the record key from the ordering requirement, set a replication factor of three with acks from all in-sync replicas, enable the idempotent producer and agree on a schema with compatibility rules. Consumers are written to be idempotent and commit offsets after processing. Dashboards show consumer lag and dead letter volume per group, with alerts on lag growth, and runbooks describe how to replay a topic or reset offsets.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "A message queue holds tasks until a worker takes one, processes it and acknowledges it, after which the broker deletes it. Several workers can pull from the same queue, which is the competing consumers pattern: throughput scales by adding workers, and the queue absorbs bursts so the producer is not blocked. A log based stream, as in Kafka, instead appends events to a durable ordered log and keeps them for a retention period regardless of consumption. Consumers track their own position, so new consumers can be added later and can replay history.",
+          "heading": "Two models"
+        },
+        {
+          "body": "Choose a queue for work distribution: jobs, emails, image processing, where each task is independent, per message acknowledgement and redelivery matter, and order usually does not. Choose a stream when events are facts that several systems need, when order per entity matters, or when replay is valuable for rebuilding state and backfilling a new consumer. A stream can act as a queue through consumer groups, but per message retry and delay are more awkward there because position is a single offset per partition.",
+          "heading": "When to use which"
+        }
+      ],
+      "id": "queue-vs-log",
+      "title": "Queues versus logs"
+    },
+    {
+      "body": [
+        {
+          "body": "A Kafka topic is split into partitions, each an ordered append only log stored on brokers and replicated for fault tolerance. Each record gets an offset, its position in the partition. Producers choose the partition, normally by hashing the record key, so all events with the same key land in the same partition and stay in order. Order is guaranteed within a partition only, never across the topic. The key is therefore a design decision: use the entity whose events must be ordered, such as an order id or account id.",
+          "heading": "How a stream scales"
+        },
+        {
+          "body": "Consumers that share a group id divide the partitions among themselves, so each partition is read by exactly one member of the group at a time. That gives parallelism up to the partition count; extra consumers sit idle. Different groups read the same topic independently, each with its own committed offsets. When a member joins or dies, the group rebalances and partitions are reassigned, and the new owner resumes from the last committed offset. Partition count caps parallelism and is hard to change later without affecting key to partition mapping.",
+          "heading": "Consumer groups"
+        }
+      ],
+      "id": "partitions-offsets-groups",
+      "title": "Partitions, offsets and consumer groups"
+    },
+    {
+      "body": [
+        {
+          "body": "The guarantee comes from the order of processing and acknowledging. Acknowledge or commit the offset first, then process: a crash in between loses the message, giving at-most-once. Process first, then acknowledge: a crash in between causes redelivery, giving at-least-once with possible duplicates. At-least-once is the practical default, because lost messages are usually worse than duplicates. On the producer side the same choice exists: a producer that retries after a timeout may write the same message twice unless the broker can detect the duplicate.",
+          "heading": "The three guarantees"
+        },
+        {
+          "body": "Kafka offers two mechanisms. The idempotent producer attaches a producer id and sequence numbers so the broker discards retried duplicates within a partition. Transactions let a producer write to several partitions and commit consumer offsets atomically, so a read, process, write loop inside Kafka takes effect once; consumers must read with isolation level read committed. This covers Kafka to Kafka flows. Any side effect outside Kafka, such as a database write or an API call, still needs an idempotent consumer, typically by recording a message id or using an upsert.",
+          "heading": "Exactly-once in Kafka"
+        }
+      ],
+      "id": "delivery-guarantees",
+      "title": "At-most-once, at-least-once and exactly-once"
+    },
+    {
+      "body": [
+        {
+          "body": "A broker hides overload instead of removing it: if consumers are slower than producers, the backlog grows. On a queue the signal is queue depth and message age; on a stream it is consumer lag, the gap between the latest offset and the committed offset. Scale consumers on these signals, and set retention so that lag cannot outrun it. A message that always fails, a poison message, will block a partition or cycle forever in a queue. Retry a bounded number of times with backoff, then move it to a dead letter queue or topic with the error attached, alert on it and provide a way to replay after the fix.",
+          "heading": "Operating consumers"
+        }
+      ],
+      "id": "lag-retries-dead-letters",
+      "title": "Backpressure, lag, retries and dead letters"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n    P1[Producer] -->|key hash| T0[Partition 0]\n    P1 -->|key hash| T1[Partition 1]\n    P1 -->|key hash| T2[Partition 2]\n    T0 --> A1[Group A consumer 1]\n    T1 --> A1\n    T2 --> A2[Group A consumer 2]\n    T0 --> B1[Group B consumer]\n    T1 --> B1\n    T2 --> B1\n    A2 -->|after retries| D[Dead letter topic]"
+  },
+  "code": [
+    {
+      "code": "# create a topic with 6 partitions, then inspect consumer lag\nbin/kafka-topics.sh --create --topic orders --partitions 6 \\\n  --replication-factor 3 --bootstrap-server HOST:9092\nbin/kafka-consumer-groups.sh --describe --group billing \\\n  --bootstrap-server HOST:9092",
+      "lang": "bash"
+    },
+    {
+      "code": "# at-least-once consumer with an idempotent handler\nfor msg in consumer:                      # auto commit disabled\n    event_id = msg.headers_dict['event-id']\n    with db.transaction() as tx:\n        if tx.seen(event_id):             # duplicate delivery\n            continue\n        apply_event(tx, msg.value)\n        tx.mark_seen(event_id)\n    consumer.commit()                     # commit after processing",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "Apache Kafka",
+    "RabbitMQ",
+    "Amazon SQS",
+    "Amazon Kinesis",
+    "Google Pub/Sub",
+    "Apache Pulsar",
+    "NATS",
+    "Azure Service Bus",
+    "Schema Registry"
+  ],
+  "related": [
+    "sd-outbox-cdc",
+    "sd-idempotency-retries",
+    "sd-replication-partitioning",
+    "sd-rate-limiting-overload",
+    "sd-observability",
+    "sd-capacity"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Kafka documentation",
+      "url": "https://kafka.apache.org/documentation/"
+    },
+    {
+      "kind": "doc",
+      "title": "Kafka introduction",
+      "url": "https://kafka.apache.org/intro/"
+    },
+    {
+      "kind": "article",
+      "title": "Exactly-once semantics in Apache Kafka (Confluent)",
+      "url": "https://www.confluent.io/blog/exactly-once-semantics-are-possible-heres-how-apache-kafka-does-it/"
+    },
+    {
+      "kind": "doc",
+      "title": "Competing Consumers pattern (Azure Architecture Center)",
+      "url": "https://learn.microsoft.com/en-us/azure/architecture/patterns/competing-consumers"
+    }
+  ],
+  "practice": "practice/sd-queues-streams",
+  "provenance": {
+    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
+    "generated_on": "2026-10-13",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-13",
+      "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    }
+  ]
+}
