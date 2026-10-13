@@ -138,6 +138,23 @@ SOURCE = {"kind": str, "title": str, "url": str, "verified?": VERIFIED}
 PROVENANCE = {"generated_by": str, "generated_on": str, "reviewed_by": (str, N), "reviewed_on": (str, N)}
 CHANGELOG = [{"version": int, "date": str, "change": str}]
 STEP = {"n": int, "do": str, "done_when": str, "why?": str, "source": {"title": str, "url": str, "verified?": VERIFIED}}
+# A design exercise (kind "design-exercise", outline section 6.1): the prompt, the numbers, the reference answer in fixed
+# sections with one Mermaid diagram, the rubric by level, the two frames and the depth notes. Written by hand, not by the pipeline.
+SECTIONS = [{"heading?": str, "body": str}]
+EXERCISE = {
+    "prompt": str,
+    "constraints": SECTIONS,
+    "clarifying_questions": [{"question": str, "answer": str}],
+    "reference_answer": [{"id": str, "title": str, "body": SECTIONS, "diagram?": {"source": str, "legend?": str},
+                          "steps?": [str], "table?": {"columns": [str], "rows": [[str]]}}],
+    "rubric": {"L1": [str], "L2": [str], "L3": [str]},
+    "interview_frame": [{"time": str, "text": str}],
+    "design_doc_frame": [{"section": str, "text": str}],
+    "depth_notes": {"L1": str, "L2": str, "L3": str},
+}
+EXERCISE_SECTION_IDS = ["requirements-and-estimates", "high-level-design", "data-model", "core-flow", "scaling-and-the-bottleneck",
+                        "failure-modes", "trade-offs", "at-10x"]
+DIAGRAM_START = re.compile(r"^\s*(flowchart|graph)\s")
 
 SCHEMAS = {
     "lesson": {
@@ -147,6 +164,7 @@ SCHEMAS = {
         "subtopics": [{"id": str, "title": str, "body": [{"heading?": str, "body": str}]}],
         "diagram": ({"source": str}, N), "code": [{"lang": str, "code": str}], "technologies": [str], "related": [str],
         "sources": [SOURCE], "practice": (str, N), "provenance": PROVENANCE, "changelog": CHANGELOG,
+        "kind?": str, "exercise?": EXERCISE,
     },
     "practice": {
         "schema_version": str, "id": str, "version": int, "lesson": str, "tool": str, "tool_key": (str, N),
@@ -286,10 +304,15 @@ def validate(docs: dict) -> list[str]:
         ids = [s["id"] for s in l["subtopics"]]
         if len(set(ids)) != len(ids) or not all(KEBAB.match(i) for i in ids):
             out.append(f"{w}: subtopic ids must be unique kebab-case")
-        if not l["subtopics"]:
+        ex = l.get("kind") == "design-exercise"
+        if "kind" in l and not ex:
+            out.append(f"{w}: unknown kind {l['kind']!r}")
+        if not l["subtopics"] and not ex:
             out.append(f"{w}: no subtopics")
+        if ex:
+            out.extend(f"{w}: {e}" for e in exercise_checks(l))
         for r in l["related"]:
-            if r not in lessons:
+            if r not in lessons and not (ex and r in sd_ids):
                 out.append(f"{w}: related names unknown lesson {r}")
         if (l["practice"] is None) != (lid not in practice):
             out.append(f"{w}: 'practice' pointer and practice file disagree")
@@ -355,13 +378,15 @@ def validate(docs: dict) -> list[str]:
         if (f["status"] == "published") != (f["id"] in families):
             out.append(f"families/index.json: {f['id']} status {f['status']} does not match its file")
     mod = docs["modules/system-design.json"]
-    if len(mod["lessons"]) != 40 or any(l["status"] != "planned" or not l["id"].startswith("sd-") for l in mod["lessons"]):
-        out.append("modules/system-design.json: expected 40 planned sd- lessons")
+    if len(mod["lessons"]) != 40 or any(l["status"] not in ("planned", "published") or not l["id"].startswith("sd-") for l in mod["lessons"]):
+        out.append("modules/system-design.json: expected 40 sd- lessons, each planned or published")
     if len({l["id"] for l in mod["lessons"]}) != len(mod["lessons"]):
         out.append("modules/system-design.json: duplicate lesson id")
     for l in mod["lessons"]:
-        if l["id"] in lessons:
+        if l["status"] == "planned" and l["id"] in lessons:
             out.append(f"modules/system-design.json: {l['id']} is planned but a lesson file exists")
+        if l["status"] == "published" and (l["id"] not in lessons or lessons[l["id"]]["status"] != "published"):
+            out.append(f"modules/system-design.json: {l['id']} is published but no published lesson file exists")
     for r in docs["redirects.json"]["redirects"]:
         m = re.match(r"^/learn/lessons/([a-z0-9-]+)/$", r["to"])
         if not m or m.group(1) not in lessons:
@@ -416,6 +441,43 @@ class _Scan(HTMLParser):
 
 CSS_URL = re.compile(r"(?i)url\(\s*['\"]?(?:https?:)?//|@import")
 TRACKERS = re.compile(r"(?i)google-analytics|googletagmanager|gtag\(|plausible\.io|cloudflareinsights|static\.cloudflareinsights|beacon\.min\.js|fbq\(|hotjar|segment\.com|matomo|piwik|mixpanel|sentry\.io|doubleclick")
+
+
+def exercise_checks(l: dict) -> list[str]:
+    """The rules of a design exercise beyond its shape: the eight sections in order, one flowchart, 8 to 12 rubric lines, 3+ sources."""
+    out: list[str] = []
+    if "exercise" not in l:
+        return ["kind is design-exercise but there is no 'exercise' object"]
+    ex = l["exercise"]
+    if not l["summary"].strip() or not ex["prompt"].strip():
+        out.append("summary and exercise.prompt must not be empty")
+    ids = [sec["id"] for sec in ex["reference_answer"]]
+    if ids != EXERCISE_SECTION_IDS:
+        out.append(f"reference_answer sections must be exactly {EXERCISE_SECTION_IDS} in that order, got {ids}")
+    diagrams = [sec for sec in ex["reference_answer"] if sec.get("diagram")]
+    if len(diagrams) != 1 or diagrams[0]["id"] != "high-level-design":
+        out.append("exactly one diagram, in the high-level-design section")
+    for sec in diagrams:
+        if not DIAGRAM_START.match(sec["diagram"]["source"]):
+            out.append("the diagram must be a Mermaid flowchart (source starts with 'flowchart' or 'graph')")
+        if re.search(r"(?i)^\s*C4", sec["diagram"]["source"]) or "%%{" in sec["diagram"]["source"]:
+            out.append("no C4 syntax and no Mermaid directives in a diagram")
+    for sec in ex["reference_answer"]:
+        t = sec.get("table")
+        if t and any(len(r) != len(t["columns"]) for r in t["rows"]):
+            out.append(f"section {sec['id']}: every table row must have {len(t['columns'])} cells")
+    if l["diagram"] is not None:
+        out.append("a design exercise carries its diagram inside the reference answer, not in 'diagram'")
+    n = sum(len(ex["rubric"][k]) for k in ("L1", "L2", "L3"))
+    if not 8 <= n <= 12:
+        out.append(f"rubric has {n} lines; 8 to 12 required")
+    if not 5 <= len(ex["clarifying_questions"]) <= 8:
+        out.append(f"{len(ex['clarifying_questions'])} clarifying questions; 5 to 8 required")
+    if len(l["sources"]) < 3:
+        out.append("a design exercise cites at least 3 sources")
+    if len(ex["interview_frame"]) < 3 or len(ex["design_doc_frame"]) < 3:
+        out.append("both frames need at least 3 entries")
+    return out
 
 
 def scan_built(site: Path) -> list[str]:
