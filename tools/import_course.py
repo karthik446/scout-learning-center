@@ -67,6 +67,28 @@ def key_map(keys: dict) -> dict[tuple[str, str], str]:
     return m
 
 
+def public_keys(seed: dict, kmap: dict) -> dict:
+    """The key list as the site publishes it: the seed's analysis fields (counts, merge reasons, the raw
+    phrase-under-different-ids table, which course used a key) stay in the spike; the public file keeps what a
+    lesson, a pathway or a later import needs."""
+    out = []
+    for k in seed["keys"]:
+        former = {c: [i for i in ids if i != k["key"]] for c, ids in k.get("former_ids", {}).items()}
+        former = {c: ids for c, ids in former.items() if ids}
+        e = {f: k[f] for f in ("key", "display", "area", "category", "technical", "aliases", "parent")}
+        e["former_ids"] = former
+        if k.get("category_note"):
+            e["category_note"] = k["category_note"]
+        out.append(e)
+    # the public file must map every old id exactly as the seed did
+    check = {(c, i): e["key"] for e in out for c, ids in e["former_ids"].items() for i in ids}
+    check.update({("*", e["key"]): e["key"] for e in out})
+    for (c, i), key in kmap.items():
+        if i != key and check.get((c, i)) != key:
+            raise SystemExit(f"refused: public key list loses the mapping {c}:{i} -> {key}")
+    return {"schema_version": "learning-center-concept-keys:1", "version": 1, "areas": seed["areas"], "keys": out}
+
+
 def map_ids(course: str, ids: list[str], kmap: dict, where: str) -> list[str]:
     out: list[str] = []
     for i in ids:
@@ -98,10 +120,9 @@ def main() -> int:
     content: Path = args.content
 
     keys = load(args.keys)
-    keys["schema_version"] = "learning-center-concept-keys:1"
-    keys["version"] = 1
+    kmap = key_map(keys)  # built from the full seed file (ids_in_course and former_ids), before the analysis fields go
+    keys = public_keys(keys, kmap)
     key_by = {k["key"]: k for k in keys["keys"]}
-    kmap = key_map(keys)
     dump(content / "keys/concept-keys.json", keys)
 
     lesson_keys: dict[str, tuple[str, set[str], str]] = {}  # lesson id -> (course, keys, title)
