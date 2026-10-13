@@ -406,6 +406,10 @@ def sim_text_checks(w: str, sim: dict, sc: dict, gold: dict) -> list[str]:
         for x in r.get("knobs", {}).values():
             knob_values |= {float(x), float(x) * 100}
     claims = sim["sim_claims"]
+    spoken = " ".join([sim["caption"], *sim["steps"]])
+    for c in claims:
+        if c["text"] not in spoken:
+            out.append(f"{w}: claim {c['text']!r} does not appear in the caption or the steps")
     for c in claims:
         row = rows.get(c["assertion"])
         if c["assertion"] == "defaults" or row is None:
@@ -470,6 +474,7 @@ SCHEMAS = {
         "kind?": str, "exercise?": EXERCISE, "sim?": SIM,
     },
     "scenario": SCENARIO,
+    "sim-staging": {"lesson": str, "sim": SIM},
     "practice": {
         "schema_version": str, "id": str, "version": int, "lesson": str, "tool": str, "tool_key": (str, N),
         "why_this_tool": str, "alternatives": str, "setup": [STEP], "steps": [STEP], "sources": [SOURCE],
@@ -547,6 +552,8 @@ def kind_of(rel: str) -> str | None:
         return "lesson"
     if rel.startswith("scenarios/"):
         return "scenario"
+    if rel.startswith("sim-staging/"):  # the `sim` field of a lesson that is not in this tree yet, for the coordinator to apply
+        return "sim-staging"
     if rel.startswith("practice/"):
         return "practice"
     if rel.startswith("pathways/"):
@@ -582,6 +589,10 @@ def validate(docs: dict) -> list[str]:
             out.extend(written_checks(rel, doc))
         if kind == "scenario" and not errs:
             out.extend(scenario_checks(rel, doc))
+        if kind == "sim-staging" and not errs:
+            if Path(rel).stem != doc["lesson"]:
+                out.append(f"{rel}: file name does not match lesson {doc['lesson']}")
+            out.extend(sim_checks(doc["lesson"], doc, docs))
     if out:
         return out  # reference checks need well-formed documents
 
