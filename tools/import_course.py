@@ -5,6 +5,12 @@ Reads, never imports, the public package data of a released gigai:
     <gigai>/src/gigai/scout/data/learning/shipped/<role>/{catalog.json,course.json,paths/*.json}
 and writes content/lessons, content/practice, content/pathways, content/keys, content/merge-candidates.json.
 Every concept id of a lesson is mapped through the key list's id map (former_ids included); an unknown id is refused.
+
+A practice path has a ``kind``: ``tool`` (also when missing; the steps cited into one tool's documentation), ``case`` or
+``artifact`` (the written pages of gigai.scout.learning_case). A case or artifact file is written with its kind and its
+fields unchanged; an unknown kind, an unknown field, or a text with an address, a backtick or a company-looking name is refused.
+``--keys`` may also be the site's public key list (schema ``learning-center-concept-keys:1``): a concept id equal to one of its
+keys then maps to that key, which lets a later course be added to an existing content/.
 """
 
 from __future__ import annotations
@@ -14,6 +20,9 @@ import json
 import re
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import scan  # noqa: E402  (the checks of the public scan: reused for the written pages, never copied)
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_GIGAI = Path("/Users/kar/orca/workspaces/gigai/gigai-v0.1.11.10")
@@ -27,6 +36,11 @@ FAMILY = "software-engineering"
 # A lesson with no mapped key at all gets one by decision of record (REPORT-library 2.1).
 PRIMARY_OVERRIDE = {"design-docs-and-adrs": "design-and-code-reviews"}
 # 'N of M postings' sentences and the sentences of a personal course that speak of one machine's postings.
+# The keys a written page holds (gigai.scout.learning_shipped._CASE_PATH_KEYS / _ARTIFACT_PATH_KEYS).
+WRITTEN_KEYS = {
+    "case": ("concept", "kind", "scenario", "constraints", "deliverable", "reference_answer", "rubric", "common_mistakes"),
+    "artifact": ("concept", "kind", "artifact_name", "template", "reference_example", "review_checklist"),
+}
 POSTING_COUNT = re.compile(
     r"\b\d+\s+of\s+\d+\s+(?:stored\s+)?postings\b|\bnamed in your\b|\byour (?:own |stored |own stored )?postings\b", re.IGNORECASE
 )
@@ -100,6 +114,25 @@ def map_ids(course: str, ids: list[str], kmap: dict, where: str) -> list[str]:
     return out
 
 
+def written_page(lid: str, path: dict) -> dict:
+    """The fields of a case or artifact path as they are stored; refuses an unknown key or a text the scan would refuse."""
+    kind = path["kind"]
+    extra = sorted(set(path) - set(WRITTEN_KEYS[kind]))
+    missing = sorted(set(WRITTEN_KEYS[kind]) - set(path))
+    if extra or missing:
+        raise SystemExit(f"refused: practice {lid}: a {kind} page has unknown keys {extra} / lacks {missing}")
+    if path["concept"] != lid:
+        raise SystemExit(f"refused: practice {lid}: concept is {path['concept']!r}")
+    fields = {k: v for k, v in path.items() if k not in ("concept",)}
+    for where, key, value in scan.walk(fields):
+        if key in scan.URL_KEYS:
+            raise SystemExit(f"refused: practice {lid}: {where}: a {kind} page holds no address field")
+        if isinstance(value, str) and key != "kind":
+            for why in scan.written_text_problems(value):
+                raise SystemExit(f"refused: practice {lid}: {where}: {why}")
+    return fields
+
+
 def path_dates(path: dict) -> list[str]:
     dates = [s["source"]["verified"]["checked"] for k in ("setup", "steps") for s in path.get(k, []) if s.get("source", {}).get("verified")]
     dates += [s["verified"]["checked"] for s in path.get("sources", []) if s.get("verified")]
@@ -115,11 +148,13 @@ def main() -> int:
     ap.add_argument("--gigai", type=Path, default=DEFAULT_GIGAI)
     ap.add_argument("--keys", type=Path, default=DEFAULT_KEYS)
     ap.add_argument("--content", type=Path, default=ROOT / "content")
+    ap.add_argument("--courses", nargs="+", default=list(COURSES), help="course folder names under the shipped folder")
     args = ap.parse_args()
     shipped = args.gigai / "src/gigai/scout/data/learning/shipped"
     content: Path = args.content
 
     keys = load(args.keys)
+    public_list = keys.get("schema_version") == "learning-center-concept-keys:1"
     kmap = key_map(keys)  # built from the full seed file (ids_in_course and former_ids), before the analysis fields go
     keys = public_keys(keys, kmap)
     key_by = {k["key"]: k for k in keys["keys"]}
@@ -129,7 +164,9 @@ def main() -> int:
     seen_lessons: dict[str, str] = {}
     pathways = []
     n_lessons = n_practice = 0
-    for course_id in COURSES:
+    for course_id in args.courses:
+        if public_list:
+            kmap.update({(course_id, k["key"]): k["key"] for k in keys["keys"] if (course_id, k["key"]) not in kmap})
         folder = shipped / course_id
         course = load(folder / "course.json")
         catalog = load(folder / "catalog.json")
@@ -155,6 +192,8 @@ def main() -> int:
                     raise SystemExit(f"refused: lesson {lid} has no key")
                 primary, secondary = mapped[0], mapped[1:]
                 path = paths.get(lid)
+                if path is not None and path.get("kind", "tool") not in ("tool", "case", "artifact"):
+                    raise SystemExit(f"refused: practice {lid}: unknown kind {path.get('kind')!r}")
                 dates = path_dates(path) if path else []
                 generated_on = max(dates) if dates else FALLBACK_DATE
                 prov = {"generated_by": GENERATED_BY, "generated_on": generated_on, "reviewed_by": None, "reviewed_on": None}
@@ -187,7 +226,19 @@ def main() -> int:
                 dump(content / f"lessons/{lid}.json", out)
                 n_lessons += 1
                 lesson_keys[lid] = (course_id, set(mapped), lesson["title"])
-                if path:
+                if path and path.get("kind", "tool") != "tool":
+                    pr = {
+                        "schema_version": "learning-center-practice:1",
+                        "id": f"practice/{lid}",
+                        "version": 1,
+                        "lesson": lid,
+                        **written_page(lid, path),
+                        "provenance": prov,
+                        "changelog": [{"version": 1, "date": IMPORT_DATE, "change": "imported from the gigai shipped course " + course_id}],
+                    }
+                    dump(content / f"practice/{lid}.json", pr)
+                    n_practice += 1
+                elif path:
                     for field in ("why_this_tool", "alternatives", "tool"):
                         path[field] = strip_count_sentences(path.get(field) or "")
                         if POSTING_COUNT.search(path[field]):
@@ -210,6 +261,8 @@ def main() -> int:
                         "provenance": prov,
                         "changelog": [{"version": 1, "date": IMPORT_DATE, "change": "imported from the gigai 0.1.11.10 shipped course " + course_id}],
                     }
+                    if "kind" in path:
+                        pr["kind"] = path["kind"]
                     dump(content / f"practice/{lid}.json", pr)
                     n_practice += 1
                 n += 1
