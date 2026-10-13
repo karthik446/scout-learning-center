@@ -1,31 +1,208 @@
 {
-  "schema_version": "learning-center-sim:1",
-  "id": "sd-caching",
-  "title": "Cache-aside in front of one database",
-  "seed": 7, "warmup_s": 5, "window_s": 60, "scale_note": null,
-  "nodes": [
-    {"id": "client", "kind": "client", "label": "Clients", "x": 0, "y": 0,
-     "config": {"capacity": 1, "serviceMs": 0, "serviceCv": 0, "queueLimit": 0, "hitRate": 0, "errorRate": 0, "timeoutMs": 2000, "retries": 0, "rps": 200}},
-    {"id": "api", "kind": "service", "label": "API", "x": 1, "y": 0,
-     "config": {"capacity": 24, "instances": 1, "serviceMs": 8, "serviceCv": 0.5, "queueLimit": 128, "hitRate": 0, "errorRate": 0, "timeoutMs": 0, "retries": 0, "rps": 0}},
-    {"id": "cache", "kind": "cache", "label": "Cache", "x": 2, "y": 0,
-     "config": {"capacity": 64, "instances": 1, "serviceMs": 2, "serviceCv": 0.4, "queueLimit": 512, "hitRate": 0.85, "errorRate": 0, "timeoutMs": 0, "retries": 0, "rps": 0}},
-    {"id": "db", "kind": "db", "label": "Database", "x": 3, "y": 0,
-     "config": {"capacity": 4, "instances": 1, "serviceMs": 30, "serviceCv": 0.7, "queueLimit": 32, "hitRate": 0, "errorRate": 0, "timeoutMs": 0, "retries": 0, "rps": 0}}
-  ],
-  "edges": [
-    {"id": "e1", "from": "client", "to": "api", "weight": 1},
-    {"id": "e2", "from": "api", "to": "cache", "weight": 1},
-    {"id": "e3", "from": "cache", "to": "db", "weight": 1}
-  ],
-  "knobs": [
-    {"id": "rps", "label": "Offered load (requests per second)", "node": "client", "field": "rps", "min": 50, "max": 1200, "step": 10, "default": 200, "unit": "/s"},
-    {"id": "hit", "label": "Cache hit rate", "node": "cache", "field": "hitRate", "min": 0, "max": 1, "step": 0.05, "default": 0.85, "unit": ""}
-  ],
-  "readouts": ["p50", "p99", "offered", "goodput", "errors", "util:db", "queue:db", "util:cache"],
-  "assertions": [
-    {"id": "db-sees-misses", "knobs": {"rps": 200, "hit": 0.85}, "metric": "arrival:db", "op": "between", "value": [20, 45]},
-    {"id": "low-hit-overloads-db", "knobs": {"rps": 200, "hit": 0.3}, "metric": "util:db", "op": ">=", "value": 0.95},
-    {"id": "low-hit-sheds", "knobs": {"rps": 200, "hit": 0.3}, "metric": "errors", "op": ">", "value": 0.02}
-  ]
+ "schema_version": "learning-center-sim:1",
+ "id": "sd-caching",
+ "title": "Cache-aside in front of one database",
+ "seed": 7,
+ "warmup_s": 5,
+ "window_s": 60,
+ "scale_note": null,
+ "nodes": [
+  {
+   "id": "client",
+   "kind": "client",
+   "label": "Clients",
+   "x": 0,
+   "y": 0,
+   "config": {
+    "capacity": 1,
+    "serviceMs": 0,
+    "serviceCv": 0,
+    "queueLimit": 0,
+    "hitRate": 0,
+    "errorRate": 0,
+    "timeoutMs": 2000,
+    "retries": 0,
+    "rps": 200
+   }
+  },
+  {
+   "id": "api",
+   "kind": "service",
+   "label": "API",
+   "x": 1,
+   "y": 0,
+   "config": {
+    "capacity": 24,
+    "instances": 1,
+    "serviceMs": 8,
+    "serviceCv": 0.5,
+    "queueLimit": 128,
+    "hitRate": 0,
+    "errorRate": 0,
+    "timeoutMs": 0,
+    "retries": 0,
+    "rps": 0
+   }
+  },
+  {
+   "id": "cache",
+   "kind": "cache",
+   "label": "Cache",
+   "x": 2,
+   "y": 0,
+   "config": {
+    "capacity": 64,
+    "instances": 1,
+    "serviceMs": 2,
+    "serviceCv": 0.4,
+    "queueLimit": 512,
+    "hitRate": 0.85,
+    "errorRate": 0,
+    "timeoutMs": 0,
+    "retries": 0,
+    "rps": 0
+   }
+  },
+  {
+   "id": "db",
+   "kind": "db",
+   "label": "Database",
+   "x": 3,
+   "y": 0,
+   "config": {
+    "capacity": 4,
+    "instances": 1,
+    "serviceMs": 30,
+    "serviceCv": 0.7,
+    "queueLimit": 32,
+    "hitRate": 0,
+    "errorRate": 0,
+    "timeoutMs": 0,
+    "retries": 0,
+    "rps": 0
+   }
+  }
+ ],
+ "edges": [
+  {
+   "id": "e1",
+   "from": "client",
+   "to": "api",
+   "weight": 1
+  },
+  {
+   "id": "e2",
+   "from": "api",
+   "to": "cache",
+   "weight": 1
+  },
+  {
+   "id": "e3",
+   "from": "cache",
+   "to": "db",
+   "weight": 1
+  }
+ ],
+ "knobs": [
+  {
+   "id": "rps",
+   "label": "Offered load (requests per second)",
+   "node": "client",
+   "field": "rps",
+   "min": 50,
+   "max": 1200,
+   "step": 10,
+   "default": 200,
+   "unit": "/s"
+  },
+  {
+   "id": "hit",
+   "label": "Cache hit rate",
+   "node": "cache",
+   "field": "hitRate",
+   "min": 0,
+   "max": 1,
+   "step": 0.05,
+   "default": 0.85,
+   "unit": ""
+  }
+ ],
+ "readouts": [
+  "p50",
+  "p99",
+  "offered",
+  "goodput",
+  "errors",
+  "util:db",
+  "queue:db",
+  "util:cache"
+ ],
+ "assertions": [
+  {
+   "id": "db-sees-misses",
+   "knobs": {
+    "rps": 200,
+    "hit": 0.85
+   },
+   "metric": "arrival:db",
+   "op": "between",
+   "value": [
+    20,
+    45
+   ]
+  },
+  {
+   "id": "db-is-a-quarter-busy",
+   "knobs": {
+    "rps": 200,
+    "hit": 0.85
+   },
+   "metric": "util:db",
+   "op": "between",
+   "value": [
+    0.15,
+    0.35
+   ]
+  },
+  {
+   "id": "low-hit-overloads-db",
+   "knobs": {
+    "rps": 200,
+    "hit": 0.3
+   },
+   "metric": "util:db",
+   "op": ">=",
+   "value": 0.95
+  },
+  {
+   "id": "low-hit-sheds",
+   "knobs": {
+    "rps": 200,
+    "hit": 0.3
+   },
+   "metric": "errors",
+   "op": ">",
+   "value": 0.02
+  },
+  {
+   "id": "more-load-overloads-db",
+   "knobs": {
+    "rps": 1200,
+    "hit": 0.85
+   },
+   "metric": "util:db",
+   "op": ">=",
+   "value": 0.95
+  },
+  {
+   "id": "hit-rate-rescues-db",
+   "knobs": {
+    "rps": 1200,
+    "hit": 0.95
+   },
+   "metric": "util:db",
+   "op": "<",
+   "value": 0.6
+  }
+ ]
 }
