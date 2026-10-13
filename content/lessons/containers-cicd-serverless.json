@@ -1,0 +1,144 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "containers-cicd-serverless",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Containers, CI/CD and serverless delivery",
+  "area": "infra",
+  "primary_key": "devops",
+  "secondary_keys": [
+    "serverless",
+    "deployment"
+  ],
+  "keys": [
+    "devops",
+    "serverless",
+    "deployment"
+  ],
+  "summary": "Containers, pipelines and serverless functions are the packaging and delivery mechanics behind every customer deployment. The forward deployed twist is that the registry, the cluster and the pipeline often belong to someone else, so artifacts must be portable, configurable from outside, and promotable through a process you do not control. This lesson focuses on those constraints rather than on the basics of each tool.",
+  "detail": [],
+  "in_practice": "A team keeps a single release pipeline that produces signed images and a versioned chart, plus a small set of per-customer values files that contain no secrets. Each customer environment pulls a pinned release, either through the customer's own pipeline or through a GitOps controller in the cluster, and secrets come from the customer's secret store. Short event-driven pieces run as functions; the agent runtime and anything streaming or long-lived runs as containers. Release notes list configuration changes explicitly, because the person applying the upgrade is often a customer platform engineer.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "A customer will usually mirror your images into their own registry and scan them before anything runs. That makes image hygiene a delivery concern: small base images, no secrets in layers, a non-root user, a published software bill of materials, and signatures the customer can verify. Reference images by digest in manifests so the mirrored copy is provably the one you tested. Build for the CPU architecture they run, and keep the registry host a configurable value everywhere.",
+          "heading": "What changes when the registry is not yours"
+        }
+      ],
+      "id": "portable-images",
+      "title": "Images as the unit of delivery"
+    },
+    {
+      "body": [
+        {
+          "body": "Kubernetes gives you declarative deployment, service discovery, rollouts and self-healing, but a customer cluster arrives with its own admission policies, ingress controller, storage classes and quotas. Ship a chart whose values expose those choices: ingress class, storage class, resource requests, node selectors, image registry, and existing secret names. Request namespace-scoped permissions where possible, since cluster-wide roles and custom resource definitions trigger extra review. Test the chart on a locked-down cluster before the customer does.",
+          "heading": "A chart that survives someone else's cluster"
+        }
+      ],
+      "id": "kubernetes-packaging",
+      "title": "Packaging for a customer Kubernetes cluster"
+    },
+    {
+      "body": [
+        {
+          "body": "Split the pipeline at the artifact. Your side builds, tests, scans and signs a versioned release; the customer side pulls that release and promotes it through their environments under their change process. Authenticate pipelines to clouds with short-lived federated tokens rather than stored keys; GitHub Actions supports this through OpenID Connect. Where the customer forbids outside pipelines from touching their cluster, use a pull model: a GitOps controller inside the cluster watches a repository and applies changes, so nothing reaches in from outside.",
+          "heading": "Build once, promote through their gates"
+        }
+      ],
+      "id": "pipelines-across-boundary",
+      "title": "CI/CD across the vendor and customer boundary"
+    },
+    {
+      "body": [
+        {
+          "body": "AWS Lambda runs code without provisioning servers, scales with request volume and bills for compute time used, which suits webhook handlers, document-triggered ingestion steps and glue between customer systems. LLM workloads strain the model in specific ways: a function has a maximum execution time, so a long agent loop or a slow model call can be cut off; time spent waiting on a model response is billed; cold starts add latency to interactive paths; and streaming responses need a supported invocation mode. A common split is functions for event-driven edges and short tool calls, and containers or a durable workflow engine for long-running agent runs. Check the customer's concurrency quotas and whether functions must attach to a private network, since both change behavior.",
+          "heading": "Strengths and limits"
+        }
+      ],
+      "id": "serverless-for-llm-workloads",
+      "title": "Serverless delivery and where it fits LLM systems"
+    },
+    {
+      "body": [
+        {
+          "body": "The twelve-factor rule is that configuration, meaning everything likely to vary between deploys, lives in the environment and not in the code. The test is whether the codebase could be made public without leaking a credential. For multi-customer delivery this is the mechanism that lets one image serve every customer: model endpoint, model name, database address, feature flags and tenant identifiers are all injected at deploy time. Avoid named environment groups baked into code such as a per-customer settings file; they multiply with every deployment. Secrets come from the customer's secret manager through workload identity, mounted or fetched at start. Validate configuration at startup and fail fast with a clear message, because a person on the customer's team, not you, may be reading the log.",
+          "heading": "One artifact, many environments"
+        }
+      ],
+      "id": "config-per-environment",
+      "title": "Configuration and secrets per customer environment"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  SRC[Source repo] --> CI[Vendor CI: build, test, scan, sign]\n  CI --> REL[Versioned release: images by digest and chart]\n  REL --> MIR[Customer registry mirror and scan]\n  MIR --> GIT[Customer config repo with values]\n  GIT --> CD[GitOps controller in cluster]\n  CD --> NS[Application namespace]\n  SEC[Customer secret manager] --> NS"
+  },
+  "code": [
+    {
+      "code": "name: release\non:\n  push:\n    tags: ['v*']\npermissions:\n  id-token: write   # short-lived cloud credentials via OIDC\n  contents: read\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: aws-actions/configure-aws-credentials@v4\n        with:\n          role-to-assume: arn:aws:iam::ACCOUNT_ID:role/ci-release\n          aws-region: us-east-1\n      - run: docker build -t REGISTRY_HOST/app:${GITHUB_REF_NAME} .\n      - run: docker push REGISTRY_HOST/app:${GITHUB_REF_NAME}",
+      "lang": "yaml"
+    }
+  ],
+  "technologies": [
+    "Docker",
+    "Kubernetes",
+    "Helm",
+    "GitHub Actions",
+    "Argo CD",
+    "Flux",
+    "AWS Lambda",
+    "Google Cloud Run",
+    "Azure Functions",
+    "AWS Secrets Manager",
+    "HashiCorp Vault",
+    "Sigstore Cosign"
+  ],
+  "related": [
+    "cloud-deployments",
+    "networking-restricted-environments",
+    "agent-orchestration-durable-execution",
+    "reusable-platform-internal-tooling"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Docker: Get started",
+      "url": "https://docs.docker.com/get-started/"
+    },
+    {
+      "kind": "doc",
+      "title": "Kubernetes: Overview",
+      "url": "https://kubernetes.io/docs/concepts/overview/"
+    },
+    {
+      "kind": "doc",
+      "title": "GitHub Actions documentation",
+      "url": "https://docs.github.com/en/actions"
+    },
+    {
+      "kind": "doc",
+      "title": "What is AWS Lambda?",
+      "url": "https://docs.aws.amazon.com/lambda/latest/dg/welcome.html"
+    },
+    {
+      "kind": "guide",
+      "title": "The Twelve-Factor App: Config",
+      "url": "https://12factor.net/config"
+    }
+  ],
+  "practice": "practice/containers-cicd-serverless",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    }
+  ]
+}

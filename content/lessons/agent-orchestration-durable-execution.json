@@ -1,0 +1,131 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "agent-orchestration-durable-execution",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Agent orchestration and durable execution",
+  "area": "ai-ml",
+  "primary_key": "agent-orchestration",
+  "secondary_keys": [
+    "workflow-orchestration"
+  ],
+  "keys": [
+    "agent-orchestration",
+    "workflow-orchestration"
+  ],
+  "summary": "Orchestration decides which agent or step runs next and what context it receives; durable execution makes sure a long run survives crashes, deploys and rate limits without losing or repeating work. Agent runs are long, expensive and stateful, so a failure halfway through cannot simply restart from the top. The lesson covers multi-agent coordination patterns, then the workflow engines and checkpointing frameworks that give those patterns reliable state.",
+  "detail": [],
+  "in_practice": "Teams usually pick the durability layer from what the customer already runs: a workflow engine where one exists, a checkpointed graph framework backed by Postgres otherwise. The agent loop is written so every model and tool call is a recorded step with a timeout, a retry policy and an idempotency key, and human approval is a durable wait instead of a blocking request. Before go-live the team kills workers mid-run, replays histories against new code, and uses gradual rollouts so agents already in flight finish on the version they started on.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "There are two ways to coordinate agents. In model-driven orchestration, a lead agent plans, decides which specialists to invoke and synthesizes results; this adapts to open-ended tasks. In code-driven orchestration, the program fixes the flow: chain agents so one output feeds the next, branch on a structured classification, run independent agents in parallel, or loop a worker with an evaluator. Code-driven flows are more predictable in speed, cost and behavior. Most production systems mix them, with code owning the outer flow and a model deciding inside bounded steps.",
+          "heading": "Model-driven versus code-driven"
+        },
+        {
+          "body": "In the orchestrator-worker design used for research systems, a lead agent decomposes a query and spawns subagents that work in parallel, each with its own context window, returning condensed findings. This buys breadth and context isolation at a price: multi-agent runs consume several times more tokens than a single agent, so they fit high-value, parallelizable tasks. Delegation quality decides the outcome. Each subagent needs an objective, an output format, guidance on tools and sources, and clear task boundaries, otherwise workers duplicate effort or leave gaps.",
+          "heading": "Orchestrator and subagents"
+        }
+      ],
+      "id": "multi-agent-orchestration",
+      "title": "Multi-agent orchestration patterns"
+    },
+    {
+      "body": [
+        {
+          "body": "In Temporal, a workflow is code whose progress is recorded as an event history. Anything with side effects, such as a model call, a tool call or a database write, runs as an activity whose result is stored. If a worker dies, another worker replays the workflow code against the history, reusing recorded activity results until it reaches the point of failure, then continues. This requires workflow code to be deterministic: no direct network calls, random values or wall-clock reads inside the workflow function. Timers and waits for external signals are durable too, so a run can pause for days.",
+          "heading": "How durable execution works"
+        },
+        {
+          "body": "For an agent, the loop is the workflow and each model call and tool call is an activity with its own timeout and retry policy. The nondeterministic model output is safe because it is recorded once and replayed from history. Long conversations make histories large, so engines provide a way to continue as a fresh run carrying forward summarized state. Changing workflow code while runs are in flight needs versioning, because replay of an old history against new code must take the same branches.",
+          "heading": "Mapping agents onto it"
+        }
+      ],
+      "id": "durable-execution-model",
+      "title": "Workflow engines and replay"
+    },
+    {
+      "body": [
+        {
+          "body": "Engines give at-least-once activity execution, so every side-effecting tool needs an idempotency key derived from the run and step, passed through to the downstream system. Agent-specific additions: classify errors so a malformed tool argument is returned to the model as an observation while a rate limit is retried with backoff by the engine; set heartbeats on long activities so stalls are detected; and treat token spend as a resource checked before each model activity, with the run failing closed when the cap is reached.",
+          "heading": "Beyond the basics"
+        }
+      ],
+      "id": "idempotent-side-effects",
+      "title": "Idempotency, retries and budget control"
+    },
+    {
+      "body": [
+        {
+          "body": "LangGraph models an agent system as a graph of nodes that read and update a shared typed state, with edges, including conditional ones, deciding what runs next. A checkpointer persists state after each step under a thread identifier, backed by a store such as Postgres. That gives resumption after failure, inspection of any earlier state, and the ability to fork a run from a past checkpoint for debugging. A node can interrupt the run to wait for a person; the graph resumes later with the human's input merged into state, which is how approval steps and edits are implemented.",
+          "heading": "Checkpointed graphs"
+        }
+      ],
+      "id": "graph-checkpoints-human-in-loop",
+      "title": "Graph state, checkpoints and human approval"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart TD\n  C[Client starts run] --> W[Workflow: agent loop]\n  W --> A1[Activity: model call]\n  A1 --> H[(Event history)]\n  W --> A2[Activity: tool call with idempotency key]\n  A2 --> H\n  W --> P[Durable wait for human approval]\n  P --> H\n  X[Worker crash] -.-> R[New worker replays history]\n  H --> R\n  R --> W\n  W --> O[Orchestrator spawns subagents]\n  O --> S1[Subagent A own context]\n  O --> S2[Subagent B own context]\n  S1 --> W\n  S2 --> W"
+  },
+  "code": [
+    {
+      "code": "from datetime import timedelta\nfrom temporalio import workflow\nfrom temporalio.common import RetryPolicy\n\n@workflow.defn\nclass TriageWorkflow:\n    @workflow.run\n    async def run(self, ticket_id: str) -> str:\n        opts = dict(\n            start_to_close_timeout=timedelta(minutes=2),\n            retry_policy=RetryPolicy(maximum_attempts=4),\n        )\n        messages = [ticket_id]\n        for step in range(8):\n            reply = await workflow.execute_activity(\"call_model\", messages, **opts)\n            if not reply.get(\"tool\"):\n                return reply[\"text\"]\n            key = f\"{workflow.info().workflow_id}-{step}\"\n            messages.append(await workflow.execute_activity(\"run_tool\", [reply, key], **opts))\n        return \"escalated\"",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "Temporal",
+    "LangGraph",
+    "OpenAI Agents SDK",
+    "Postgres",
+    "AWS Step Functions",
+    "Claude Agent SDK"
+  ],
+  "related": [
+    "agent-architectures",
+    "webhooks-kafka-events",
+    "airflow-dagster-pipelines",
+    "observability-agent-traces",
+    "scaling-performance-cost",
+    "debugging-postmortems"
+  ],
+  "sources": [
+    {
+      "kind": "article",
+      "title": "How we built our multi-agent research system",
+      "url": "https://www.anthropic.com/engineering/multi-agent-research-system"
+    },
+    {
+      "kind": "doc",
+      "title": "Temporal Docs: Workflows",
+      "url": "https://docs.temporal.io/workflows"
+    },
+    {
+      "kind": "repo",
+      "title": "LangGraph",
+      "url": "https://github.com/langchain-ai/langgraph"
+    },
+    {
+      "kind": "doc",
+      "title": "OpenAI Agents SDK: Orchestrating multiple agents",
+      "url": "https://openai.github.io/openai-agents-python/multi_agent/"
+    }
+  ],
+  "practice": "practice/agent-orchestration-durable-execution",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    }
+  ]
+}

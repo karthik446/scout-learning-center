@@ -1,0 +1,137 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "python-for-platform-engineering",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Python for platform engineering: packaging, environments and testing",
+  "area": "software",
+  "primary_key": "python",
+  "secondary_keys": [
+    "software-engineering"
+  ],
+  "keys": [
+    "python",
+    "software-engineering"
+  ],
+  "summary": "Python is the common language of ML teams, so platform tooling, pipeline components and SDKs are mostly written in it. The platform concern is not syntax but engineering hygiene: isolated environments, reproducible dependencies, properly packaged libraries and tested code. Getting these right is what makes a training job behave the same on a laptop, in CI and on a cluster.",
+  "detail": [],
+  "in_practice": "Teams standardise on a project template: a src layout, a pyproject.toml with pinned tool settings, a lock file, a test folder and a container build that installs from the lock. Shared platform code lives in a small number of internal packages published to a private index by CI on tagged commits. Data scientists create environments with one command, and CI rebuilds the environment from scratch on every change so that drift between laptops and the cluster shows up as a failed build instead of a failed training run.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "A virtual environment is a self-contained directory tree holding a particular Python version plus its own set of installed packages. It is created with the standard venv module, for example by running python -m venv .venv, and activated by a script that puts its bin directory first on the shell path. Packages installed with pip then go into that environment only. This solves the conflict where one application needs version 1 of a library and another needs version 2. The environment directory is disposable and should be excluded from version control; the list of requirements is what gets committed.",
+          "heading": "How a virtual environment works"
+        },
+        {
+          "body": "ML stacks have heavy native dependencies: numerical libraries, GPU runtimes and compiled extensions that are tied to specific driver and Python versions. Two projects on the same machine frequently cannot share one interpreter. In production the container image is the real isolation boundary, yet a virtual environment inside the image is still common because it keeps application packages apart from system Python. The platform rule is one environment per project, created from a declared file, never built up by hand.",
+          "heading": "Why it matters more in ML"
+        }
+      ],
+      "id": "virtual-environments",
+      "title": "Virtual environments and isolation"
+    },
+    {
+      "body": [
+        {
+          "body": "There are two lists to keep. The declared list states what the project needs directly, with version ranges. The resolved list, or lock file, records the exact version of every direct and transitive package that was actually installed. The simplest form is pip freeze writing a requirements.txt that pip install -r can replay. Dedicated tools produce lock files with hashes so that an install fails if a package was tampered with or changed. Training and serving should install from the same lock, since a different numerical library version between them is a real cause of training-serving skew.",
+          "heading": "Declared versus resolved dependencies"
+        }
+      ],
+      "id": "dependency-pinning-and-locking",
+      "title": "Dependency pinning and lock files"
+    },
+    {
+      "body": [
+        {
+          "body": "A distributable package has a pyproject.toml that names a build backend in its build-system table and holds metadata in the project table: name, version, required Python version, dependencies and entry points. A common layout puts importable code under a src directory, with tests beside it. Running the build frontend produces two artifacts: a source distribution and a wheel, which is a prebuilt archive pip can install without running build steps. Artifacts are uploaded to an index with an upload tool, and a test index exists for rehearsing a release before publishing for real.",
+          "heading": "Project layout and build"
+        },
+        {
+          "body": "Platform teams ship shared code as versioned packages instead of copying modules between repositories: a client for the feature store, pipeline step helpers, logging and tracing setup. These go to a private index, and consumers pin a version. Semantic versioning signals breaking changes, and console entry points in the project metadata turn the package into a command line tool that data scientists can run. Keeping the SDK thin, with few dependencies, avoids forcing version conflicts onto every training environment that installs it.",
+          "heading": "Internal platform SDKs"
+        }
+      ],
+      "id": "packaging-with-pyproject",
+      "title": "Packaging libraries with pyproject.toml"
+    },
+    {
+      "body": [
+        {
+          "body": "Platform Python code is tested in layers. Unit tests cover pure functions such as feature transforms and config parsing, using a test runner with fixtures and parametrised cases. Contract tests check that a pipeline step accepts and emits the expected schema. Integration tests run a miniature pipeline on a tiny dataset to prove the steps connect, which is cheap insurance against failures that would otherwise show up hours into a real run. CI runs these across the supported Python versions inside a fresh environment built from the lock file, so the test also verifies that the package installs cleanly.",
+          "heading": "Test layers"
+        }
+      ],
+      "id": "testing-python-platform-code",
+      "title": "Testing platform and pipeline code"
+    },
+    {
+      "body": [
+        {
+          "body": "Type hints plus a static type checker catch a large class of errors before a job is ever scheduled, which matters when a failure costs GPU hours. A linter and formatter remove style debate and run as pre-commit hooks and in CI. Configuration, a known debt source in ML systems, is parsed into typed models at startup so a wrong learning rate type or a missing path fails fast with a clear message. Project templates bake all of this in, so every new repository starts with the same tool settings in its pyproject.toml.",
+          "heading": "Static checks as a platform default"
+        }
+      ],
+      "id": "typing-linting-and-config",
+      "title": "Typing, linting and validated configuration"
+    }
+  ],
+  "diagram": null,
+  "code": [
+    {
+      "code": "[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n\n[project]\nname = \"platform-sdk\"\nversion = \"0.3.0\"\nrequires-python = \">=3.10\"\ndependencies = [\"pydantic>=2\", \"requests>=2.31\"]\n\n[project.scripts]\nplatform = \"platform_sdk.cli:main\"",
+      "lang": "toml"
+    },
+    {
+      "code": "python -m venv .venv\nsource .venv/bin/activate\npython -m pip install -r requirements.txt\npython -m pip install -e .\npython -m pytest -q\npython -m build   # writes sdist and wheel to dist/",
+      "lang": "bash"
+    }
+  ],
+  "technologies": [
+    "venv",
+    "pip",
+    "uv",
+    "Poetry",
+    "setuptools",
+    "hatchling",
+    "build",
+    "twine",
+    "pytest",
+    "mypy",
+    "ruff",
+    "Pydantic"
+  ],
+  "related": [
+    "github-actions-ci-cd",
+    "mlops-and-ml-lifecycle",
+    "kubernetes-for-ml-workloads",
+    "golden-paths-self-service"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Virtual Environments and Packages",
+      "url": "https://docs.python.org/3/tutorial/venv.html"
+    },
+    {
+      "kind": "tutorial",
+      "title": "Packaging Python Projects",
+      "url": "https://packaging.python.org/en/latest/tutorials/packaging-projects/"
+    }
+  ],
+  "practice": "practice/python-for-platform-engineering",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    }
+  ]
+}

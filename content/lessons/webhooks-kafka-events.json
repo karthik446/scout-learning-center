@@ -1,0 +1,157 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "webhooks-kafka-events",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Webhooks and event-driven integrations with Kafka",
+  "area": "software",
+  "primary_key": "webhooks",
+  "secondary_keys": [
+    "kafka",
+    "integrations"
+  ],
+  "keys": [
+    "webhooks",
+    "kafka",
+    "integrations"
+  ],
+  "summary": "Polling an API tells you what changed eventually; events tell you when it changes. Webhooks are the push mechanism SaaS vendors expose over plain HTTP, and Kafka is the durable, replayable log enterprises use to move events between their own systems. This lesson covers how to receive webhooks safely, how Kafka's model works, what delivery guarantees you actually get, and how the two are combined in a customer deployment.",
+  "detail": [],
+  "in_practice": "The team registers a webhook endpoint in the vendor's test mode, uses the vendor CLI or a tunnel to replay sample events locally, and writes the receiver so it only verifies, enqueues and acknowledges. Events land on a topic or queue with an agreed envelope and schema; consumers are idempotent on event id, emit lag and failure metrics, and send poison records to a dead letter topic with a documented replay command. A nightly reconciliation against the vendor API catches missed events. On customer-owned Kafka, topic creation, ACLs and schema registration go through the customer's platform team, so those requests are filed in the first week of the engagement rather than the last.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "A webhook is an HTTP POST that a provider sends to an endpoint you register when a subscribed event occurs. The endpoint is public, so authenticity comes from a signature: the provider computes an HMAC over the raw request body with a shared secret and sends it in a header, and you recompute it and compare in constant time. Verify against the raw bytes, before any JSON parsing or re-serialization. Many providers also sign a timestamp so you can reject old requests and limit replay. Rotate the secret like any other credential.",
+          "heading": "The receiver contract"
+        },
+        {
+          "body": "Providers expect a 2xx response within a short timeout and treat anything else as a failed delivery. The receiver should therefore do three things only: verify the signature, persist or enqueue the event, and return success. Calling an LLM, a CRM or a database migration inside the request handler leads to timeouts, provider retries and duplicated work. Subscribe only to the event types you need, and keep the provider's delivery log and redelivery tools in your runbook, since they are the first place to look when events go missing.",
+          "heading": "Acknowledge fast, work later"
+        }
+      ],
+      "id": "receiving-webhooks-safely",
+      "title": "Receiving webhooks: verify, acknowledge, defer"
+    },
+    {
+      "body": [
+        {
+          "body": "Webhook delivery is at-least-once and unordered in practice. Providers retry on failure, so the same event can arrive more than once, and an update can arrive before the create it follows. Deduplicate on the provider's event id with a unique constraint or a processed-events table, written in the same transaction as the side effect. For ordering, do not trust arrival order: compare a version or timestamp on the object, or treat the event as a hint and fetch current state from the API before acting.",
+          "heading": "Design for at-least-once"
+        },
+        {
+          "body": "Events can be lost entirely, for example during an outage longer than the provider's retry window or after an endpoint is auto-disabled. Pair every webhook subscription with a periodic reconciliation job that lists recently modified objects through the API and repairs differences. The webhook gives low latency; the reconciliation gives correctness.",
+          "heading": "Closing the gaps"
+        }
+      ],
+      "id": "duplicates-ordering-and-reconciliation",
+      "title": "Duplicates, ordering and reconciliation"
+    },
+    {
+      "body": [
+        {
+          "body": "Kafka stores events durably in topics. An event has a key, a value, a timestamp and optional headers. Each topic is split into partitions, which are append-only logs spread across brokers and replicated for fault tolerance. Events with the same key go to the same partition, and order is guaranteed only within a partition, so the key choice is the ordering decision: key by customer or entity id when per-entity order matters. Unlike a traditional queue, reading does not delete; events are retained for a configured time or size, so consumers can replay.",
+          "heading": "A distributed commit log"
+        },
+        {
+          "body": "Consumers track their position as an offset per partition. Consumers that share a group id divide the partitions among themselves, which gives parallelism up to the partition count; separate groups each receive the full stream independently, which is how one topic feeds a CRM writeback service and an AI agent trigger at the same time. Consumer lag, the distance between the latest offset and the committed offset, is the primary health signal. Rebalances occur when members join or leave and briefly pause consumption.",
+          "heading": "Consumers and scaling"
+        }
+      ],
+      "id": "kafka-log-model",
+      "title": "Kafka's model: topics, partitions, offsets, consumer groups"
+    },
+    {
+      "body": [
+        {
+          "body": "Commit the offset after processing and you get at-least-once: a crash between the side effect and the commit means reprocessing. Commit before and you get at-most-once. Kafka's idempotent producer removes duplicates caused by producer retries, and transactions make a consume-transform-produce cycle atomic within Kafka. Neither extends to an external HTTP call or database write, so consumers that touch other systems still need idempotent handlers. When a service must update its database and publish an event together, write the event to an outbox table in the same transaction and relay it to Kafka.",
+          "heading": "What exactly-once really covers"
+        },
+        {
+          "body": "A topic is a shared API. Define event schemas in Avro, Protobuf or JSON Schema, register them, and enforce compatibility rules so a producer cannot break existing consumers. A record that always fails must not block its partition: retry a bounded number of times, then route it to a dead letter topic with the error and original offset, alert, and provide a replay path once the bug is fixed.",
+          "heading": "Contracts and bad records"
+        }
+      ],
+      "id": "delivery-guarantees-and-failure-handling",
+      "title": "Delivery guarantees, schemas and poison messages"
+    },
+    {
+      "body": [
+        {
+          "body": "A common deployment shape is a thin webhook ingress service that verifies each provider's signature, wraps the payload in a standard envelope with source, event id, tenant and received time, and produces it to Kafka keyed by entity id. Everything downstream consumes from the log, so a slow or failing consumer never causes provider retries, and a new use case is a new consumer group replaying history. In restricted environments the cluster is rarely yours: expect TLS and SASL authentication, per-topic ACLs requested through a platform team, and network rules that decide where the ingress can run. Alternatives such as RabbitMQ or NATS appear where a customer needs routing or lightweight messaging more than a replayable log.",
+          "heading": "The ingress pattern"
+        }
+      ],
+      "id": "bridging-webhooks-into-the-event-backbone",
+      "title": "Bridging webhooks into the customer's event backbone"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  P[SaaS provider] -->|signed HTTPS POST| G[Webhook ingress]\n  G -->|2xx after verify| P\n  G -->|keyed event| K[(Kafka topic)]\n  K --> C1[Consumer group CRM writeback]\n  K --> C2[Consumer group agent trigger]\n  C1 -->|after bounded retries| D[(Dead letter topic)]\n  R[Reconciliation job] -->|list modified objects| P\n  R --> K"
+  },
+  "code": [
+    {
+      "code": "import hmac, hashlib, os\nfrom flask import Flask, request, abort\n\napp = Flask(__name__)\nSECRET = os.environ[\"WEBHOOK_SECRET\"].encode()\n\n@app.post(\"/webhooks/crm\")\ndef receive():\n    raw = request.get_data()  # verify the raw bytes, not parsed JSON\n    want = \"sha256=\" + hmac.new(SECRET, raw, hashlib.sha256).hexdigest()\n    got = request.headers.get(\"X-Signature-256\", \"\")\n    if not hmac.compare_digest(got, want):\n        abort(401)\n    event = request.get_json()\n    enqueue(key=event[\"object_id\"], event_id=event[\"id\"], payload=raw)\n    return \"\", 204  # ack fast; consumers dedupe on event_id",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "Apache Kafka",
+    "Kafka Connect",
+    "Confluent Schema Registry",
+    "Amazon MSK",
+    "Redpanda",
+    "RabbitMQ",
+    "NATS",
+    "AWS SQS",
+    "Amazon EventBridge",
+    "Stripe webhooks",
+    "GitHub webhooks",
+    "Debezium"
+  ],
+  "related": [
+    "rest-apis-json-oauth",
+    "legacy-systems-migrations",
+    "agent-orchestration-durable-execution",
+    "airflow-dagster-pipelines",
+    "networking-restricted-environments",
+    "observability-agent-traces"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Apache Kafka: Introduction",
+      "url": "https://kafka.apache.org/intro/"
+    },
+    {
+      "kind": "doc",
+      "title": "Apache Kafka Documentation",
+      "url": "https://kafka.apache.org/documentation/"
+    },
+    {
+      "kind": "doc",
+      "title": "GitHub Docs: About webhooks",
+      "url": "https://docs.github.com/en/webhooks/about-webhooks"
+    },
+    {
+      "kind": "doc",
+      "title": "Stripe Docs: Receive events in your webhook endpoint",
+      "url": "https://docs.stripe.com/webhooks"
+    }
+  ],
+  "practice": "practice/webhooks-kafka-events",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    }
+  ]
+}

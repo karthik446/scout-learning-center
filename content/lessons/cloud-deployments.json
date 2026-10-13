@@ -1,0 +1,145 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "cloud-deployments",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Deploying into customer clouds: AWS, Google Cloud and Azure",
+  "area": "infra",
+  "primary_key": "aws",
+  "secondary_keys": [
+    "google-cloud",
+    "azure",
+    "cloud-infrastructure",
+    "ml-platform"
+  ],
+  "keys": [
+    "aws",
+    "google-cloud",
+    "azure",
+    "cloud-infrastructure",
+    "ml-platform"
+  ],
+  "summary": "Forward deployed work usually ends with software running in an account the customer owns, under their identity, network and compliance rules. This lesson covers the deployment models you will be offered, how access is granted across account boundaries, and how the same architecture maps onto AWS, Google Cloud and Azure. The goal is to get from a signed contract to a first working deployment without waiting weeks on access.",
+  "detail": [],
+  "in_practice": "A team starts with an access request in the first week: a sandbox account or project, a named role with a written permission list, and a contact on the customer platform team. They deploy a thin end-to-end slice with the customer's infrastructure tool and pipeline, using workload identity and the cloud-native model endpoint the customer has already approved. The design document states the deployment model, what data crosses the boundary, and how upgrades and rollbacks are done, phrased against the provider's architecture framework so the review board can sign off. Only after that slice works do they add the real workload and sizing.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "A vendor-hosted deployment runs in your company's cloud and the customer reaches it over an API; you keep full operational control but customer data leaves their boundary. A customer-cloud deployment, often called bring your own cloud, runs your software in an account, project or subscription the customer owns; data stays put, but you operate through whatever access they grant. An on-premises deployment runs on customer hardware, often with no managed services at all. Each step toward the customer removes things you rely on: managed databases, your own observability stack, the ability to push a fix in minutes. Decide the model during scoping, because it determines packaging, the upgrade path, who is on call, and whether a hosted model API is even reachable.",
+          "heading": "Three shapes and what each costs you"
+        },
+        {
+          "body": "A common compromise keeps a small control plane with the vendor (release metadata, licensing, configuration, fleet health) and puts the data plane, which touches customer data and calls models, inside the customer account. The data plane opens outbound connections to the control plane, so the customer does not have to open inbound access. This gives you visibility and a controlled upgrade channel while customer data stays inside their boundary. Be explicit in the design document about what crosses the boundary: usually versions, health signals and aggregate metrics, never prompts, documents or records.",
+          "heading": "Control plane and data plane split"
+        }
+      ],
+      "id": "deployment-models",
+      "title": "Deployment models: vendor-hosted, customer cloud, on-premises"
+    },
+    {
+      "body": [
+        {
+          "body": "On AWS, IAM controls who is authenticated and what they are authorized to do, and the standard way into a customer account is a role they create that trusts a principal in your account. You assume it and receive temporary credentials, so nobody exchanges long-lived access keys. The trust policy says who may assume the role; the permission policy says what the role may do. Google Cloud uses service accounts with impersonation and workload identity federation for the same purpose; Azure uses Entra ID service principals and managed identities with role assignments at subscription or resource group scope. In every cloud, ask for a named role with a written permission list, scoped to the resources the deployment creates, and expect the customer security team to review it line by line.",
+          "heading": "Roles instead of shared credentials"
+        },
+        {
+          "body": "Access for humans and access for running workloads are separate problems. A workload should obtain credentials from the platform at run time: an instance or task role on AWS, a service account bound to a Kubernetes service account on Google Cloud, a managed identity on Azure. This removes static secrets from images and configuration, and it lets the customer audit every call the workload makes in their own logs. When the customer asks what your software can touch, the answer should be one role and its policy.",
+          "heading": "Workload identity"
+        }
+      ],
+      "id": "cross-account-identity",
+      "title": "Identity and access across the customer boundary"
+    },
+    {
+      "body": [
+        {
+          "body": "In a customer account the infrastructure definition is a deliverable, not an internal tool. Customers typically standardize on one tool and expect a module they can read, pin to a version, and apply through their own pipeline with their own state backend. Keep inputs few and explicit (network identifiers, key identifiers, sizing), avoid creating account-wide resources, tag everything so cost and ownership are traceable, and document a clean destroy path. Expect policy checks in their pipeline to reject public endpoints, unencrypted storage and wildcard permissions.",
+          "heading": "Shipping modules, not console steps"
+        }
+      ],
+      "id": "infrastructure-as-code-handoff",
+      "title": "Infrastructure as code that the customer can run"
+    },
+    {
+      "body": [
+        {
+          "body": "The tenancy unit differs: an AWS account, a Google Cloud project inside a folder and organization, an Azure subscription containing resource groups. Managed Kubernetes is EKS, GKE and AKS. Object storage is S3, Cloud Storage and Blob Storage. Managed Postgres, queues, secret stores and key management exist in all three. Hosted model access is commonly Amazon Bedrock, Vertex AI and Azure OpenAI or Azure AI Foundry, and many customers will only approve the one inside their existing cloud agreement. Keep cloud-specific code behind thin interfaces for storage, queues, secrets and model calls, and standardize on portable pieces such as containers, Postgres and Kubernetes where the customer allows it.",
+          "heading": "Same building blocks, different names and boundaries"
+        },
+        {
+          "body": "Each provider publishes architecture guidance that customer review boards cite. The AWS Well-Architected Framework organizes review questions into pillars: operational excellence, security, reliability, performance efficiency, cost optimization and sustainability. The Azure Architecture Center application architecture guide walks through architecture styles, technology choices and design principles. You do not need to memorize them, but writing your design document in their vocabulary shortens reviews, because the reviewer can map your answers to the checklist they already use.",
+          "heading": "Using the architecture frameworks"
+        }
+      ],
+      "id": "three-cloud-mapping",
+      "title": "Mapping one architecture onto AWS, Google Cloud and Azure"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  subgraph Vendor[Vendor account]\n    CP[Control plane: releases, config, fleet health]\n    ENG[Engineer or CI principal]\n  end\n  subgraph Customer[Customer account]\n    ROLE[Deployment role with scoped policy]\n    DP[Data plane: app and agents]\n    DATA[(Customer data stores)]\n    LLM[Approved model endpoint]\n  end\n  ENG -->|assume role, temporary credentials| ROLE\n  ROLE -->|create and update| DP\n  DP --> DATA\n  DP --> LLM\n  DP -->|outbound only: versions, health| CP"
+  },
+  "code": [
+    {
+      "code": "# Assume the role the customer created for the deployment\naws sts assume-role \\\n  --role-arn arn:aws:iam::CUSTOMER_ACCOUNT_ID:role/vendor-deployer \\\n  --role-session-name deploy-2026-10 \\\n  --external-id AGREED_EXTERNAL_ID\n\n# Confirm which identity later commands run as\naws sts get-caller-identity",
+      "lang": "bash"
+    }
+  ],
+  "technologies": [
+    "AWS IAM",
+    "AWS STS",
+    "Amazon EKS",
+    "Amazon Bedrock",
+    "Google Cloud IAM",
+    "GKE",
+    "Vertex AI",
+    "Microsoft Entra ID",
+    "AKS",
+    "Azure OpenAI",
+    "Terraform",
+    "AWS CDK"
+  ],
+  "related": [
+    "containers-cicd-serverless",
+    "networking-restricted-environments",
+    "security-compliance-reviews",
+    "technical-scoping-design-docs"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "AWS Well-Architected Framework",
+      "url": "https://docs.aws.amazon.com/wellarchitected/latest/framework/welcome.html"
+    },
+    {
+      "kind": "doc",
+      "title": "What is IAM?",
+      "url": "https://docs.aws.amazon.com/IAM/latest/UserGuide/introduction.html"
+    },
+    {
+      "kind": "doc",
+      "title": "Google Cloud overview",
+      "url": "https://docs.cloud.google.com/docs/overview"
+    },
+    {
+      "kind": "doc",
+      "title": "Azure Architecture Center: Application architecture guide",
+      "url": "https://learn.microsoft.com/en-us/azure/architecture/guide/"
+    }
+  ],
+  "practice": "practice/cloud-deployments",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    }
+  ]
+}

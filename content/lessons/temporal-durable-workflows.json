@@ -1,0 +1,148 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "temporal-durable-workflows",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Durable workflows and event-driven services with Temporal",
+  "area": "data",
+  "primary_key": "temporal",
+  "secondary_keys": [
+    "microservices"
+  ],
+  "keys": [
+    "temporal",
+    "microservices"
+  ],
+  "summary": "Temporal provides durable execution: workflow code runs as if failures do not exist, because every step is recorded in an event history and the workflow can be rebuilt by replay after a crash. Side effects live in activities, which the platform retries and times out according to policy. On an ML platform it fits long-running, event-driven processes such as model promotion with human approval, fine-tuning job management and multi-step agent or data operations, more than scheduled batch DAGs.",
+  "detail": [],
+  "in_practice": "A team introduces Temporal for one process that keeps breaking under glue code, such as model promotion: a workflow runs an evaluation activity, waits for an approval signal with a timeout, calls activities that update the registry and trigger a canary rollout, watches metrics on a timer, and compensates by rolling back on failure. Workers run as Kubernetes deployments, split by task queue so slow or GPU-bound activities do not starve short ones, and autoscale on queue backlog. Activities are written to be idempotent with keys derived from workflow and activity ids, large inputs travel as storage references, and replay tests against recorded histories run in CI before each worker release. Consumers on the message broker translate events into workflow starts or signals keyed by a business id, and operators debug by reading event histories in the UI instead of correlating logs across services.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "A workflow definition is ordinary code in a supported language. A workflow execution is one run of it, identified by a workflow id. As it progresses, the Temporal Service appends events to that execution's history: workflow started, activity scheduled, activity completed with its result, timer fired, signal received. If the worker process dies, another worker picks up the execution, re-runs the workflow function from the top and feeds it the recorded results instead of re-executing completed steps, until it reaches the point where it left off. The effect is that local variables and the call stack survive crashes, deployments and restarts, and a workflow can sleep for days or months while holding no compute.",
+          "heading": "How it works"
+        },
+        {
+          "body": "Without durable execution, the same guarantees require hand-built state machines, status tables, polling jobs, queues with redelivery and reconciliation scripts. Temporal moves that into the platform, leaving the business sequence readable as straight-line code.",
+          "heading": "What it replaces"
+        }
+      ],
+      "id": "durable-execution-model",
+      "title": "Durable execution: workflows, event history and replay"
+    },
+    {
+      "body": [
+        {
+          "body": "Because replay re-executes workflow code against recorded history, the code must be deterministic: given the same history it must issue the same commands in the same order. Workflow code must not call the network, read files, use the system clock, generate random numbers or spawn threads directly. The SDK provides safe equivalents such as workflow time, timers, random and UUID helpers, and anything else belongs in an activity. A mismatch between code and history is raised as a non-determinism error.",
+          "heading": "The rule"
+        },
+        {
+          "body": "Executions may outlive several deployments, so changing the order or set of commands in workflow code can break in-flight runs. Teams handle this with patching or versioning APIs that branch on whether an execution started before the change, with worker versioning that pins executions to compatible builds, or by routing new starts to a new workflow type. Very long or looping workflows use continue-as-new to start a fresh execution with a clean history, and replay tests in CI run recorded histories against new code before release.",
+          "heading": "Changing running workflows"
+        }
+      ],
+      "id": "determinism-and-versioning",
+      "title": "Determinism constraints and versioning workflow code"
+    },
+    {
+      "body": [
+        {
+          "body": "An activity is a normal function that performs a single well-defined action that may fail: calling a service, writing to a database, launching a training job. Activities are retried by default under a retry policy with initial interval, backoff coefficient, maximum interval, maximum attempts and a list of non-retryable error types. Timeouts bound them: start-to-close limits one attempt, schedule-to-close limits the total including retries, and a heartbeat timeout detects a stuck or dead worker when a long activity reports progress periodically. Heartbeats can carry details such as a checkpoint so the next attempt resumes. Execution is at-least-once, so activities should be idempotent, typically by passing an idempotency key derived from the workflow id and activity id to the downstream system.",
+          "heading": "Beyond a hand-built job runtime"
+        }
+      ],
+      "id": "activities-retries-and-timeouts",
+      "title": "Activities: retries, timeouts, heartbeats and idempotency"
+    },
+    {
+      "body": [
+        {
+          "body": "A running workflow can receive signals (asynchronous messages that are recorded in history and can change its course), answer queries (read-only inspection of current state), and handle updates (synchronous requests that are validated, change state and return a result). Workflows can wait on a condition with a timeout, which expresses patterns such as wait for human approval for up to three days and otherwise escalate. Child workflows and timers complete the toolkit, and the saga pattern is written as plain code: on failure, run compensating activities for steps already done.",
+          "heading": "Message passing into workflows"
+        },
+        {
+          "body": "In an event-driven architecture, a broker such as RabbitMQ or Kafka carries events between services, while Temporal owns the stateful process that reacts to them. A thin consumer turns each message into a workflow start or a signal-with-start addressed by a business key used as the workflow id, which also deduplicates redelivered messages. Activities publish outbound events. The broker gives fan-out and decoupling; the workflow gives ordering, timeouts and recovery per entity.",
+          "heading": "Working with a message broker"
+        }
+      ],
+      "id": "signals-queries-and-event-driven-services",
+      "title": "Signals, queries, updates and event-driven services"
+    },
+    {
+      "body": [
+        {
+          "body": "The Temporal Service (self-hosted with a database such as Postgres or Cassandra, or the hosted cloud offering) stores histories and dispatches tasks; it never runs application code. Workers are processes the team deploys that long-poll named task queues and execute workflow and activity code. Task queues are the routing and scaling unit: a GPU-bound activity can listen on its own queue served by workers on GPU nodes, while lightweight workflow workers scale separately. Namespaces isolate teams or environments, and the web UI and CLI show each execution's full history for debugging.",
+          "heading": "Runtime topology"
+        },
+        {
+          "body": "Good fits are model promotion with evaluation, approval and staged rollout steps; managing external training or fine-tuning jobs by start, poll and cleanup; batch inference campaigns; and long-running agent or data-remediation processes. Poor fits are data-heavy step graphs needing artifact lineage and caching, where ML-native orchestrators serve better. Payloads and histories have size limits, so pass references to object storage, not data.",
+          "heading": "Fit and limits"
+        }
+      ],
+      "id": "workers-task-queues-and-ml-use",
+      "title": "Workers, task queues and where Temporal fits in ML platforms"
+    }
+  ],
+  "diagram": {
+    "source": "sequenceDiagram\n  participant C as Client or event consumer\n  participant T as Temporal Service\n  participant W as Workflow worker\n  participant A as Activity worker\n  C->>T: Start workflow (workflow id)\n  T->>W: Workflow task\n  W->>T: Schedule activity run_eval\n  T->>A: Activity task\n  A-->>T: Result recorded in history\n  T->>W: Workflow task with result\n  W->>T: Wait for approval signal\n  C->>T: Signal approve\n  T->>W: Workflow task with signal\n  W->>T: Schedule activity promote, then complete"
+  },
+  "code": [
+    {
+      "code": "from datetime import timedelta\nfrom temporalio import activity, workflow\nfrom temporalio.common import RetryPolicy\n\n@activity.defn\nasync def run_eval(model_id: str) -> float:\n    return 0.93  # call the evaluation service here\n\n@workflow.defn\nclass PromoteModel:\n    @workflow.run\n    async def run(self, model_id: str) -> str:\n        score = await workflow.execute_activity(\n            run_eval, model_id,\n            start_to_close_timeout=timedelta(minutes=30),\n            retry_policy=RetryPolicy(maximum_attempts=3))\n        return \"promote\" if score > 0.9 else \"reject\"",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "Temporal",
+    "Temporal Cloud",
+    "Temporal Python SDK",
+    "Temporal Go SDK",
+    "RabbitMQ",
+    "Kafka",
+    "PostgreSQL",
+    "Cassandra",
+    "Kubernetes"
+  ],
+  "related": [
+    "airflow-pipelines",
+    "ml-native-orchestrators",
+    "model-evaluation-gates",
+    "staged-rollouts",
+    "agents-and-mcp",
+    "kubernetes-for-ml-workloads",
+    "observability-opentelemetry-prometheus"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Temporal Workflows",
+      "url": "https://docs.temporal.io/workflows"
+    },
+    {
+      "kind": "doc",
+      "title": "What is Temporal?",
+      "url": "https://docs.temporal.io/temporal"
+    },
+    {
+      "kind": "doc",
+      "title": "Temporal Activities",
+      "url": "https://docs.temporal.io/activities"
+    }
+  ],
+  "practice": "practice/temporal-durable-workflows",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    }
+  ]
+}

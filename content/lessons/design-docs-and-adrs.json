@@ -1,0 +1,133 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "design-docs-and-adrs",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Writing and reviewing design docs and architecture decision records",
+  "area": "software",
+  "primary_key": "design-and-code-reviews",
+  "secondary_keys": [],
+  "keys": [
+    "design-and-code-reviews"
+  ],
+  "summary": "Platform decisions outlive the people who made them and affect every team on the platform, so they need a written record that can be reviewed before work starts. Design docs explain a proposed system and its trade-offs, architecture decision records capture single decisions and their consequences, and enhancement proposals add rollout and operational rigor. Reviewing these documents well is a skill of its own.",
+  "detail": [],
+  "in_practice": "A platform team keeps a docs or decisions directory in its main repository with numbered ADR files and a template, and requires a design doc for any change that adds a capability, alters a tenant-facing interface or is costly to reverse. The author writes a draft, shares it with two or three close reviewers, then opens it to affected user teams for a fixed comment window. Named approvers sign off, the key decisions are extracted into ADRs, and the doc is linked from the tracking issue and the catalog entry. Larger changes add a rollout and rollback section modeled on enhancement proposals. Superseded records stay in place with a pointer to their replacement, so new engineers can read the history instead of asking for it.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "As described in the account of design docs at Google, a design doc is a relatively informal document written before coding that records the high level implementation strategy and the key decisions, with emphasis on the trade-offs considered. A common shape is: context and scope, goals and non-goals, the actual design, alternatives considered and cross-cutting concerns such as security, privacy and observability. Non-goals are things that could reasonably be goals but are explicitly excluded. The design section usually opens with an overview and a system context diagram, then covers APIs and data storage at sketch level, not full schemas or code.",
+          "heading": "Structure and intent"
+        },
+        {
+          "body": "The doc pays off when the solution is ambiguous, the cost of a wrong turn is high or several teams must agree. If the design is obvious, a doc that only restates the implementation is overhead. Length should match the problem: larger efforts land around ten to twenty pages, while an incremental change can use a mini doc of one to three pages.",
+          "heading": "When to write one"
+        }
+      ],
+      "id": "design-doc-anatomy",
+      "title": "Anatomy of a design doc"
+    },
+    {
+      "body": [
+        {
+          "body": "An architecture decision record captures a single architecturally significant decision together with its context and consequences. The widely used template has a title, a status such as proposed, accepted, deprecated or superseded, the context that forced the decision, the decision itself and the consequences, including the negative ones. Records are numbered, kept as text files in the repository next to the code they govern and reviewed through pull requests. An accepted record is not rewritten when the decision changes: a new record supersedes it and links back, so the collection becomes a decision log that explains why the system looks the way it does.",
+          "heading": "One decision per record"
+        },
+        {
+          "body": "Good candidates are choices that are expensive to reverse: the orchestrator, the model registry, the tenancy model, the serving runtime, how features are stored, how secrets and identities are issued. Record the options rejected and the evidence used, such as a benchmark or a cost estimate, since that is what future readers ask about.",
+          "heading": "What deserves an ADR on an ML platform"
+        }
+      ],
+      "id": "architecture-decision-records",
+      "title": "Architecture decision records"
+    },
+    {
+      "body": [
+        {
+          "body": "The Kubernetes Enhancement Proposal template shows what a heavier process looks like for changes that many users depend on. Besides summary, motivation, goals, non-goals and the proposal itself, it requires risks and mitigations, design details, a test plan, graduation criteria from alpha through beta to stable, an upgrade and downgrade strategy, a version skew strategy, a production readiness questionnaire, drawbacks and alternatives. The production readiness section asks how the feature is enabled and rolled back, how operators know it is working and what it depends on. An ML platform team can borrow a trimmed version for changes that touch every tenant, such as a new pipeline API version or a cluster migration.",
+          "heading": "The KEP template as a model"
+        }
+      ],
+      "id": "enhancement-proposals",
+      "title": "Enhancement proposals for platform-wide changes"
+    },
+    {
+      "body": [
+        {
+          "body": "Google's code review guidance puts design first among the things to examine, ahead of functionality, complexity, tests and naming, and sets the standard that a change should be approved once it clearly improves overall health, even if it is not perfect. The same standard carries over to design review. Check that the problem and non-goals are stated, that the simplest design that meets the goals was considered, that alternatives were rejected for real reasons, and that failure modes, migration, security and operating cost are addressed. Separate blocking concerns from preferences, explain the reasoning behind each comment and respond quickly, since a stalled review stalls the project.",
+          "heading": "What a reviewer looks for"
+        },
+        {
+          "body": "Share drafts early with a small group, then widen. Use comments for detail and a short meeting only for unresolved disagreement. Name the approvers up front, record the outcome and update the doc when implementation diverges.",
+          "heading": "Running the process"
+        }
+      ],
+      "id": "reviewing-designs",
+      "title": "Reviewing design docs and decisions"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  P[Problem identified] --> D[Draft design doc]\n  D --> S[Small group feedback]\n  S --> W[Wider review window]\n  W -->|open concerns| D\n  W --> A[Approvers sign off]\n  A --> R[ADR recorded in repo]\n  R --> I[Implementation and rollout]\n  I -->|decision changes| N[New ADR supersedes old]"
+  },
+  "code": [
+    {
+      "code": "# ADR 0012: Use a batch queue for GPU training jobs\n\n## Status\nAccepted (supersedes ADR 0007)\n\n## Context\nStatic namespace quotas leave GPUs idle while other\nteams wait. Distributed jobs start partially scheduled.\n\n## Decision\nAdmit training jobs through a queueing layer with\nguaranteed shares, borrowing and preemption.\n\n## Consequences\n- Higher GPU utilization; borrowed jobs can be preempted.\n- Jobs must checkpoint to tolerate preemption.\n- One more controller to operate and upgrade.",
+      "lang": "markdown"
+    }
+  ],
+  "technologies": [
+    "Markdown",
+    "adr-tools",
+    "Log4brain",
+    "MADR",
+    "Git pull requests",
+    "Google Docs",
+    "Backstage TechDocs",
+    "Mermaid",
+    "C4 model"
+  ],
+  "related": [
+    "golden-paths-self-service",
+    "multi-tenant-platform-design",
+    "slos-on-call-and-postmortems",
+    "gitops-argo-cd-and-terraform"
+  ],
+  "sources": [
+    {
+      "kind": "article",
+      "title": "Design Docs at Google",
+      "url": "https://www.industrialempathy.com/posts/design-docs-at-google/"
+    },
+    {
+      "kind": "repo",
+      "title": "Architecture decision record repository",
+      "url": "https://github.com/architecture-decision-record/architecture-decision-record"
+    },
+    {
+      "kind": "guide",
+      "title": "Google Engineering Practices: How to do a code review",
+      "url": "https://google.github.io/eng-practices/review/reviewer/"
+    },
+    {
+      "kind": "repo",
+      "title": "Kubernetes Enhancement Proposal template",
+      "url": "https://github.com/kubernetes/enhancements/blob/master/keps/NNNN-kep-template/README.md"
+    }
+  ],
+  "practice": null,
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-12",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    }
+  ]
+}

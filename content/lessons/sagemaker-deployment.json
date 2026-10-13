@@ -1,0 +1,129 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "sagemaker-deployment",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Managed deployment and serving with Amazon SageMaker",
+  "area": "ai-ml",
+  "primary_key": "sagemaker",
+  "secondary_keys": [],
+  "keys": [
+    "sagemaker"
+  ],
+  "summary": "Amazon SageMaker offers managed hosting in which AWS runs the instances, load balancing and health management while the team supplies a container and a model artifact. It provides several inference options that map onto online, asynchronous and batch demand. The platform work lies in choosing the right option, wiring autoscaling and making deployments safe and repeatable.",
+  "detail": [],
+  "in_practice": "Teams define models, endpoint configurations and scaling policies in Terraform, CDK or pipeline code, never in the console. A release pipeline registers the model version, runs a batch transform against a holdout set as an evaluation gate, deploys to a staging endpoint, runs a load test, then updates production with canary traffic shifting and alarm-based rollback. Cost reviews look at instance utilisation per endpoint and move low-traffic models to serverless, asynchronous or shared multi-model hosting.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "Hosting is built from three resources. A Model pairs a container image with a model artifact in S3 and an execution role. An EndpointConfig lists one or more production variants, each naming a model, an instance type, an initial instance count and a traffic weight. An Endpoint is the running, addressable thing created from a configuration; updating it means pointing it at a new configuration. Clients call the runtime API with the endpoint name, and SageMaker routes to healthy instances across availability zones when more than one instance is configured.",
+          "heading": "Model, endpoint configuration, endpoint"
+        },
+        {
+          "body": "A custom serving container listens on a fixed port and answers two routes: a health check that returns success once the model is loaded, and an invocations route that takes the request body and returns the prediction. The artifact is unpacked into a known directory before the server starts. AWS publishes prebuilt containers for common frameworks and for LLM runtimes, so many teams only write an inference handler. Keeping the same image runnable outside SageMaker makes local testing and later migration much easier.",
+          "heading": "What the container must do"
+        }
+      ],
+      "id": "endpoint-object-model",
+      "title": "The endpoint object model and container contract"
+    },
+    {
+      "body": [
+        {
+          "body": "Real-time endpoints keep instances running and suit interactive, low-latency traffic with modest payloads. Serverless inference removes instance management and scales to zero, at the price of cold starts and no GPU support, so it fits spiky, low-volume CPU models. Asynchronous inference queues requests, reads large payloads from S3, writes results to S3 and can scale its instances to zero when the queue is empty; it fits long processing times. Batch transform has no persistent endpoint at all: a job starts instances, splits input files from S3 into mini-batches, writes outputs and shuts down.",
+          "heading": "Four options, four demand shapes"
+        },
+        {
+          "body": "A transform job is tuned with a few parameters: how records are split within a file, how many records go into each request, the maximum payload size and the number of concurrent requests per instance. Input and output can be joined so that predictions sit next to the source record, and filters select which fields reach the model. It is the usual choice for scoring a full dataset, for offline evaluation of a candidate model, and for precomputing predictions that are later served from a database.",
+          "heading": "Batch transform details that matter"
+        }
+      ],
+      "id": "inference-options",
+      "title": "Choosing among real-time, serverless, asynchronous and batch"
+    },
+    {
+      "body": [
+        {
+          "body": "Endpoint scaling uses Application Auto Scaling. A production variant is registered as a scalable target with a minimum and maximum instance count, then a policy is attached. Target tracking is the default choice: pick a metric and a target value and the service adds or removes instances to hold it. The predefined metric is invocations per instance; custom metrics such as GPU utilisation or concurrent requests are often better for models whose request cost varies. Step scaling and scheduled scaling cover sharp ramps and known daily patterns.",
+          "heading": "How scaling is configured"
+        },
+        {
+          "body": "The target comes from a load test, not a guess: find the request rate at which a single instance still meets the latency objective, then set the target below it to leave headroom for the time a new instance takes to come into service. Scale-out cooldown should be short and scale-in cooldown longer, to avoid oscillation. Because new instances must download the image and the artifact, large models need more headroom or a higher minimum count.",
+          "heading": "Finding the target value"
+        }
+      ],
+      "id": "endpoint-autoscaling",
+      "title": "Autoscaling endpoints"
+    },
+    {
+      "body": [
+        {
+          "body": "Updating an endpoint uses a blue/green approach by default: a new fleet is provisioned, traffic moves to it, and the old fleet is removed. Traffic can shift all at once, as a canary, or linearly in steps, with a baking period between steps. CloudWatch alarms attached to the update trigger automatic rollback to the old fleet if error rate or latency breaches a threshold. Multiple production variants on one endpoint support weighted A/B tests, and a shadow variant receives a copy of live traffic without returning its responses, which validates a new model or instance type under real load.",
+          "heading": "Deployment guardrails"
+        }
+      ],
+      "id": "safe-endpoint-updates",
+      "title": "Safe updates: variants, traffic shifting and rollback"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart TD\n  R[Model registry] --> M[SageMaker Model]\n  M --> EC[Endpoint config with variants]\n  EC --> EP[Real-time endpoint]\n  EP --> AS[Application Auto Scaling]\n  CW[CloudWatch metrics and alarms] --> AS\n  CW --> RB[Automatic rollback]\n  M --> BT[Batch transform job]\n  S3in[(S3 input)] --> BT\n  BT --> S3out[(S3 output)]"
+  },
+  "code": [
+    {
+      "code": "import boto3\n\naas = boto3.client(\"application-autoscaling\")\nrid = \"endpoint/churn-prod/variant/AllTraffic\"\ndim = \"sagemaker:variant:DesiredInstanceCount\"\n\naas.register_scalable_target(\n    ServiceNamespace=\"sagemaker\", ResourceId=rid,\n    ScalableDimension=dim, MinCapacity=2, MaxCapacity=10)\n\naas.put_scaling_policy(\n    PolicyName=\"invocations-target\", ServiceNamespace=\"sagemaker\",\n    ResourceId=rid, ScalableDimension=dim,\n    PolicyType=\"TargetTrackingScaling\",\n    TargetTrackingScalingPolicyConfiguration={\n        \"TargetValue\": 70.0,\n        \"PredefinedMetricSpecification\": {\n            \"PredefinedMetricType\": \"SageMakerVariantInvocationsPerInstance\"},\n        \"ScaleOutCooldown\": 60, \"ScaleInCooldown\": 300})",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "Amazon SageMaker",
+    "SageMaker Batch Transform",
+    "SageMaker Asynchronous Inference",
+    "SageMaker Serverless Inference",
+    "Application Auto Scaling",
+    "Amazon CloudWatch",
+    "Amazon S3",
+    "boto3"
+  ],
+  "related": [
+    "aws-and-eks-foundations",
+    "model-serving-architecture",
+    "staged-rollouts",
+    "autoscaling-and-cost-efficiency",
+    "model-registry-and-versioning",
+    "bedrock-and-claude-apis"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "SageMaker Real-time inference",
+      "url": "https://docs.aws.amazon.com/sagemaker/latest/dg/realtime-endpoints.html"
+    },
+    {
+      "kind": "doc",
+      "title": "SageMaker Batch transform",
+      "url": "https://docs.aws.amazon.com/sagemaker/latest/dg/batch-transform.html"
+    },
+    {
+      "kind": "doc",
+      "title": "Automatic scaling of SageMaker models",
+      "url": "https://docs.aws.amazon.com/sagemaker/latest/dg/endpoint-auto-scaling.html"
+    }
+  ],
+  "practice": "practice/sagemaker-deployment",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    }
+  ]
+}

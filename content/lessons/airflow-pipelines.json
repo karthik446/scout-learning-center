@@ -1,0 +1,148 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "airflow-pipelines",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Orchestrating ML pipelines with Airflow",
+  "area": "data",
+  "primary_key": "airflow",
+  "secondary_keys": [
+    "workflow-orchestration"
+  ],
+  "keys": [
+    "airflow",
+    "workflow-orchestration"
+  ],
+  "summary": "Airflow models a pipeline as a DAG of tasks defined in Python, and a scheduler decides when each task runs based on a schedule, dependencies and state. For ML platforms it is usually the control plane that triggers heavy work elsewhere (Spark, Kubernetes pods, training services) rather than the place where the compute happens. Running it well depends on idempotent tasks, careful DAG authoring and an executor that fits the workload.",
+  "detail": [],
+  "in_practice": "A typical ML platform team runs Airflow on Kubernetes from the official Helm chart or uses a managed offering, with DAGs delivered from a Git repository through CI. Data scientists get a template DAG with standard stages: validate inputs, build features, train, evaluate, register. Each heavy stage runs as a pod or an external job, and Airflow only tracks state and passes references such as a storage path or a model version. The team sets default retries, timeouts and failure callbacks through shared default arguments, uses pools to protect scarce resources such as GPUs and warehouse slots, and watches scheduler health, parse time and task queue latency. Retraining is scheduled by time or triggered by upstream data updates, and backfills are run with concurrency limits after feature logic changes.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "A DAG is a Python-defined collection of tasks with directed dependencies and no cycles. It describes order and conditions of execution, not what the tasks do internally. A task is an instance of an operator (a prebuilt template such as a Bash, Python or Kubernetes pod operator), a sensor (waits for an external condition) or a function decorated with the TaskFlow task decorator. Dependencies are declared with the bitshift operators or set_upstream and set_downstream, and TaskFlow infers them from function calls. Each scheduled execution creates a DAG run, and each task in it becomes a task instance with its own state: queued, running, success, failed, up for retry or skipped.",
+          "heading": "Core concepts"
+        },
+        {
+          "body": "Beyond linear chains, Airflow supports branching (pick one downstream path at runtime), trigger rules (run a task when all upstream succeeded, when any failed, or always, which is useful for cleanup and alerts), task groups for visual and logical grouping, and dynamic task mapping, which expands one task into many instances at runtime from a list, for example one training task per region or hyperparameter set. Small values pass between tasks through XCom; anything large should be written to object storage and passed by reference.",
+          "heading": "Control flow"
+        }
+      ],
+      "id": "dag-model-and-tasks",
+      "title": "The DAG model: tasks, operators and dependencies"
+    },
+    {
+      "body": [
+        {
+          "body": "A DAG has a start date and a schedule, which can be a cron expression, a preset such as daily, a timedelta, a custom timetable, or a data-aware trigger that fires when an upstream dataset or asset is updated. Each run carries a logical date and a data interval describing the slice of data it is responsible for. A daily run typically processes the previous complete day, so the run for an interval starts after that interval ends. Tasks should read the interval from the runtime context or templates instead of calling the current time, so that a rerun months later processes the same slice.",
+          "heading": "How runs are timed"
+        },
+        {
+          "body": "With catchup enabled, the scheduler creates a run for every interval between the start date and now that has not yet run; disabled, it only schedules the latest. Backfill deliberately reruns a historical range, for example after fixing a feature bug that requires recomputing ninety days of features. Both only work safely when tasks are partitioned by interval and idempotent. Limits such as max active runs and pools keep a backfill from flooding a warehouse or a GPU queue.",
+          "heading": "Catchup and backfill"
+        }
+      ],
+      "id": "scheduling-and-data-intervals",
+      "title": "Scheduling, data intervals, catchup and backfill"
+    },
+    {
+      "body": [
+        {
+          "body": "Airflow's guidance is to treat each task like a database transaction: it either completes fully or leaves nothing partial behind, and rerunning it gives the same result. In practice that means writing to a partition keyed by the data interval and overwriting it (or using upsert and merge) instead of appending, never relying on local disk between tasks because tasks may run on different workers, and avoiding non-deterministic inputs such as the current time. Retries are set per task with a count, a delay and optional exponential backoff. Timeouts, SLA-style alerts and on-failure callbacks turn a silent stall into a page or a chat message. For ML, training tasks should checkpoint to remote storage so a retry resumes instead of restarting.",
+          "heading": "Tasks as transactions"
+        }
+      ],
+      "id": "idempotent-tasks-and-retries",
+      "title": "Idempotent tasks, retries and failure handling"
+    },
+    {
+      "body": [
+        {
+          "body": "An Airflow deployment has a scheduler that decides what should run, a DAG processor that parses DAG files, a metadata database (usually Postgres) holding all state, a web UI and API server, and an executor that determines where tasks run. The local executor runs tasks as subprocesses beside the scheduler. The Celery executor distributes them to a fixed pool of workers through a broker. The Kubernetes executor launches one pod per task, giving isolation and scale to zero at the cost of pod startup latency.",
+          "heading": "Components"
+        },
+        {
+          "body": "Independent of the executor, the Kubernetes pod operator runs a task as a pod from any image with its own resource requests, node selectors and tolerations. This keeps ML dependencies and GPU requirements out of the Airflow image. Platform teams commonly keep Airflow workers light and delegate: submit a Spark job, start a training job on a cluster or managed service, then poll or use a deferrable operator, which releases the worker slot while waiting and resumes through the triggerer process.",
+          "heading": "The pattern for ML"
+        }
+      ],
+      "id": "executors-and-kubernetes",
+      "title": "Architecture and executors: running tasks on Kubernetes"
+    },
+    {
+      "body": [
+        {
+          "body": "DAG files are parsed repeatedly by the DAG processor, so top-level code must be fast. Do not query databases, call APIs or read Airflow Variables at module level, and move heavy imports inside task functions. Read Variables and Connections through templates or inside the task at runtime. Keep secrets in Connections or a secrets backend, not in code. Generate similar DAGs from configuration with care, since each generated DAG adds parse time and scheduler load.",
+          "heading": "Keep parsing cheap"
+        },
+        {
+          "body": "A baseline CI test loads every DAG file and fails on import errors or cycles. Unit tests cover the Python callables in isolation, and a single DAG can be executed locally with the test command or dag.test for a debug run without a scheduler. DAGs ship through Git: synced into the deployment or baked into the image, promoted across staging and production, with the Airflow version and provider packages pinned so upgrades are deliberate.",
+          "heading": "Testing and delivery"
+        }
+      ],
+      "id": "dag-authoring-practices-and-testing",
+      "title": "DAG authoring practices and testing"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  Git[DAG repo] --> DP[DAG processor]\n  DP --> DB[(Metadata DB)]\n  S[Scheduler] --> DB\n  UI[Web UI and API] --> DB\n  S --> E[Executor]\n  E --> P1[Task pod: features]\n  E --> P2[Task pod: train on GPU]\n  E --> P3[Task pod: evaluate]\n  P1 --> OS[(Object storage)]\n  P2 --> OS\n  P3 --> REG[Model registry]"
+  },
+  "code": [
+    {
+      "code": "from datetime import datetime, timedelta\nfrom airflow.decorators import dag, task\n\n@dag(schedule=\"@daily\", start_date=datetime(2025, 1, 1), catchup=False,\n     default_args={\"retries\": 2, \"retry_delay\": timedelta(minutes=5)})\ndef train_daily():\n    @task\n    def build_features(data_interval_start=None) -> str:\n        # write to a partition keyed by the interval, overwrite on rerun\n        return f\"features/dt={data_interval_start:%Y-%m-%d}/\"\n\n    @task\n    def train(path: str) -> str:\n        print(\"training on\", path)\n        return \"model-version-ref\"\n\n    train(build_features())\n\ntrain_daily()",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "Apache Airflow",
+    "TaskFlow API",
+    "KubernetesExecutor",
+    "CeleryExecutor",
+    "KubernetesPodOperator",
+    "Amazon MWAA",
+    "Google Cloud Composer",
+    "Astronomer",
+    "PostgreSQL",
+    "Helm"
+  ],
+  "related": [
+    "ml-native-orchestrators",
+    "temporal-durable-workflows",
+    "kubernetes-for-ml-workloads",
+    "spark-data-pipelines",
+    "python-for-platform-engineering",
+    "model-evaluation-gates"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Airflow: DAGs",
+      "url": "https://airflow.apache.org/docs/apache-airflow/stable/core-concepts/dags.html"
+    },
+    {
+      "kind": "tutorial",
+      "title": "Airflow 101: Building Your First Workflow",
+      "url": "https://airflow.apache.org/docs/apache-airflow/stable/tutorial/fundamentals.html"
+    },
+    {
+      "kind": "doc",
+      "title": "Airflow Best Practices",
+      "url": "https://airflow.apache.org/docs/apache-airflow/stable/best-practices.html"
+    }
+  ],
+  "practice": "practice/airflow-pipelines",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    }
+  ]
+}

@@ -1,0 +1,161 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "sql-postgres-data-systems",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "SQL and data systems: schemas, indexing and partitioning in Postgres",
+  "area": "data",
+  "primary_key": "sql",
+  "secondary_keys": [
+    "data-systems",
+    "storage"
+  ],
+  "keys": [
+    "sql",
+    "data-systems",
+    "storage"
+  ],
+  "summary": "Almost every deployment ends up reading from or writing to a relational database, and Postgres is the one most often named. The work has two halves: designing schemas, indexes and partitions for the systems you build, and reading a customer's existing, often undocumented, schema well enough to map it to business concepts and query it without hurting production.",
+  "detail": [],
+  "in_practice": "On a new engagement the first database task is usually discovery: a read-only role, a pass through the catalog, column profiling, and a mapping document reviewed with the customer's domain expert. For systems the team builds, schemas are managed with a migration tool in the application repository, constraints carry the invariants, and indexes are added after looking at real query plans from slow query logs or pg_stat_statements. Large event or log tables are range partitioned by time from the start so retention is a partition drop. Changes to big production tables are rehearsed on a copy and applied with concurrent index builds and short lock timeouts.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "A schema is the most durable documentation a system has. Model entities as tables with a primary key, express relationships with foreign keys, and encode invariants as NOT NULL, UNIQUE and CHECK constraints so bad data is rejected at write time instead of discovered in a report. Choose types precisely: timestamptz for instants, numeric for money, uuid or bigint identity columns for keys, and jsonb for semi-structured payloads that do not justify columns yet. Normalize by default and denormalize deliberately for read paths you have measured. Schema changes go through versioned migrations, and on large tables you need to know which changes take locks that block writes.",
+          "heading": "Let the database enforce the rules"
+        }
+      ],
+      "id": "schema-design-and-constraints",
+      "title": "Schema design and constraints in Postgres"
+    },
+    {
+      "body": [
+        {
+          "body": "An index is a separate ordered structure that lets the database find rows without scanning the table. The default in Postgres is the B-tree, which serves equality and range conditions and can return rows already sorted. In a multicolumn B-tree the column order matters: the index is most useful when the query constrains the leading columns, so put equality columns first and the range or sort column after them. Other index types fit other data: GIN for jsonb containment, arrays and full-text search, GiST for geometric and range types, and BRIN for very large tables whose values correlate with physical order, such as append-only timestamps.",
+          "heading": "How an index helps"
+        },
+        {
+          "body": "A partial index covers only rows matching a predicate, which keeps it small when queries always filter the same way, for example on unprocessed rows. An expression index stores the result of a function such as lower of an email, and is used only when the query uses the same expression. Covering indexes add non-key columns with INCLUDE so a query can be answered by an index-only scan. Every index slows writes and takes space, so add them in response to real queries. On a busy production table, build with CREATE INDEX CONCURRENTLY to avoid blocking writes.",
+          "heading": "Refinements and costs"
+        }
+      ],
+      "id": "indexing",
+      "title": "Indexing: types, column order and trade-offs"
+    },
+    {
+      "body": [
+        {
+          "body": "EXPLAIN shows the plan the planner chose as a tree of nodes, each with an estimated cost and row count. EXPLAIN ANALYZE actually runs the query and adds real timings and row counts, and the BUFFERS option shows how many pages were read. Read from the innermost nodes outward. The key signals are a sequential scan on a large table where few rows are needed, a large gap between estimated and actual rows, which points to stale or missing statistics, and a nested loop executed many thousands of times. Remember that ANALYZE executes the statement, so wrap data-modifying queries in a transaction and roll back.",
+          "heading": "From slow query to cause"
+        }
+      ],
+      "id": "reading-explain",
+      "title": "Reading query plans with EXPLAIN"
+    },
+    {
+      "body": [
+        {
+          "body": "Postgres can split one logical table into child tables by range, list or hash on a partition key. The planner uses partition pruning to skip children that cannot match the query's conditions, so queries must filter on the key to benefit. The larger operational win is data lifecycle: dropping or detaching a month-old partition is a fast metadata change, while deleting the same rows is slow and leaves bloat. The constraints are real: a primary key or unique constraint must include the partition key columns, too many partitions increases planning time, and a poor key choice gives no pruning at all. Partition when a table is large and access is naturally bounded by time or tenant.",
+          "heading": "Declarative partitioning and when it pays off"
+        }
+      ],
+      "id": "table-partitioning",
+      "title": "Table partitioning"
+    },
+    {
+      "body": [
+        {
+          "body": "Start with the catalog: information_schema and the pg_catalog tables list every table, column, type, constraint and index, and table statistics show which tables are large and actively written. Declared foreign keys give the reliable relationships; for the rest, infer candidates from column names and confirm by checking that values in one column actually exist in the other. Profile each important column for null rate, distinct count and value distribution, since a status column with eleven values tells you more than its name. Then sit with someone who uses the system, trace one real business record across tables, and write down the mapping as a glossary the customer signs off on.",
+          "heading": "A repeatable discovery method"
+        },
+        {
+          "body": "Ask for a read-only role scoped to the schemas you need, and prefer a replica or a snapshot over the primary. Set a statement timeout for your session so an accidental cross join cannot run for an hour. Sample with LIMIT while exploring, and check the plan before running anything over a large table. Record every assumption about meaning, such as which timestamp is the business date and how soft deletes are flagged, because those assumptions are where integrations and AI features silently go wrong.",
+          "heading": "Working safely on someone else's database"
+        }
+      ],
+      "id": "mapping-undocumented-schemas",
+      "title": "Mapping an undocumented customer schema to business concepts"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart TB\n  Q[Query filtered by tenant and time range] --> PL[Planner]\n  PL -->|partition pruning| P2[events_2026_02]\n  PL -.->|skipped| P1[events_2026_01]\n  PL -.->|skipped| P3[events_2026_03]\n  P2 --> IX[B-tree index on tenant_id, occurred_at]\n  IX --> R[Matching rows]"
+  },
+  "code": [
+    {
+      "code": "CREATE TABLE events (\n  tenant_id   bigint      NOT NULL,\n  occurred_at timestamptz NOT NULL,\n  kind        text        NOT NULL CHECK (kind <> ''),\n  payload     jsonb       NOT NULL\n) PARTITION BY RANGE (occurred_at);\n\nCREATE TABLE events_2026_02 PARTITION OF events\n  FOR VALUES FROM ('2026-02-01') TO ('2026-03-01');\n\nCREATE INDEX ON events (tenant_id, occurred_at DESC);\n\nEXPLAIN (ANALYZE, BUFFERS)\nSELECT kind, count(*)\nFROM events\nWHERE tenant_id = 42\n  AND occurred_at >= '2026-02-10' AND occurred_at < '2026-02-11'\nGROUP BY kind;",
+      "lang": "sql"
+    },
+    {
+      "code": "-- Discover declared relationships in an unfamiliar schema\nSELECT tc.table_name, kcu.column_name,\n       ccu.table_name AS references_table,\n       ccu.column_name AS references_column\nFROM information_schema.table_constraints tc\nJOIN information_schema.key_column_usage kcu\n  ON tc.constraint_name = kcu.constraint_name\nJOIN information_schema.constraint_column_usage ccu\n  ON tc.constraint_name = ccu.constraint_name\nWHERE tc.constraint_type = 'FOREIGN KEY'\nORDER BY tc.table_name;",
+      "lang": "sql"
+    }
+  ],
+  "technologies": [
+    "PostgreSQL",
+    "psql",
+    "pg_stat_statements",
+    "pgvector",
+    "Alembic",
+    "Flyway",
+    "Prisma",
+    "Drizzle ORM",
+    "PgBouncer",
+    "Amazon RDS"
+  ],
+  "related": [
+    "messy-data-entity-resolution",
+    "snowflake-databricks-platforms",
+    "dbt-elt-transformations",
+    "rag-vector-databases",
+    "legacy-systems-migrations",
+    "scaling-performance-cost"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "PostgreSQL Tutorial",
+      "url": "https://www.postgresql.org/docs/current/tutorial.html"
+    },
+    {
+      "kind": "doc",
+      "title": "PostgreSQL: Indexes",
+      "url": "https://www.postgresql.org/docs/current/indexes.html"
+    },
+    {
+      "kind": "doc",
+      "title": "PostgreSQL: Table Partitioning",
+      "url": "https://www.postgresql.org/docs/current/ddl-partitioning.html"
+    },
+    {
+      "kind": "book",
+      "title": "Use The Index, Luke: Preface",
+      "url": "https://use-the-index-luke.com/sql/preface"
+    },
+    {
+      "kind": "doc",
+      "title": "PostgreSQL Documentation: Data Definition",
+      "url": "https://www.postgresql.org/docs/current/ddl.html"
+    },
+    {
+      "kind": "doc",
+      "title": "PostgreSQL Documentation: Using EXPLAIN",
+      "url": "https://www.postgresql.org/docs/current/using-explain.html"
+    }
+  ],
+  "practice": "practice/sql-postgres-data-systems",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    }
+  ]
+}

@@ -1,0 +1,142 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "rag-infrastructure",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Retrieval-augmented generation infrastructure and vector search",
+  "area": "ai-ml",
+  "primary_key": "rag",
+  "secondary_keys": [],
+  "keys": [
+    "rag"
+  ],
+  "summary": "Retrieval-augmented generation pairs a model's parametric knowledge with an external, searchable store, so answers can be grounded in current and private data and can cite it. The infrastructure is two pipelines: an offline one that parses, chunks, embeds and indexes documents, and an online one that retrieves, ranks and assembles context for the model. Most quality and reliability problems are data-pipeline and search problems, not model problems.",
+  "detail": [],
+  "in_practice": "Teams run ingestion as a queue-driven or scheduled pipeline with job state in a database, and treat the index as a derived, rebuildable artifact. Each chunk records source, hash and embedding model version, and reindexing into a fresh index with an alias switch is the standard upgrade path. Retrieval is exposed as an internal API or as a tool for agents, with tenant filters applied server side. A golden question set runs in CI and nightly against production indexes; dashboards track retrieval latency per stage, empty-result rate, index lag and embedding spend. Many teams start on Postgres with pgvector or a managed knowledge base and move to a dedicated engine only when measurements require it.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "The original RAG work combined a generator, whose knowledge is fixed in its weights, with a dense vector index queried by a neural retriever, and showed that generation conditioned on retrieved passages is more factual and specific. Production systems keep that split but decouple the parts: any embedding model, any vector store, any generator. The design consequence for a platform is that knowledge is updated by reindexing data, not by retraining, and that every answer can carry the identifiers of the passages it was built from.",
+          "heading": "Parametric and non-parametric memory"
+        }
+      ],
+      "id": "rag-two-pipelines",
+      "title": "The RAG architecture: indexing and query paths"
+    },
+    {
+      "body": [
+        {
+          "body": "Once parsing and chunking work, the platform questions are about change. Each chunk should store the source document identifier, a content hash, the chunking version and the embedding model version, so that incremental sync only re-embeds what changed and a model upgrade can be run as a controlled backfill into a new index. Embedding calls are batched and rate limited like any other provider traffic. Deletions must propagate: when a source document is removed or a user loses access, its chunks must disappear from the index within a defined time.",
+          "heading": "Platform concerns beyond parsing"
+        }
+      ],
+      "id": "ingestion-and-chunking",
+      "title": "Ingestion, chunking and embedding pipelines"
+    },
+    {
+      "body": [
+        {
+          "body": "pgvector adds a vector column type and distance operators to Postgres: L2 distance, inner product and cosine distance. Without an index a query scans every row, which is exact but slow at scale. Approximate indexes trade recall for speed. HNSW builds a layered graph; it has better query performance and needs no training data, at the cost of slower builds and more memory. IVFFlat partitions vectors into lists and probes a few of them; it builds faster and is smaller, but should be created after the table has data.",
+          "heading": "Exact and approximate search"
+        },
+        {
+          "body": "Recall is tuned at query time: the HNSW search list size and the IVFFlat probe count both raise recall and latency together. Build-time parameters set graph connectivity or the number of lists. Filters matter: an approximate index applied before a selective metadata filter can return too few rows, so teams use partial indexes, partitioning by tenant, or iterative scan options. Keeping vectors in Postgres gives transactions, joins and row-level security next to the embeddings; dedicated vector databases are chosen when scale or feature needs exceed that.",
+          "heading": "Tuning and filtering"
+        }
+      ],
+      "id": "vector-indexes-pgvector",
+      "title": "Vector search and index tuning with pgvector"
+    },
+    {
+      "body": [
+        {
+          "body": "After lexical and vector candidates are fused, a common second stage is a cross-encoder reranker that scores each query and passage pair jointly and keeps the top few. It is slower per item, so it runs on tens of candidates, not thousands, and its latency must be budgeted. Query rewriting, which turns a conversational question into a standalone search query, sits before retrieval. Each stage should be measurable on its own: recall at k for retrieval, ranking metrics for the reranker, and groundedness for the final answer.",
+          "heading": "What follows first-stage retrieval"
+        }
+      ],
+      "id": "hybrid-retrieval-and-reranking",
+      "title": "Hybrid retrieval, fusion and reranking"
+    },
+    {
+      "body": [
+        {
+          "body": "A managed knowledge base takes over the indexing pipeline. You point it at a data source, choose an embedding model and a chunking strategy, and it parses, chunks, embeds and writes to a supported vector store, with sync jobs to pick up changes. At query time one API returns the retrieved passages, and another retrieves and generates an answer with citations to the sources. This is a fast path for standard document corpora; custom pipelines remain common where parsing, ranking or access rules are unusual.",
+          "heading": "Bedrock Knowledge Bases"
+        },
+        {
+          "body": "A shared RAG service needs tenancy and permissions enforced at retrieval time, by metadata filters or separate indexes, because the model cannot be trusted to withhold text it was given. Freshness is a service level objective: time from a source change to a searchable chunk. Quality is tracked with a labeled question set, measuring whether the right passages are retrieved and whether answers are supported by them. Retrieved text is untrusted input and can carry injected instructions, so it is delimited and never granted authority.",
+          "heading": "Access control, freshness and evaluation"
+        }
+      ],
+      "id": "managed-rag-and-operations",
+      "title": "Managed RAG and operating it as a service"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart TB\n  subgraph Indexing\n    S[Source documents] --> P[Parse and chunk]\n    P --> E[Embed]\n    E --> V[Vector and text index]\n  end\n  subgraph Query\n    Q[User question] --> W[Rewrite query]\n    W --> R[Hybrid retrieve with filters]\n    V --> R\n    R --> K[Rerank]\n    K --> C[Assemble context]\n    C --> L[LLM]\n    L --> A[Answer with citations]\n  end"
+  },
+  "code": [
+    {
+      "code": "CREATE EXTENSION IF NOT EXISTS vector;\n\nCREATE TABLE chunks (\n  id bigserial PRIMARY KEY,\n  doc_id text NOT NULL,\n  tenant text NOT NULL,\n  embed_model text NOT NULL,\n  body text NOT NULL,\n  embedding vector(1024)\n);\n\nCREATE INDEX ON chunks USING hnsw (embedding vector_cosine_ops);\n\nSET hnsw.ef_search = 80;\nSELECT id, doc_id, body\nFROM chunks\nWHERE tenant = 'acme'\nORDER BY embedding <=> $1\nLIMIT 8;",
+      "lang": "sql"
+    }
+  ],
+  "technologies": [
+    "pgvector",
+    "PostgreSQL",
+    "Amazon Bedrock Knowledge Bases",
+    "Amazon OpenSearch Service",
+    "LangChain",
+    "LlamaIndex",
+    "Elasticsearch",
+    "Qdrant",
+    "Pinecone",
+    "Amazon S3"
+  ],
+  "related": [
+    "bedrock-and-claude-apis",
+    "agents-and-mcp",
+    "storage-lakehouse-and-data-stores",
+    "llmops-evals-and-ai-assisted-dev",
+    "multi-tenant-platform-design",
+    "security-identity-and-governance"
+  ],
+  "sources": [
+    {
+      "kind": "paper",
+      "title": "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "url": "https://arxiv.org/abs/2005.11401"
+    },
+    {
+      "kind": "repo",
+      "title": "pgvector repository",
+      "url": "https://github.com/pgvector/pgvector"
+    },
+    {
+      "kind": "doc",
+      "title": "Amazon Bedrock Knowledge Bases",
+      "url": "https://docs.aws.amazon.com/bedrock/latest/userguide/knowledge-base.html"
+    },
+    {
+      "kind": "tutorial",
+      "title": "Build a RAG app (LangChain tutorial)",
+      "url": "https://docs.langchain.com/oss/python/deepagents/rag"
+    }
+  ],
+  "practice": "practice/rag-infrastructure",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    }
+  ]
+}

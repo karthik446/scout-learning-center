@@ -1,0 +1,126 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "model-monitoring-and-drift",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Model monitoring: data quality, drift and alerting",
+  "area": "infra",
+  "primary_key": "monitoring",
+  "secondary_keys": [],
+  "keys": [
+    "monitoring"
+  ],
+  "summary": "A model can be up, fast and error-free while its predictions get worse, because the data it sees has moved away from the data it was trained on. Model monitoring adds a second layer on top of service observability: checks on input data quality, on the distribution of inputs and predictions, and on accuracy once ground truth arrives. The outputs are alerts and retraining triggers, not just dashboards.",
+  "detail": [],
+  "in_practice": "Teams make monitoring part of the deployment contract: a model cannot be promoted without a registered baseline and a monitoring schedule. Capture is switched on at the endpoint by the platform, a scheduled job (hourly or daily, depending on traffic) computes quality and drift reports, and the summary numbers are exported as metrics next to latency and error rate. Reports with per-feature detail are stored for the investigation that follows an alert. The first weeks after launch are spent tuning thresholds, since default sensitivity produces alerts for seasonal patterns that are not problems. Drift alerts feed the retraining pipeline as a signal, with an evaluation gate before any automatic promotion.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "Data quality monitoring compares live inference inputs with a baseline computed from the training or validation set. In SageMaker Model Monitor a baseline job produces per-feature statistics and a set of suggested constraints: data types, completeness, value ranges and distribution descriptions. A scheduled monitoring job then analyzes captured production data against those constraints and writes a violations report plus metrics that can raise alarms. Typical violations are a missing column, a type change from numeric to string, a jump in null rate, or a category never seen in training. The same pattern works in open source with a reference dataset and a current window.",
+          "heading": "Baseline, constraints, violations"
+        }
+      ],
+      "id": "data-quality-baselines",
+      "title": "Data quality monitoring against a baseline"
+    },
+    {
+      "body": [
+        {
+          "body": "Data drift, also called covariate shift, is a change in the input distribution. Prediction drift is a change in the output distribution. Concept drift is a change in the relationship between inputs and the correct answer, and only labeled data reveals it directly. Managed monitors separate these into data quality, model quality, bias drift and feature attribution drift. Because labels are often late, input and prediction drift act as early proxies for model quality.",
+          "heading": "What can move"
+        },
+        {
+          "body": "Drift is detected by comparing a reference window with a current window per feature. Common measures are the Kolmogorov-Smirnov test for numeric features, chi-squared for categorical ones, and distance scores such as population stability index, Jensen-Shannon divergence or Wasserstein distance. Statistical tests become oversensitive at large sample sizes, so teams usually threshold on a distance score and weight features by importance. For text and embeddings, drift is measured on embedding distributions or with a classifier that tries to tell reference from current data.",
+          "heading": "How it is tested"
+        }
+      ],
+      "id": "drift-types-and-tests",
+      "title": "Kinds of drift and how they are measured"
+    },
+    {
+      "body": [
+        {
+          "body": "Nothing can be monitored unless requests and responses are recorded. Serving endpoints capture a configurable sample of payloads to object storage, each record tagged with an inference id, timestamp, model name and model version. Model quality monitoring needs a later join: the label arrives hours or weeks afterwards from a business system and is matched on the inference id, after which accuracy, precision, recall or error metrics are computed per window. Design points are the sampling rate, redaction of sensitive fields before storage, retention, and partitioning by date and model version so monitoring jobs read only the window they need.",
+          "heading": "The data plumbing"
+        }
+      ],
+      "id": "capture-and-ground-truth",
+      "title": "Capturing inference data and joining ground truth"
+    },
+    {
+      "body": [
+        {
+          "body": "Monitoring jobs publish their results as metrics, for example a drift score per feature and a share of drifted features per model. In Prometheus an alerting rule has an expression, an optional for duration that the condition must hold before the alert fires, labels such as severity, and annotations that carry a summary and a runbook reference. The for clause matters because drift scores are noisy between windows. Route by severity: data quality breakage such as a missing feature pages someone, gradual drift opens a ticket, and sustained drift on important features triggers evaluation of a retrained candidate.",
+          "heading": "Turning scores into alerts"
+        }
+      ],
+      "id": "alerting-on-model-health",
+      "title": "Alerting rules and response"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  T[Training data] --> B[Baseline job: statistics and constraints]\n  E[Serving endpoint] --> C[Captured requests and responses]\n  L[Late ground truth labels] --> J[Join on inference id]\n  C --> J\n  B --> M[Scheduled monitoring job]\n  C --> M\n  J --> M\n  M --> R[Violation and drift reports]\n  M --> P[Metrics]\n  P --> A[Alert rules]\n  A --> O[Page, ticket or retrain trigger]"
+  },
+  "code": [
+    {
+      "code": "groups:\n- name: model-health\n  rules:\n  - alert: FeatureDriftSustained\n    expr: model_drifted_feature_share{model=\"churn\"} > 0.3\n    for: 6h\n    labels:\n      severity: ticket\n    annotations:\n      summary: \"Over 30 percent of features drifted for {{ $labels.model }}\"\n      runbook: \"runbooks/model-drift\"\n  - alert: FeatureNullRateHigh\n    expr: model_feature_null_ratio > 0.05\n    for: 15m\n    labels:\n      severity: page",
+      "lang": "yaml"
+    }
+  ],
+  "technologies": [
+    "Amazon SageMaker Model Monitor",
+    "Evidently",
+    "Prometheus",
+    "Alertmanager",
+    "Amazon CloudWatch",
+    "Grafana",
+    "Great Expectations",
+    "whylogs"
+  ],
+  "related": [
+    "observability-opentelemetry-prometheus",
+    "model-evaluation-gates",
+    "feature-stores",
+    "sagemaker-deployment",
+    "slos-on-call-and-postmortems",
+    "llmops-evals-and-ai-assisted-dev"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "SageMaker Model Monitor",
+      "url": "https://docs.aws.amazon.com/sagemaker/latest/dg/model-monitor.html"
+    },
+    {
+      "kind": "doc",
+      "title": "SageMaker Model Monitor: Data quality",
+      "url": "https://docs.aws.amazon.com/sagemaker/latest/dg/model-monitor-data-quality.html"
+    },
+    {
+      "kind": "repo",
+      "title": "Evidently repository",
+      "url": "https://github.com/evidentlyai/evidently"
+    },
+    {
+      "kind": "doc",
+      "title": "Prometheus Alerting rules",
+      "url": "https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/"
+    }
+  ],
+  "practice": "practice/model-monitoring-and-drift",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-12",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    }
+  ]
+}

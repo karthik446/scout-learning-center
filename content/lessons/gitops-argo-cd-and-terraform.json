@@ -1,0 +1,133 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "gitops-argo-cd-and-terraform",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Reproducible environments: GitOps with Argo CD and infrastructure as code with Terraform",
+  "area": "infra",
+  "primary_key": "argo-cd",
+  "secondary_keys": [
+    "gitops",
+    "infrastructure-as-code",
+    "devops"
+  ],
+  "keys": [
+    "argo-cd",
+    "gitops",
+    "infrastructure-as-code",
+    "devops"
+  ],
+  "summary": "Reproducible environments come from declaring everything in version control and letting automation converge real systems toward it. Terraform declares cloud infrastructure and tracks it in state; Argo CD runs inside Kubernetes and continuously reconciles cluster resources against manifests in Git. For model releases this means a deployed model version is a line in a Git repository, with review, history and revert for free.",
+  "detail": [],
+  "in_practice": "Teams keep an infrastructure repository with Terraform modules and per-environment root configurations, applied by CI after a reviewed plan, and a separate deployment repository with Kustomize overlays or Helm values per environment. Terraform creates the cluster and installs Argo CD, which then manages a root application that pulls in platform add-ons and an ApplicationSet that generates one application per model service and environment. Staging syncs automatically with prune and self-heal; production either syncs automatically from a protected branch or requires a manual sync. The release pipeline's last step is a bot pull request updating the model version and image digest, and anyone can answer what is running by reading Git.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "Argo CD is a declarative continuous delivery controller for Kubernetes. Its central object is the Application, which binds a source, meaning a Git repository, revision and path containing manifests, Helm charts or Kustomize overlays, to a destination cluster and namespace. The target state is what Git declares; the live state is what is running. Sync status says whether the two match, and health status says whether the live resources are working. A sync applies the target state to the cluster. An AppProject groups applications and restricts which repositories, clusters and resource kinds they may use. Because the controller pulls from Git, CI systems never need cluster credentials; they only write to a repository.",
+          "heading": "Target state, live state and sync"
+        }
+      ],
+      "id": "argo-cd-core-concepts",
+      "title": "The GitOps model and Argo CD concepts"
+    },
+    {
+      "body": [
+        {
+          "body": "With manual sync, Argo CD reports that an application is out of sync and waits for an operator. With an automated sync policy it applies changes as soon as Git changes. Two options matter operationally: prune deletes resources that were removed from Git, and self-heal reverts manual changes made directly in the cluster. Enabling both makes Git the only way to change the environment, which is the point, but it requires that emergency procedures also go through Git. Sync waves and hooks order resources, for example installing CRDs and running a migration job before workloads.",
+          "heading": "Automated sync, prune and self-heal"
+        },
+        {
+          "body": "Platform teams avoid hand-written Application objects. The app-of-apps pattern has one root application that manages other applications, and ApplicationSet generates applications from a template over a list of clusters, directories or repositories, which suits one inference service per model per environment.",
+          "heading": "Scaling to many teams and clusters"
+        }
+      ],
+      "id": "sync-policies-and-fleet-patterns",
+      "title": "Sync policies, drift and managing many applications"
+    },
+    {
+      "body": [
+        {
+          "body": "Terraform's write, plan, apply cycle depends on state, the record that maps configuration to real resource identifiers and stores metadata such as dependencies. For a shared platform the state lives in a remote backend with locking so two applies cannot run at once, is split per environment and per layer to limit blast radius, and is treated as sensitive because it can contain secret values. For ML platforms the layers typically cover network, cluster and GPU node groups, object storage, registries and identity roles.",
+          "heading": "State as the mapping to real resources"
+        }
+      ],
+      "id": "terraform-workflow-and-state",
+      "title": "Terraform workflow and state"
+    },
+    {
+      "body": [
+        {
+          "body": "A common split is that Terraform owns things with a cloud API and a slow change rate: accounts, networking, the cluster, node pools, buckets, registries, identity roles, and the initial installation of Argo CD itself. Argo CD owns everything inside the cluster: platform add-ons such as GPU operators, ingress and monitoring, and the workloads. Managing in-cluster Helm releases through Terraform works but couples every chart upgrade to a plan and apply and gives no continuous drift correction, so teams usually bootstrap Argo CD once and hand over.",
+          "heading": "Splitting ownership cleanly"
+        },
+        {
+          "body": "The serving manifest for a model references a model version or storage path and an image digest. Promotion is a pull request that changes those values in the environment overlay; Argo CD detects the commit and syncs it, and rollback is a revert of that commit. The registry remains the source of truth for what is approved, and Git records what is deployed where.",
+          "heading": "A model release as a Git change"
+        }
+      ],
+      "id": "terraform-argo-boundary-and-model-promotion",
+      "title": "Where Terraform stops and GitOps starts"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  subgraph Infra\n    T[Terraform repo] --> P[Plan and apply in CI]\n    P --> C[Cloud: VPC, cluster, buckets, roles]\n    P --> A[Argo CD installed]\n  end\n  subgraph Delivery\n    R[Release pipeline] --> G[Deployment repo: version and digest]\n    G --> A\n    A --> K[Cluster: inference services]\n    K -. drift detected .-> A\n  end\n  C --> K"
+  },
+  "code": [],
+  "technologies": [
+    "Argo CD",
+    "ApplicationSet",
+    "Terraform",
+    "Helm",
+    "Kustomize",
+    "Flux",
+    "Amazon EKS",
+    "KServe"
+  ],
+  "related": [
+    "github-actions-ci-cd",
+    "staged-rollouts",
+    "kubernetes-for-ml-workloads",
+    "aws-and-eks-foundations",
+    "model-serving-architecture",
+    "multi-tenant-platform-design",
+    "security-identity-and-governance"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Argo CD Getting Started",
+      "url": "https://argo-cd.readthedocs.io/en/stable/getting_started/"
+    },
+    {
+      "kind": "doc",
+      "title": "Argo CD Core Concepts",
+      "url": "https://argo-cd.readthedocs.io/en/stable/core_concepts/"
+    },
+    {
+      "kind": "doc",
+      "title": "What is Terraform?",
+      "url": "https://developer.hashicorp.com/terraform/intro"
+    },
+    {
+      "kind": "doc",
+      "title": "Terraform State",
+      "url": "https://developer.hashicorp.com/terraform/language/state"
+    }
+  ],
+  "practice": "practice/gitops-argo-cd-and-terraform",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    }
+  ]
+}

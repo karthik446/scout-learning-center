@@ -1,0 +1,152 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "ai-coding-tools-production-code",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Shipping production code with Claude Code and other AI coding tools",
+  "area": "ai-ml",
+  "primary_key": "claude",
+  "secondary_keys": [
+    "cursor",
+    "codex",
+    "ai-assisted-development",
+    "production-code",
+    "software-engineering"
+  ],
+  "keys": [
+    "claude",
+    "cursor",
+    "codex",
+    "ai-assisted-development",
+    "production-code",
+    "software-engineering"
+  ],
+  "summary": "Agentic coding tools read a repository, run commands, edit files and iterate on test results, which changes the engineer's job from typing code to directing and verifying it. For a forward deployed engineer the gain is speed in unfamiliar customer codebases, and the obligation is unchanged: the person who merges the change owns its correctness, security and fit with the customer's standards.",
+  "detail": [],
+  "in_practice": "A team using these tools well commits an instruction file and a small set of shared commands to each repository, so every session starts with the same build, test and convention knowledge. Engineers begin non-trivial changes in a read-only planning step, approve the plan, and let the agent implement against a test it can run. Pull requests stay small and are reviewed by a human who reads the full diff, with CI as the arbiter of whether anything passes. On customer engagements the tool, account type and permitted data are agreed in writing before the first session, and agents run with the minimum permissions and no production credentials.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "An agent that starts editing immediately will solve the problem it guessed at. The reliable loop is to have it read the relevant code first and explain how the area works, then produce a plan you review before any file changes, then implement in small steps, then prove the result by running tests, a type check or the application itself. Tools support this directly, for example a plan mode that restricts the agent to read-only actions until the plan is approved. The same loop is the fastest way into an unfamiliar customer codebase: ask where a request enters, how data flows and which tests cover it before changing anything.",
+          "heading": "Why the order matters"
+        },
+        {
+          "body": "The largest quality lever is a verification signal the agent can run on its own: a failing test that should pass, an expected output, a screenshot to match, or a lint and type check command. Without one, the agent stops when the code looks plausible. State the task with the target behavior, the files or patterns to follow, and the command that proves success. Keep tasks scoped to one reviewable change, and start a fresh session when the context fills with unrelated history, since stale context degrades results.",
+          "heading": "Giving the agent a way to check itself"
+        }
+      ],
+      "id": "explore-plan-implement-verify",
+      "title": "The core workflow: explore, plan, implement, verify"
+    },
+    {
+      "body": [
+        {
+          "body": "Each tool reads a persistent instruction file at the start of a session: CLAUDE.md for Claude Code, rules files for Cursor, and AGENTS.md for Codex. Put there what the agent cannot infer from the code: the build and test commands, branch and commit conventions, directories that must not be touched, and the non-obvious architectural rules. Keep it short and specific, because long instruction files get diluted. Repeated workflows, such as opening a pull request or running a migration check, belong in reusable commands or skills so every engineer on the engagement invokes the same procedure. Connections to external systems such as issue trackers or databases are added through Model Context Protocol servers.",
+          "heading": "Teaching the tool the repository"
+        }
+      ],
+      "id": "project-context-and-instructions",
+      "title": "Project context: instruction files, rules and reusable commands"
+    },
+    {
+      "body": [
+        {
+          "body": "Beyond ordinary review, watch for the mistakes agents make more often than people do: tests weakened or deleted to get a green run, errors swallowed by broad exception handlers, invented library functions or configuration options, duplicated helpers where one already exists, and changes that drift outside the requested scope. Read the diff, not the agent's summary of the diff, and treat a claim that tests pass as unverified until CI shows it.",
+          "heading": "Failure modes specific to generated code"
+        }
+      ],
+      "id": "reviewing-and-testing-generated-code",
+      "title": "Reviewing and testing generated code"
+    },
+    {
+      "body": [
+        {
+          "body": "Coding agents run shell commands with your credentials, so the permission model matters. Tools provide modes that range from asking before every edit or command to allowing a defined set automatically, plus allow and deny lists for specific commands and paths. Hooks run your own scripts before or after tool calls and can block an action deterministically, which is stronger than an instruction the model may ignore. Run unattended or broadly permitted sessions inside a sandbox or container without production credentials. Treat content the agent reads from the web, issues or documents as untrusted, because it can carry injected instructions.",
+          "heading": "Controlling what the agent can do"
+        },
+        {
+          "body": "Before using any AI tool on a customer's code, confirm that their policy and your contract allow it, which provider and data retention terms apply, and whether the code may leave their network at all. Some customers require a specific approved tool, an enterprise account, or a cloud-hosted model endpoint inside their own tenancy. Keep secrets and personal data out of prompts and out of files the agent reads. Follow the customer's review process exactly, and disclose AI assistance where their contribution rules ask for it.",
+          "heading": "Customer-specific obligations"
+        }
+      ],
+      "id": "permissions-and-customer-repositories",
+      "title": "Permissions, safety and working in customer repositories"
+    },
+    {
+      "body": [
+        {
+          "body": "The remaining points are mechanical. Isolate parallel sessions with git worktrees so agents do not overwrite each other. Use subagents to keep exploration out of the main context window. Run the tool non-interactively in CI for narrow jobs such as triaging a failing build or drafting a review, with a tightly restricted tool list. Parallelism multiplies review load, so cap it at what one person can actually read.",
+          "heading": "Scaling beyond one session"
+        }
+      ],
+      "id": "parallel-agents-and-automation",
+      "title": "Parallel sessions, subagents and headless automation"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  T[Task with success criterion] --> E[Explore: agent reads code]\n  E --> P[Plan: read-only proposal]\n  P -->|human approves| I[Implement in small steps]\n  P -->|human corrects| E\n  I --> V[Verify: tests, types, run the app]\n  V -->|fails| I\n  V -->|passes| R[Human reviews full diff]\n  R --> CI[CI gate]\n  CI --> M[Merge]"
+  },
+  "code": [
+    {
+      "code": "# CLAUDE.md\n\n## Commands\n- Install: pnpm install\n- Type check: pnpm tsc --noEmit\n- Test one file: pnpm vitest run path/to/file.test.ts\n- Lint: pnpm eslint .\n\n## Rules\n- Never edit files under migrations/ that are already merged.\n- All external responses are parsed with a schema in src/schemas.\n- Do not change or delete a failing test to make it pass; report it.\n- Keep each change to one concern; no drive-by refactors.\n\n## Verification\n- A change is done only when type check, lint and tests pass.",
+      "lang": "markdown"
+    }
+  ],
+  "technologies": [
+    "Claude Code",
+    "Cursor",
+    "OpenAI Codex",
+    "GitHub Copilot",
+    "Model Context Protocol",
+    "Git worktrees",
+    "GitHub Actions",
+    "pytest",
+    "Playwright"
+  ],
+  "related": [
+    "python-for-integrations",
+    "typescript-node-services",
+    "agent-architectures",
+    "mcp-servers",
+    "security-compliance-reviews",
+    "reusable-platform-internal-tooling"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Claude Code overview",
+      "url": "https://code.claude.com/docs/en/overview"
+    },
+    {
+      "kind": "doc",
+      "title": "Claude Code: Common workflows",
+      "url": "https://code.claude.com/docs/en/common-workflows"
+    },
+    {
+      "kind": "doc",
+      "title": "Cursor Docs",
+      "url": "https://cursor.com/docs"
+    },
+    {
+      "kind": "doc",
+      "title": "OpenAI Codex",
+      "url": "https://learn.chatgpt.com/docs"
+    }
+  ],
+  "practice": "practice/ai-coding-tools-production-code",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    }
+  ]
+}

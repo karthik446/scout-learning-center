@@ -1,0 +1,144 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "reusable-platform-internal-tooling",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Turning one-off customer builds into reusable platform features and internal tooling",
+  "area": "software",
+  "primary_key": "reusable-platform",
+  "secondary_keys": [
+    "internal-tooling",
+    "product-feedback"
+  ],
+  "keys": [
+    "reusable-platform",
+    "internal-tooling",
+    "product-feedback"
+  ],
+  "summary": "Forward deployed work creates custom solutions under time pressure, and its long-term value depends on how much of that work the next engagement can reuse. This lesson covers how to decide what to generalize, how feature toggles let one codebase serve many customers, how field teams and platform teams work together, and how developer portals and internal tools turn repeated work into paved paths.",
+  "detail": [],
+  "in_practice": "After each engagement the team holds a short review that lists what was built, what was reused and what was painful, and tags candidates for extraction. When the same need has shown up at several customers, a field engineer and a platform engineer pair for a sprint or two to pull the core into the product behind a per-tenant toggle, with customer specifics moved into configuration. The first customer is migrated to the shared version to prove it, then ownership moves to the platform team and the capability is published as a template and a catalog entry in the developer portal. Product managers use the engagement log and adoption numbers to decide what gets generalized next, and release toggles are removed once all tenants are on the new path.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "Forward deployed work produces custom code by design, and most of it should stay custom. The signal for reuse is repetition: when a second or third customer needs the same connector, evaluation harness or deployment script, the pattern is real and its variation points are visible. Generalizing after one build tends to encode that customer's quirks as product assumptions. Keep a running log of what each engagement built, what was copied from a previous one and what had to be changed; that log is the evidence the product team needs to prioritize.",
+          "heading": "From one customer to a pattern"
+        },
+        {
+          "body": "To extract a feature, split it into a stable core, a set of declared extension points and per-customer configuration. Field mappings, prompts, thresholds and credentials belong in configuration; orchestration, retries, auth flows and telemetry belong in the core. Write the contract first: inputs, outputs, error behavior and version policy. Then migrate the original customer onto the extracted version, since a reusable component that its first user does not run is unproven. Hand over ownership explicitly, with docs, tests and an on-call owner.",
+          "heading": "Separating core from configuration"
+        }
+      ],
+      "id": "deciding-what-to-generalize",
+      "title": "Deciding what to generalize"
+    },
+    {
+      "body": [
+        {
+          "body": "Feature toggles let one codebase behave differently without a branch or a fork per customer. Fowler's taxonomy sorts them by lifetime and dynamism. Release toggles hide unfinished code on trunk and should live days or weeks. Experiment toggles route cohorts for A/B tests. Ops toggles act as kill switches for risky or costly behavior, such as an expensive model path. Permission toggles enable features for specific users or tenants and can live for years. Each category deserves different handling: a long-lived permission toggle needs proper management, while a release toggle needs a removal date.",
+          "heading": "Toggle categories"
+        },
+        {
+          "body": "Avoid scattering conditionals on a flag name through the code. Put the decision behind a toggle router, expose a named feature decision such as whether to include a step, and where the variation is large inject a different strategy implementation at construction time. Toggle configuration ranges from static files that ship with a deploy to a dynamic store that changes per request. Toggles carry a cost: every one multiplies the states to test, so test the expected production configuration plus the fallback, keep an inventory with owners, and delete release toggles once the rollout completes.",
+          "heading": "Keeping toggles manageable"
+        }
+      ],
+      "id": "feature-toggles-per-customer-variation",
+      "title": "Feature toggles for per-customer variation"
+    },
+    {
+      "body": [
+        {
+          "body": "Team Topologies describes four team types: stream-aligned teams that deliver along a flow of work, enabling teams that help others gain capabilities, complicated-subsystem teams that own areas needing deep specialist knowledge, and platform teams that provide internal services to speed up stream-aligned teams. They interact in three modes: collaboration, X-as-a-Service and facilitating. A forward deployed team is stream-aligned to a customer. It collaborates closely with the platform team while a capability is being discovered, then shifts to consuming it as a service once the interface is stable. The aim throughout is to reduce cognitive load on delivery teams.",
+          "heading": "Team types and interaction modes"
+        },
+        {
+          "body": "Platform engineering treats internal tooling as a product with users, a roadmap and adoption metrics. The platform offers self-service capabilities so that an engineer can provision an environment, deploy an agent or add a connector without filing a ticket. Keep it as thin as possible: the smallest set of APIs, templates and docs that removes real friction. Measure it by time to first deployment for a new customer, the share of engagements using the paved path, and how often teams work around it. Adoption should be earned by usefulness, not mandated.",
+          "heading": "Platform as a product"
+        }
+      ],
+      "id": "platform-as-product-team-topologies",
+      "title": "Platform as a product and team interaction"
+    },
+    {
+      "body": [
+        {
+          "body": "An internal developer portal gives one place to find and create software. Backstage, an open source framework for building such portals, centers on a software catalog that tracks ownership and metadata for services, libraries, pipelines and other components; software templates that scaffold a new project with the organization's standards already applied; and TechDocs, which builds documentation from Markdown kept beside the code. Plugins extend it to show CI status, cloud resources or cost. For field teams, a template that creates a new customer deployment with auth, telemetry, evaluation and CI wired in is the highest-value golden path.",
+          "heading": "Catalog, templates and docs"
+        },
+        {
+          "body": "The best internal tools start as a script someone wrote during an engagement: a data profiler, a connectivity checker, a trace viewer, an onboarding checklist. Promote one when several engineers are copying it. Give it a home in a shared repository, a command-line entry point, versioned releases and a short document that states what it does and what it does not. Feed the same pain points into onboarding flows and docs, since each question asked twice by a customer or a new engineer points to a gap.",
+          "heading": "Tooling built from field pain"
+        }
+      ],
+      "id": "developer-portal-golden-paths",
+      "title": "Developer portals, golden paths and field tooling"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  A[Customer build 1] --> L[Engagement pattern log]\n  B[Customer build 2] --> L\n  C[Customer build 3] --> L\n  L --> D{Repeated need?}\n  D -->|no| E[Keep custom]\n  D -->|yes| F[Extract core and config]\n  F --> G[Platform feature behind toggle]\n  G --> H[Template in developer portal]\n  H --> N[Next customer deployment]"
+  },
+  "code": [
+    {
+      "code": "apiVersion: backstage.io/v1alpha1\nkind: Component\nmetadata:\n  name: crm-connector\n  description: Reusable CRM sync connector extracted from customer builds\n  annotations:\n    backstage.io/techdocs-ref: dir:.\n  tags:\n    - connector\n    - python\nspec:\n  type: service\n  lifecycle: production\n  owner: team-platform",
+      "lang": "yaml"
+    }
+  ],
+  "technologies": [
+    "Backstage",
+    "LaunchDarkly",
+    "Unleash",
+    "OpenFeature",
+    "Cookiecutter",
+    "GitHub Actions",
+    "Terraform modules",
+    "Helm charts",
+    "TechDocs"
+  ],
+  "related": [
+    "fde-delivery-model",
+    "pocs-pilots-prototyping",
+    "containers-cicd-serverless",
+    "mcp-servers",
+    "ai-coding-tools-production-code",
+    "debugging-postmortems"
+  ],
+  "sources": [
+    {
+      "kind": "article",
+      "title": "Feature Toggles (aka Feature Flags)",
+      "url": "https://martinfowler.com/articles/feature-toggles.html"
+    },
+    {
+      "kind": "guide",
+      "title": "Team Topologies: Key Concepts",
+      "url": "https://teamtopologies.com/key-concepts"
+    },
+    {
+      "kind": "doc",
+      "title": "What is Backstage?",
+      "url": "https://backstage.io/docs/overview/what-is-backstage/"
+    },
+    {
+      "kind": "article",
+      "title": "What is platform engineering?",
+      "url": "https://platformengineering.org/blog/what-is-platform-engineering"
+    }
+  ],
+  "practice": "practice/reusable-platform-internal-tooling",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-12",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    }
+  ]
+}

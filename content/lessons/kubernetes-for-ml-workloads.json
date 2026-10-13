@@ -1,0 +1,136 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "kubernetes-for-ml-workloads",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Kubernetes for ML workloads: containers, deployments and jobs",
+  "area": "infra",
+  "primary_key": "kubernetes",
+  "secondary_keys": [
+    "cloud-native"
+  ],
+  "keys": [
+    "kubernetes",
+    "cloud-native"
+  ],
+  "summary": "Kubernetes is the default substrate for ML platforms because it schedules containers across a shared pool of machines and keeps declared state true. ML uses two workload shapes on it: long-running services for inference and run-to-completion jobs for training and batch work. This lesson covers the container and workload primitives that later lessons on GPUs, scheduling and serving build on.",
+  "detail": [],
+  "in_practice": "A platform team gives each ML team a namespace with quotas and offers two paved paths: a chart or template for an inference Deployment with correct probes and resource settings, and a job template for training with checkpoint paths, retry limits and GPU tolerations already filled in. Images are built in CI, pushed to a registry and referenced by digest. Researchers rarely write raw manifests; they submit through an SDK or orchestrator that generates Jobs, while the platform team watches pending pods, out-of-memory kills and image pull times as its core health signals.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "A container image packages the application with its dependencies and runtime so it runs the same everywhere. ML images are unusually large because they carry numerical libraries, a deep learning framework and often GPU runtime libraries, so several gigabytes is normal. Layer ordering matters: put the base image and slow-changing dependencies first and the application code last, so rebuilds and node pulls reuse cached layers. Multi-stage builds keep compilers out of the final image. Model weights are usually kept out of the image and fetched from object storage at start, so that one image can serve many model versions.",
+          "heading": "What makes ML images different"
+        }
+      ],
+      "id": "container-images-for-ml",
+      "title": "Container images for ML code"
+    },
+    {
+      "body": [
+        {
+          "body": "A cluster has a control plane, with the API server, scheduler, controller managers and etcd, and worker nodes running the kubelet and a container runtime. Users declare objects and controllers reconcile actual state toward them. For ML the important extension is that this model is open: custom resources and operators add new object kinds such as a distributed training job or an inference service, and the same reconcile loop manages them. Kubernetes deliberately does not provide application-level services or dictate a CI system, which is the gap an ML platform fills.",
+          "heading": "The parts that matter for ML"
+        }
+      ],
+      "id": "cluster-model-and-desired-state",
+      "title": "Cluster model and desired state"
+    },
+    {
+      "body": [
+        {
+          "body": "A Deployment manages ReplicaSets and performs rolling updates controlled by maxSurge and maxUnavailable. Model servers stress this mechanism because a pod may need minutes to pull a large image and load weights into memory. Readiness probes must only pass after the model is loaded, and a startup probe gives slow starts room without loosening liveness checks. Setting maxUnavailable to zero with a surge of one keeps capacity during rollout, at the price of needing a spare node, which is expensive when that node has a GPU. Rollback uses the revision history the Deployment keeps.",
+          "heading": "Rollout behavior with slow-starting pods"
+        }
+      ],
+      "id": "deployments-for-model-servers",
+      "title": "Deployments for model servers"
+    },
+    {
+      "body": [
+        {
+          "body": "A Job creates one or more pods and tracks them until a set number complete successfully. Key fields are completions and parallelism for fan-out work, backoffLimit for how many retries to allow, activeDeadlineSeconds to cap runtime, and ttlSecondsAfterFinished to clean up. Indexed completion mode gives each pod a stable index, useful for sharding a dataset across workers. A CronJob creates Jobs on a schedule, a simple way to run periodic retraining or batch scoring. The pod restartPolicy must be Never or OnFailure, since a Job is not meant to run forever.",
+          "heading": "Run-to-completion workloads"
+        },
+        {
+          "body": "Nodes get drained, spot capacity gets reclaimed and pods get preempted, so a training job must tolerate restarts. The standard pattern is periodic checkpointing to object storage or a persistent volume and resuming from the latest checkpoint on start. Jobs should be idempotent, writing outputs to a path keyed by run id. A plain Job has no notion of several pods that must all start together, which is why distributed training uses operators and batch schedulers that add gang scheduling and queues on top of the Job primitive.",
+          "heading": "Making training survive the cluster"
+        }
+      ],
+      "id": "jobs-for-training-and-batch",
+      "title": "Jobs for training and batch inference"
+    },
+    {
+      "body": [
+        {
+          "body": "The scheduler places a pod on a node by its resource requests; limits cap what the container may use at runtime. Exceeding a memory limit gets the container killed, a frequent failure when a data loader or a model is larger than expected. Pods whose requests equal their limits get the Guaranteed quality of service class and are evicted last. GPUs appear as extended resources exposed by a device plugin, requested in the limits section as a whole number, and are not overcommitted by default. Node selectors, taints and tolerations keep ordinary pods off expensive GPU nodes.",
+          "heading": "How scheduling decisions are made"
+        }
+      ],
+      "id": "resources-and-gpu-requests",
+      "title": "Resource requests, limits and GPUs"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart TB\n  U[User or pipeline] --> API[API server]\n  API --> S[Scheduler]\n  API --> C[Controllers]\n  C --> D[Deployment]\n  C --> J[Job]\n  D --> RS[ReplicaSet]\n  RS --> P1[Model server pods]\n  J --> P2[Training pods]\n  S --> N1[CPU node pool]\n  S --> N2[GPU node pool]\n  P1 --> N1\n  P2 --> N2\n  P2 --> O[(Object storage checkpoints)]"
+  },
+  "code": [],
+  "technologies": [
+    "Kubernetes",
+    "Docker",
+    "containerd",
+    "Helm",
+    "Kustomize",
+    "kubectl",
+    "Kubeflow Training Operator",
+    "Kueue",
+    "NVIDIA device plugin"
+  ],
+  "related": [
+    "aws-and-eks-foundations",
+    "nvidia-gpus-on-kubernetes",
+    "distributed-training",
+    "workload-scheduling-and-cluster-ops",
+    "model-serving-architecture",
+    "staged-rollouts",
+    "autoscaling-and-cost-efficiency"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Kubernetes Overview",
+      "url": "https://kubernetes.io/docs/concepts/overview/"
+    },
+    {
+      "kind": "doc",
+      "title": "Deployments",
+      "url": "https://kubernetes.io/docs/concepts/workloads/controllers/deployment/"
+    },
+    {
+      "kind": "tutorial",
+      "title": "Learn Kubernetes Basics",
+      "url": "https://kubernetes.io/docs/tutorials/kubernetes-basics/"
+    },
+    {
+      "kind": "doc",
+      "title": "Docker: Get started",
+      "url": "https://docs.docker.com/get-started/"
+    }
+  ],
+  "practice": "practice/kubernetes-for-ml-workloads",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    }
+  ]
+}

@@ -1,0 +1,151 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "networking-restricted-environments",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Networking for private, air-gapped and classified customer environments",
+  "area": "infra",
+  "primary_key": "networking",
+  "secondary_keys": [
+    "classified-environments",
+    "defense"
+  ],
+  "keys": [
+    "networking",
+    "classified-environments",
+    "defense"
+  ],
+  "summary": "Many enterprise and government customers run workloads on networks with no public ingress, tightly filtered egress, or no internet connection at all. This lesson covers private connectivity patterns, network controls inside Kubernetes, and what changes when the environment is air-gapped or in a government region. The recurring theme is that every dependency you normally fetch at run time must be either reachable privately or carried in.",
+  "detail": [],
+  "in_practice": "A team keeps a connectivity matrix for each deployment: every source, destination, port and protocol, with the reason. They test the release in an internal environment that has no internet route and default-deny network policies, which catches most surprises before the customer sees them. For disconnected customers the pipeline emits an offline bundle with checksums alongside the normal release, and the installer reads every registry and endpoint address from configuration. A support bundle command and a written runbook stand in for the remote access the team will not have.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "A virtual private cloud is a logically isolated network with subnets, route tables, gateways and security groups. In a customer environment you rarely design it; you are handed subnets and must discover the rules. Ask which subnets have a route to the internet, whether egress passes through a proxy or firewall with an allowlist, how DNS resolves internal names, and how much address space is free, since pod networking can exhaust small ranges quickly.",
+          "heading": "Reading the customer's network before you deploy"
+        }
+      ],
+      "id": "private-network-layout",
+      "title": "Private network layout for a customer deployment"
+    },
+    {
+      "body": [
+        {
+          "body": "AWS PrivateLink lets resources in a VPC connect privately to supported AWS services, to services hosted in other accounts, and to partner services, as if they were inside the VPC, without an internet gateway, NAT device or public address. The consumer creates an interface endpoint, which appears as network interfaces with private addresses in their subnets; the provider exposes an endpoint service, typically fronted by a network load balancer. Traffic is one-directional by design: the consumer initiates, and the provider cannot reach back into the consumer network. That property makes it easier to get approved than peering, which joins two networks at the routing level and requires non-overlapping address ranges. Google Cloud Private Service Connect and Azure Private Link follow the same model.",
+          "heading": "Reaching services without the public internet"
+        },
+        {
+          "body": "Use private endpoints for cloud services the workload calls, including storage, the container registry, the secret store and the hosted model service, so the deployment works in subnets with no internet route. Use an endpoint service when the vendor control plane must be reachable from the customer network or the reverse. Use site-to-site VPN or a dedicated circuit when the workload must reach systems in a customer data center. List every outbound destination in the design document, with protocol and port, because that list becomes the firewall change request.",
+          "heading": "Choosing a pattern"
+        }
+      ],
+      "id": "private-connectivity",
+      "title": "Private connectivity: endpoints, peering and VPN"
+    },
+    {
+      "body": [
+        {
+          "body": "The Kubernetes network model gives every pod its own cluster-wide address, and pods can reach each other without address translation unless something restricts them. Services provide a stable address and DNS name in front of a changing set of pods; Ingress and the newer Gateway API expose HTTP routes to clients outside the cluster. NetworkPolicy objects restrict traffic by pod labels, namespaces and address ranges, but only take effect if the cluster's network plugin enforces them. Restricted customers often apply a default-deny policy per namespace, so your chart must ship explicit policies for every flow it needs: application to database, application to model endpoint, DNS, and metrics scraping. A missing DNS egress rule is the classic first failure, and it shows up as timeouts rather than refusals.",
+          "heading": "Services, ingress and policy"
+        }
+      ],
+      "id": "kubernetes-network-controls",
+      "title": "Kubernetes networking and egress control"
+    },
+    {
+      "body": [
+        {
+          "body": "An air-gapped environment has no route to the internet, so nothing can be pulled at install or run time. The release becomes a self-contained bundle: all container images exported as archives, charts, operating system packages, language dependencies, model weights and tokenizer files, plus checksums and signatures. The bundle is transferred through an approved process, scanned, and loaded into an internal registry and artifact store. Hunt down hidden network calls before shipping: telemetry, license checks, libraries that download model files on first use, and fonts or scripts loaded by a web front end from a public network.",
+          "heading": "Everything arrives as a bundle"
+        },
+        {
+          "body": "Hosted model APIs are unavailable, so inference runs on local GPUs with an open-weight model, and evaluation results from a hosted model do not transfer; rerun the evaluation suite on the model that will actually serve. You cannot attach a debugger or read dashboards remotely, so build a diagnostics command that collects logs, configuration and versions into a single redacted file the customer can review and hand back. Upgrades are infrequent and expensive, which raises the bar on installer idempotence, rollback and written runbooks.",
+          "heading": "Operating without reaching in"
+        }
+      ],
+      "id": "air-gapped-delivery",
+      "title": "Air-gapped delivery"
+    },
+    {
+      "body": [
+        {
+          "body": "AWS GovCloud (US) consists of isolated regions designed for United States government agencies and customers with sensitive workloads and regulatory requirements. Accounts and credentials are separate from standard regions, resource names use a different partition, endpoints differ, and not every service or feature is available or arrives at the same time. Practically, hard-coded partitions, region names and endpoints in infrastructure code break, and a managed service you depend on may be missing, including specific hosted models. Parameterize partition and endpoints, and check service availability during scoping rather than at install.",
+          "heading": "What a government region changes"
+        },
+        {
+          "body": "Classified environments add physical and personnel constraints on top of air-gapping: work happens on site in accredited facilities by cleared staff, no personal devices or outside connectivity are allowed, and software enters through a formal review and transfer process. The system needs an authorization to operate, which rests on documented security controls. Expect slow iteration loops, so invest in a faithful unclassified replica environment where the installer and upgrade path are rehearsed end to end before each visit.",
+          "heading": "Classified networks"
+        }
+      ],
+      "id": "govcloud-and-classified",
+      "title": "Government regions and classified environments"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  subgraph CustVPC[Customer private network]\n    APP[Application pods in private subnets]\n    EP1[Interface endpoint: model service]\n    EP2[Interface endpoint: registry and storage]\n    FW[Egress proxy with allowlist]\n  end\n  APP --> EP1 --> MODEL[Hosted model service]\n  APP --> EP2 --> SVC[Registry and object storage]\n  APP --> FW --> CP[Vendor control plane endpoint]\n  APP -->|VPN or dedicated circuit| DC[Customer data center systems]"
+  },
+  "code": [
+    {
+      "code": "apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: app-egress\n  namespace: assistant\nspec:\n  podSelector: {matchLabels: {app: assistant-api}}\n  policyTypes: [Egress]\n  egress:\n    - to: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}}]\n      ports: [{protocol: UDP, port: 53}]\n    - to: [{podSelector: {matchLabels: {app: postgres}}}]\n      ports: [{protocol: TCP, port: 5432}]\n    - to: [{ipBlock: {cidr: 10.20.0.0/24}}]   # private model endpoint subnet\n      ports: [{protocol: TCP, port: 443}]",
+      "lang": "yaml"
+    }
+  ],
+  "technologies": [
+    "Amazon VPC",
+    "AWS PrivateLink",
+    "Google Cloud Private Service Connect",
+    "Azure Private Link",
+    "AWS Transit Gateway",
+    "Kubernetes NetworkPolicy",
+    "Cilium",
+    "Calico",
+    "Gateway API",
+    "Harbor",
+    "AWS GovCloud (US)",
+    "Azure Government"
+  ],
+  "related": [
+    "cloud-deployments",
+    "containers-cicd-serverless",
+    "gpu-inference-serving",
+    "security-compliance-reviews"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "What is Amazon VPC?",
+      "url": "https://docs.aws.amazon.com/vpc/latest/userguide/what-is-amazon-vpc.html"
+    },
+    {
+      "kind": "doc",
+      "title": "What is AWS PrivateLink?",
+      "url": "https://docs.aws.amazon.com/vpc/latest/privatelink/what-is-privatelink.html"
+    },
+    {
+      "kind": "doc",
+      "title": "Kubernetes: Services, Load Balancing, and Networking",
+      "url": "https://kubernetes.io/docs/concepts/services-networking/"
+    },
+    {
+      "kind": "doc",
+      "title": "What is AWS GovCloud (US)?",
+      "url": "https://docs.aws.amazon.com/govcloud-us/latest/UserGuide/whatis.html"
+    }
+  ],
+  "practice": "practice/networking-restricted-environments",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-12",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    }
+  ]
+}

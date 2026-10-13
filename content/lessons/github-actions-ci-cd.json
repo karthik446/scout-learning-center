@@ -1,0 +1,129 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "github-actions-ci-cd",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "CI/CD for models and services with GitHub Actions",
+  "area": "infra",
+  "primary_key": "github-actions",
+  "secondary_keys": [
+    "ci-cd",
+    "sdlc",
+    "automation"
+  ],
+  "keys": [
+    "github-actions",
+    "ci-cd",
+    "sdlc",
+    "automation"
+  ],
+  "summary": "CI/CD for machine learning extends ordinary software delivery with two extra artifacts, data and models, and a third loop, continuous training. GitHub Actions is a common engine for it: workflows defined as YAML in the repository react to events, run jobs on runners, and call out to training, evaluation, registry and deployment systems. The platform engineer's job is to design the pipeline shape and the reusable building blocks that every model team shares.",
+  "detail": [],
+  "in_practice": "A platform team publishes a small set of reusable workflows: one that builds and scans an image and outputs its digest, one that submits a training pipeline, one that runs the evaluation gate against a registry version, and one that promotes a version by opening a pull request on the deployment repository. Model teams call these from a short workflow in their own repository and supply only parameters. Production promotion sits behind a protected environment with required reviewers, deploy jobs use a concurrency group per environment, and all cloud access goes through short-lived federated roles. Long-running work is delegated to the orchestrator, with the workflow recording run links and identifiers in the job summary.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "A workflow is a YAML file under the repository's workflows directory. The on key names triggering events such as push, pull_request, schedule or workflow_dispatch. Jobs run in parallel by default on a runner chosen by runs-on, and are ordered with needs. Each job is a list of steps that either run shell commands or use a packaged action. For platform work the important features are reusable workflows invoked through workflow_call, matrix strategies, concurrency groups that prevent overlapping deploys, and job outputs that pass an image digest or model version to later jobs.",
+          "heading": "Events, jobs, steps and runners"
+        }
+      ],
+      "id": "workflow-anatomy",
+      "title": "Workflow anatomy"
+    },
+    {
+      "body": [
+        {
+          "body": "In an ML system, CI tests and validates not only code but also data schemas and models; CD delivers a training pipeline that in turn delivers a prediction service; and continuous training automatically retrains and serves models when triggered by new data, a schedule or detected performance decay. A widely used maturity model describes three levels. At level 0 everything is manual and script driven, with rare releases. At level 1 the training pipeline is automated so models retrain continuously, with data validation and model validation as pipeline steps. At level 2 the pipeline itself has automated CI/CD, so changes to pipeline components are built, tested and deployed quickly and reliably.",
+          "heading": "Three loops and maturity levels"
+        },
+        {
+          "body": "A code change triggers CI on the pipeline code and images. A data or schedule trigger runs the deployed training pipeline. A newly approved model version triggers the serving deployment. Keeping these triggers separate avoids retraining on every commit.",
+          "heading": "What triggers what"
+        }
+      ],
+      "id": "ci-cd-ct-for-ml",
+      "title": "CI, CD and continuous training for ML"
+    },
+    {
+      "body": [
+        {
+          "body": "A typical pipeline has a fast pull request stage: lint, unit tests for feature and preprocessing code, a tiny training smoke run on sample data, and a build of the training and serving images. After merge, images are pushed by digest and the training pipeline is submitted to the orchestrator or cluster; GitHub Actions launches and watches it but does not run long GPU training on a hosted runner. When training registers a new version, a gate job runs the evaluation suite. A passing version is promoted, and the deployment job opens a change against the environment configuration or calls the serving platform, which then performs the staged rollout. Each stage hands the next one explicit identifiers: commit, image digest, model version.",
+          "heading": "Stages from commit to promotion"
+        }
+      ],
+      "id": "model-release-pipeline",
+      "title": "Shape of a model release pipeline"
+    },
+    {
+      "body": [
+        {
+          "body": "Hosted runners suit linting, tests and image builds. Jobs that need GPUs, private network access or large caches run on self-hosted runners, commonly autoscaled on Kubernetes, and these must be isolated from untrusted pull requests. Cloud credentials should be short lived: the workflow requests an identity token and exchanges it for a cloud role scoped to that repository and branch, so no long-lived keys sit in secrets. Environments model deployment targets such as staging and production; they hold environment-scoped secrets and protection rules such as required reviewers, which gives a manual approval step before production. The permissions key should restrict the default token to the minimum, and third-party actions should be pinned to a commit.",
+          "heading": "Securing and scaling the pipeline"
+        }
+      ],
+      "id": "runners-secrets-and-environments",
+      "title": "Runners, credentials and protected environments"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  A[Pull request] --> B[Lint, unit tests, smoke train]\n  B --> C[Merge to main]\n  C --> D[Build and push images by digest]\n  D --> E[Submit training pipeline]\n  E --> F[Register model version]\n  F --> G[Evaluation gate job]\n  G --> H{Passed?}\n  H -- yes --> I[Approval on production environment]\n  I --> J[PR to deployment repo]\n  H -- no --> K[Fail and notify]"
+  },
+  "code": [
+    {
+      "code": "name: model-release\non:\n  workflow_dispatch:\n    inputs:\n      model_version: {required: true, type: string}\npermissions: {id-token: write, contents: read}\nconcurrency: release-fraud-scorer\njobs:\n  gate:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n        with: {python-version: \"3.12\"}\n      - run: pip install -r requirements-eval.txt\n      - run: python eval/gate.py --model fraud-scorer --version ${{ inputs.model_version }}\n  promote:\n    needs: gate\n    runs-on: ubuntu-latest\n    environment: production\n    steps:\n      - run: python release/promote.py --version ${{ inputs.model_version }}",
+      "lang": "yaml"
+    }
+  ],
+  "technologies": [
+    "GitHub Actions",
+    "Reusable workflows",
+    "Actions Runner Controller",
+    "Docker Buildx",
+    "Amazon ECR",
+    "MLflow",
+    "pytest",
+    "Trivy"
+  ],
+  "related": [
+    "model-evaluation-gates",
+    "model-registry-and-versioning",
+    "gitops-argo-cd-and-terraform",
+    "staged-rollouts",
+    "mlops-and-ml-lifecycle",
+    "security-identity-and-governance",
+    "golden-paths-self-service"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Workflow syntax for GitHub Actions",
+      "url": "https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax"
+    },
+    {
+      "kind": "doc",
+      "title": "Understanding GitHub Actions",
+      "url": "https://docs.github.com/en/actions/get-started/understand-github-actions"
+    },
+    {
+      "kind": "guide",
+      "title": "MLOps: Continuous delivery and automation pipelines in machine learning",
+      "url": "https://docs.cloud.google.com/architecture/mlops-continuous-delivery-and-automation-pipelines-in-machine-learning"
+    }
+  ],
+  "practice": "practice/github-actions-ci-cd",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    }
+  ]
+}

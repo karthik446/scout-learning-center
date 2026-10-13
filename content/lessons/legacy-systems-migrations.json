@@ -1,0 +1,161 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "legacy-systems-migrations",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Integrating legacy systems and running migrations",
+  "area": "software",
+  "primary_key": "legacy-systems",
+  "secondary_keys": [
+    "migration"
+  ],
+  "keys": [
+    "legacy-systems",
+    "migration"
+  ],
+  "summary": "Customers buy AI systems to change how work is done, but the work still runs through systems that are old, poorly documented and business critical. The skill is to integrate with them through whatever interface exists, shield the new system from their data model, and move functionality and data across in small reversible steps until the old tool can be switched off. This lesson covers the core patterns: strangler fig, anti-corruption layer, parallel change, and a validated cutover.",
+  "detail": [],
+  "in_practice": "A team begins with discovery: an inventory of every consumer, integration and scheduled job touching the legacy system, plus samples of real data. They put a routing facade or adapter in front, build the anti-corruption layer with tests drawn from those samples, and move one narrow capability first to prove routing, sync and rollback. Schema changes follow expand, migrate, contract as numbered migration scripts. Data moves by backfill plus change data capture, with reconciliation reports reviewed with business owners, a period of parallel running, and a rehearsed cutover runbook. The engagement tracks a decommission date as a deliverable, because customers judge the migration by the day the old tool is switched off.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "A big-bang rewrite delivers no value until the end and concentrates all risk in one cutover. The strangler fig pattern grows the new system around the old one instead. A facade or proxy sits in front of the legacy system and intercepts requests. One capability at a time is implemented in the new system, and the facade routes that slice of traffic to it while everything else still goes to legacy. Over time the legacy system handles less and less until it can be retired, and then the facade itself can be removed.",
+          "heading": "The pattern"
+        },
+        {
+          "body": "Choose seams by business capability and by where interception is possible: an HTTP route, a message type, a batch job, a UI screen. Start with a slice that is low risk but real, so the routing and rollback machinery is proven early. Route by percentage or by tenant, and keep the ability to send traffic back. The hard part is shared data: while both systems are live, decide which one owns each entity and synchronize the other. The pattern is poor value for small systems or where requests cannot be intercepted.",
+          "heading": "Making it work"
+        }
+      ],
+      "id": "strangler-fig-incremental-replacement",
+      "title": "Strangler fig: replace incrementally behind a facade"
+    },
+    {
+      "body": [
+        {
+          "body": "Legacy systems carry their own semantics: overloaded status codes, fixed-width fields, composite keys, flags whose meaning depends on the year the record was created. If the new system calls them directly, those concepts leak into its domain model and prompts. An anti-corruption layer is a facade or adapter between the two that translates in both directions, so the new system speaks only its own model and the legacy system is unchanged. It can live as a module inside the new service or as a separate service when several consumers need it.",
+          "heading": "Translation at the boundary"
+        },
+        {
+          "body": "The layer adds a network hop, latency and something else to operate and scale, so keep it thin: mapping, validation and protocol conversion, no business logic. Give it its own contract tests built from real legacy samples, including the ugly ones. For AI workloads it is also the right place to normalize codes into readable labels before data reaches a model. Decide up front whether it is temporary, retired with the legacy system, or permanent because the legacy system is staying.",
+          "heading": "Costs and lifecycle"
+        }
+      ],
+      "id": "anti-corruption-layer",
+      "title": "Anti-corruption layer: keep the legacy model out"
+    },
+    {
+      "body": [
+        {
+          "body": "Many systems of record predate REST. In rough order of preference: a documented service interface such as SOAP or a vendor SDK; an existing message queue or scheduled file export over SFTP in CSV, fixed-width or XML; read access to a database replica or reporting views; change data capture from the database transaction log, which streams inserts, updates and deletes without touching application code; and finally UI automation or screen scraping when nothing else exists. Each step down the list is more brittle and less supported by the vendor.",
+          "heading": "Options, from best to worst"
+        },
+        {
+          "body": "Ask who owns the system and whether direct database access voids support. Find the batch windows, since many legacy systems are only consistent after a nightly job. Measure how much extra load the system tolerates before querying it in a loop. Prefer reading from a replica and writing through the supported interface, because writing straight to legacy tables bypasses validation that lives in application code. Capture real samples early: encodings, date formats and sentinel values such as all nines are where the schedule slips.",
+          "heading": "Constraints to check early"
+        }
+      ],
+      "id": "legacy-integration-surfaces",
+      "title": "Finding an integration surface when there is no API"
+    },
+    {
+      "body": [
+        {
+          "body": "Parallel change makes a breaking interface change safe by splitting it into three phases. Expand: add the new form alongside the old, for example a new column, field or endpoint, so both are valid. Migrate: move every producer and consumer to the new form and backfill existing data, usually with dual writes during the transition. Contract: remove the old form once nothing uses it. Each phase is deployed separately and is reversible until contract, which is what allows zero-downtime change while old and new code run side by side.",
+          "heading": "Expand, migrate, contract"
+        },
+        {
+          "body": "Evolutionary database design treats every schema change as a small, ordered migration script kept in version control and applied automatically through every environment, with data migration included in the same script as the structural change. In a legacy migration this gives a repeatable path from the old shape to the new one that can be rehearsed against production copies. Backfill in batches to avoid long locks, and verify that no reader still depends on the old form before you contract, using query logs or access metrics.",
+          "heading": "Schema as versioned code"
+        }
+      ],
+      "id": "parallel-change-and-evolutionary-schema",
+      "title": "Parallel change and evolutionary database design"
+    },
+    {
+      "body": [
+        {
+          "body": "Beyond automated reconciliation and backfills, the cutover itself needs a plan. Run the new system in shadow or parallel so its outputs are compared with legacy on live traffic before it becomes authoritative. Define explicit go or no-go criteria, a freeze window, the order of switching writers before readers, and a rollback path with a deadline after which rolling back means data loss. After cutover, keep legacy read-only for an agreed period, then archive data to meet retention rules, revoke credentials, remove integrations and stop paying for it. A migration is finished when the old system is off, not when the new one is on.",
+          "heading": "The last mile"
+        }
+      ],
+      "id": "data-migration-validation-and-cutover",
+      "title": "Validated cutover and decommissioning"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  U[Clients and upstream systems] --> F[Routing facade]\n  F -->|migrated capabilities| N[New service]\n  F -->|remaining capabilities| L[Legacy system]\n  N --> A[Anti-corruption layer]\n  A --> L\n  L -->|CDC or batch export| S[Sync and backfill]\n  S --> D[(New data store)]\n  N --> D\n  D --> V[Reconciliation report]\n  L --> V"
+  },
+  "code": [
+    {
+      "code": "-- 1. expand: add the new form, old code keeps working\nALTER TABLE customer ADD COLUMN full_name text;\n\n-- 2. migrate: dual-write in the app, backfill in batches\nUPDATE customer\n   SET full_name = first_name || ' ' || last_name\n WHERE full_name IS NULL\n   AND id BETWEEN 1 AND 10000;\n\n-- 3. contract: only after no reader uses the old columns\nALTER TABLE customer\n  DROP COLUMN first_name,\n  DROP COLUMN last_name;",
+      "lang": "sql"
+    }
+  ],
+  "technologies": [
+    "Debezium",
+    "AWS Database Migration Service",
+    "Kafka Connect",
+    "Flyway",
+    "Liquibase",
+    "Alembic",
+    "NGINX",
+    "Envoy",
+    "Azure API Management",
+    "MuleSoft",
+    "SFTP",
+    "SOAP"
+  ],
+  "related": [
+    "rest-apis-json-oauth",
+    "webhooks-kafka-events",
+    "sql-postgres-data-systems",
+    "messy-data-entity-resolution",
+    "workflow-mapping-automation",
+    "technical-scoping-design-docs",
+    "dbt-elt-transformations"
+  ],
+  "sources": [
+    {
+      "kind": "article",
+      "title": "Strangler Fig Application",
+      "url": "https://martinfowler.com/bliki/StranglerFigApplication.html"
+    },
+    {
+      "kind": "doc",
+      "title": "Strangler Fig pattern",
+      "url": "https://learn.microsoft.com/en-us/azure/architecture/patterns/strangler-fig"
+    },
+    {
+      "kind": "doc",
+      "title": "Anti-corruption Layer pattern",
+      "url": "https://learn.microsoft.com/en-us/azure/architecture/patterns/anti-corruption-layer"
+    },
+    {
+      "kind": "article",
+      "title": "Evolutionary Database Design",
+      "url": "https://martinfowler.com/articles/evodb.html"
+    },
+    {
+      "kind": "article",
+      "title": "Parallel Change",
+      "url": "https://martinfowler.com/bliki/ParallelChange.html"
+    }
+  ],
+  "practice": "practice/legacy-systems-migrations",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    }
+  ]
+}

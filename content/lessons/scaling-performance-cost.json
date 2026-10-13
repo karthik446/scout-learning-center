@@ -1,0 +1,143 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "scaling-performance-cost",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Scaling and performance-cost tradeoffs for LLM systems",
+  "area": "infra",
+  "primary_key": "scaling",
+  "secondary_keys": [
+    "cost-efficiency"
+  ],
+  "keys": [
+    "scaling",
+    "cost-efficiency"
+  ],
+  "summary": "LLM systems have an unusual cost and latency profile: spend scales with tokens, latency scales mostly with output length, and capacity is bounded by provider rate limits or by GPUs. This lesson covers the levers that move latency and cost, the provider features built for it, and how to behave under overload. The skill is choosing a point on the quality, latency and cost surface that the customer can defend.",
+  "detail": [],
+  "in_practice": "A team instruments every model call with token counts, cache hits, latency and a tenant label before optimizing anything, then looks at where time and money actually go. Typical first moves are restructuring prompts so the stable prefix caches, moving bulk and evaluation work to batch, routing easy steps to a smaller model, and removing an agent turn. They set per-tenant quotas and a single retry layer with backoff and a budget, and define what the product does when capacity runs out. Each change is checked against the evaluation suite so a cost win does not hide a quality loss, and the result is reported to the customer as cost per business outcome.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "Output generation dominates response time, because tokens are produced one at a time, while input tokens are processed far faster. The practical levers follow from that: generate fewer tokens by asking for concise or structured output; use a smaller or faster model for steps that do not need the strongest one; trim input where it is large enough to matter; make fewer sequential requests by combining steps; and run independent steps in parallel. Not every step needs a model at all; a lookup, a rule or a classical classifier is faster and cheaper where it is good enough.",
+          "heading": "A short list of levers"
+        },
+        {
+          "body": "Users judge responsiveness by time to first visible progress, not total time. Streaming tokens, showing which step an agent is on, and returning a partial result early all make a long operation acceptable without changing compute. Measure time to first token and total time separately, at the median and at the tail, and split them by stage: retrieval, each model call, each tool call. In agent systems the number of turns is usually the largest factor, so cutting one unnecessary round trip often beats any model-level optimization.",
+          "heading": "Perceived latency"
+        }
+      ],
+      "id": "latency-levers",
+      "title": "Where latency comes from and how to cut it"
+    },
+    {
+      "body": [
+        {
+          "body": "Prompt caching lets a provider reuse the processed form of a prompt prefix across requests. With the Claude API you mark cache breakpoints, the prefix up to that point is stored, and later requests with an identical prefix read it at a fraction of the normal input price and with lower latency; writing the cache costs somewhat more than a normal input token, and entries expire after a short lifetime that is refreshed on each use. The design consequence is ordering: put stable content first (tool definitions, system instructions, reference documents, few-shot examples) and volatile content last. Anything that changes per request near the top, such as a timestamp or user name, invalidates everything after it. Track cache read and cache write token counts in the response usage to confirm it works.",
+          "heading": "Prompt caching"
+        },
+        {
+          "body": "Work that does not need an immediate answer, such as backfills, bulk classification, document enrichment and evaluation runs, can go through an asynchronous batch interface. With the Claude Message Batches API you submit many requests at once, each with your own identifier, poll until processing ends, then fetch results and match them by identifier; batches are priced at a substantial discount to standard calls and most complete well within the stated processing window. Batch requests do not consume the interactive path's capacity in the same way, which keeps overnight jobs from starving daytime users. Results can arrive in any order and individual requests can fail independently, so the consumer must be idempotent and handle partial success.",
+          "heading": "Batch processing"
+        }
+      ],
+      "id": "prompt-caching-and-batch",
+      "title": "Prompt caching and batch processing"
+    },
+    {
+      "body": [
+        {
+          "body": "Hosted model providers limit requests and tokens per minute, and a self-hosted server is limited by GPU memory and batch capacity. Either way, a traffic spike or a few very large prompts can exhaust capacity. The guidance from large-scale service practice applies directly: reject excess load early and cheaply rather than accepting work you cannot finish; give each customer or tenant a quota so one cannot starve the rest; and classify requests by criticality so interactive user traffic is served before background jobs when capacity is short.",
+          "heading": "Limits are in tokens, not only requests"
+        },
+        {
+          "body": "Naive retries turn a brief overload into a sustained one. Use exponential backoff with jitter, honor any retry-after hint from the provider, and cap retries with a budget, for example a small ratio of retries to requests per client, so retries cannot multiply load. Retry at one layer only; when every layer of an agent stack retries, attempts multiply. Client-side throttling goes further: when a client sees a high share of its recent requests rejected, it starts dropping requests locally before sending them. Pair this with degradation paths: a smaller model, a cached answer, a shorter context, or a queued response.",
+          "heading": "Retries without amplification"
+        }
+      ],
+      "id": "overload-and-rate-limits",
+      "title": "Overload, rate limits and graceful degradation"
+    },
+    {
+      "body": [
+        {
+          "body": "Beyond hard caps on spend, a customer deployment needs a unit cost the buyer understands: cost per resolved ticket, per processed document, per agent run. Record input, output and cached tokens per call with tenant, feature and model labels, and join them to outcomes. The cloud cost optimization guidance applies as written: establish ownership, measure usage, match supply to demand, and revisit choices as prices and models change. Model routing, with a cheap model first and escalation on low confidence, is usually the largest single saving.",
+          "heading": "From spend caps to cost per outcome"
+        }
+      ],
+      "id": "cost-governance",
+      "title": "Cost attribution and unit economics"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  REQ[Incoming request] --> Q{Tenant quota and criticality}\n  Q -->|over quota or low priority under load| SHED[Reject early or queue]\n  Q -->|admitted| R{Router}\n  R -->|simple step| SMALL[Small fast model]\n  R -->|hard step| LARGE[Large model with cached prefix]\n  R -->|not urgent| BATCH[Batch interface]\n  SMALL --> M[Usage record: tokens, cache, latency, tenant]\n  LARGE --> M\n  BATCH --> M\n  M --> COST[Cost per outcome dashboard]"
+  },
+  "code": [
+    {
+      "code": "import anthropic\n\nclient = anthropic.Anthropic()\nresp = client.messages.create(\n    model=\"claude-opus-5-5\",\n    max_tokens=512,\n    system=[{\n        \"type\": \"text\",\n        \"text\": LONG_STABLE_INSTRUCTIONS_AND_REFERENCE_DOCS,\n        \"cache_control\": {\"type\": \"ephemeral\"},  # cache everything up to here\n    }],\n    messages=[{\"role\": \"user\", \"content\": user_question}],  # volatile part last\n)\nu = resp.usage\nprint(u.cache_creation_input_tokens, u.cache_read_input_tokens, u.input_tokens, u.output_tokens)",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "Claude API prompt caching",
+    "Claude Message Batches API",
+    "OpenAI Batch API",
+    "LiteLLM",
+    "Redis",
+    "Envoy",
+    "OpenTelemetry",
+    "Prometheus",
+    "AWS Cost Explorer",
+    "vLLM"
+  ],
+  "related": [
+    "gpu-inference-serving",
+    "prompt-and-context-engineering",
+    "observability-agent-traces",
+    "llm-agent-evaluation",
+    "agent-orchestration-durable-execution"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Claude Docs: Prompt caching",
+      "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching"
+    },
+    {
+      "kind": "doc",
+      "title": "Claude Docs: Batch processing",
+      "url": "https://platform.claude.com/docs/en/build-with-claude/batch-processing"
+    },
+    {
+      "kind": "doc",
+      "title": "OpenAI Docs: Latency optimization",
+      "url": "https://developers.openai.com/api/docs/guides/latency-optimization"
+    },
+    {
+      "kind": "book",
+      "title": "Google SRE Book: Handling Overload",
+      "url": "https://sre.google/sre-book/handling-overload/"
+    },
+    {
+      "kind": "doc",
+      "title": "AWS Well-Architected: Cost Optimization Pillar",
+      "url": "https://docs.aws.amazon.com/wellarchitected/latest/cost-optimization-pillar/welcome.html"
+    }
+  ],
+  "practice": "practice/scaling-performance-cost",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-12",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    }
+  ]
+}

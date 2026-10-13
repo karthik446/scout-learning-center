@@ -1,0 +1,167 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "rest-apis-json-oauth",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "REST APIs, JSON and OAuth 2.0 authentication",
+  "area": "software",
+  "primary_key": "apis",
+  "secondary_keys": [
+    "rest-apis",
+    "json"
+  ],
+  "keys": [
+    "apis",
+    "rest-apis",
+    "json"
+  ],
+  "summary": "Most enterprise integrations are HTTP calls carrying JSON, authorized by an OAuth 2.0 access token. The job of a forward deployed engineer is less about designing a clean API and more about consuming someone else's imperfect one safely: getting delegated access approved, validating payloads, surviving rate limits and writing back to a system of record without creating duplicates. This lesson moves from the protocol layer, through data contracts, to authorization and resilient client design.",
+  "detail": [],
+  "in_practice": "A team starts in the vendor sandbox with a collection of saved requests, gets a connected app or service account approved by the customer's admin, and confirms which scopes the security team will accept. They generate or hand-write a thin typed client, put schema validation and structured logging at the boundary, and wrap it with one shared policy for timeouts, retries, backoff and token refresh. Read sync ships first with a watermark and a reconciliation count against the source; writeback ships second, behind an upsert key and a dry-run mode that logs intended changes, and is enabled for a handful of records before it is opened to the whole tenant.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "HTTP is a stateless client-server protocol: every request carries a method, a path, headers and an optional body, and every response carries a status code. As a consumer, the method semantics decide your retry policy. GET, PUT and DELETE are defined as idempotent, so a timed-out call can be repeated; POST is not, so a blind retry can create a second record. Status classes decide the next action: 4xx means fix the request or the credentials, 429 means slow down, 5xx means retry later. Vendor APIs often bend these rules, so confirm actual behavior in a sandbox before trusting the documentation.",
+          "heading": "What matters when you consume instead of serve"
+        }
+      ],
+      "id": "http-semantics-from-the-consumer-side",
+      "title": "HTTP semantics from the consumer side"
+    },
+    {
+      "body": [
+        {
+          "body": "JSON has six value kinds: object, array, string, number, true or false, and null. The format does not define integer width, dates, or what to do with duplicate keys, and that is where integrations break. Large identifiers lose precision when a parser reads them as floating point, so many APIs send them as strings. Timestamps arrive as strings in whatever format the vendor chose. Missing key, null and empty string are three different things that source systems use inconsistently. Decide explicitly how each maps into your own model instead of letting the parser decide.",
+          "heading": "JSON and its sharp edges"
+        },
+        {
+          "body": "JSON Schema describes the shape of a document: types, required properties, enums, formats and nested structures. Validating every inbound payload against a schema at the boundary turns silent data corruption into a loud, attributable error. OpenAPI wraps the same idea around a whole HTTP API: paths, operations, parameters, request and response schemas, and security schemes such as OAuth 2.0 flows and scopes. When a vendor publishes an OpenAPI document, generate a typed client from it and diff new versions in CI. When they do not, write the schema yourself from observed traffic and treat it as your contract test.",
+          "heading": "Schemas at the boundary"
+        }
+      ],
+      "id": "json-schema-and-openapi-contracts",
+      "title": "JSON, JSON Schema and OpenAPI as the contract"
+    },
+    {
+      "body": [
+        {
+          "body": "OAuth 2.0 is an authorization framework that lets an application obtain limited access to an HTTP service without holding the user's password. It defines four roles. The resource owner is the user or organization that owns the data. The client is your application. The authorization server authenticates the owner, collects consent and issues tokens. The resource server is the API that accepts those tokens. In enterprise SaaS the authorization server and resource server are usually the same vendor, and the customer's admin, not the end user, often has to approve your client before anyone can connect.",
+          "heading": "The four roles"
+        },
+        {
+          "body": "The authorization code grant is for acting on behalf of a user: the browser is redirected to the authorization server, the user consents, and your backend exchanges the returned code for tokens. Add PKCE and a state parameter to protect the exchange. The client credentials grant is for machine to machine access where the client acts as itself, which is typical for backend sync jobs and service accounts. The original specification also defines the implicit and resource owner password grants; current guidance treats both as legacy and they should not be used for new work. A refresh token lets the client obtain new access tokens without user interaction.",
+          "heading": "Choosing a grant"
+        }
+      ],
+      "id": "oauth2-roles-and-grants",
+      "title": "OAuth 2.0 roles and grant types"
+    },
+    {
+      "body": [
+        {
+          "body": "Access tokens are short lived by design, so the client must handle expiry as a normal path. Cache the token with its expiry time, refresh slightly early, and on a 401 refresh once and retry once. Some authorization servers rotate the refresh token on every use, so concurrent workers must serialize the refresh or one of them will be logged out. Request the narrowest scopes that the workflow needs; security reviewers will ask why each one is there. In a multi-tenant deployment, store tokens per customer tenant, encrypted, in a secrets manager or an encrypted column, never in logs, prompts or agent context.",
+          "heading": "Running tokens in production"
+        },
+        {
+          "body": "When an LLM agent calls APIs through tools, the token defines the blast radius of a bad decision. Keep the token inside the tool implementation so the model never sees it. Prefer per-user delegated tokens over one powerful service account, so the agent can only do what the requesting user could do, and the vendor's audit log shows who acted. Split read scopes from write scopes and gate write tools behind approval where the action is hard to undo.",
+          "heading": "What an AI agent changes"
+        }
+      ],
+      "id": "token-lifecycle-scopes-and-storage",
+      "title": "Token lifecycle, scopes and secret storage"
+    },
+    {
+      "body": [
+        {
+          "body": "Bulk reads go through pagination. Cursor based pagination returns an opaque pointer to the next page and stays stable while data changes; offset pagination can skip or repeat rows when records are inserted mid-scan. For incremental sync, filter on a last-modified field and keep a watermark, overlapping slightly and deduplicating by id. Respect rate limits: read the limit headers the vendor returns, honor Retry-After on 429, and back off exponentially with jitter. Budget the limit across all your workers for a tenant, since the quota is usually shared with the customer's other integrations.",
+          "heading": "Reading at volume"
+        },
+        {
+          "body": "Writeback to a CRM or ERP is where mistakes become visible to the customer. A timeout does not tell you whether the write happened. Use an idempotency key header where the API supports it, or an upsert on an external id field that you control, so repeating the call is harmless. Otherwise read before write. Record every outbound mutation with request id, tenant, payload hash and response, so a wrong update can be traced and reversed.",
+          "heading": "Writing without duplicates"
+        }
+      ],
+      "id": "resilient-api-clients-and-writeback",
+      "title": "Resilient clients: pagination, rate limits and safe writeback"
+    }
+  ],
+  "diagram": {
+    "source": "sequenceDiagram\n  participant U as User\n  participant C as Client app\n  participant A as Authorization server\n  participant R as Resource server\n  U->>C: Connect account\n  C->>A: Authorization request with state and PKCE challenge\n  A->>U: Login and consent\n  A->>C: Redirect with authorization code\n  C->>A: Exchange code and verifier\n  A->>C: Access token and refresh token\n  C->>R: API call with Bearer token\n  R->>C: JSON response"
+  },
+  "code": [
+    {
+      "code": "import os, requests\n\ndef get_token():\n    r = requests.post(os.environ[\"TOKEN_URL\"], data={\n        \"grant_type\": \"client_credentials\",\n        \"scope\": \"contacts.read\",\n    }, auth=(os.environ[\"CLIENT_ID\"], os.environ[\"CLIENT_SECRET\"]), timeout=10)\n    r.raise_for_status()\n    return r.json()[\"access_token\"]\n\ndef list_contacts(token):\n    url, out = os.environ[\"API_BASE\"] + \"/contacts\", []\n    while url:\n        r = requests.get(url, headers={\"Authorization\": f\"Bearer {token}\"}, timeout=10)\n        r.raise_for_status()\n        body = r.json()\n        out += body[\"items\"]\n        url = body.get(\"next\")  # cursor link, absent on last page\n    return out",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "OpenAPI",
+    "JSON Schema",
+    "OAuth 2.0",
+    "PKCE",
+    "Postman",
+    "curl",
+    "Python requests",
+    "httpx",
+    "Pydantic",
+    "Zod",
+    "Okta",
+    "Microsoft Entra ID"
+  ],
+  "related": [
+    "webhooks-kafka-events",
+    "python-for-integrations",
+    "typescript-node-services",
+    "structured-outputs-tool-calling",
+    "mcp-servers",
+    "security-compliance-reviews"
+  ],
+  "sources": [
+    {
+      "kind": "guide",
+      "title": "MDN: An overview of HTTP",
+      "url": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Overview"
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 6749: The OAuth 2.0 Authorization Framework",
+      "url": "https://datatracker.ietf.org/doc/html/rfc6749"
+    },
+    {
+      "kind": "guide",
+      "title": "OAuth 2.0",
+      "url": "https://oauth.net/2/"
+    },
+    {
+      "kind": "spec",
+      "title": "OpenAPI Specification",
+      "url": "https://swagger.io/specification/"
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 8259: The JSON Data Interchange Format",
+      "url": "https://www.rfc-editor.org/info/rfc8259/"
+    },
+    {
+      "kind": "tutorial",
+      "title": "JSON Schema: Creating your first schema",
+      "url": "https://json-schema.org/learn/getting-started-step-by-step"
+    }
+  ],
+  "practice": "practice/rest-apis-json-oauth",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    }
+  ]
+}

@@ -1,0 +1,140 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "workflow-mapping-automation",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Mapping customer workflows and choosing what to automate with AI",
+  "area": "software",
+  "primary_key": "workflows",
+  "secondary_keys": [
+    "automation",
+    "ai-adoption"
+  ],
+  "keys": [
+    "workflows",
+    "automation",
+    "ai-adoption"
+  ],
+  "summary": "Before any model is called, an FDE has to understand how the customer's work is actually done and decide which steps are worth automating. This lesson covers process discovery, a notation for writing the process down, criteria for picking automation candidates and the right AI pattern for each, where humans stay in the loop, and how the result is implemented in a workflow tool.",
+  "detail": [],
+  "in_practice": "The FDE spends several days shadowing operators and collects fifty to a few hundred real cases with their outcomes. The as-is process is drawn in BPMN with lanes per role and annotated with volume and handling time, then reviewed with the people who do the work until they agree it is accurate. The team scores each step, picks one or two candidates, and draws the to-be process with the model calls, the deterministic steps and the human review tasks made explicit. The first implementation is usually a fixed workflow with a review queue, built either in the vendor's own platform, in a tool such as n8n, or in code, and the collected cases become the first evaluation set.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "Managers describe the process as designed, and operators perform the process as it is. Discovery therefore combines stakeholder interviews with shadowing sessions where the engineer watches real cases being handled, including the spreadsheets, copy-paste steps and side-channel messages that no document mentions. For each step, record the trigger, the inputs, the system used, the decision made, the output and who receives it. Collect a sample of real cases, including the awkward ones, and baseline numbers such as volume, handling time, error rate and rework. Those numbers later become the success criteria.",
+          "heading": "Observe, do not just interview"
+        }
+      ],
+      "id": "process-discovery",
+      "title": "Discovering the as-is workflow"
+    },
+    {
+      "body": [
+        {
+          "body": "Business Process Model and Notation (BPMN) 2.0 is an OMG standard for process diagrams that both business and technical readers can follow. A small subset covers most needs. Events are circles: start, intermediate and end, often with a type such as message or timer. Activities are rounded rectangles: tasks, which can be typed as user, service or manual, and subprocesses. Gateways are diamonds that split or merge the flow: exclusive for one path, parallel for all paths. Sequence flows connect elements inside a participant, and message flows cross between participants.",
+          "heading": "Core elements"
+        },
+        {
+          "body": "A pool represents a participant such as the customer organization or an external supplier, and lanes inside it represent roles or systems. Laying the process out in lanes makes handoffs visible, and handoffs are where delay and errors concentrate. Keep the first diagram at the level a team lead would recognize, roughly ten to twenty activities, and model the happy path before exceptions. Then annotate each task with volume and time so the diagram doubles as the input to the automation decision.",
+          "heading": "Pools, lanes and level of detail"
+        }
+      ],
+      "id": "bpmn-notation",
+      "title": "Writing the process down with BPMN"
+    },
+    {
+      "body": [
+        {
+          "body": "Score each step on value and feasibility. Value comes from volume, handling time, cost of delay and error cost. Feasibility depends on whether the inputs are available digitally, whether a correct output can be recognized and measured, how tolerant the step is of mistakes, and whether the action is reversible. Good first candidates are high-volume, text-heavy steps with a clear definition of done and a cheap way to catch errors, such as classification, extraction, drafting and summarization. Steps that are rule-based and deterministic belong in plain code, not in a model.",
+          "heading": "Scoring candidate steps"
+        },
+        {
+          "body": "Anthropic's guide describes a ladder of designs. The base is an LLM augmented with retrieval, tools and memory. Workflows compose calls on fixed paths: prompt chaining for sequential subtasks, routing to send inputs to specialized handling, parallelization for independent subtasks or voting, orchestrator-workers when subtasks cannot be predicted in advance, and evaluator-optimizer for iterative refinement. Agents, which plan their own steps in a loop, fit open-ended problems where the path cannot be hardcoded and the environment gives reliable feedback. Choose the lowest rung that meets the measured need.",
+          "heading": "Matching the pattern to the step"
+        }
+      ],
+      "id": "choosing-automation-candidates",
+      "title": "Choosing what to automate and with which AI pattern"
+    },
+    {
+      "body": [
+        {
+          "body": "In a mapped workflow, checkpoints are modeled as user tasks placed before irreversible or externally visible actions. Three design choices follow: what the reviewer sees, which should be the proposed action with its evidence and not raw model output; what happens on timeout or rejection, modeled as explicit paths; and how the gate relaxes over time, for example by auto-approving a class of cases once its measured accuracy holds above an agreed threshold for a sustained period. Reviewer decisions are logged as labeled evaluation data.",
+          "heading": "Design choices beyond the gate itself"
+        }
+      ],
+      "id": "human-in-the-loop-checkpoints",
+      "title": "Placing human checkpoints"
+    },
+    {
+      "body": [
+        {
+          "body": "Tools such as n8n model a workflow as a set of connected nodes: a trigger node starts a run from a webhook, schedule or application event, and action nodes call applications, transform data, branch or invoke a model. Each run is an execution that can be inspected step by step, which helps when debugging with customer staff. These tools suit integrations that the customer wants to own and modify. Use a code-based or durable workflow engine when the process needs long-running state, strict versioning, complex retries or rigorous testing.",
+          "heading": "Low-code engines versus code"
+        }
+      ],
+      "id": "implementing-in-workflow-tools",
+      "title": "Implementing the to-be workflow"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart TD\n  A[Case arrives] --> B[Extract fields with LLM]\n  B --> C{Rule based check passes}\n  C -->|no| H[Human review queue]\n  C -->|yes| D{Confidence above threshold}\n  D -->|no| H\n  D -->|yes| E[Draft action]\n  E --> F{Action reversible}\n  F -->|yes| G[Execute and log]\n  F -->|no| H\n  H --> I[Approve, edit or reject]\n  I --> G\n  I --> J[Label stored for evals]"
+  },
+  "code": [],
+  "technologies": [
+    "BPMN 2.0",
+    "Camunda Modeler",
+    "n8n",
+    "Zapier",
+    "Temporal",
+    "Miro",
+    "Lucidchart",
+    "Claude API"
+  ],
+  "related": [
+    "fde-delivery-model",
+    "technical-scoping-design-docs",
+    "pocs-pilots-prototyping",
+    "agent-architectures",
+    "agent-orchestration-durable-execution",
+    "responsible-ai-guardrails"
+  ],
+  "sources": [
+    {
+      "kind": "guide",
+      "title": "Building effective agents",
+      "url": "https://www.anthropic.com/engineering/building-effective-agents"
+    },
+    {
+      "kind": "guide",
+      "title": "BPMN 2.0 Symbol Reference",
+      "url": "https://camunda.com/bpmn/reference/"
+    },
+    {
+      "kind": "spec",
+      "title": "About the Business Process Model and Notation Specification 2.0",
+      "url": "https://www.omg.org/spec/BPMN/2.0/About-BPMN/"
+    },
+    {
+      "kind": "doc",
+      "title": "n8n Docs: Workflows",
+      "url": "https://docs.n8n.io/build/understand-workflows"
+    }
+  ],
+  "practice": "practice/workflow-mapping-automation",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    }
+  ]
+}

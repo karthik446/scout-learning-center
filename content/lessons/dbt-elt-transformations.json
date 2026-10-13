@@ -1,0 +1,147 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "dbt-elt-transformations",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "ELT transformations with dbt",
+  "area": "data",
+  "primary_key": "dbt",
+  "secondary_keys": [
+    "etl",
+    "data-engineering"
+  ],
+  "keys": [
+    "dbt",
+    "etl",
+    "data-engineering"
+  ],
+  "summary": "In ELT, raw data is loaded into the warehouse first and transformed there with SQL. dbt is the standard tool for that transformation step: each model is a select statement, dbt works out the dependency graph, builds the tables and views in order, and runs tests against the results. It brings software engineering practice, meaning version control, modularity, testing and documentation, to analytics code.",
+  "detail": [],
+  "in_practice": "A team keeps the dbt project in git with one branch per change. Each developer builds into a personal schema, and a pull request triggers a CI job that builds only modified models and their dependents in a temporary schema and runs their tests. Merges deploy to production, where a scheduler or orchestrator runs the build after ingestion completes. On customer engagements the first weeks often go into staging models and tests over existing raw tables, which surface inconsistencies quickly and give the customer a documented, tested base that outlives the engagement. Test failures route to a channel with a named owner, and generated docs with lineage are published for analysts.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "Older ETL tools transformed data on a separate server before loading it. Cheap, elastic warehouse compute reversed the order: an ingestion tool lands raw data unchanged, and transformations run as SQL in the warehouse, where they are easy to inspect and rerun. dbt handles only the T. It does not extract or load data, and it does not hold data itself; it compiles your project into SQL and sends it to the platform through an adapter for Snowflake, Databricks, BigQuery, Postgres and others. The open-source dbt Core runs from the command line, and the hosted dbt platform adds scheduling, an IDE and a catalog.",
+          "heading": "Transform inside the warehouse"
+        },
+        {
+          "body": "Transformations become reviewable code in git, not logic hidden in BI tools or stored procedures. A new engineer can read the project, see lineage, and trust tested models, which is exactly what a handover to the customer's team requires.",
+          "heading": "Why it matters for customer work"
+        }
+      ],
+      "id": "elt-and-where-dbt-fits",
+      "title": "ELT and where dbt fits"
+    },
+    {
+      "body": [
+        {
+          "body": "A SQL model is one file containing one select statement; the file name becomes the model name. You never write create table or insert statements, because dbt wraps the select according to the configured materialization. Reference another model with the ref function and raw tables with the source function. dbt uses those references to build a directed acyclic graph, run models in dependency order, and resolve the correct schema for each environment, so the same code builds into a developer's sandbox or into production. Models can also be written in Python on platforms that support it.",
+          "heading": "A model is a select statement"
+        },
+        {
+          "body": "View is the default and stores only the query. Table rebuilds the whole result each run. Incremental processes only new or changed rows, which is necessary for large fact tables but requires a reliable unique key and filter. Ephemeral models are inlined as common table expressions. Start with views and tables, and move to incremental only when build time demands it.",
+          "heading": "Materializations"
+        }
+      ],
+      "id": "models-ref-and-materializations",
+      "title": "Models, ref, sources and materializations"
+    },
+    {
+      "body": [
+        {
+          "body": "The recommended structure moves data from source-conformed to business-conformed shapes. Staging models map one to one onto source tables and do only light work: renaming, type casting, basic computations and categorization. They are the single place each raw table is touched. Intermediate models combine staging models into purpose-built steps, such as pivoting payments or joining order lines, and are usually not exposed to end users. Marts are the wide, entity-grained tables that consumers query, organized by business area, for example customers and orders in a finance or marketing folder.",
+          "heading": "Three layers with distinct jobs"
+        },
+        {
+          "body": "Use consistent prefixes such as stg, int, fct and dim, keep folder structure aligned with the layers, and set materialization defaults per folder in the project file. The discipline matters most in a messy warehouse: fixes to a source quirk are made once in staging, and every downstream model inherits them.",
+          "heading": "Conventions that pay off"
+        }
+      ],
+      "id": "project-structure-layers",
+      "title": "Project structure: staging, intermediate, marts"
+    },
+    {
+      "body": [
+        {
+          "body": "A dbt data test is a query that returns failing rows; zero rows means the test passes. Generic tests are parameterized and declared in YAML on a model or column. Four ship with dbt: unique, not_null, accepted_values and relationships, the last checking referential integrity to another model. Singular tests are one-off SQL files in the tests directory for a specific rule, such as no order having a negative total. You can write your own generic tests and install packages of them. Severity can be set to warn or error, and failing rows can be stored for inspection.",
+          "heading": "Assertions that run against real data"
+        },
+        {
+          "body": "Put unique and not_null on the primary key of every model, relationships on foreign keys in marts, and accepted_values on status columns. Add source freshness checks so stale loads are caught before models run. The build command runs models and tests together in graph order and skips downstream models when an upstream test fails.",
+          "heading": "What to test first"
+        }
+      ],
+      "id": "data-tests",
+      "title": "Data tests"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  R1[raw.crm_accounts] --> S1[stg_crm__accounts]\n  R2[raw.billing_invoices] --> S2[stg_billing__invoices]\n  S1 --> I1[int_accounts_with_invoices]\n  S2 --> I1\n  I1 --> M1[dim_customers]\n  I1 --> M2[fct_invoices]\n  T[Data tests: unique, not_null, relationships] -.-> S1\n  T -.-> M1\n  T -.-> M2"
+  },
+  "code": [
+    {
+      "code": "-- models/staging/crm/stg_crm__accounts.sql\nwith source as (\n    select * from {{ source('crm', 'accounts') }}\n)\nselect\n    id as account_id,\n    trim(lower(email)) as email,\n    cast(created_at as timestamp) as created_at,\n    status\nfrom source",
+      "lang": "sql"
+    },
+    {
+      "code": "# models/staging/crm/_crm__models.yml\nmodels:\n  - name: stg_crm__accounts\n    columns:\n      - name: account_id\n        data_tests:\n          - unique\n          - not_null\n      - name: status\n        data_tests:\n          - accepted_values:\n              values: ['active', 'churned', 'trial']",
+      "lang": "yaml"
+    }
+  ],
+  "technologies": [
+    "dbt Core",
+    "dbt platform",
+    "Jinja",
+    "SQL",
+    "Snowflake",
+    "Databricks",
+    "BigQuery",
+    "Fivetran",
+    "Airbyte"
+  ],
+  "related": [
+    "sql-postgres-data-systems",
+    "snowflake-databricks-platforms",
+    "airflow-dagster-pipelines",
+    "messy-data-entity-resolution",
+    "containers-cicd-serverless"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "What is dbt?",
+      "url": "https://docs.getdbt.com/docs/introduction"
+    },
+    {
+      "kind": "doc",
+      "title": "dbt: About dbt models",
+      "url": "https://docs.getdbt.com/docs/build/models"
+    },
+    {
+      "kind": "doc",
+      "title": "dbt: Add data tests to your DAG",
+      "url": "https://docs.getdbt.com/docs/build/data-tests"
+    },
+    {
+      "kind": "guide",
+      "title": "dbt: How we structure our dbt projects",
+      "url": "https://docs.getdbt.com/best-practices/how-we-structure/1-guide-overview"
+    }
+  ],
+  "practice": "practice/dbt-elt-transformations",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    }
+  ]
+}

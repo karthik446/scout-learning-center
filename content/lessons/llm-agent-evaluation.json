@@ -1,0 +1,127 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "llm-agent-evaluation",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Evaluating LLM and agent systems",
+  "area": "ai-ml",
+  "primary_key": "model-evaluation",
+  "secondary_keys": [],
+  "keys": [
+    "model-evaluation"
+  ],
+  "summary": "Evaluation turns a vague sense that the system seems fine into a number tied to defined success criteria, so prompts, models and architectures can be changed with evidence. A working eval practice has three layers: fast assertions in code, model-graded and human-graded quality checks, and measurement on real usage. For agents the unit under test is the whole trajectory and the final state of the world, not only the last message.",
+  "detail": [],
+  "in_practice": "On a customer engagement the eval set is agreed with the customer early, because it doubles as the acceptance definition for the pilot. The team collects a few dozen real cases with the customer's domain expert, writes code assertions first, adds a calibrated model judge for the qualities code cannot check, and wires both into CI so every prompt or tool change shows a before and after. During the pilot someone reviews a sample of traces each week with the expert, adds new failure cases to the set, and reports pass rates by failure category instead of one headline score.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "Criteria should be specific, measurable and tied to the customer's task, usually several at once: task accuracy, format validity, tone, latency, cost per case. Build the set from the real task distribution plus deliberate edge cases such as ambiguous input, irrelevant input and very long input. Volume with automated grading generally beats a small hand-graded set. Models can generate additional cases from a seed set, which a person then spot-checks for realism.",
+          "heading": "What goes beyond a gold set"
+        }
+      ],
+      "id": "success-criteria-test-sets",
+      "title": "Success criteria and test sets"
+    },
+    {
+      "body": [
+        {
+          "body": "Use the fastest reliable grader that fits. Code-based grading, such as exact match, string or regex checks and schema validation, is cheap and deterministic. Model-based grading handles nuance: give the judge a detailed rubric, ask it to reason before deciding, and force a constrained verdict such as pass or fail or a short scale. Human grading is the most flexible and the slowest, so reserve it for calibration.",
+          "heading": "Choosing a grader"
+        },
+        {
+          "body": "A model judge is itself a system that needs evaluation. Have a domain expert label a sample with pass or fail and a written critique, run the judge on the same sample, and measure agreement; revise the rubric until the two align, then re-check periodically. Binary judgements with reasons are easier to align than numeric scores. Where possible use a different model from the one being graded, and keep judge prompts in version control with the eval results they produced.",
+          "heading": "Keeping a judge honest"
+        }
+      ],
+      "id": "grading-methods",
+      "title": "Code, model and human graders"
+    },
+    {
+      "body": [
+        {
+          "body": "An agent can reach a right answer by a wasteful or unsafe path, or a wrong answer after correct steps, so grade at several levels. Outcome checks inspect final state: was the ticket created with the right fields, did the record change as intended. Trajectory checks inspect the trace: were the expected tools called with valid arguments, were forbidden tools avoided, how many turns and tokens were used. Component checks isolate one step, such as routing accuracy or retrieval quality. Prefer outcome checks where several valid paths exist, since strict step matching penalizes legitimate alternatives.",
+          "heading": "What to measure"
+        },
+        {
+          "body": "Agent evals need a controlled environment: seeded test data, sandboxed or mocked tools with realistic responses, and reset between cases so runs are independent. Because agent behavior varies between runs, repeat each case several times and report a pass rate instead of a single result. Multi-turn tasks need a simulated user, often another model following a scripted persona and goal. Store full traces with each result so a failing case can be opened and read step by step.",
+          "heading": "Harness needs"
+        }
+      ],
+      "id": "agent-trajectory-evals",
+      "title": "Evaluating agent trajectories"
+    },
+    {
+      "body": [
+        {
+          "body": "The highest-value activity is reading traces. Sample real or pilot interactions, write a short note on what went wrong in each, group the notes into failure categories, and count them; the largest category sets the next piece of work. Each confirmed failure becomes a regression case. Unit-style assertions run on every change in CI, model-graded suites run on a schedule or before release, and a sample of production traffic is scored continuously to catch drift. A simple viewer that shows the trace beside the grade removes friction and gets domain experts involved.",
+          "heading": "From traces to tests"
+        }
+      ],
+      "id": "error-analysis-eval-loop",
+      "title": "Error analysis and evals in the delivery loop"
+    }
+  ],
+  "diagram": null,
+  "code": [
+    {
+      "code": "import json, statistics\n\ndef grade(case, trace):\n    calls = [s[\"tool\"] for s in trace[\"steps\"] if s.get(\"tool\")]\n    return {\n        \"outcome\": trace[\"final_state\"] == case[\"expected_state\"],\n        \"no_forbidden\": not set(calls) & set(case[\"forbidden_tools\"]),\n        \"within_budget\": len(trace[\"steps\"]) <= case[\"max_steps\"],\n    }\n\ndef run_suite(cases, run_agent, trials=3):\n    report = {}\n    for case in cases:\n        passes = [all(grade(case, run_agent(case[\"input\"])).values())\n                  for _ in range(trials)]\n        report[case[\"id\"]] = statistics.mean(passes)\n    return report\n\nprint(json.dumps(run_suite([], lambda x: {}), indent=2))",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "OpenAI Evals",
+    "Anthropic Console evaluation tool",
+    "pytest",
+    "LangSmith",
+    "Braintrust",
+    "promptfoo",
+    "Inspect AI"
+  ],
+  "related": [
+    "agent-architectures",
+    "prompt-and-context-engineering",
+    "rag-vector-databases",
+    "observability-agent-traces",
+    "pocs-pilots-prototyping",
+    "responsible-ai-guardrails"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Claude Docs: Create strong empirical evaluations",
+      "url": "https://platform.claude.com/docs/en/test-and-evaluate/develop-tests"
+    },
+    {
+      "kind": "doc",
+      "title": "OpenAI Docs: Evals",
+      "url": "https://developers.openai.com/api/docs/guides/evals"
+    },
+    {
+      "kind": "article",
+      "title": "Your AI Product Needs Evals",
+      "url": "https://hamel.dev/blog/posts/evals/"
+    },
+    {
+      "kind": "repo",
+      "title": "OpenAI Evals",
+      "url": "https://github.com/openai/evals"
+    }
+  ],
+  "practice": "practice/llm-agent-evaluation",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    }
+  ]
+}

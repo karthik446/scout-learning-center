@@ -1,0 +1,145 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "python-for-integrations",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Python for integrations, services and data transformation",
+  "area": "software",
+  "primary_key": "python",
+  "secondary_keys": [
+    "backend-engineering"
+  ],
+  "keys": [
+    "python",
+    "backend-engineering"
+  ],
+  "summary": "Python is the default language for field integration work because one language covers throwaway scripts, data transformation, HTTP services and the whole AI library ecosystem. The skill is less about syntax than about writing small programs that survive real customer data: typed at the boundaries, concurrent where the work is I/O bound, and packaged so they run the same way inside someone else's environment.",
+  "detail": [],
+  "in_practice": "A field team usually starts with a script in a shared repository that pulls a sample of the customer's data, parses it into typed models and prints a reject report, because that surfaces data problems on day one. Once the shape is understood, the same parsing code is lifted into a small FastAPI service or a scheduled job, with concurrency bounded to whatever the customer's API tolerates. Tests are written against captured real payloads with sensitive values scrubbed, type checking and linting run in CI, and the result ships as a container with a lock file so the customer's platform team can run it without asking questions.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "Most field scripts follow one pattern: read records from a file or an API, normalize them, write them somewhere else, and report what was skipped. Use the standard library first: json, csv, pathlib, datetime, itertools and collections cover the majority of cases. Prefer generators so a large export streams row by row instead of loading into memory. Keep the transform a pure function from one record to one record, so it can be unit tested with a handful of literal dicts. Always count inputs, outputs and rejects, and write rejects to a separate file with the reason, because the customer will ask where the missing rows went.",
+          "heading": "The shape of a good transformation script"
+        }
+      ],
+      "id": "data-transformation-scripts",
+      "title": "Scripts for parsing, reshaping and validating data"
+    },
+    {
+      "body": [
+        {
+          "body": "External payloads are untrusted even when the customer says the format is fixed. Define a model for each inbound shape and parse into it at the edge, so the rest of the code works with attributes that have known types rather than nested dict lookups. Pydantic coerces and validates in one step and produces an error that names the failing field, which is what you paste into a ticket for the customer's team. Use optional fields and defaults deliberately: a field that is missing, null, or an empty string are three different facts in a legacy export. Run a type checker such as mypy or pyright in CI so refactors stay safe.",
+          "heading": "Parse, do not just check"
+        }
+      ],
+      "id": "typed-models-at-boundaries",
+      "title": "Typed models at the boundaries with Pydantic and type hints"
+    },
+    {
+      "body": [
+        {
+          "body": "asyncio runs many coroutines on one thread, switching between them only at await points. That fits integration work, which is mostly waiting on HTTP calls, databases and model APIs. A coroutine function is declared with async def and does nothing until it is awaited or scheduled as a task. asyncio.run starts the event loop, asyncio.gather or a TaskGroup runs several awaitables concurrently, and a Semaphore caps how many are in flight. Blocking calls freeze every other coroutine, so a synchronous client or heavy CPU work inside a coroutine must be moved off the loop with asyncio.to_thread or a process pool.",
+          "heading": "The model"
+        },
+        {
+          "body": "Unbounded gather over ten thousand records will exhaust a customer's rate limit or connection pool within seconds, so always bound concurrency and add a timeout to each call. Decide what one failure means: gather raises the first exception by default, while return_exceptions collects them so the batch can finish and report partial results. Cancellation is delivered as an exception at an await point, so cleanup belongs in try and finally blocks or async context managers. Retries need backoff and jitter, and the operation being retried must be idempotent or you will create duplicates downstream.",
+          "heading": "What goes wrong in the field"
+        }
+      ],
+      "id": "asyncio-concurrent-io",
+      "title": "Concurrent I/O with asyncio"
+    },
+    {
+      "body": [
+        {
+          "body": "FastAPI maps a decorated function, called a path operation, to an HTTP method and path. Function parameters declare where data comes from: path parameters, query parameters, or a request body typed as a Pydantic model. The framework validates the request against those types, returns a structured error response when validation fails, and generates an OpenAPI schema with interactive documentation from the same declarations. Shared concerns such as database sessions, authentication and configuration are supplied through dependency injection with Depends, which also makes them easy to override in tests. The app runs under an ASGI server such as Uvicorn.",
+          "heading": "How a FastAPI service is put together"
+        },
+        {
+          "body": "The common shapes are a webhook receiver that validates and enqueues, a thin adapter that exposes a legacy system behind a clean JSON contract, and a backend for a pilot application that calls a model. Keep handlers thin: parse, call a plain function, return a response model. Declare a response model so internal fields never leak. Use async handlers when the work awaits I/O and plain def handlers when a library is blocking, since FastAPI runs those in a thread pool. The generated documentation doubles as the contract you hand to the customer's engineers.",
+          "heading": "Typical field uses"
+        }
+      ],
+      "id": "fastapi-services",
+      "title": "Small HTTP services with FastAPI"
+    },
+    {
+      "body": [
+        {
+          "body": "Code that runs on your laptop is not a deliverable. Declare dependencies in pyproject.toml, commit a lock file, and pin the interpreter version, so the customer's build produces the same environment as yours. Tools such as uv or Poetry handle resolution and virtual environments; a container image removes the remaining differences. Read configuration from environment variables and fail at startup with a clear message when one is missing. In restricted networks the public package index may be unreachable, so learn early whether there is an internal mirror and whether wheels must be vendored. Ship a single entry point command and a short runbook.",
+          "heading": "Making it run somewhere else"
+        }
+      ],
+      "id": "packaging-reproducible-environments",
+      "title": "Packaging and reproducible environments"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  A[Customer system or export] --> B[Fetch with bounded concurrency]\n  B --> C[Parse into typed models]\n  C -->|valid| D[Transform]\n  C -->|invalid| E[Reject file with reasons]\n  D --> F[Load to target API or database]\n  F --> G[Run report: in, out, rejected]\n  E --> G"
+  },
+  "code": [
+    {
+      "code": "import asyncio, os\nimport httpx\n\nBASE = os.environ[\"API_BASE\"]\n\nasync def fetch(client, sem, rec_id):\n    async with sem:\n        r = await client.get(f\"{BASE}/records/{rec_id}\", timeout=10)\n        r.raise_for_status()\n        return r.json()\n\nasync def main(ids):\n    sem = asyncio.Semaphore(8)\n    async with httpx.AsyncClient() as client:\n        tasks = (fetch(client, sem, i) for i in ids)\n        return await asyncio.gather(*tasks, return_exceptions=True)\n\nresults = asyncio.run(main(range(100)))\nprint(sum(not isinstance(r, Exception) for r in results), \"ok\")",
+      "lang": "python"
+    },
+    {
+      "code": "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\nclass Order(BaseModel):\n    order_id: str\n    amount_cents: int\n    currency: str = \"USD\"\n\nclass Accepted(BaseModel):\n    order_id: str\n\n@app.post(\"/orders\", response_model=Accepted)\nasync def create_order(order: Order):\n    return Accepted(order_id=order.order_id)",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "Python",
+    "asyncio",
+    "FastAPI",
+    "Pydantic",
+    "Uvicorn",
+    "httpx",
+    "pytest",
+    "mypy",
+    "Ruff",
+    "uv",
+    "Poetry",
+    "Docker"
+  ],
+  "related": [
+    "rest-apis-json-oauth",
+    "typescript-node-services",
+    "structured-outputs-tool-calling",
+    "messy-data-entity-resolution",
+    "containers-cicd-serverless"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "The Python Tutorial",
+      "url": "https://docs.python.org/3/tutorial/index.html"
+    },
+    {
+      "kind": "doc",
+      "title": "asyncio: Asynchronous I/O",
+      "url": "https://docs.python.org/3/library/asyncio.html"
+    },
+    {
+      "kind": "tutorial",
+      "title": "FastAPI Tutorial: User Guide",
+      "url": "https://fastapi.tiangolo.com/tutorial/"
+    }
+  ],
+  "practice": "practice/python-for-integrations",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    }
+  ]
+}

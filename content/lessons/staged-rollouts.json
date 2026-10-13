@@ -1,0 +1,141 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "staged-rollouts",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Staged rollouts: shadow, canary, champion/challenger and rollback",
+  "area": "ai-ml",
+  "primary_key": "staged-rollout",
+  "secondary_keys": [
+    "model-deployment"
+  ],
+  "keys": [
+    "staged-rollout",
+    "model-deployment"
+  ],
+  "summary": "Offline evaluation cannot prove a model behaves well on live traffic, so releases are staged: the new version is exposed to production conditions gradually while automated checks decide whether to continue. Shadow testing gives it real inputs with no user impact, canary and blue/green shift real traffic in controlled steps, and champion/challenger compares business outcomes. Every strategy is paired with a fast, rehearsed rollback.",
+  "detail": [],
+  "in_practice": "A common sequence for a risky model change is shadow first for a day or more to compare latency, errors and prediction differences, then a canary at a few percent with automated analysis on service and model metrics, stepping up through pauses to full traffic, with the old version kept warm through a bake period. Low-risk refreshes skip shadow and go straight to canary. The platform team provides the rollout template, standard analysis queries and alarm definitions so model teams only set thresholds, and rollback is practiced regularly in staging. Champion/challenger tests are run through the experimentation system on top of the same routing, with the model version logged on every prediction.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "In a shadow deployment the candidate runs next to the production model and receives a copy of live requests, but only the production model's response is returned to the caller. The shadow's outputs and operational metrics are logged for comparison. This validates things offline tests cannot: latency and error rate under real load, memory behavior, feature availability in the serving path, and how often predictions differ from the current model. SageMaker implements this as a shadow variant on an endpoint that receives a configured percentage of the production variant's requests, with a dashboard comparing the two, and service meshes offer the same idea as traffic mirroring. Limits: it doubles inference cost for the mirrored share, it must not trigger side effects twice, and it cannot measure outcomes that depend on users seeing the prediction.",
+          "heading": "Real requests, discarded responses"
+        }
+      ],
+      "id": "shadow-testing",
+      "title": "Shadow deployments"
+    },
+    {
+      "body": [
+        {
+          "body": "Argo Rollouts adds a Rollout resource that replaces a Deployment and manages ReplicaSets with progressive strategies. A canary strategy is a list of steps: set the canary weight to a percentage, pause for a duration or indefinitely until promoted, then continue. Without a traffic provider the weight is approximated by the ratio of canary to stable pods; with an ingress controller or service mesh integration the controller sets exact traffic percentages independently of replica counts, which matters for GPU services where each replica is expensive.",
+          "heading": "Rollout resource, steps and traffic routing"
+        },
+        {
+          "body": "An AnalysisTemplate defines metric queries, for example error rate or tail latency from Prometheus, with success conditions and failure limits. Analysis runs in the background or as a step during the rollout; if it fails, the controller aborts and shifts traffic back to the stable version. For models, add prediction-level signals such as score distribution or fallback rate, not only HTTP health.",
+          "heading": "Automated analysis"
+        }
+      ],
+      "id": "canary-with-argo-rollouts",
+      "title": "Canary releases with Argo Rollouts"
+    },
+    {
+      "body": [
+        {
+          "body": "Blue/green provisions the new version as a complete second fleet, tests it, then switches traffic, keeping the old fleet alive for a while so rollback is instant. It costs double capacity during the release but avoids running mixed versions under partial load. SageMaker deployment guardrails apply this to endpoint updates: a new fleet is created and traffic moves all at once, as a canary where a small portion shifts first and the rest follows after a baking period, or linearly in equal steps. CloudWatch alarms are attached to the deployment, and if any alarm trips during a baking period the service automatically rolls traffic back to the old fleet. A rolling option updates the fleet in batches when doubling capacity is not acceptable.",
+          "heading": "Two fleets and a traffic switch"
+        }
+      ],
+      "id": "blue-green-and-sagemaker-guardrails",
+      "title": "Blue/green and managed deployment guardrails"
+    },
+    {
+      "body": [
+        {
+          "body": "A canary answers whether the new version is safe; champion/challenger answers whether it is better. The champion is the production model, and one or more challengers receive a fixed share of traffic for long enough to measure business outcomes such as conversion, fraud caught or handling time. This is an experiment, so it needs stable assignment of users or entities to a variant, logging of which model version produced each prediction, and a sample size decided up front. Labels often arrive late, so the comparison window can be days or weeks. In registry terms the two roles map to aliases; when the challenger wins, the champion alias moves and the usual rollout mechanics apply.",
+          "heading": "Comparing outcomes, not just health"
+        }
+      ],
+      "id": "champion-challenger",
+      "title": "Champion/challenger and online experiments"
+    },
+    {
+      "body": [
+        {
+          "body": "Rollback must be faster and simpler than the forward release. Keep the previous version's artifact, image and capacity available until the new one has baked; with GitOps the rollback is a revert of the promotion commit, and with a rollout controller it is an abort that returns traffic to the stable ReplicaSet. Define abort criteria before the release and automate them, since a human watching a dashboard is slow. Models add specific hazards: a new version may need new features or a changed request schema, so keep changes backward compatible for one release; cached or stored predictions from the bad version may need invalidation; and a stateful downstream system may have already acted on bad scores. Record every promotion and rollback against the model version.",
+          "heading": "Make reverting the cheap path"
+        }
+      ],
+      "id": "rollback-design",
+      "title": "Designing rollback"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart TD\n  A[Approved model version] --> B[Shadow: mirrored traffic, responses discarded]\n  B --> C{Latency, errors, diffs OK?}\n  C -- no --> X[Stop and investigate]\n  C -- yes --> D[Canary 5 percent]\n  D --> E[Automated analysis]\n  E -- fail --> R[Abort: traffic back to stable]\n  E -- pass --> F[Canary 25 then 50 percent]\n  F --> G[Full traffic]\n  G --> H[Bake period with old version kept]\n  H -- alarm --> R\n  H -- clean --> I[Retire old version]"
+  },
+  "code": [
+    {
+      "code": "apiVersion: argoproj.io/v1alpha1\nkind: Rollout\nmetadata:\n  name: fraud-scorer\nspec:\n  replicas: 6\n  selector:\n    matchLabels: {app: fraud-scorer}\n  template:\n    metadata:\n      labels: {app: fraud-scorer}\n    spec:\n      containers:\n        - name: server\n          image: REGISTRY/fraud-scorer@sha256:DIGEST\n  strategy:\n    canary:\n      analysis:\n        templates: [{templateName: error-rate-and-p99}]\n        startingStep: 1\n      steps:\n        - setWeight: 5\n        - pause: {duration: 15m}\n        - setWeight: 25\n        - pause: {duration: 30m}\n        - setWeight: 50\n        - pause: {}",
+      "lang": "yaml"
+    }
+  ],
+  "technologies": [
+    "Argo Rollouts",
+    "Amazon SageMaker deployment guardrails",
+    "Amazon SageMaker shadow tests",
+    "Istio",
+    "KServe",
+    "Prometheus",
+    "Amazon CloudWatch",
+    "Seldon Core"
+  ],
+  "related": [
+    "model-registry-and-versioning",
+    "model-evaluation-gates",
+    "gitops-argo-cd-and-terraform",
+    "model-serving-architecture",
+    "sagemaker-deployment",
+    "observability-opentelemetry-prometheus",
+    "model-monitoring-and-drift",
+    "slos-on-call-and-postmortems"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Argo Rollouts Concepts",
+      "url": "https://argo-rollouts.readthedocs.io/en/stable/concepts/"
+    },
+    {
+      "kind": "doc",
+      "title": "Argo Rollouts Canary Deployment Strategy",
+      "url": "https://argo-rollouts.readthedocs.io/en/stable/features/canary/"
+    },
+    {
+      "kind": "doc",
+      "title": "SageMaker Deployment guardrails",
+      "url": "https://docs.aws.amazon.com/sagemaker/latest/dg/deployment-guardrails.html"
+    },
+    {
+      "kind": "doc",
+      "title": "SageMaker Shadow tests",
+      "url": "https://docs.aws.amazon.com/sagemaker/latest/dg/shadow-tests.html"
+    }
+  ],
+  "practice": "practice/staged-rollouts",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    }
+  ]
+}

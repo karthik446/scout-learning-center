@@ -1,0 +1,154 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "nvidia-gpus-on-kubernetes",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "GPU compute on Kubernetes with the NVIDIA stack",
+  "area": "ai-ml",
+  "primary_key": "gpu-compute",
+  "secondary_keys": [
+    "nvidia"
+  ],
+  "keys": [
+    "gpu-compute",
+    "nvidia"
+  ],
+  "summary": "Kubernetes does not understand GPUs natively; it learns about them through a device plugin that advertises them as an extended resource. The NVIDIA stack supplies the pieces that make this work: kernel driver, container toolkit, device plugin and monitoring, usually installed together by the GPU Operator. This lesson covers how those layers fit, how pods request GPUs, and how a GPU can be shared or partitioned.",
+  "detail": [],
+  "in_practice": "A platform team creates dedicated GPU node pools per instance type, taints them, and installs the GPU Operator with Helm through the same GitOps flow as every other cluster add-on. On managed clouds they decide whether to use the provider's GPU-ready node image with a preinstalled driver or let the operator manage the driver. DCGM exporter metrics for utilization, memory and temperature flow into Prometheus and feed dashboards and idle-GPU alerts. Interactive and small inference workloads go on time-sliced or MIG pools, training jobs get whole GPUs, and driver upgrades are rolled out pool by pool after a canary node passes the operator's validation.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "Four layers must line up on every GPU node. The NVIDIA kernel driver talks to the hardware. The NVIDIA Container Toolkit configures the container runtime, such as containerd, so that a container can be started with the driver libraries and device files mounted in. The NVIDIA device plugin runs as a DaemonSet, registers with the kubelet through the device plugin gRPC API, and advertises the node's GPUs as the extended resource nvidia.com/gpu. Finally the kubelet reports that capacity to the API server, and the scheduler can place pods against it. When a pod is admitted, the kubelet asks the plugin which devices to allocate and the runtime injects them.",
+          "heading": "From hardware to an extended resource"
+        },
+        {
+          "body": "Most GPU node problems are a mismatch between layers: a driver version that does not support the CUDA version in the image, a runtime not configured to use the NVIDIA runtime, or a device plugin pod that is not running so the node shows zero allocatable GPUs. The first debugging steps are to check node allocatable resources, check the plugin and driver pods on that node, and run nvidia-smi inside a test container.",
+          "heading": "Where it breaks"
+        }
+      ],
+      "id": "gpu-stack-layers",
+      "title": "The layers between a pod and a GPU"
+    },
+    {
+      "body": [
+        {
+          "body": "Installing the layers by hand on every node image does not scale, so the GPU Operator manages them as containers. It is installed with Helm and uses the operator pattern to deploy and reconcile: the driver, either as a container or by using a driver preinstalled in the node image, the Container Toolkit, the device plugin, GPU Feature Discovery which labels nodes with GPU model, memory and capabilities, the DCGM exporter for Prometheus metrics, and a validator that confirms a node is ready. A custom resource called ClusterPolicy holds the configuration. Node Feature Discovery detects which nodes have NVIDIA hardware, so the components land only there. Upgrading drivers becomes a controlled rollout rather than a node image rebuild.",
+          "heading": "One operator, many components"
+        }
+      ],
+      "id": "gpu-operator",
+      "title": "Automating the stack with the NVIDIA GPU Operator"
+    },
+    {
+      "body": [
+        {
+          "body": "A container asks for GPUs in its resource limits, for example nvidia.com/gpu set to 1. GPUs are whole-number resources and cannot be overcommitted: if a request is given it must equal the limit, and specifying only the limit is enough. A pod that needs a particular GPU type selects it with a node selector or node affinity against labels published by GPU Feature Discovery, such as the product name or memory size.",
+          "heading": "Resource requests"
+        },
+        {
+          "body": "GPU nodes are expensive, so clusters stop ordinary pods from landing on them. The node pool carries a taint, commonly keyed nvidia.com/gpu with effect NoSchedule, and only pods with a matching toleration are scheduled there. A toleration permits placement but does not attract the pod, so it is paired with a GPU request or node affinity. Together with separate node pools per GPU type, this keeps system workloads on cheap CPU nodes and lets the autoscaler scale GPU pools to zero when idle.",
+          "heading": "Taints and tolerations"
+        }
+      ],
+      "id": "requesting-and-isolating-gpus",
+      "title": "Requesting GPUs and keeping GPU nodes for GPU work"
+    },
+    {
+      "body": [
+        {
+          "body": "A whole GPU per pod wastes capacity for notebooks and small inference services. Time-slicing lets the device plugin advertise each GPU as several replicas; workloads take turns on the device with no memory or fault isolation. MPS, the Multi-Process Service, lets processes run concurrently on one GPU with better throughput than time-slicing, with limited isolation. MIG, Multi-Instance GPU, is available on supported data center GPUs and partitions one card into hardware-isolated instances with dedicated memory and compute, which is the right choice for multi-tenant use. Training jobs normally still take whole GPUs.",
+          "heading": "Three sharing mechanisms"
+        },
+        {
+          "body": "The device plugin model can only count identical devices. Dynamic Resource Allocation is the newer Kubernetes API for richer requests. Drivers publish devices and their attributes in ResourceSlices, administrators define DeviceClasses, and workloads state what they need in a ResourceClaim, optionally generated from a ResourceClaimTemplate. The scheduler matches claims to devices using attribute selectors, so a pod can ask for a GPU with a minimum amount of memory, or several containers can share one claimed device.",
+          "heading": "Dynamic Resource Allocation"
+        }
+      ],
+      "id": "gpu-sharing-and-dra",
+      "title": "Sharing GPUs: time-slicing, MPS, MIG and Dynamic Resource Allocation"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart TB\n  subgraph Node[GPU node]\n    D[NVIDIA kernel driver] --> T[NVIDIA Container Toolkit]\n    T --> R[containerd runtime]\n    P[Device plugin DaemonSet] -->|registers nvidia.com/gpu| K[kubelet]\n    K --> R\n    G[GPU Feature Discovery] -->|node labels| K\n    M[DCGM exporter] --> Prom[Prometheus]\n  end\n  O[GPU Operator and ClusterPolicy] --> D\n  O --> T\n  O --> P\n  O --> G\n  O --> M\n  K -->|allocatable GPUs| A[API server]\n  A --> S[kube-scheduler]\n  S -->|binds pod requesting GPU| K"
+  },
+  "code": [
+    {
+      "code": "apiVersion: v1\nkind: Pod\nmetadata:\n  name: gpu-smoke-test\nspec:\n  restartPolicy: Never\n  tolerations:\n    - key: nvidia.com/gpu\n      operator: Exists\n      effect: NoSchedule\n  containers:\n    - name: cuda\n      image: nvidia/cuda:12.4.1-base-ubuntu22.04\n      command: [\"nvidia-smi\"]\n      resources:\n        limits:\n          nvidia.com/gpu: 1",
+      "lang": "yaml"
+    }
+  ],
+  "technologies": [
+    "NVIDIA GPU Operator",
+    "NVIDIA Container Toolkit",
+    "NVIDIA k8s-device-plugin",
+    "GPU Feature Discovery",
+    "Node Feature Discovery",
+    "DCGM Exporter",
+    "Multi-Instance GPU",
+    "Kubernetes Dynamic Resource Allocation",
+    "Helm",
+    "containerd"
+  ],
+  "related": [
+    "kubernetes-for-ml-workloads",
+    "aws-and-eks-foundations",
+    "distributed-training",
+    "workload-scheduling-and-cluster-ops",
+    "autoscaling-and-cost-efficiency",
+    "llm-serving-vllm-sglang"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "NVIDIA GPU Operator",
+      "url": "https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/index.html"
+    },
+    {
+      "kind": "doc",
+      "title": "Installing the NVIDIA Container Toolkit",
+      "url": "https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html"
+    },
+    {
+      "kind": "doc",
+      "title": "Schedule GPUs (Kubernetes)",
+      "url": "https://kubernetes.io/docs/tasks/manage-gpus/scheduling-gpus/"
+    },
+    {
+      "kind": "repo",
+      "title": "NVIDIA device plugin for Kubernetes",
+      "url": "https://github.com/NVIDIA/k8s-device-plugin"
+    },
+    {
+      "kind": "doc",
+      "title": "Kubernetes Documentation: Device Plugins",
+      "url": "https://kubernetes.io/docs/concepts/extend-kubernetes/compute-storage-net/device-plugins/"
+    },
+    {
+      "kind": "doc",
+      "title": "Kubernetes Documentation: Dynamic Resource Allocation",
+      "url": "https://kubernetes.io/docs/concepts/resource-management/dynamic-resource-allocation/"
+    },
+    {
+      "kind": "doc",
+      "title": "Kubernetes Documentation: Taints and Tolerations",
+      "url": "https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/"
+    }
+  ],
+  "practice": "practice/nvidia-gpus-on-kubernetes",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    }
+  ]
+}

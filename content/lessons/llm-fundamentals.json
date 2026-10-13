@@ -1,0 +1,150 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "llm-fundamentals",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "How LLMs work inside applications: tokens, context windows and model APIs",
+  "area": "ai-ml",
+  "primary_key": "llm",
+  "secondary_keys": [
+    "applied-ai",
+    "ai-powered-systems"
+  ],
+  "keys": [
+    "llm",
+    "applied-ai",
+    "ai-powered-systems"
+  ],
+  "summary": "A large language model is a function that takes a sequence of tokens and predicts the next one, repeated until a stop condition. Everything an application does with a model, including chat, tools and retrieval, is expressed by what is placed in a bounded context window and sent through a stateless API. Understanding tokens, the window and the request parameters explains most of the cost, latency and failure behavior seen in the field.",
+  "detail": [],
+  "in_practice": "On a customer engagement the team first builds a token and cost model for the target workflow: typical input size, expected output size, calls per transaction and transactions per day, per model tier. They wrap the provider SDK in a thin client that sets timeouts and retries with backoff on rate limit and overload errors, records model id, token usage, stop reason and latency for every call, and enforces a maximum output size. Model ids are pinned in configuration instead of floating aliases so behavior does not shift under a release. Streaming is turned on for anything a person waits on, caching is applied to the stable prefix, and a cheaper model is tried on each step with the evaluation set deciding whether quality holds.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "Models do not read characters or words. A tokenizer splits text into subword units from a fixed vocabulary and maps each to an integer id; the model only ever sees those ids. Common English words are often a single token, while rare words, identifiers, non-English text and numbers split into several. A rough planning figure for English prose is three to four characters per token, but JSON, code and tables are noticeably denser in tokens than their character count suggests.",
+          "heading": "What a token is"
+        },
+        {
+          "body": "Tokens are the unit for everything a provider meters: the context limit, the output limit, rate limits and price. Token counts differ between model families because each uses its own tokenizer, so a prompt that fits one model may not fit another. Measure with the provider's token counting endpoint or library rather than estimating, and log input and output token counts from every response so that cost and capacity questions can be answered from data.",
+          "heading": "Why it matters in an application"
+        }
+      ],
+      "id": "tokens-and-tokenization",
+      "title": "Tokens and tokenization"
+    },
+    {
+      "body": [
+        {
+          "body": "The Transformer replaced recurrence with attention. Each token id becomes an embedding vector, positional information is added, and a stack of layers repeatedly applies self-attention followed by a feed-forward network. In self-attention every position computes query, key and value vectors and takes a weighted mix of the other positions, so any token can directly use information from any other token in the window. Multiple attention heads run in parallel and learn different relationships. The final layer produces a probability distribution over the vocabulary for the next token.",
+          "heading": "The architecture in one pass"
+        },
+        {
+          "body": "Generation is autoregressive: the model samples one token, appends it, and runs again. Output is therefore produced sequentially and output tokens dominate latency, while input is processed in parallel. The model has no memory outside the window and no notion of truth, only of likely continuations, which is why fluent but wrong answers occur when the needed facts are absent. Sampling settings such as temperature change how the distribution is drawn from, so identical requests can return different text.",
+          "heading": "Consequences for builders"
+        }
+      ],
+      "id": "transformer-next-token-prediction",
+      "title": "Transformers and next-token prediction"
+    },
+    {
+      "body": [
+        {
+          "body": "The context window is the total number of tokens the model can consider in one request: system prompt, tool definitions, the full conversation history, retrieved documents, tool results, and the output being generated. Reasoning or thinking tokens, where a model supports them, also consume budget. Because the API is stateless, each turn resends the whole history, so input size grows linearly with turns and total tokens billed across a conversation grow roughly quadratically unless history is trimmed or cached.",
+          "heading": "What counts against the window"
+        },
+        {
+          "body": "Treat the window as working memory with a hard ceiling and a soft quality limit. Exceeding the ceiling yields an error or truncation depending on provider and model; well before that, very long contexts can dilute attention to the important parts. Standard techniques are to reserve space for the output, summarize or drop old turns, keep tool results compact, retrieve only what the current step needs, and place long reference material before the question that uses it.",
+          "heading": "Managing it"
+        }
+      ],
+      "id": "context-window-budgeting",
+      "title": "The context window as a budget"
+    },
+    {
+      "body": [
+        {
+          "body": "Provider APIs converge on the same shape: a model id, a system or developer instruction, an ordered list of messages with roles such as user and assistant, optional tool definitions, and generation settings. The key settings are a maximum output token count, temperature or other sampling controls, and stop sequences. The response carries content blocks, a stop reason (finished naturally, hit the output limit, or requested a tool) and a usage object with token counts. Always branch on the stop reason: a response cut off by the output limit is a different outcome from a completed answer and should not be parsed as one.",
+          "heading": "Shape of a request and response"
+        }
+      ],
+      "id": "model-api-requests-and-parameters",
+      "title": "Model API requests and parameters"
+    },
+    {
+      "body": [
+        {
+          "body": "Cost is input tokens times input price plus output tokens times output price, with output usually priced several times higher. Latency splits into time to first token, driven by input size and queueing, and generation time, driven by output length. Streaming returns tokens as they are produced, which improves perceived latency and lets a client cancel early. Prompt caching lets a stable prefix such as the system prompt, tool definitions and reference documents be reused across requests at a reduced rate, so order content from most stable to most variable. Batch endpoints trade latency for a lower price on offline work, and smaller models handle routing and extraction steps cheaply.",
+          "heading": "The levers"
+        }
+      ],
+      "id": "cost-latency-streaming-caching",
+      "title": "Cost, latency, streaming and caching"
+    }
+  ],
+  "diagram": {
+    "source": "sequenceDiagram\n  participant App\n  participant API as Model API\n  participant Tok as Tokenizer\n  participant M as Model\n  App->>API: system, messages, max_tokens, params\n  API->>Tok: text\n  Tok->>M: token ids within context window\n  loop one token per step\n    M-->>API: next token\n  end\n  API-->>App: streamed deltas, stop reason, usage"
+  },
+  "code": [
+    {
+      "code": "import anthropic\n\nclient = anthropic.Anthropic()  # reads the API key from the environment\n\nresp = client.messages.create(\n    model=\"claude-sonnet-5-5\",\n    max_tokens=512,\n    system=\"You answer questions about order status. Be brief.\",\n    messages=[{\"role\": \"user\", \"content\": \"Where is order 1042?\"}],\n)\n\nif resp.stop_reason == \"max_tokens\":\n    raise RuntimeError(\"output truncated; do not parse\")\n\nprint(resp.content[0].text)\nprint(resp.usage.input_tokens, resp.usage.output_tokens)",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "Anthropic Messages API",
+    "OpenAI Responses API",
+    "Amazon Bedrock",
+    "Google Vertex AI",
+    "Azure OpenAI",
+    "tiktoken",
+    "LiteLLM",
+    "OpenRouter",
+    "Server-Sent Events"
+  ],
+  "related": [
+    "prompt-and-context-engineering",
+    "structured-outputs-tool-calling",
+    "rag-vector-databases",
+    "scaling-performance-cost",
+    "gpu-inference-serving",
+    "observability-agent-traces"
+  ],
+  "sources": [
+    {
+      "kind": "paper",
+      "title": "Attention Is All You Need",
+      "url": "https://arxiv.org/abs/1706.03762"
+    },
+    {
+      "kind": "article",
+      "title": "The Illustrated Transformer",
+      "url": "https://jalammar.github.io/illustrated-transformer/"
+    },
+    {
+      "kind": "doc",
+      "title": "Claude Docs: Context windows",
+      "url": "https://platform.claude.com/docs/en/build-with-claude/context-windows"
+    },
+    {
+      "kind": "doc",
+      "title": "OpenAI Docs: Text generation",
+      "url": "https://developers.openai.com/api/docs/guides/text"
+    }
+  ],
+  "practice": "practice/llm-fundamentals",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    }
+  ]
+}

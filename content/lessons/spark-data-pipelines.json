@@ -1,0 +1,155 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "spark-data-pipelines",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Large-scale data pipelines with Spark and PySpark",
+  "area": "data",
+  "primary_key": "spark",
+  "secondary_keys": [
+    "data-pipelines",
+    "large-datasets",
+    "data-engineering"
+  ],
+  "keys": [
+    "spark",
+    "data-pipelines",
+    "large-datasets",
+    "data-engineering"
+  ],
+  "summary": "Apache Spark is the default engine for building training sets and feature tables that do not fit on one machine. A driver plans a query over DataFrames, splits it into stages and tasks, and executors run those tasks over partitions of data. The platform engineer's job is to make such jobs correct on rerun, predictable in cost, and operable on shared clusters.",
+  "detail": [],
+  "in_practice": "A team keeps Spark transformations as plain functions from DataFrame to DataFrame in a Python package, tested locally in CI, and submits them through an orchestrator that passes the logical date. Each job reads date-partitioned Parquet or lakehouse tables, writes one output partition idempotently, and is followed by a data quality task. The platform group owns the base image, cluster or Kubernetes operator configuration, default tuning such as adaptive execution, and dashboards for job duration, shuffle size and cost per run. When a job slows down, the first step is the Spark UI: find the slowest stage, compare maximum and median task time, and check for skew, spill or a missing partition filter before adding hardware.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "A Spark application has one driver and many executors. DataFrame transformations such as select, filter, join and groupBy are lazy: they only build a logical plan. An action such as write, count or collect makes the Catalyst optimizer rewrite that plan (predicate pushdown, column pruning, join reordering) and compile it to a physical plan. The plan is cut into stages at every shuffle boundary, and each stage runs one task per partition. Because DataFrames carry a schema, SQL and the DataFrame API go through the same optimizer and perform the same, which is why pipelines mix both freely.",
+          "heading": "From DataFrame code to tasks"
+        },
+        {
+          "body": "A partition is the slice of data one task processes in memory on one executor core. Too few partitions give huge tasks that spill to disk or fail with out-of-memory errors; too many give scheduling overhead and thousands of tiny output files. Input partitioning comes from the file layout, while post-shuffle partitioning is set by spark.sql.shuffle.partitions and, with adaptive query execution on, adjusted at runtime by coalescing small partitions. Reading the query plan with explain and the stage view in the Spark UI is the basic skill for reasoning about any slow job.",
+          "heading": "Why partitions are the unit of everything"
+        }
+      ],
+      "id": "spark-execution-model",
+      "title": "Execution model: driver, executors, lazy plans"
+    },
+    {
+      "body": [
+        {
+          "body": "Most Spark cost is shuffle: moving rows across the network so that equal keys land in the same partition for a join or aggregation. A sort-merge join shuffles both sides; a broadcast hash join ships a small table to every executor and avoids the shuffle entirely, so keeping dimension tables under the broadcast threshold is a cheap win. Filtering and projecting before the join reduces shuffled bytes. Columnar formats such as Parquet let Spark skip columns and row groups at read time, so the cheapest optimization is often a better partition filter on the input.",
+          "heading": "Where the time goes"
+        },
+        {
+          "body": "Skew means a few keys hold most rows, for example a null user id or one very large customer. One task then runs for an hour while the other 199 finish in seconds, and it often dies on memory. Adaptive query execution can split skewed partitions in sort-merge joins automatically. When that is not enough, teams filter or separately handle the hot keys, salt the key with a random suffix on both sides, or pre-aggregate before joining. The symptom to look for in the Spark UI is a stage whose maximum task duration and shuffle read size are far above the median.",
+          "heading": "Skew and how to handle it"
+        }
+      ],
+      "id": "shuffles-joins-and-skew",
+      "title": "Shuffles, joins and data skew"
+    },
+    {
+      "body": [
+        {
+          "body": "PySpark is a Python API over the same engine: built-in functions in pyspark.sql.functions execute in the JVM and are optimized, while a plain Python UDF serializes every row to a Python worker and back and is opaque to the optimizer. The rule is built-in functions first, then pandas UDFs, which exchange Arrow batches and run vectorized code, and row-at-a-time UDFs last. The pandas API on Spark helps port pandas code, but the same shuffle and partition rules apply underneath.",
+          "heading": "Staying in the JVM, and when you cannot"
+        },
+        {
+          "body": "For high-volume unstructured data the usual pattern is to keep the heavy bytes in object storage and have Spark process a manifest table of paths plus metadata. Spark distributes the work with mapInPandas or a pandas UDF that opens each object, decodes it and emits embeddings, thumbnails or extracted attributes. Partition count is tuned by bytes per task instead of row count, because one row can be hundreds of megabytes. GPU inference inside such jobs needs executor resource requests and batch sizes sized to the device, and is often moved to a dedicated batch inference system.",
+          "heading": "Images, video and point clouds"
+        }
+      ],
+      "id": "pyspark-udfs-and-unstructured-data",
+      "title": "PySpark for feature and unstructured data work"
+    },
+    {
+      "body": [
+        {
+          "body": "Structured Streaming treats a stream as a table that keeps growing and runs the same DataFrame query incrementally, by default in micro-batches. A source such as Kafka or a file directory supplies offsets, the engine processes new rows, and a sink receives the result in append, update or complete output mode. Progress and state are written to a checkpoint location; on restart the query resumes from the recorded offsets. With a replayable source and an idempotent or transactional sink this gives end-to-end exactly-once results, which is the property feature pipelines need.",
+          "heading": "A stream as an unbounded table"
+        },
+        {
+          "body": "Windowed aggregations group by event time taken from the record, not by arrival time. A watermark declares how late data may arrive, for example ten minutes behind the maximum event time seen; rows older than that are dropped and the state for closed windows is released. Without a watermark, state grows without bound and the job eventually fails. Stream-stream joins also need watermarks on both sides plus a time-range condition. Operating a streaming job means watching input rate against processing rate, batch duration, state store size and consumer lag.",
+          "heading": "Event time, watermarks and state"
+        }
+      ],
+      "id": "structured-streaming",
+      "title": "Structured Streaming for near-real-time features"
+    },
+    {
+      "body": [
+        {
+          "body": "A production batch job takes a logical date as a parameter, reads only the input partitions for that date, and overwrites only the matching output partition. With dynamic partition overwrite, or a transactional table format, a retry or a backfill produces the same result instead of duplicates. Jobs avoid collect on large data, avoid wall-clock time inside transformations, and write a controlled number of files per partition. Schema is declared explicitly so that an upstream change fails loudly at read time.",
+          "heading": "Idempotent, partition-scoped writes"
+        },
+        {
+          "body": "Spark runs on Kubernetes, YARN or a managed service; in each case the platform decides executor sizing, dynamic allocation, use of spot capacity for executors, and per-team quotas. Standard practice is a job template that fixes the Spark version, image, logging and metrics configuration, so teams only supply code and resource hints. Unit tests run transformations on a local SparkSession with small fixtures, and data quality checks on row counts, null rates and key uniqueness run as a step after the write and before downstream consumers are triggered.",
+          "heading": "Platform concerns"
+        }
+      ],
+      "id": "operating-spark-jobs",
+      "title": "Running Spark jobs in production"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  A[Raw events in object storage] --> B[Spark batch job]\n  K[Kafka topic] --> S[Structured Streaming query]\n  B --> C[Partitioned feature tables]\n  S --> C\n  S --> CK[Checkpoint location]\n  C --> Q[Data quality checks]\n  Q --> T[Training sets and feature store]\n  D[Driver] --> E1[Executor 1]\n  D --> E2[Executor 2]\n  B -.runs on.-> D"
+  },
+  "code": [
+    {
+      "code": "from pyspark.sql import SparkSession, functions as F\n\nspark = SparkSession.builder.appName('user_daily_features').getOrCreate()\nspark.conf.set('spark.sql.sources.partitionOverwriteMode', 'dynamic')\nds = '2026-01-01'  # logical date passed by the orchestrator\n\nevents = spark.read.parquet('LAKE_ROOT/events').where(F.col('ds') == ds)\n\nfeats = (\n    events.groupBy('user_id')\n    .agg(F.count('*').alias('events_1d'),\n         F.avg('amount').alias('avg_amount_1d'))\n    .withColumn('ds', F.lit(ds))\n)\n\n(feats.repartition(8)\n      .write.mode('overwrite')\n      .partitionBy('ds')\n      .parquet('LAKE_ROOT/features/user_daily'))",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "Apache Spark",
+    "PySpark",
+    "Spark SQL",
+    "Structured Streaming",
+    "Apache Kafka",
+    "Apache Parquet",
+    "Apache Arrow",
+    "Databricks",
+    "Amazon EMR",
+    "Spark on Kubernetes operator"
+  ],
+  "related": [
+    "storage-lakehouse-and-data-stores",
+    "feature-stores",
+    "airflow-pipelines",
+    "kubernetes-for-ml-workloads",
+    "python-for-platform-engineering"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Spark SQL, DataFrames and Datasets Guide",
+      "url": "https://spark.apache.org/docs/latest/sql-programming-guide.html"
+    },
+    {
+      "kind": "doc",
+      "title": "PySpark Getting Started",
+      "url": "https://spark.apache.org/docs/latest/api/python/getting_started/index.html"
+    },
+    {
+      "kind": "doc",
+      "title": "Structured Streaming Programming Guide",
+      "url": "https://spark.apache.org/docs/latest/structured-streaming-programming-guide.html"
+    }
+  ],
+  "practice": "practice/spark-data-pipelines",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    }
+  ]
+}

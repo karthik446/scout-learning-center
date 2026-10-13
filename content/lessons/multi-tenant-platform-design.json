@@ -1,0 +1,144 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "multi-tenant-platform-design",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "System design for multi-tenant ML infrastructure: isolation, quotas and backpressure",
+  "area": "software",
+  "primary_key": "system-design",
+  "secondary_keys": [
+    "distributed-systems",
+    "ml-platform"
+  ],
+  "keys": [
+    "system-design",
+    "distributed-systems",
+    "ml-platform"
+  ],
+  "summary": "A shared ML platform runs training, batch and serving workloads from many teams on common clusters and accelerators. The design problem is to give each tenant isolation, a fair and predictable share of scarce capacity, and protection from other tenants under overload. This lesson covers the isolation layers, quota and fairness mechanisms, backpressure patterns and cost attribution that make sharing safe.",
+  "detail": [],
+  "in_practice": "Teams usually begin with one namespace per team and environment, stamped out by automation with RBAC bindings, a default deny network policy, a ResourceQuota, a LimitRange and cost labels. GPU nodes sit in dedicated pools behind taints, and a batch queueing layer handles guaranteed shares, borrowing and preemption for training jobs. Shared services such as the inference gateway, the tracking server and the orchestrator enforce per-tenant rate and concurrency limits and return fast rejections when saturated, with clients configured for bounded, jittered retries. Utilization and cost per tenant are reviewed regularly, quotas are adjusted from data, and the design is load tested with one deliberately abusive tenant to confirm others stay within their service objectives.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "Kubernetes documentation distinguishes multi-team tenancy, where tenants are teams inside one organization, from multi-customer tenancy, where tenants are external and untrusted. The basic unit is the namespace: RBAC roles are bound per namespace, quotas attach to it and most policies are scoped by it. A common convention is one namespace per team and environment, created by automation with the same baseline every time. When tenants need their own cluster-scoped resources, such as custom resource definitions, namespaces are not enough and teams move to virtual control planes or a cluster per tenant.",
+          "heading": "Control plane isolation"
+        },
+        {
+          "body": "Workloads share nodes, a network and a kernel unless told otherwise. NetworkPolicy with a default deny rule stops cross-namespace traffic. Pod Security Standards block privileged containers. Dedicated node pools with taints and tolerations keep one tenant's pods off another's nodes, which matters for GPU nodes and for sensitive data. Sandboxed runtimes add a stronger boundary for untrusted code such as user notebooks. Storage isolation comes from per-tenant buckets or prefixes with scoped identities.",
+          "heading": "Data plane isolation"
+        }
+      ],
+      "id": "tenancy-models-and-isolation",
+      "title": "Tenancy models and isolation layers"
+    },
+    {
+      "body": [
+        {
+          "body": "A ResourceQuota caps the aggregate consumption of one namespace: total CPU and memory requests and limits, storage requests, object counts such as pods or services, and extended resources such as GPUs through a requests-prefixed resource name. When a quota for CPU or memory is active, every new pod must declare that value or it is rejected, so a LimitRange is normally added to supply defaults. Quotas can be scoped, for example by PriorityClass, so a tenant gets a small allowance of high priority pods and a larger one of preemptible pods. Quota is enforced at admission and does not affect pods already running.",
+          "heading": "ResourceQuota and LimitRange"
+        },
+        {
+          "body": "Static quotas strand capacity: a team that is idle still holds its GPUs on paper. Batch queueing systems add borrowing, where a tenant can exceed its guaranteed share while others are idle and is preempted when the owner returns. Design decisions include guaranteed versus burst share, preemption order, and whether jobs are admitted all at once so distributed training does not start with half its workers.",
+          "heading": "Beyond static quotas"
+        }
+      ],
+      "id": "quotas-and-fair-sharing",
+      "title": "Quotas, limits and fair sharing of compute"
+    },
+    {
+      "body": [
+        {
+          "body": "The SRE book treats overload as something every service must plan for. Capacity should be measured in real resource cost, not raw request count, since requests differ widely in cost; for model serving this means tokens or GPU seconds. Each tenant gets a per-customer limit, and requests over the limit are rejected early and cheaply instead of queuing. Requests carry a criticality label so that under pressure the service sheds low priority traffic, such as batch scoring, before interactive traffic. Rejecting is better than degrading everyone.",
+          "heading": "Per-tenant limits and load shedding"
+        },
+        {
+          "body": "Rejections still cost the server something, so clients throttle themselves: adaptive throttling tracks requests sent against requests accepted and starts dropping locally when the ratio grows. Retries need budgets, both per request and per client, or a small overload becomes a retry storm that spreads through layers. In ML platforms the same ideas apply to bounded queues in front of inference servers, admission limits on pipeline submissions and concurrency caps per tenant on the orchestrator.",
+          "heading": "Client behavior and retries"
+        }
+      ],
+      "id": "backpressure-and-overload",
+      "title": "Backpressure and overload handling on shared services"
+    },
+    {
+      "body": [
+        {
+          "body": "The AWS Well-Architected Machine Learning Lens applies the cost optimization pillar across the ML lifecycle: tag resources, right-size training and inference, and choose pricing models to match workload behavior. On a shared platform this starts with mandatory labels for team, project and environment, injected by the golden path and enforced by admission policy, so every pod, volume and endpoint maps to an owner. Showback reports spending per tenant; chargeback bills it. Shared costs such as the control plane, idle GPU headroom and the platform's own services need an explicit allocation rule. Typical levers are interruptible capacity for fault-tolerant training with checkpointing, scale to zero for idle endpoints, smaller or quantized models for cost-sensitive serving, and quota sized from measured utilization.",
+          "heading": "Making cost visible per tenant"
+        }
+      ],
+      "id": "cost-attribution-and-chargeback",
+      "title": "Cost attribution and capacity trade-offs per tenant"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart TB\n  A[Tenant A requests] --> GW[Gateway with per-tenant rate limits]\n  B[Tenant B requests] --> GW\n  GW -->|over limit| REJ[Fast reject]\n  GW --> Q[Bounded queue with criticality]\n  Q -->|overload| SHED[Shed low priority]\n  Q --> ADM[Admission and quota check]\n  ADM --> NSA[Namespace A quota and policies]\n  ADM --> NSB[Namespace B quota and policies]\n  NSA --> GPU[Shared GPU node pool]\n  NSB --> GPU\n  GPU --> COST[Usage and cost by tenant label]"
+  },
+  "code": [
+    {
+      "code": "apiVersion: v1\nkind: ResourceQuota\nmetadata:\n  name: team-a-compute\n  namespace: team-a\nspec:\n  hard:\n    requests.cpu: \"200\"\n    requests.memory: 800Gi\n    limits.memory: 1000Gi\n    requests.nvidia.com/gpu: \"8\"\n    pods: \"300\"\n    persistentvolumeclaims: \"50\"",
+      "lang": "yaml"
+    }
+  ],
+  "technologies": [
+    "Kubernetes namespaces",
+    "ResourceQuota",
+    "LimitRange",
+    "NetworkPolicy",
+    "PriorityClass",
+    "Kueue",
+    "Volcano",
+    "vCluster",
+    "gVisor",
+    "Kyverno",
+    "OPA Gatekeeper",
+    "Envoy"
+  ],
+  "related": [
+    "kubernetes-for-ml-workloads",
+    "workload-scheduling-and-cluster-ops",
+    "nvidia-gpus-on-kubernetes",
+    "autoscaling-and-cost-efficiency",
+    "security-identity-and-governance",
+    "model-serving-architecture",
+    "golden-paths-self-service"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Kubernetes Multi-tenancy",
+      "url": "https://kubernetes.io/docs/concepts/security/multi-tenancy/"
+    },
+    {
+      "kind": "doc",
+      "title": "Kubernetes Resource Quotas",
+      "url": "https://kubernetes.io/docs/concepts/policy/resource-quotas/"
+    },
+    {
+      "kind": "book",
+      "title": "SRE Book: Handling Overload",
+      "url": "https://sre.google/sre-book/handling-overload/"
+    },
+    {
+      "kind": "guide",
+      "title": "Machine Learning Lens - AWS Well-Architected Framework",
+      "url": "https://docs.aws.amazon.com/wellarchitected/latest/machine-learning-lens/machine-learning-lens.html"
+    }
+  ],
+  "practice": "practice/multi-tenant-platform-design",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-12",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    }
+  ]
+}

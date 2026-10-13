@@ -1,0 +1,151 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "aws-and-eks-foundations",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "AWS and EKS foundations for an ML platform",
+  "area": "infra",
+  "primary_key": "aws",
+  "secondary_keys": [
+    "aws-eks",
+    "cloud-infrastructure"
+  ],
+  "keys": [
+    "aws",
+    "aws-eks",
+    "cloud-infrastructure"
+  ],
+  "summary": "Amazon EKS is the managed Kubernetes service many ML platforms are built on: AWS runs the control plane and the team owns the workloads, the node strategy and the integrations. The foundations to get right are identity, networking, compute choice and storage, because ML workloads are heavy users of all four. The Well-Architected Machine Learning Lens gives a review framework for the resulting design.",
+  "detail": [],
+  "in_practice": "Teams define the whole foundation in infrastructure as code: VPC and subnets, the EKS cluster, add-on versions, node pools or autoscaler configuration, IAM roles and the service account mappings. A new ML team is onboarded by a module that creates a namespace, a service account, a scoped IAM role and a bucket prefix. Cluster upgrades are rehearsed in a non-production cluster first. The EKS best practices guide is used as the baseline for security, reliability, networking and scalability settings, and the ML Lens is applied when a new workload type goes to design review.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "EKS runs the Kubernetes control plane for you across multiple availability zones and handles its scaling, patching and availability. The data plane is your choice: managed node groups of EC2 instances, self-managed nodes, Fargate for serverless pods, or modes in which AWS also automates node provisioning. Cluster capabilities come as add-ons such as the VPC CNI, CoreDNS, kube-proxy and storage drivers, each with its own version to keep compatible. Upstream Kubernetes conformance means standard tooling and operators work unchanged. Version upgrades remain a team responsibility and need a rehearsed process, since Kubernetes versions leave standard support on a fixed schedule.",
+          "heading": "What AWS manages and what the team manages"
+        }
+      ],
+      "id": "eks-architecture",
+      "title": "EKS architecture and the responsibility split"
+    },
+    {
+      "body": [
+        {
+          "body": "IAM controls who is authenticated and what they are authorised to do. The pieces are principals (users, roles, federated identities), policies written as JSON documents that allow or deny actions on resources, and roles that are assumed to obtain temporary credentials. Roles with short-lived credentials are preferred over long-term access keys. Least privilege means granting only the actions and resources a task needs, for example read access to one bucket prefix for a training job.",
+          "heading": "IAM building blocks"
+        },
+        {
+          "body": "Pods should not inherit the broad role of the node they run on. Instead a Kubernetes service account is mapped to an IAM role, either through the cluster OIDC provider with a trust policy (IAM roles for service accounts) or through EKS Pod Identity associations. The AWS SDK inside the pod picks up temporary credentials automatically. On an ML platform this gives per-team and per-workload scoping: a training job can read its dataset and write its checkpoints, an inference service can only read model artifacts, and every access is attributable in audit logs.",
+          "heading": "Giving a pod an AWS identity"
+        }
+      ],
+      "id": "iam-and-pod-identity",
+      "title": "IAM and identity for pods"
+    },
+    {
+      "body": [
+        {
+          "body": "With the default VPC CNI each pod receives a real IP address from the VPC subnets, which makes pods directly routable but means large clusters consume addresses quickly. Subnet sizing therefore has to account for peak pod count, not node count, and options such as prefix delegation or secondary address ranges exist for when space runs short. Nodes normally sit in private subnets across several zones, with load balancers in front for ingress. VPC endpoints for object storage and the container registry keep heavy data and image traffic on the AWS network and avoid NAT gateway charges, which can be significant for dataset downloads.",
+          "heading": "Pod networking and address planning"
+        }
+      ],
+      "id": "vpc-networking-for-eks",
+      "title": "VPC networking for EKS"
+    },
+    {
+      "body": [
+        {
+          "body": "ML clusters mix cheap general-purpose nodes for control and pipeline pods with accelerated instances for training and inference. Managed node groups give fixed pools per instance type backed by auto scaling groups. A node autoscaler such as Karpenter instead watches pending pods and launches instances that fit them directly, which suits bursty and heterogeneous GPU demand, and it can consolidate underused nodes. GPU nodes use accelerated machine images with drivers preinstalled and carry taints so only GPU workloads land there. Scaling GPU pools to zero when idle is one of the largest cost levers.",
+          "heading": "Choosing how nodes appear"
+        },
+        {
+          "body": "Spot capacity is far cheaper but can be reclaimed at short notice, so it fits checkpointed training and batch inference, not latency-critical serving. Capacity for specific GPU types is uneven across zones, and a job with a zonal persistent volume is pinned to that zone, which can leave it unschedulable. Common storage choices are object storage for datasets and model artifacts, block volumes for per-pod scratch, and shared file systems for datasets many pods read at once. Image pull time for large images is managed with registry caching and prewarmed nodes.",
+          "heading": "Spot, zones and storage"
+        }
+      ],
+      "id": "compute-and-node-strategy",
+      "title": "Compute and node strategy for ML"
+    },
+    {
+      "body": [
+        {
+          "body": "The Machine Learning Lens extends the AWS Well-Architected Framework to ML workloads. It walks through the ML lifecycle phases, from business goal identification and problem framing through data processing, model development, deployment and monitoring, and for each phase lists best practices under the framework pillars: operational excellence, security, reliability, performance efficiency, cost optimisation and sustainability. It is cloud guidance, not a product, and is used as a checklist in design reviews. Typical findings concern missing lineage tracking, no rollback plan for a model, unscoped data access, and training resources that are not right-sized or not shut down.",
+          "heading": "A review framework for ML workloads"
+        }
+      ],
+      "id": "well-architected-ml-lens",
+      "title": "The Well-Architected Machine Learning Lens"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart TB\n  subgraph AWS_managed[AWS managed]\n    CP[EKS control plane]\n  end\n  subgraph VPC[Customer VPC private subnets]\n    NG1[CPU node pool]\n    NG2[GPU node pool]\n    SA[Service account] --> POD[Training or serving pod]\n    POD --> NG2\n  end\n  CP --> NG1\n  CP --> NG2\n  SA -->|assumes| ROLE[IAM role]\n  ROLE --> S3[(S3 datasets and models)]\n  POD -->|VPC endpoint| S3\n  POD -->|pulls image| ECR[(ECR)]\n  KA[Node autoscaler] -->|launches instances| NG2"
+  },
+  "code": [
+    {
+      "code": "# Map a Kubernetes service account to an IAM role with EKS Pod Identity\naws eks create-pod-identity-association \\\n  --cluster-name ml-platform \\\n  --namespace team-a \\\n  --service-account trainer \\\n  --role-arn arn:aws:iam::ACCOUNT_ID:role/team-a-trainer\n\n# Verify from inside a pod that uses the service account\naws sts get-caller-identity",
+      "lang": "bash"
+    }
+  ],
+  "technologies": [
+    "Amazon EKS",
+    "Amazon EC2",
+    "AWS IAM",
+    "EKS Pod Identity",
+    "Amazon VPC CNI",
+    "Karpenter",
+    "Amazon S3",
+    "Amazon ECR",
+    "Amazon EBS",
+    "Amazon EFS",
+    "Terraform",
+    "AWS CDK"
+  ],
+  "related": [
+    "kubernetes-for-ml-workloads",
+    "gitops-argo-cd-and-terraform",
+    "security-identity-and-governance",
+    "autoscaling-and-cost-efficiency",
+    "nvidia-gpus-on-kubernetes",
+    "sagemaker-deployment",
+    "storage-lakehouse-and-data-stores",
+    "multi-tenant-platform-design"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "What is Amazon EKS?",
+      "url": "https://docs.aws.amazon.com/eks/latest/userguide/what-is-eks.html"
+    },
+    {
+      "kind": "guide",
+      "title": "Amazon EKS Best Practices Guide",
+      "url": "https://docs.aws.amazon.com/eks/latest/best-practices/introduction.html"
+    },
+    {
+      "kind": "guide",
+      "title": "Machine Learning Lens - AWS Well-Architected Framework",
+      "url": "https://docs.aws.amazon.com/wellarchitected/latest/machine-learning-lens/machine-learning-lens.html"
+    },
+    {
+      "kind": "doc",
+      "title": "What is IAM?",
+      "url": "https://docs.aws.amazon.com/IAM/latest/UserGuide/introduction.html"
+    }
+  ],
+  "practice": "practice/aws-and-eks-foundations",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    }
+  ]
+}

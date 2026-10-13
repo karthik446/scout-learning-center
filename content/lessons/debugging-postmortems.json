@@ -1,0 +1,142 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "debugging-postmortems",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Debugging production systems and running postmortems",
+  "area": "software",
+  "primary_key": "debugging",
+  "secondary_keys": [
+    "production-systems"
+  ],
+  "keys": [
+    "debugging",
+    "production-systems"
+  ],
+  "summary": "Debugging production systems is a disciplined loop of triage, observation, hypothesis and test, not a hunt driven by intuition. In customer deployments the loop has to work across systems you do not own and across non-deterministic model behavior. When an incident is over, a blameless postmortem turns it into tracked improvements.",
+  "detail": [],
+  "in_practice": "When a customer reports a problem, the engineer on the account first confirms impact and mitigates, often by turning off a feature flag or rolling back the last release, and opens a shared incident channel with the customer's technical contact. They pull the trace for a failing request id, compare it with a healthy one, and bisect across hops until the fault is isolated to their service, the customer's infrastructure or a model or tool behavior. Notes go into a running incident document as they work. After resolution the team writes a postmortem within a few days, reviews it in a short meeting, files action items in the normal backlog with owners, adds the failing case to the test or evaluation suite, and sends the customer a plain summary of what happened and what changed.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "Effective troubleshooting is the hypothetico-deductive method applied to a running system. Start from a problem report that states expected behavior, actual behavior and how to reproduce it. Triage first: in a major outage the priority is to stop the bleeding by rolling back, shifting traffic or disabling a feature, not to find the root cause. Then examine the telemetry, form a hypothesis, and test it either by comparing observed state with what the hypothesis predicts or by changing one thing and watching the result. Write down what you tried and what you saw, so that the next person does not repeat it.",
+          "heading": "Triage, examine, diagnose, test"
+        },
+        {
+          "body": "Two techniques cut most problems down quickly. Bisection splits the data path in half: check whether the output is correct midway through the pipeline, then repeat in the faulty half. Asking what changed last works because a running system tends to keep working until a deploy, config push, data change or load shift disturbs it. Avoid the common traps: chasing symptoms that are unrelated, treating correlation as cause, and favoring an exotic explanation when a recent change is the simpler one. A negative result is still a result; record it.",
+          "heading": "Narrowing the search"
+        }
+      ],
+      "id": "systematic-troubleshooting-loop",
+      "title": "A systematic troubleshooting loop"
+    },
+    {
+      "body": [
+        {
+          "body": "In a customer deployment half the system is not yours. You may have no shell access, logs may sit in the customer's tools, and the failing component may be a gateway, an identity provider or a legacy database owned by another team. Prepare for that before the incident: agree on a shared correlation id that appears in both sides' logs, document who owns each hop, and build a small diagnostic script that checks connectivity, credentials, versions and clock skew from inside the customer network. When something fails, ask for specific evidence, such as the request id, a timestamp with time zone and the response body, rather than a general description.",
+          "heading": "Working with partial access"
+        },
+        {
+          "body": "Reproduce the request at each boundary. Replay the same payload against your API directly, then through the customer's proxy, then from the customer application. The hop where behavior changes is where the fault lives. Typical causes in restricted environments are TLS inspection that rewrites certificates, proxies that buffer or cut streaming responses, allowlists that miss a new endpoint, expired tokens, and payload size limits. Keep a minimal reproduction that the customer's team can run themselves; it turns a debate about ownership into a shared test with a clear result.",
+          "heading": "Isolating whose side the fault is on"
+        }
+      ],
+      "id": "debugging-across-customer-boundary",
+      "title": "Debugging across the customer boundary"
+    },
+    {
+      "body": [
+        {
+          "body": "A wrong agent output is a symptom with several possible layers of cause: missing or stale context from retrieval, a tool that returned an error or an unexpected shape, a prompt change, a model version change, truncation at the context limit, or plain sampling variance. Open the trace for the run and read it step by step: what the model was shown, what it called, what came back. Most failures turn out to be context or tool problems rather than model reasoning problems. Check whether the failure is stable by rerunning the same inputs several times; a failure that appears one time in ten needs a rate, not a single anecdote.",
+          "heading": "From a bad answer to a cause"
+        },
+        {
+          "body": "Once the cause is known, capture the failing input as a regression case in the evaluation set before changing anything, confirm that it fails, apply the fix, and confirm that it passes without breaking other cases. Record model id, prompt version and tool versions with every run, so that a later regression can be traced to a specific change. Fixes that only edit the prompt for one example tend to break others, which is why the full suite must rerun after each change.",
+          "heading": "Closing the loop"
+        }
+      ],
+      "id": "debugging-llm-agent-failures",
+      "title": "Debugging LLM and agent failures"
+    },
+    {
+      "body": [
+        {
+          "body": "A postmortem is a written record of an incident: its impact, the timeline, the actions taken to mitigate it, the root causes and contributing factors, and the follow-up actions to prevent recurrence. Teams define triggers in advance, such as user-visible downtime above a threshold, any data loss, a manual on-call intervention like a rollback, or a monitoring failure where a human found the problem before an alert did. Write it while memory is fresh, and include what went well and where the team got lucky, because luck is a risk that has not been paid for yet.",
+          "heading": "What a postmortem contains"
+        },
+        {
+          "body": "Blameless means the document assumes that everyone acted with good intent on the information available, and it looks for the conditions that made the mistake possible instead of naming a person. That keeps people willing to report problems. A postmortem is only finished when it has been reviewed and its action items have an owner, a priority and a tracked ticket. For customer-facing incidents, a separate external summary states impact, cause and remediation in plain language and without internal detail. Share completed postmortems widely so that other deployments learn from them.",
+          "heading": "Blameless and followed through"
+        }
+      ],
+      "id": "blameless-postmortems",
+      "title": "Blameless postmortems and follow-through"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart TD\n  A[Problem report] --> B[Triage and mitigate]\n  B --> C[Examine telemetry]\n  C --> D[Form hypothesis]\n  D --> E[Test hypothesis]\n  E -->|not confirmed| C\n  E -->|confirmed| F[Fix and verify]\n  F --> G[Postmortem and action items]\n  G --> H[Regression test or eval case]"
+  },
+  "code": [
+    {
+      "code": "# Replay one failing request directly and through the customer proxy, then compare\nREQ_ID=req-123\ncurl -sS -o direct.json -w \"%{http_code} %{time_total}\\n\" \\\n  -H \"Authorization: Bearer $TOKEN\" -H \"X-Request-Id: $REQ_ID\" \\\n  -d @payload.json \"$API_BASE/v1/tasks\"\n\ncurl -sS -o proxied.json -w \"%{http_code} %{time_total}\\n\" \\\n  --proxy \"$CUSTOMER_PROXY\" \\\n  -H \"Authorization: Bearer $TOKEN\" -H \"X-Request-Id: $REQ_ID\" \\\n  -d @payload.json \"$API_BASE/v1/tasks\"\n\ndiff <(jq -S . direct.json) <(jq -S . proxied.json)",
+      "lang": "bash"
+    }
+  ],
+  "technologies": [
+    "OpenTelemetry",
+    "Datadog",
+    "Grafana",
+    "Sentry",
+    "PagerDuty",
+    "Jira",
+    "Confluence",
+    "curl",
+    "jq",
+    "git bisect"
+  ],
+  "related": [
+    "observability-agent-traces",
+    "llm-agent-evaluation",
+    "networking-restricted-environments",
+    "legacy-systems-migrations",
+    "reusable-platform-internal-tooling"
+  ],
+  "sources": [
+    {
+      "kind": "book",
+      "title": "Google SRE Book: Effective Troubleshooting",
+      "url": "https://sre.google/sre-book/effective-troubleshooting/"
+    },
+    {
+      "kind": "book",
+      "title": "Google SRE Book: Postmortem Culture",
+      "url": "https://sre.google/sre-book/postmortem-culture/"
+    },
+    {
+      "kind": "book",
+      "title": "Google SRE Workbook: Postmortem Culture",
+      "url": "https://sre.google/workbook/postmortem-culture/"
+    },
+    {
+      "kind": "guide",
+      "title": "Atlassian: Incident postmortems",
+      "url": "https://www.atlassian.com/incident-management/postmortem"
+    }
+  ],
+  "practice": null,
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-12",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    }
+  ]
+}

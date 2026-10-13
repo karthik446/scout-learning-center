@@ -1,0 +1,145 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "golden-paths-self-service",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Self-service platforms: golden paths, templates and developer tooling",
+  "area": "infra",
+  "primary_key": "self-service-platform",
+  "secondary_keys": [
+    "platform-engineering",
+    "developer-tooling"
+  ],
+  "keys": [
+    "self-service-platform",
+    "platform-engineering",
+    "developer-tooling"
+  ],
+  "summary": "A self-service platform lets ML and product teams get a working, compliant project, pipeline or endpoint without filing a ticket. The platform team packages its opinions as golden paths: templates, a catalog and a small set of well-documented interfaces that make the supported way the easiest way. The work is treated as product management as much as engineering, with users, feedback and adoption metrics.",
+  "detail": [],
+  "in_practice": "A platform team usually starts by picking the one or two workload shapes that most teams ship, such as a batch training pipeline and an online endpoint, and builds a template for each that produces a deployable repository in minutes. The template lives in a portal, most often Backstage, alongside the catalog and documentation, and it calls the same CI, GitOps and infrastructure modules the platform team uses itself. The team then onboards a friendly pilot team, watches where they get stuck, fixes the template and documentation, and only then advertises the path widely. Templates are versioned, changes are reviewed like product changes, and a dashboard tracks adoption and time to first deployment so the roadmap is driven by evidence.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "The CNCF platforms white paper describes a platform as a curated set of capabilities offered to internal users through consistent interfaces, run by a team that treats those users as customers. For an ML platform the capabilities are things like compute for training, pipeline orchestration, artifact and model storage, serving, observability and identity. The product stance means the team does user research, publishes a roadmap, writes documentation as a first-class deliverable and keeps adoption optional where it can, so that usage is a real signal. The platform team aims to reduce cognitive load: a data scientist should need to understand the model and the contract of the platform, not the cluster, the network and the IAM layout underneath it.",
+          "heading": "What changes when users are internal customers"
+        },
+        {
+          "body": "Start with the smallest set of capabilities that removes a real, repeated pain, often just a template, a CI pipeline and a documented deploy path. Wrap existing provider services instead of rebuilding them, and add abstraction only where several teams hit the same friction. Each capability needs an owner, a support channel and a stated service level, otherwise it is a shared script and not a product.",
+          "heading": "Thinnest viable platform"
+        }
+      ],
+      "id": "platform-as-a-product",
+      "title": "Treating the platform as a product"
+    },
+    {
+      "body": [
+        {
+          "body": "A golden path is the supported, opinionated route from idea to production for one kind of workload: for example a batch training job, a real-time model endpoint or a feature pipeline. It bundles a repository skeleton, a build and test pipeline, deployment manifests, default dashboards and alerts, and the security settings the organization requires. The path is paved, not walled: teams can leave it, but then they own what the platform would have given them for free.",
+          "heading": "What a golden path is"
+        },
+        {
+          "body": "Backstage Software Templates implement this with a Template entity. The parameters section declares a form, rendered in the portal, that collects inputs such as service name, owner and model type. The steps section runs scaffolder actions in order: fetch a skeleton and render it with the inputs, publish the result to a new repository, and register the new component in the catalog. Custom actions can add steps such as creating a namespace, an experiment in the tracking server or a pipeline definition.",
+          "heading": "Scaffolding with Backstage templates"
+        }
+      ],
+      "id": "golden-path-templates",
+      "title": "Golden paths and software templates"
+    },
+    {
+      "body": [
+        {
+          "body": "Backstage is an open framework for building developer portals. Its center is the software catalog: every service, library, pipeline, dataset or model is described by a small metadata file kept next to the code, stating its kind, owner, lifecycle and relations to other entities. The portal ingests those files and gives a searchable inventory with ownership attached. Around the catalog sit TechDocs, which renders documentation written beside the code, and a plugin system that surfaces CI status, deployments, cost or on-call data on the entity page. For an ML platform the useful extension is modeling ML-specific entities, so a served model links to its training pipeline, its registry entry, its feature sources and the team that answers the page.",
+          "heading": "One place to find and own things"
+        }
+      ],
+      "id": "software-catalog-and-portal",
+      "title": "The developer portal and software catalog"
+    },
+    {
+      "body": [
+        {
+          "body": "A typical ML path starts with a template that creates a repository with a standard project layout, a container build, unit tests and a pipeline definition. Training runs through the platform orchestrator, logs parameters and metrics to the tracking server and writes a versioned artifact to the model registry. A promotion step runs evaluation gates, then a GitOps change deploys the model to the serving layer with a staged rollout. Dashboards, alerts, drift monitors and cost labels are created by the path, not by the team.",
+          "heading": "From template to serving endpoint"
+        },
+        {
+          "body": "The interface is usually a short declarative spec: model name, framework, resource class, scaling bounds and data dependencies. The platform expands it into the full Kubernetes or cloud resources. Keep an escape hatch, such as an overlay or raw manifest patch, so unusual workloads are possible without forking the path. Version the templates and provide an upgrade mechanism, because generated repositories drift from the template the day after they are created.",
+          "heading": "Choosing the abstraction level"
+        }
+      ],
+      "id": "ml-golden-path-anatomy",
+      "title": "Anatomy of an ML golden path"
+    },
+    {
+      "body": [
+        {
+          "body": "Measure the platform the way a product is measured. Useful signals include the share of workloads on the golden path, time from template creation to first production deployment, deployment frequency and failure rate for path users, the number of support tickets per team and how many requests still need a human on the platform team. Developer surveys add the qualitative side. Recurring support questions are the backlog: each one is a candidate for better documentation, a clearer error message, a new template parameter or a new capability. Office hours, an open support channel and embedding with a user team for a sprint are common ways to see friction first hand. Deprecate paths that nobody uses, since every supported path carries maintenance cost.",
+          "heading": "Signals that the platform works"
+        }
+      ],
+      "id": "adoption-metrics-and-feedback",
+      "title": "Measuring adoption and closing the feedback loop"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  U[ML engineer] --> P[Developer portal]\n  P --> T[Software template]\n  T --> R[New repository from skeleton]\n  T --> C[Catalog entry with owner]\n  R --> CI[CI build and tests]\n  CI --> G[GitOps deploy]\n  G --> K[Platform runtime]\n  K --> O[Dashboards and alerts]\n  O --> P"
+  },
+  "code": [
+    {
+      "code": "apiVersion: scaffolder.backstage.io/v1beta3\nkind: Template\nmetadata:\n  name: model-endpoint\n  title: Real-time model endpoint\nspec:\n  owner: ml-platform\n  type: service\n  parameters:\n    - title: Service details\n      required: [name, owner]\n      properties:\n        name: {type: string}\n        owner: {type: string}\n  steps:\n    - id: fetch\n      action: fetch:template\n      input:\n        url: ./skeleton\n        values: {name: '${{ parameters.name }}'}",
+      "lang": "yaml"
+    }
+  ],
+  "technologies": [
+    "Backstage",
+    "Backstage Software Templates",
+    "Backstage TechDocs",
+    "Cookiecutter",
+    "Argo CD",
+    "Terraform",
+    "Crossplane",
+    "GitHub Actions",
+    "Helm",
+    "MLflow"
+  ],
+  "related": [
+    "multi-tenant-platform-design",
+    "design-docs-and-adrs",
+    "gitops-argo-cd-and-terraform",
+    "github-actions-ci-cd",
+    "mlops-and-ml-lifecycle"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "What is Backstage?",
+      "url": "https://backstage.io/docs/overview/what-is-backstage/"
+    },
+    {
+      "kind": "doc",
+      "title": "Backstage Software Templates",
+      "url": "https://backstage.io/docs/features/software-templates/"
+    },
+    {
+      "kind": "guide",
+      "title": "CNCF Platforms White Paper",
+      "url": "https://tag-app-delivery.cncf.io/whitepapers/platforms/"
+    }
+  ],
+  "practice": "practice/golden-paths-self-service",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-12",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    }
+  ]
+}

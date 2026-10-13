@@ -1,0 +1,127 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "model-registry-and-versioning",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Model registry, packaging and versioning",
+  "area": "ai-ml",
+  "primary_key": "model-registry",
+  "secondary_keys": [
+    "model-versioning"
+  ],
+  "keys": [
+    "model-registry",
+    "model-versioning"
+  ],
+  "summary": "A model registry is the system of record between training and serving: it gives each trained artifact a name, an immutable version, lineage back to the run that produced it, and a state that says whether it may be deployed. Packaging standardizes what an artifact contains so any serving stack can load it without knowing how it was trained. Together they make a release a reference to a specific, reproducible version instead of a file somebody copied.",
+  "detail": [],
+  "in_practice": "A training pipeline finishes by logging the model in a standard format with its signature and registering it as a new version, tagged with the commit, data snapshot and image digest. Automated evaluation writes its results onto the version, and an approver or a gate job flips the approval status or moves an alias. Deployment tooling only ever reads approved versions by alias or explicit version number, and production credentials can read the registry but training jobs cannot write to the production alias. The platform team owns naming conventions, required tags and retention rules, and enforces them in the registration step so that no unregistered artifact can reach serving.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "A registry holds named models, and under each name an ordered list of versions. A version is immutable: it points to one artifact location and records the training run, parameters, metrics, code revision and data references that produced it. In MLflow this is a registered model with model versions linked to a tracking run; in SageMaker it is a Model Package Group containing versioned model packages. The registry does not replace the artifact store; it is a metadata index over it. Its value is that every other system, such as CI, deployment tooling and monitoring, can ask the same question and get the same answer: which exact version is this, where did it come from, and is it approved.",
+          "heading": "Registered models, versions and lineage"
+        }
+      ],
+      "id": "registry-as-system-of-record",
+      "title": "What a registry stores and why"
+    },
+    {
+      "body": [
+        {
+          "body": "An MLflow Model is a directory with an MLmodel descriptor file plus the serialized weights and environment files. The descriptor lists flavors, which are the ways the model can be loaded: a native flavor such as sklearn, pytorch or transformers, and usually the generic python_function flavor that exposes a uniform predict interface. It also carries a signature describing input and output schema, and optionally an input example. Dependency files pin the Python packages needed to load it. Because the format is self-describing, a serving layer or batch job can load any model the same way and validate requests against the signature before inference.",
+          "heading": "The MLflow Model layout"
+        },
+        {
+          "body": "For serving, the model directory is usually combined with a container image that holds the runtime, inference server and system libraries. Teams either bake weights into the image for small models or have the container pull the artifact at startup by registry reference for large ones. Either way the release unit is the pair of model version and image, and both must be recorded.",
+          "heading": "Packaging beyond the artifact"
+        }
+      ],
+      "id": "model-packaging-format",
+      "title": "Packaging: a self-describing model artifact"
+    },
+    {
+      "body": [
+        {
+          "body": "Versions never change, so promotion is expressed with mutable pointers. MLflow uses aliases, named references such as champion or challenger that point at one version of a registered model and can be reassigned, plus free-form tags for annotations such as validation status. Deployment code resolves the alias instead of hard-coding a version number, so promoting a model is one atomic metadata update and rollback is moving the alias back. Many teams also separate environments by using distinct registered models or catalogs per environment and copying an approved version from the dev registry to the prod one, which keeps production access controls strict.",
+          "heading": "Mutable pointers over immutable versions"
+        },
+        {
+          "body": "SageMaker Model Registry attaches an approval status to each model package version: pending manual approval, approved or rejected. A status change emits an event that can trigger a deployment pipeline, which makes the human or automated approval the explicit boundary between training and release.",
+          "heading": "Approval status"
+        }
+      ],
+      "id": "aliases-tags-and-promotion",
+      "title": "Aliases, tags and promotion between environments"
+    },
+    {
+      "body": [
+        {
+          "body": "A model version is only reproducible if everything it depends on is pinned as well. Serving and training images should be referenced by digest, not by a floating tag, and the digest stored as metadata on the model version. Weights in object storage should sit under a versioned or content-hashed path with overwrites disabled, so the registry entry cannot silently point at different bytes. Recording the hash of the training data snapshot and the code commit closes the loop: given a model version, the platform can name the exact image, weights, code and data behind it, and an audit or a rollback does not depend on anyone's memory.",
+          "heading": "Content addressing for the full release unit"
+        }
+      ],
+      "id": "pinning-artifacts-by-digest",
+      "title": "Pinning images and artifacts immutably"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  A[Training run] --> B[Log model with signature]\n  B --> C[Artifact store]\n  B --> D[Registry: new version]\n  D --> E[Evaluation results as tags]\n  E --> F{Approved?}\n  F -- yes --> G[Alias champion moved]\n  F -- no --> H[Rejected version kept for audit]\n  G --> I[Deployment resolves alias]\n  C --> I"
+  },
+  "code": [
+    {
+      "code": "import mlflow\nfrom mlflow import MlflowClient\nfrom mlflow.models import infer_signature\n\nwith mlflow.start_run() as run:\n    model.fit(X_train, y_train)\n    sig = infer_signature(X_train, model.predict(X_train))\n    info = mlflow.sklearn.log_model(\n        model, name=\"model\", signature=sig,\n        registered_model_name=\"fraud-scorer\",\n    )\n\nclient = MlflowClient()\nv = info.registered_model_version\nclient.set_model_version_tag(\"fraud-scorer\", v, \"git_sha\", GIT_SHA)\nclient.set_model_version_tag(\"fraud-scorer\", v, \"image_digest\", IMAGE_DIGEST)\n# promote after the gate passes\nclient.set_registered_model_alias(\"fraud-scorer\", \"champion\", v)\nloaded = mlflow.pyfunc.load_model(\"models:/fraud-scorer@champion\")",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "MLflow Model Registry",
+    "MLflow Models",
+    "Amazon SageMaker Model Registry",
+    "Amazon S3",
+    "Amazon ECR",
+    "Unity Catalog",
+    "ONNX",
+    "Docker"
+  ],
+  "related": [
+    "mlflow-experiment-tracking",
+    "model-evaluation-gates",
+    "staged-rollouts",
+    "sagemaker-deployment",
+    "security-identity-and-governance"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "MLflow Model Registry",
+      "url": "https://mlflow.org/docs/latest/ml/model-registry/"
+    },
+    {
+      "kind": "doc",
+      "title": "MLflow Models",
+      "url": "https://mlflow.org/docs/latest/ml/model/"
+    },
+    {
+      "kind": "doc",
+      "title": "Model Registration Deployment with Model Registry (SageMaker)",
+      "url": "https://docs.aws.amazon.com/sagemaker/latest/dg/model-registry.html"
+    }
+  ],
+  "practice": "practice/model-registry-and-versioning",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    }
+  ]
+}

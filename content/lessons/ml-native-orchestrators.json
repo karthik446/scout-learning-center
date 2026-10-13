@@ -1,0 +1,167 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "ml-native-orchestrators",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "ML-native orchestrators: Kubeflow Pipelines, Flyte, Prefect and Metaflow",
+  "area": "ai-ml",
+  "primary_key": "kubeflow",
+  "secondary_keys": [
+    "flyte",
+    "prefect",
+    "metaflow"
+  ],
+  "keys": [
+    "kubeflow",
+    "flyte",
+    "prefect",
+    "metaflow"
+  ],
+  "summary": "ML-native orchestrators treat a pipeline as a graph of containerized, typed steps that produce versioned artifacts, rather than as scheduled tasks that happen to run ML code. Kubeflow Pipelines and Flyte are Kubernetes-native platforms; Prefect and Metaflow are Python-first frameworks that start on a laptop and scale out to remote compute. Choosing between them is mostly a question of who authors pipelines, where compute lives and how much platform the team wants to operate.",
+  "detail": [],
+  "in_practice": "A platform team usually picks one ML-native orchestrator and wraps it in a golden path: a project template, base images with pinned ML libraries, a CI job that builds step images and registers or deploys the pipeline, and defaults for resources, retries and artifact locations. Data scientists develop a pipeline locally on a sample, then run it remotely with full data and GPUs by changing configuration instead of code. Runs are parameterized and triggered by a schedule, an upstream data pipeline or a merge. The final steps evaluate the model against a gate and register it. The team watches cache hit rates, queue wait times for GPU steps and failed-run causes, and keeps tenants isolated with namespaces, quotas and per-team storage prefixes.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "A general scheduler records whether a task succeeded. An ML-native orchestrator also records what each step consumed and produced: datasets, models, metrics, with types and storage locations. That enables three things. Lineage: for any model, find the exact data, code version and parameters that produced it. Caching: if a step's inputs and code are unchanged, reuse the previous output instead of recomputing, which matters when a step is hours of GPU time. Reproducibility: each step runs in a pinned container image with declared resources, so a run can be repeated later or on another cluster.",
+          "heading": "Artifacts, not just task state"
+        },
+        {
+          "body": "ML pipelines are often run on demand with parameters (an experiment, a retrain for one segment) rather than only on a clock. They fan out widely for hyperparameter sweeps or per-partition training, need per-step resources such as GPUs and large memory, and are authored by data scientists who want plain Python and a fast local loop. These orchestrators optimize for those needs.",
+          "heading": "Workload shape"
+        }
+      ],
+      "id": "what-ml-native-means",
+      "title": "What ML-native orchestration adds"
+    },
+    {
+      "body": [
+        {
+          "body": "Kubeflow Pipelines (KFP) is a platform for building and deploying portable, scalable ML workflows on Kubernetes, and one component of the wider Kubeflow project, which also covers notebooks, training operators, tuning and model serving. With the KFP Python SDK, a component is a function or container with typed inputs and outputs, and a pipeline is a function that wires components together. The SDK compiles the pipeline to an intermediate representation in YAML, which is submitted to a KFP backend. Each component executes as its own container, and the backend stores runs, experiments, parameters and artifacts so runs can be compared in the UI.",
+          "heading": "Model"
+        },
+        {
+          "body": "The backend runs in the cluster with an API server, a workflow engine (Argo Workflows in the open source distribution), a metadata store and an object store for artifacts. Step caching, recurring runs, and per-step resource and node placement settings are built in. The cost is operational: the platform team owns upgrades, multi-user isolation through namespaces and profiles, and the image build path for components.",
+          "heading": "Operating it"
+        }
+      ],
+      "id": "kubeflow-pipelines",
+      "title": "Kubeflow Pipelines"
+    },
+    {
+      "body": [
+        {
+          "body": "Flyte is an open source, Kubernetes-native workflow orchestrator for data and ML. Tasks are strongly typed Python functions, each run in a container, and workflows compose tasks into a graph that is checked at registration time, so many wiring errors surface before anything runs. Registered tasks and workflows are immutable and versioned, and executions are grouped by project and domain (for example development, staging, production), giving a multi-tenant structure out of the box. Launch plans bind a workflow to default inputs, schedules and notifications.",
+          "heading": "Model"
+        },
+        {
+          "body": "Flyte passes typed data between tasks through object storage and tracks it, supports caching keyed on inputs and a cache version, dynamic workflows and map tasks for large fan-out, per-task resource requests including GPUs, and retries that can distinguish system failures such as spot preemption from user errors. Plugins hand a task to Spark, Ray or distributed training operators. It suits organizations that want strong contracts and a central platform serving many teams.",
+          "heading": "Why teams pick it"
+        }
+      ],
+      "id": "flyte",
+      "title": "Flyte"
+    },
+    {
+      "body": [
+        {
+          "body": "Prefect turns ordinary Python into workflows with a flow decorator on the entry function and a task decorator on units of work. Control flow is native Python, so loops and conditionals work as written and the graph is discovered at runtime rather than declared up front. Tasks get retries, caching and concurrency controls, and state is reported to a Prefect server or the hosted cloud service. To run on a schedule or in response to events, a flow is packaged as a deployment and executed by workers pulling from a work pool backed by infrastructure such as Kubernetes or containers.",
+          "heading": "Prefect"
+        },
+        {
+          "body": "A Metaflow flow is a class deriving from FlowSpec; methods marked as steps are nodes, and each step calls self.next to name its successor. Any value assigned to self becomes a persisted, versioned artifact available in later steps and after the run through the client API. Branches and foreach fan out, and a join step merges results. The same code runs locally or with steps dispatched to cloud batch compute or Kubernetes through decorators that request resources, and flows can be deployed to a production scheduler.",
+          "heading": "Metaflow"
+        }
+      ],
+      "id": "prefect-and-metaflow",
+      "title": "Prefect and Metaflow"
+    },
+    {
+      "body": [
+        {
+          "body": "Start with who writes pipelines. Data scientists iterating on models favor Metaflow or Prefect for the local loop and low ceremony; a central platform with many tenants favors Flyte or KFP for typed interfaces, isolation and governance. Next, where compute lives: KFP and Flyte assume Kubernetes, Metaflow fits cloud batch services as well, and Prefect is infrastructure agnostic. Then consider operating cost, since KFP and Flyte are multi-service control planes that need an owner. Finally, check integration with the model registry, experiment tracker and feature store already in place.",
+          "heading": "Decision factors"
+        },
+        {
+          "body": "Many organizations run two layers: a general scheduler such as Airflow for data pipelines and cross-system coordination, and an ML-native tool for training and evaluation graphs, with the scheduler triggering ML pipeline runs through an API. Lower-level engines such as Argo Workflows sit underneath several of these tools and are sometimes used directly by platform teams for container-native DAGs.",
+          "heading": "Coexistence"
+        }
+      ],
+      "id": "choosing-an-orchestrator",
+      "title": "Choosing and combining orchestrators"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart TB\n  Dev[Pipeline code in Python] --> CI[CI: build images, compile or register]\n  CI --> CP[Orchestrator control plane]\n  CP --> K8s[Kubernetes or batch compute]\n  K8s --> A[Step: prepare data]\n  K8s --> B[Step: train on GPU]\n  K8s --> C[Step: evaluate]\n  A --> Store[(Artifact store)]\n  B --> Store\n  C --> Store\n  CP --> Meta[(Run metadata and lineage)]\n  C --> Reg[Model registry]"
+  },
+  "code": [
+    {
+      "code": "from metaflow import FlowSpec, step\nclass TrainFlow(FlowSpec):\n    @step\n    def start(self):\n        self.alphas = [0.1, 1.0, 10.0]\n        self.next(self.train, foreach=\"alphas\")\n    @step\n    def train(self):\n        self.alpha = self.input\n        self.score = 1.0 / (1.0 + self.alpha)  # stand-in for a real fit\n        self.next(self.join)\n    @step\n    def join(self, inputs):\n        self.best = max(inputs, key=lambda i: i.score).alpha\n        self.next(self.end)\n    @step\n    def end(self):\n        print(\"best alpha\", self.best)\nif __name__ == \"__main__\":\n    TrainFlow()",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "Kubeflow Pipelines",
+    "Kubeflow",
+    "Flyte",
+    "Prefect",
+    "Metaflow",
+    "Argo Workflows",
+    "Kubernetes",
+    "Ray",
+    "MLflow"
+  ],
+  "related": [
+    "airflow-pipelines",
+    "temporal-durable-workflows",
+    "kubernetes-for-ml-workloads",
+    "distributed-training",
+    "mlflow-experiment-tracking",
+    "model-registry-and-versioning",
+    "golden-paths-self-service",
+    "multi-tenant-platform-design"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Kubeflow Pipelines",
+      "url": "https://www.kubeflow.org/docs/components/pipelines/"
+    },
+    {
+      "kind": "doc",
+      "title": "Kubeflow Introduction",
+      "url": "https://www.kubeflow.org/docs/started/introduction/"
+    },
+    {
+      "kind": "repo",
+      "title": "Flyte repository",
+      "url": "https://github.com/flyteorg/flyte"
+    },
+    {
+      "kind": "doc",
+      "title": "Prefect Quickstart",
+      "url": "https://docs.prefect.io/v3/get-started/quickstart"
+    },
+    {
+      "kind": "doc",
+      "title": "Metaflow Basics",
+      "url": "https://docs.metaflow.org/metaflow/basics"
+    }
+  ],
+  "practice": "practice/ml-native-orchestrators",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    }
+  ]
+}

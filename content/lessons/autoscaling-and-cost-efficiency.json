@@ -1,0 +1,129 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "autoscaling-and-cost-efficiency",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Autoscaling and cost efficiency: right-sizing, spot mix and GPU utilization",
+  "area": "infra",
+  "primary_key": "cost-efficiency",
+  "secondary_keys": [],
+  "keys": [
+    "cost-efficiency"
+  ],
+  "summary": "ML workloads are expensive and bursty, so capacity has to follow demand at two levels: the number of pods and the number and type of nodes under them. Kubernetes HPA and KEDA scale pods, Karpenter provisions and consolidates nodes, and cost practice decides what is right-sized, what runs on spot capacity and how GPU time is kept busy. The goal is to meet latency objectives at the lowest cost per unit of useful work.",
+  "detail": [],
+  "in_practice": "Teams layer the scalers: KEDA or HPA sets replica counts from queue depth or concurrency, and Karpenter adds or removes nodes in response. Each serving workload gets a minimum replica count sized to the latency objective and a scale-down delay longer than model load time. Load tests establish throughput per replica, which becomes the scaling target. GPU node pools are tainted, capped with limits and split by capacity type, and images and weights are cached on nodes to shorten cold starts. A cost dashboard shows spend and GPU utilization per namespace, reviewed monthly with the owning teams, and commitments such as savings plans are bought only for the steady baseline.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "The HPA controller periodically compares a metric with a target and sets the replica count of a Deployment or StatefulSet. The core calculation is desired replicas equals the ceiling of current replicas times current metric value divided by target value. Resource metrics such as CPU are measured against pod requests, so missing requests break scaling. With several metrics, the largest proposed replica count wins. The behavior field sets stabilization windows and rate limits per direction, which is how flapping is prevented.",
+          "heading": "The control loop"
+        },
+        {
+          "body": "A GPU model server can be saturated while its CPU sits low, so scale on a signal that tracks load: in-flight requests per replica, queue depth, or GPU utilization exposed through a custom or external metrics adapter. Scale up fast and down slowly, because a new replica must pull a large image, load weights and warm up before it is useful. Readiness probes must pass only after the model is loaded, otherwise traffic reaches pods that cannot answer and latency objectives are missed during every scale-up.",
+          "heading": "Why CPU is the wrong signal for inference"
+        }
+      ],
+      "id": "horizontal-pod-autoscaling",
+      "title": "Horizontal Pod Autoscaler"
+    },
+    {
+      "body": [
+        {
+          "body": "KEDA is an event-driven autoscaler that extends Kubernetes instead of replacing the HPA. A ScaledObject names a workload and one or more triggers, called scalers, that read an external source: queue length, stream lag, a Prometheus query, a schedule. KEDA activates the workload from zero when events appear and feeds metrics to an HPA it manages for scaling from one upward. A ScaledJob instead starts a Job per batch of events, which suits long-running work that must not be interrupted. This fits asynchronous inference, batch scoring and rarely used models, where idle GPU pods would otherwise cost money.",
+          "heading": "Scaling from external signals and to zero"
+        }
+      ],
+      "id": "event-driven-scaling-keda",
+      "title": "Event-driven scaling with KEDA"
+    },
+    {
+      "body": [
+        {
+          "body": "Karpenter watches for pods the scheduler cannot place and launches nodes sized to fit them, reading their resource requests, node selectors, affinities, tolerations and topology spread. A NodePool sets constraints such as allowed instance families, zones, capacity type and limits on total resources, and a NodeClass holds cloud-specific settings such as images and networking. Disruption handling removes or replaces nodes that are empty, underused, drifted from their specification or past an expiry, respecting pod disruption budgets.",
+          "heading": "Just-in-time nodes"
+        },
+        {
+          "body": "Spot capacity is much cheaper but can be reclaimed at short notice. Put interruptible work on it: training with checkpointing, batch inference, hyperparameter sweeps. Keep latency-critical serving on on-demand or reserved capacity, or run a baseline on-demand with burst on spot. Allow many instance types so the provisioner can find available capacity. Use separate NodePools with taints for GPU nodes so only GPU workloads land there, and protect long training pods from voluntary consolidation.",
+          "heading": "Spot and on-demand mix"
+        }
+      ],
+      "id": "node-provisioning-karpenter-spot",
+      "title": "Node provisioning with Karpenter and spot mix"
+    },
+    {
+      "body": [
+        {
+          "body": "Right-sizing for ML starts with GPU duty cycle and memory headroom, since an allocated but idle GPU is the largest waste. Raise utilization through dynamic batching, running several model replicas per device, GPU sharing by time slicing or hardware partitioning, and choosing the smallest GPU type that meets the latency objective. Then measure unit cost: cost per thousand inferences, per million tokens or per training run, attributed to teams by namespace and labels. The cost optimization pillar frames this as ongoing practice: financial ownership, expenditure awareness, cost-effective resources, matching supply to demand, and optimizing over time.",
+          "heading": "The GPU-specific part"
+        }
+      ],
+      "id": "right-sizing-and-gpu-utilization",
+      "title": "Right-sizing, GPU utilization and cost attribution"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  Q[Queue depth or in-flight requests] --> K[KEDA or HPA]\n  K -->|set replicas| D[Model server Deployment]\n  D -->|unschedulable pods| KP[Karpenter]\n  KP -->|launch| ND[On-demand GPU nodes]\n  KP -->|launch| NS[Spot GPU nodes]\n  ND --> D\n  NS --> D\n  KP -->|consolidate idle nodes| X[Removed capacity]\n  D --> M[Utilization and cost metrics]\n  M --> Q"
+  },
+  "code": [],
+  "technologies": [
+    "Kubernetes Horizontal Pod Autoscaler",
+    "KEDA",
+    "Karpenter",
+    "Cluster Autoscaler",
+    "Vertical Pod Autoscaler",
+    "Prometheus Adapter",
+    "NVIDIA DCGM Exporter",
+    "Amazon EC2 Spot Instances",
+    "Kubecost",
+    "OpenCost",
+    "AWS Cost Explorer"
+  ],
+  "related": [
+    "kubernetes-for-ml-workloads",
+    "nvidia-gpus-on-kubernetes",
+    "workload-scheduling-and-cluster-ops",
+    "model-serving-architecture",
+    "llm-serving-vllm-sglang",
+    "observability-opentelemetry-prometheus",
+    "multi-tenant-platform-design"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Kubernetes Horizontal Pod Autoscaling",
+      "url": "https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/"
+    },
+    {
+      "kind": "doc",
+      "title": "Karpenter Concepts",
+      "url": "https://karpenter.sh/docs/concepts/"
+    },
+    {
+      "kind": "doc",
+      "title": "KEDA Concepts",
+      "url": "https://keda.sh/docs/2.21/concepts/"
+    },
+    {
+      "kind": "guide",
+      "title": "Cost Optimization Pillar - AWS Well-Architected Framework",
+      "url": "https://docs.aws.amazon.com/wellarchitected/latest/cost-optimization-pillar/welcome.html"
+    }
+  ],
+  "practice": "practice/autoscaling-and-cost-efficiency",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-12",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    }
+  ]
+}

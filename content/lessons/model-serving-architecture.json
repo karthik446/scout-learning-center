@@ -1,0 +1,146 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "model-serving-architecture",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Model serving architecture: inference APIs for batch and real-time demand",
+  "area": "ai-ml",
+  "primary_key": "model-serving",
+  "secondary_keys": [
+    "inference",
+    "apis",
+    "batch-and-real-time",
+    "backend-engineering"
+  ],
+  "keys": [
+    "model-serving",
+    "inference",
+    "apis",
+    "batch-and-real-time",
+    "backend-engineering"
+  ],
+  "summary": "Model serving turns a versioned model artifact into an inference API with defined latency, throughput and availability. The architecture splits into a thin API layer, a model server that owns batching and hardware, and a control plane that handles rollout and scaling. The same model is often exposed through several paths (synchronous, asynchronous and batch) because demand shapes differ.",
+  "detail": [],
+  "in_practice": "A team typically standardises on one serving stack per workload class: KServe or Ray Serve as the Kubernetes-facing layer, with Triton or a framework runtime underneath for GPU models, and a thin FastAPI service where custom logic is needed. Model owners ship an artifact through the registry; a template renders the serving resource, and a pipeline runs a load test against a staging endpoint before any traffic shift. Capacity is planned per zone, dashboards track p50 and p99 latency, queue time, batch size and accelerator utilisation, and failover is rehearsed by draining a zone during business hours.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "Online inference answers a request within a latency budget, usually tens to hundreds of milliseconds, and is sized for peak concurrency. Asynchronous inference accepts a request, places it on a queue and returns a handle; workers pull at the rate the accelerators can sustain, which absorbs bursts and suits long-running or large-payload calls. Batch inference scores a whole dataset on a schedule, reads from object storage or a table and writes predictions back, with no endpoint kept alive between runs. The choice is driven by who waits for the answer: a user, another service, or nobody until tomorrow.",
+          "heading": "Three demand shapes"
+        },
+        {
+          "body": "Each path has a different unit of scaling. Online paths scale on concurrency or request rate and need warm replicas. Queue-driven paths scale on backlog depth and can scale to zero. Batch paths scale on data volume and are judged on cost per million rows and completion time, not on tail latency. A platform normally packages one model image so it can run behind all three paths, keeping preprocessing identical to avoid skew between online and offline predictions.",
+          "heading": "Consequences for the platform"
+        }
+      ],
+      "id": "request-paths-online-async-batch",
+      "title": "Request paths: online, asynchronous and batch"
+    },
+    {
+      "body": [
+        {
+          "body": "A model server loads artifacts from a model repository, keeps them resident in CPU or GPU memory, and schedules requests onto them. NVIDIA Triton is the reference example: it serves several frameworks side by side (TensorRT, ONNX Runtime, PyTorch, Python backends and others), runs multiple instances of a model concurrently, and applies dynamic batching, which holds requests for a short configurable window so that the accelerator executes one larger batch. It exposes HTTP and gRPC endpoints, health and readiness probes, and Prometheus metrics. Ensembles and pipelines let preprocessing, the model and postprocessing run as one server-side graph.",
+          "heading": "What the server does beyond calling predict"
+        },
+        {
+          "body": "Ray Serve takes a different approach: each step is a Python deployment with its own replica count and resource request, including fractional GPUs, and deployments call each other through handles. This suits pipelines that mix business logic with several models, because composition is ordinary Python and each stage scales independently. It is framework agnostic and supports request batching and response streaming. The trade is that the team owns more of the runtime behaviour than with a fixed-function server.",
+          "heading": "Python-native composition"
+        }
+      ],
+      "id": "model-server-anatomy",
+      "title": "Anatomy of a model server"
+    },
+    {
+      "body": [
+        {
+          "body": "An inference API needs typed request and response schemas, a model name and version in the path or headers, separate liveness and readiness endpoints (ready only once weights are loaded), and explicit limits on payload size and timeout. FastAPI is a common choice for the thin layer because type-annotated handlers produce validation and OpenAPI documentation automatically. Many servers also implement a standard inference protocol, a shared REST and gRPC shape for tensors and model metadata, so clients do not change when the runtime behind the endpoint changes.",
+          "heading": "The API contract"
+        },
+        {
+          "body": "On Kubernetes, KServe adds an InferenceService custom resource. The spec names a model format and storage location; the controller selects a serving runtime, pulls the artifact, wires networking, and manages autoscaling, including scale to zero, and canary traffic splitting between revisions. It covers both predictive models and generative models. Platform teams usually wrap this resource in a template so that model owners provide only the artifact location, resources and scaling bounds.",
+          "heading": "KServe as control plane"
+        }
+      ],
+      "id": "inference-api-contracts",
+      "title": "Inference API contracts and the serving control plane"
+    },
+    {
+      "body": [
+        {
+          "body": "Inference capacity is slow to add: a new replica must schedule onto an accelerator node, pull a large image and load weights, which can take minutes. Designs therefore assume that capacity lost in one zone cannot be replaced instantly. Replicas are spread across availability zones with topology constraints, each zone is sized so that the remaining zones carry peak load, and a second region holds either warm capacity or a smaller fallback. Model artifacts are replicated so that a region can start without reaching into the failed one.",
+          "heading": "Failure modes specific to inference"
+        },
+        {
+          "body": "When demand exceeds capacity the service should shed load deliberately. Common techniques are bounded queues with early rejection, per-tenant concurrency limits, priority classes that drop batch traffic first, deadline propagation so that expired requests are not executed, and a fallback ladder: a smaller or quantized model, a cached answer, or a rule-based default. Each fallback is tagged in the response so that downstream quality monitoring can separate degraded answers from normal ones.",
+          "heading": "Degrading instead of failing"
+        }
+      ],
+      "id": "graceful-degradation-and-failover",
+      "title": "Graceful degradation and failover"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  C[Clients] --> G[Gateway and auth]\n  G --> A[API layer]\n  A --> S[Model server with dynamic batching]\n  S --> M[(Model repository)]\n  G --> Q[Request queue]\n  Q --> W[Async workers]\n  W --> S\n  D[(Dataset in object storage)] --> B[Batch scoring job]\n  B --> P[(Predictions table)]\n  A --> F[Fallback model or cache]"
+  },
+  "code": [
+    {
+      "code": "from fastapi import FastAPI, HTTPException\nfrom pydantic import BaseModel\n\napp = FastAPI()\nmodel = None\n\nclass Req(BaseModel):\n    features: list[float]\n\n@app.get(\"/readyz\")\ndef ready():\n    if model is None:\n        raise HTTPException(503, \"model not loaded\")\n    return {\"status\": \"ready\"}\n\n@app.post(\"/v1/models/churn:predict\")\ndef predict(req: Req):\n    score = model.predict([req.features])[0]\n    return {\"score\": float(score), \"model_version\": \"3\"}",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "KServe",
+    "Ray Serve",
+    "NVIDIA Triton Inference Server",
+    "FastAPI",
+    "gRPC",
+    "Kubernetes",
+    "Prometheus"
+  ],
+  "related": [
+    "kubernetes-for-ml-workloads",
+    "staged-rollouts",
+    "autoscaling-and-cost-efficiency",
+    "model-registry-and-versioning",
+    "sagemaker-deployment",
+    "llm-serving-vllm-sglang"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Ray Serve: Scalable and Programmable Serving",
+      "url": "https://docs.ray.io/en/latest/serve/index.html"
+    },
+    {
+      "kind": "repo",
+      "title": "KServe repository",
+      "url": "https://github.com/kserve/kserve"
+    },
+    {
+      "kind": "tutorial",
+      "title": "FastAPI: First Steps",
+      "url": "https://fastapi.tiangolo.com/tutorial/first-steps/"
+    },
+    {
+      "kind": "repo",
+      "title": "NVIDIA Triton Inference Server repository",
+      "url": "https://github.com/triton-inference-server/server"
+    }
+  ],
+  "practice": "practice/model-serving-architecture",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    }
+  ]
+}

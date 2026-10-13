@@ -1,0 +1,147 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "security-compliance-reviews",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Security reviews, governance and compliance in regulated industries",
+  "area": "security",
+  "primary_key": "security-governance",
+  "secondary_keys": [
+    "compliance-governance",
+    "healthcare",
+    "financial-services",
+    "legal",
+    "security"
+  ],
+  "keys": [
+    "security-governance",
+    "compliance-governance",
+    "healthcare",
+    "financial-services",
+    "legal",
+    "security"
+  ],
+  "summary": "Regulated customers will not put an AI system into production until it passes their security and compliance review. This lesson covers how to threat model a deployment, how the common control frameworks are used, how to protect and govern regulated data as it flows through prompts and indexes, and how to design and document a deployment so that the review goes quickly.",
+  "detail": [],
+  "in_practice": "At scoping, the engineer asks which regulations and internal frameworks apply and who signs off, then drafts a data flow diagram that marks every trust boundary, including the hop to the model provider. The team runs a short threat modeling session with the customer's security architect, ranks the threats, and records mitigations as design requirements: a dedicated least-privilege identity for the agent, approval gates on writes, redaction before egress, and audit logging. They fill in the security questionnaire from a maintained evidence pack, map their controls to the customer's framework, and agree on a shared responsibility matrix. Findings from the review become tracked tickets, exceptions are signed with an expiry date, and the same documents are updated whenever a new tool, data source or model is added.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "Threat modeling is a structured way to find what can go wrong before an attacker does. The OWASP process has three steps: decompose the application, determine and rank threats, and determine countermeasures and mitigations. Decomposition produces data flow diagrams that show external entities, processes, data stores, data flows and the trust boundaries between them, plus a list of entry points, assets and trust levels. Threats are then enumerated per element, commonly with STRIDE: spoofing, tampering, repudiation, information disclosure, denial of service and elevation of privilege. Each threat is ranked by risk and mapped to a control or an accepted risk.",
+          "heading": "The process"
+        },
+        {
+          "body": "An AI deployment adds trust boundaries that classic models miss. Any text the model reads, including retrieved documents, emails, tickets and tool results, is untrusted input that may carry instructions, so prompt injection belongs in the tampering and elevation columns. The model's tool permissions define the blast radius: model the agent as a principal with its own least-privilege identity, not as the user. Add the model provider as an external entity with its own data flow, and record what is sent, what is retained and for how long. Mitigations are architectural: scoped credentials, human approval for writes, output validation and egress limits.",
+          "heading": "What changes with a model in the flow"
+        }
+      ],
+      "id": "threat-modeling-ai-deployments",
+      "title": "Threat modeling an AI deployment"
+    },
+    {
+      "body": [
+        {
+          "body": "The OWASP Application Security Verification Standard is a catalog of testable security requirements for web applications and services, grouped into chapters such as authentication, session management, access control, input validation, cryptography, logging and API security. It defines three verification levels of increasing rigor, so a team can pick the level that matches the sensitivity of the application and use the requirements as a checklist in design and review. For a forward deployed engineer it is a practical way to answer the question of whether the application is secure with specific, verifiable statements rather than assurances.",
+          "heading": "ASVS for application requirements"
+        },
+        {
+          "body": "NIST SP 800-53 Revision 5 is a catalog of security and privacy controls for information systems and organizations, organized into families such as access control, audit and accountability, identification and authentication, incident response, system and communications protection, and supply chain risk management. Government customers and many regulated enterprises use it, or baselines derived from it, as the reference in security reviews. You rarely implement a family alone; instead you map what your deployment does to the control ids the customer cares about, and note which controls are inherited from the cloud provider, which are the customer's and which are yours.",
+          "heading": "NIST SP 800-53 for organizational controls"
+        }
+      ],
+      "id": "control-frameworks-asvs-nist",
+      "title": "Control frameworks: ASVS and NIST SP 800-53"
+    },
+    {
+      "body": [
+        {
+          "body": "Beyond encrypting data in transit and at rest and masking it outside production, the strongest move in a regulated deployment is to shrink what is in scope. Tokenize card data so that only a payment processor handles the real number, send the model only the fields a task needs, and redact identifiers before text leaves the customer boundary. Treat the model provider as a subprocessor: confirm its retention terms, whether data is used for training, and whether a business associate agreement or equivalent contract is required for health data.",
+          "heading": "Reducing scope before adding controls"
+        }
+      ],
+      "id": "protecting-pii-payment-data",
+      "title": "Protecting PII and payment data: encryption and masking"
+    },
+    {
+      "body": [
+        {
+          "body": "Data governance answers who may use which data, for what purpose and for how long. In an AI deployment the same record can end up in several derived places: a prompt, an embedding index, a cache, a trace and an evaluation set. Keep an inventory of those copies with a classification, an owner and a retention period for each. A deletion or access request must reach every one of them, so store source record ids alongside chunks and embeddings to make targeted deletion possible. Enforce document-level permissions at retrieval time, so that the model never sees a document that the asking user could not open.",
+          "heading": "Governing data that flows through AI systems"
+        }
+      ],
+      "id": "governing-data-in-ai-systems",
+      "title": "Governance: retention, deletion and access for derived data"
+    },
+    {
+      "body": [
+        {
+          "body": "Enterprise customers gate deployment on a security review. Expect a questionnaire, an architecture and data flow diagram, a list of subprocessors, penetration test results, and evidence of controls such as single sign-on, role-based access, audit logging, encryption, backup and incident response. Sector rules add specifics: health data brings HIPAA safeguards, card data brings PCI DSS, and contact center work brings consent rules for call recording and outbound contact. Prepare a reusable evidence pack and a shared responsibility matrix that states for each control whether the vendor, the customer or the cloud provider operates it.",
+          "heading": "What reviewers ask for"
+        },
+        {
+          "body": "Reviews go faster when the design removes questions. Deploy inside the customer's cloud account or network when data may not leave it, use their identity provider, keep secrets in their vault, and write an immutable audit log of every agent action with who, what, when and on whose behalf. Raise the review at scoping time, not the week before launch; approvals in regulated firms often take longer than the build. Record every accepted risk and exception in writing with an owner and an expiry date.",
+          "heading": "Designing so the review is short"
+        }
+      ],
+      "id": "passing-customer-security-review",
+      "title": "Getting through a customer security review"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  U[User] --> A[Customer application]\n  subgraph CB[Customer trust boundary]\n    A --> G[Agent service]\n    G --> T[Internal tools and data]\n    G --> L[Audit log]\n    G --> R[Redaction and policy check]\n  end\n  R --> P[Model provider]\n  I[Identity provider] --> A\n  I --> G"
+  },
+  "code": [],
+  "technologies": [
+    "OWASP ASVS",
+    "NIST SP 800-53",
+    "STRIDE",
+    "OWASP Threat Dragon",
+    "HashiCorp Vault",
+    "AWS KMS",
+    "Okta",
+    "Microsoft Entra ID",
+    "Open Policy Agent",
+    "Microsoft Presidio"
+  ],
+  "related": [
+    "responsible-ai-guardrails",
+    "networking-restricted-environments",
+    "cloud-deployments",
+    "rest-apis-json-oauth",
+    "technical-scoping-design-docs",
+    "observability-agent-traces"
+  ],
+  "sources": [
+    {
+      "kind": "guide",
+      "title": "OWASP: Threat Modeling Process",
+      "url": "https://community.owasp.org/Threat_Modeling_Process"
+    },
+    {
+      "kind": "spec",
+      "title": "OWASP Application Security Verification Standard",
+      "url": "https://owasp.org/projects/asvs"
+    },
+    {
+      "kind": "spec",
+      "title": "NIST SP 800-53 Rev. 5: Security and Privacy Controls",
+      "url": "https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final"
+    }
+  ],
+  "practice": "practice/security-compliance-reviews",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-12",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    }
+  ]
+}

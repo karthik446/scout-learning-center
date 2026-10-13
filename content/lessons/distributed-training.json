@@ -1,0 +1,124 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "distributed-training",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Distributed training across multiple GPU nodes",
+  "area": "ai-ml",
+  "primary_key": "distributed-training",
+  "secondary_keys": [
+    "foundation-models"
+  ],
+  "keys": [
+    "distributed-training",
+    "foundation-models"
+  ],
+  "summary": "When a model or dataset is too large for one GPU, training is spread across several GPUs and several nodes that must start together, find each other and stay in sync. The training framework handles gradient synchronisation; the platform handles launching the worker group, wiring up networking and recovering from failures. Ray Train and Kubeflow Trainer are the two common ways to run this on Kubernetes.",
+  "detail": [],
+  "in_practice": "Teams start by making a training script work on one GPU, then on several GPUs in one node, and only then across nodes, measuring throughput at each step to see whether scaling is worth the cost. The platform provides a blessed launch path, either a Ray cluster template or a set of Kubeflow training runtimes, with base images that pin compatible CUDA, driver and framework versions. Jobs write checkpoints to object storage, log metrics to the experiment tracker from the rank zero worker only, and are submitted through a queue so the whole worker group is admitted together. GPU utilisation and data loader wait time are watched on dashboards because a starved input pipeline is the most common reason added GPUs do not help.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "The dominant pattern is data parallelism. Each worker process holds a full copy of the model on its own GPU and receives a different shard of every batch. After the backward pass, gradients are averaged across all workers with a collective all-reduce operation, so every copy applies the same update. In PyTorch this is DistributedDataParallel: each process has a rank, the group has a world size, and communication goes through a backend such as NCCL over the node network. A distributed sampler ensures workers see disjoint data. The effective batch size grows with the number of workers, which often means the learning rate has to be scaled too.",
+          "heading": "Workers, ranks and gradient sync"
+        },
+        {
+          "body": "Speedup is rarely linear. Gradient synchronisation costs network bandwidth, so interconnect speed between nodes matters, and one slow worker holds back the whole group because each step waits for everyone. Data loading is the other common bottleneck: if CPU workers or storage cannot feed the GPUs, utilisation drops no matter how many GPUs are added. Models too large for one GPU's memory need additional techniques such as sharding parameters or optimizer state across devices.",
+          "heading": "What limits scaling"
+        }
+      ],
+      "id": "data-parallel-training-model",
+      "title": "How data-parallel training works"
+    },
+    {
+      "body": [
+        {
+          "body": "Ray Train wraps an existing training loop with little change. The user writes a per-worker training function and passes it to a trainer such as TorchTrainer along with a ScalingConfig that states the number of workers and whether each uses a GPU. Ray starts that many worker processes across the cluster, sets up the distributed process group, and runs the function on each. Helper calls prepare the model and data loader for distributed use, moving them to the right device and adding the sampler. Inside the loop the function reports metrics and checkpoints back to the driver. It has integrations for PyTorch, Lightning, Hugging Face Transformers, TensorFlow and XGBoost. On Kubernetes, Ray clusters are usually managed by the KubeRay operator.",
+          "heading": "Trainer, scaling config, training function"
+        }
+      ],
+      "id": "ray-train",
+      "title": "Ray Train: scaling a training loop from Python"
+    },
+    {
+      "body": [
+        {
+          "body": "Kubeflow Trainer is the Kubernetes-native approach. A platform team defines reusable runtimes, as ClusterTrainingRuntime or namespaced TrainingRuntime objects, that describe how a framework is launched: images, the number and roles of nodes, and the startup policy. Users submit a TrainJob that references a runtime and supplies their code, arguments and resource needs, either as YAML or through the Python SDK without writing manifests. The controller creates the group of pods, gives them stable network identities so workers can discover each other, and injects the environment the framework needs. It supports PyTorch, MPI-based workloads and others, and it is the successor to the older Training Operator with its per-framework resources such as PyTorchJob.",
+          "heading": "TrainJob and runtimes"
+        },
+        {
+          "body": "The split between runtime and job mirrors the split between platform and data science teams. Platform engineers own runtimes, base images, node selection and integration with a queueing system such as Kueue. Model developers only choose a runtime, a node count and resources per node. That keeps infrastructure detail out of user code and lets the platform change it centrally.",
+          "heading": "Separation of concerns"
+        }
+      ],
+      "id": "kubeflow-trainer",
+      "title": "Kubeflow Trainer: distributed training as a Kubernetes resource"
+    },
+    {
+      "body": [
+        {
+          "body": "A multi-node job that runs for hours or days will see failures: a node is reclaimed, a GPU errors, a pod is preempted. Because all workers move in lockstep, losing one normally stops the whole group. The defence is periodic checkpointing of model weights, optimizer state, scheduler state and the current step to shared durable storage, usually object storage or a shared filesystem, written by one worker to avoid races. On restart the job loads the latest checkpoint and resumes. Ray Train can restart failed workers and restore from the last reported checkpoint up to a configured failure limit; on Kubernetes the job controller's restart policy does the same. Checkpoint frequency trades lost work against write overhead.",
+          "heading": "Surviving worker loss"
+        }
+      ],
+      "id": "checkpointing-and-fault-tolerance",
+      "title": "Checkpointing and fault tolerance"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart TB\n  U[User submits job: workers=4, gpu=1 each] --> C[Trainer controller or Ray driver]\n  C --> W0[Worker rank 0 on node A]\n  C --> W1[Worker rank 1 on node A]\n  C --> W2[Worker rank 2 on node B]\n  C --> W3[Worker rank 3 on node B]\n  W0 <-->|gradient all-reduce| W1\n  W1 <-->|gradient all-reduce| W2\n  W2 <-->|gradient all-reduce| W3\n  DS[(Sharded dataset)] --> W0\n  DS --> W1\n  DS --> W2\n  DS --> W3\n  W0 -->|checkpoints| S[(Shared storage)]\n  W0 -->|metrics| T[Experiment tracker]"
+  },
+  "code": [
+    {
+      "code": "import torch, torch.nn as nn\nimport ray.train\nfrom ray.train import ScalingConfig\nfrom ray.train.torch import TorchTrainer, prepare_model\n\ndef train_loop_per_worker(config):\n    model = prepare_model(nn.Linear(10, 1))  # wraps in DDP, moves to GPU\n    opt = torch.optim.SGD(model.parameters(), lr=config[\"lr\"])\n    device = ray.train.torch.get_device()\n    for epoch in range(config[\"epochs\"]):\n        x = torch.randn(64, 10, device=device)\n        loss = model(x).pow(2).mean()\n        opt.zero_grad(); loss.backward(); opt.step()\n        ray.train.report({\"epoch\": epoch, \"loss\": loss.item()})\n\ntrainer = TorchTrainer(\n    train_loop_per_worker,\n    train_loop_config={\"lr\": 0.01, \"epochs\": 3},\n    scaling_config=ScalingConfig(num_workers=4, use_gpu=True),\n)\nresult = trainer.fit()",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "Ray Train",
+    "KubeRay",
+    "Kubeflow Trainer",
+    "PyTorch DistributedDataParallel",
+    "NCCL",
+    "MPI",
+    "Hugging Face Transformers",
+    "PyTorch Lightning",
+    "JobSet"
+  ],
+  "related": [
+    "nvidia-gpus-on-kubernetes",
+    "workload-scheduling-and-cluster-ops",
+    "mlflow-experiment-tracking",
+    "kubernetes-for-ml-workloads",
+    "ml-native-orchestrators",
+    "storage-lakehouse-and-data-stores"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Ray Train: Scalable Model Training",
+      "url": "https://docs.ray.io/en/latest/train/train.html"
+    },
+    {
+      "kind": "doc",
+      "title": "Kubeflow Trainer",
+      "url": "https://www.kubeflow.org/docs/components/trainer/"
+    }
+  ],
+  "practice": "practice/distributed-training",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    }
+  ]
+}

@@ -1,0 +1,138 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "observability-agent-traces",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Observability: logs, metrics and agent traces",
+  "area": "infra",
+  "primary_key": "observability",
+  "secondary_keys": [
+    "logs-metrics-tracing"
+  ],
+  "keys": [
+    "observability",
+    "logs-metrics-tracing"
+  ],
+  "summary": "Observability is the ability to understand what a running system is doing from the telemetry it emits: logs, metrics and traces. For AI deployments the same signals are extended with spans for model calls, tool executions and agent steps, so that cost, latency and behavior can be explained per task. This lesson covers the signals, what to alert on, how agent traces are shaped, and how to handle sensitive prompt content in telemetry.",
+  "detail": [],
+  "in_practice": "A team instruments the agent service and its tools with OpenTelemetry SDKs and sends everything over OTLP to a collector that the deployment owns. The collector redacts sensitive attributes, applies tail sampling and fans out to the customer's chosen backends, which are often already in place and not negotiable. Before go-live the team builds one dashboard per deployment with the golden signals plus token cost and tool error rate, defines a small number of symptom-based alerts with a runbook each, and checks that a single request id from the customer's application can be followed through the agent trace into backend logs. During the pilot, engineers review sampled traces weekly to find slow steps, repeated loops and failing tools, and feed those findings into prompt, tool and evaluation changes.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "Telemetry comes in three main signals. Logs are timestamped records of discrete events, most useful when structured as key-value fields and stamped with a trace id. Metrics are numeric measurements aggregated over time, cheap to store and well suited to dashboards and alerts. Traces record the path of one request through many services as a tree of spans. A system is observable when these signals let you answer questions you did not anticipate without shipping new code. In a deployment, the first task is to make all three share identifiers such as service name, environment, customer tenant and trace id, so that you can pivot from an alert to a trace to the exact log lines.",
+          "heading": "Logs, metrics and traces"
+        },
+        {
+          "body": "The four golden signals are latency, traffic, errors and saturation. Measure latency for successful and failed requests separately, and look at percentiles rather than averages, because a slow tail hides inside a healthy mean. Page a human only for symptoms that users feel and that need action now; send cause-level signals, such as a full disk on one node, to dashboards or tickets. Every page should be urgent, actionable and novel. For an AI feature, add signals the classic list misses: tokens per request, cost per task, tool-call error rate, and the rate of refusals or schema-invalid outputs.",
+          "heading": "What to alert on"
+        }
+      ],
+      "id": "signals-and-alerting",
+      "title": "The three signals and what to alert on"
+    },
+    {
+      "body": [
+        {
+          "body": "A trace is a set of spans that share a trace id; each span has a name, start and end time, attributes, events, a status and a parent span id. Context propagation carries the trace id and parent span id across process boundaries, usually in the W3C traceparent header. In field work the hard part is the boundaries you do not own: message queues, batch jobs, customer gateways that strip headers, and vendor APIs. Carry context in message metadata, use span links for fan-in from batches, and record the customer's own correlation id as a span attribute so that both sides can search for the same request.",
+          "heading": "Spans, context and where propagation breaks"
+        }
+      ],
+      "id": "distributed-tracing-context-propagation",
+      "title": "Distributed tracing and context propagation"
+    },
+    {
+      "body": [
+        {
+          "body": "OpenTelemetry publishes semantic conventions for generative AI so that model calls look the same regardless of provider or framework. They cover spans for model inference, embeddings, tool execution and agent invocation, plus metrics such as token usage and operation duration, and events for inputs and outputs. Typical attributes include gen_ai.operation.name, gen_ai.request.model, gen_ai.response.model, gen_ai.usage.input_tokens and gen_ai.usage.output_tokens. The conventions are still evolving, so pin the version your instrumentation emits and expect attribute names to change between releases. Using them means a backend can compute cost and latency per model without custom parsing.",
+          "heading": "What the conventions define"
+        },
+        {
+          "body": "One agent run should be one trace. The root span is the task or user turn; under it sit a span per model call, a span per tool execution, and spans for retrieval and guardrail checks. Tool spans in turn parent the ordinary HTTP and database spans of the systems they touch, which is what joins agent behavior to backend behavior. Add attributes that make runs comparable: prompt version, agent name, step index, retry count and finish reason. With that shape you can answer the questions that matter in a pilot: which step is slow, which tool fails, where the loop repeated, and what a task costs.",
+          "heading": "Shape of an agent trace"
+        }
+      ],
+      "id": "genai-semantic-conventions-agent-traces",
+      "title": "Agent traces and the GenAI semantic conventions"
+    },
+    {
+      "body": [
+        {
+          "body": "Prompts and completions are the most useful debugging data and the most sensitive. They can contain personal data, credentials pasted by users, and customer documents. Instrumentation libraries generally leave content capture off by default and require an explicit opt-in. Decide per environment: full content in development, redacted or hashed content in production, with a short retention period and access limited to the people on call. Run redaction in the collector pipeline rather than in each service, so that one policy applies everywhere, and check where the telemetry backend stores data, because a customer's residency rules apply to traces as much as to databases.",
+          "heading": "Content capture is a data decision"
+        },
+        {
+          "body": "Agent traces are large; a single run can produce hundreds of spans and long payloads. Head sampling decides at the start of a trace and is cheap; tail sampling decides after the trace completes, so you can keep every error, every slow run and every run with a guardrail hit while keeping a small share of normal ones. Keep metric labels low in cardinality: model, operation and tenant tier are fine, user id and prompt text are not. Put high-cardinality detail on spans and logs instead.",
+          "heading": "Sampling and cardinality"
+        }
+      ],
+      "id": "telemetry-privacy-and-cost",
+      "title": "Prompt content, privacy and telemetry cost"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  A[Agent service] -->|OTLP| C[OTel Collector]\n  T[Tool and API services] -->|OTLP| C\n  C --> R[Redact and sample]\n  R --> M[Metrics store]\n  R --> L[Log store]\n  R --> X[Trace store]\n  M --> D[Dashboards and alerts]\n  L --> D\n  X --> D"
+  },
+  "code": [
+    {
+      "code": "from opentelemetry import trace\n\ntracer = trace.get_tracer(\"support-agent\")\n\ndef call_model(client, model, messages):\n    with tracer.start_as_current_span(f\"chat {model}\") as span:\n        span.set_attribute(\"gen_ai.operation.name\", \"chat\")\n        span.set_attribute(\"gen_ai.request.model\", model)\n        resp = client.chat(model=model, messages=messages)\n        span.set_attribute(\"gen_ai.usage.input_tokens\", resp.usage.input_tokens)\n        span.set_attribute(\"gen_ai.usage.output_tokens\", resp.usage.output_tokens)\n        return resp",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "OpenTelemetry",
+    "OpenTelemetry Collector",
+    "OTLP",
+    "Prometheus",
+    "Grafana",
+    "Jaeger",
+    "Datadog",
+    "Langfuse",
+    "LangSmith",
+    "Arize Phoenix"
+  ],
+  "related": [
+    "debugging-postmortems",
+    "llm-agent-evaluation",
+    "scaling-performance-cost",
+    "agent-architectures",
+    "security-compliance-reviews"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "OpenTelemetry: Observability primer",
+      "url": "https://opentelemetry.io/docs/concepts/observability-primer/"
+    },
+    {
+      "kind": "doc",
+      "title": "OpenTelemetry: Traces",
+      "url": "https://opentelemetry.io/docs/concepts/signals/traces/"
+    },
+    {
+      "kind": "spec",
+      "title": "OpenTelemetry: Semantic conventions for generative AI systems",
+      "url": "https://opentelemetry.io/docs/specs/semconv/gen-ai/"
+    },
+    {
+      "kind": "book",
+      "title": "Google SRE Book: Monitoring Distributed Systems",
+      "url": "https://sre.google/sre-book/monitoring-distributed-systems/"
+    }
+  ],
+  "practice": "practice/observability-agent-traces",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-12",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    }
+  ]
+}

@@ -1,0 +1,154 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "react-nextjs-customer-apps",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Full-stack customer applications with React and Next.js",
+  "area": "software",
+  "primary_key": "react",
+  "secondary_keys": [
+    "nextjs",
+    "frontend",
+    "full-stack",
+    "custom-applications"
+  ],
+  "keys": [
+    "react",
+    "nextjs",
+    "frontend",
+    "full-stack",
+    "custom-applications"
+  ],
+  "summary": "Customers judge an AI deployment by the screen their people use, so a forward deployed engineer is often expected to build that screen as well as the backend. React supplies the component model, and Next.js wraps it in a full-stack framework with routing, server rendering and server-side data access in one codebase, which is why it is the common choice for pilot and production customer applications.",
+  "detail": [],
+  "in_practice": "A typical customer application starts from a Next.js template with TypeScript, a component library and an authentication provider already wired in. The engineer builds pages as server components that query Postgres directly, adds client components only for interactive pieces such as a chat panel or an editable table, and streams model output through a route handler. Every pull request produces a preview deployment that is shared with the customer for feedback, and the same build is later promoted to the customer's own cloud as a container when security review requires it.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "The discipline from Thinking in React still decides whether an application stays maintainable: break the interface into a component hierarchy, build a static version first, find the minimal state, and decide which component owns each piece. Most bugs in fast-built customer applications come from duplicated or derived state held in several places. Compute derived values during render, lift shared state to the closest common parent, and reach for effects only to synchronize with systems outside React.",
+          "heading": "The part worth revisiting"
+        }
+      ],
+      "id": "components-and-state",
+      "title": "Components, props and state"
+    },
+    {
+      "body": [
+        {
+          "body": "In the Next.js App Router, folders under the app directory define URL segments and special files define behavior: page for the route's interface, layout for chrome shared by child routes, loading for a fallback shown while content streams, error for an error boundary, and route for an HTTP endpoint. Dynamic segments are folders in square brackets. Layouts keep their state across navigation between child routes, which makes shells such as a sidebar and a conversation list cheap to build.",
+          "heading": "File-system routing"
+        },
+        {
+          "body": "Components in the App Router are server components by default. They render on the server, can be async, can read a database or call an internal API directly, and send no component JavaScript to the browser. A file that starts with the use client directive marks a client boundary: it and what it imports are bundled for the browser and can use state, effects and event handlers. The practical rule is to keep data access and secrets in server components and push the client boundary down to the smallest interactive leaf. Props that cross from server to client must be serializable.",
+          "heading": "Where code runs"
+        }
+      ],
+      "id": "app-router-server-client-components",
+      "title": "The App Router: server and client components"
+    },
+    {
+      "body": [
+        {
+          "body": "Reads happen in server components with ordinary async code, so a page can await a query and render the result with no client-side fetching layer. Writes go through server functions, marked with the use server directive and called from forms or event handlers, or through route handlers when an external system needs a plain HTTP endpoint such as a webhook. After a write, revalidate the affected path or tag so cached pages refresh. Treat every server function as a public endpoint: authenticate, authorize and validate its input, because it can be invoked directly.",
+          "heading": "Reading and writing"
+        },
+        {
+          "body": "Model responses arrive token by token, and users expect to see them that way. Suspense boundaries let the server send the page shell immediately and stream slower sections as they resolve. For chat-style output, a route handler returns a streamed response that a client component reads incrementally and appends to state. Design the interface around the slow path: show tool calls and intermediate steps as they happen, allow cancellation, and persist the conversation on the server so a refresh does not lose work. Caching defaults have changed between major Next.js versions, so check the behavior of the version in use.",
+          "heading": "Streaming for AI interfaces"
+        }
+      ],
+      "id": "data-fetching-and-mutations",
+      "title": "Data fetching, mutations and streaming"
+    },
+    {
+      "body": [
+        {
+          "body": "Enterprise customers expect single sign-on through their identity provider, usually by OpenID Connect or SAML, so plan for it from the first demo rather than shipping a password form. Keep the session in an HTTP-only cookie, check it on the server for every page and every server function, and enforce data access rules in the data layer, not only by hiding buttons. Secrets and model API keys stay in server-only code and environment variables. Decide the hosting target early: a managed platform is fastest, while many customers require a container in their own cloud account, which Next.js supports through a standalone Node build.",
+          "heading": "What a customer application needs before it is real"
+        }
+      ],
+      "id": "auth-and-multi-tenant-concerns",
+      "title": "Authentication, authorization and customer deployment concerns"
+    },
+    {
+      "body": [
+        {
+          "body": "In field work the preview link is a communication tool as much as an engineering one: each pull request yields a URL that a customer stakeholder can click and react to the same day. Protect previews behind authentication and seed them with scrubbed data. Keep a thin end-to-end suite on the critical flow, such as sign in, submit a request and see a result, and stub the model call so tests are deterministic.",
+          "heading": "The feedback loop with the customer"
+        }
+      ],
+      "id": "preview-and-ui-testing",
+      "title": "Preview deployments and UI testing"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart TB\n  U[Browser] -->|request| L[Layout server component]\n  L --> P[Page server component]\n  P -->|query| DB[(Postgres)]\n  P -->|renders| C[Client component with use client]\n  C -->|form submit| SA[Server function]\n  SA -->|write and revalidate| DB\n  C -->|stream| RH[Route handler]\n  RH -->|call| M[Model API]\n  RH -->|tokens| C"
+  },
+  "code": [
+    {
+      "code": "// app/tickets/page.tsx  (server component)\nimport { listTickets } from \"@/lib/db\";\nimport { NewTicketForm } from \"./new-ticket-form\";\n\nexport default async function TicketsPage() {\n  const tickets = await listTickets();\n  return (\n    <main>\n      <NewTicketForm />\n      <ul>\n        {tickets.map((t) => (\n          <li key={t.id}>{t.title}</li>\n        ))}\n      </ul>\n    </main>\n  );\n}",
+      "lang": "tsx"
+    },
+    {
+      "code": "// app/tickets/actions.ts\n\"use server\";\nimport { revalidatePath } from \"next/cache\";\nimport { requireUser } from \"@/lib/auth\";\nimport { insertTicket } from \"@/lib/db\";\n\nexport async function createTicket(formData: FormData) {\n  const user = await requireUser();\n  const title = String(formData.get(\"title\") ?? \"\").trim();\n  if (!title) throw new Error(\"title is required\");\n  await insertTicket({ title, ownerId: user.id });\n  revalidatePath(\"/tickets\");\n}",
+      "lang": "tsx"
+    }
+  ],
+  "technologies": [
+    "React",
+    "Next.js",
+    "TypeScript",
+    "Tailwind CSS",
+    "shadcn/ui",
+    "Auth.js",
+    "Vercel",
+    "Playwright",
+    "Storybook",
+    "PostgreSQL"
+  ],
+  "related": [
+    "typescript-node-services",
+    "sql-postgres-data-systems",
+    "pocs-pilots-prototyping",
+    "rest-apis-json-oauth",
+    "cloud-deployments"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "React: Quick Start",
+      "url": "https://react.dev/learn"
+    },
+    {
+      "kind": "doc",
+      "title": "React: Thinking in React",
+      "url": "https://react.dev/learn/thinking-in-react"
+    },
+    {
+      "kind": "doc",
+      "title": "Next.js Docs: App Router",
+      "url": "https://nextjs.org/docs/app"
+    },
+    {
+      "kind": "course",
+      "title": "Learn Next.js",
+      "url": "https://nextjs.org/learn"
+    }
+  ],
+  "practice": "practice/react-nextjs-customer-apps",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    }
+  ]
+}

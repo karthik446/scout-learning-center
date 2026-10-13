@@ -1,0 +1,140 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "security-identity-and-governance",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Security, identity and access, and compliance for ML platforms",
+  "area": "security",
+  "primary_key": "security",
+  "secondary_keys": [
+    "identity-and-access",
+    "devsecops",
+    "compliance-governance",
+    "regulated-industry"
+  ],
+  "keys": [
+    "security",
+    "identity-and-access",
+    "devsecops",
+    "compliance-governance",
+    "regulated-industry"
+  ],
+  "summary": "An ML platform concentrates valuable things: training data, model weights, expensive compute and credentials to many systems. Securing it means giving every human and workload an identity with least privilege, proving where code and model artifacts came from, and running a governance process that manages AI-specific risk. This lesson covers Kubernetes RBAC, cloud IAM, supply chain integrity under SLSA, and the NIST AI Risk Management Framework.",
+  "detail": [],
+  "in_practice": "Security is built into the paved path so that the secure option is the default one. A new team gets a namespace, a group binding, a service account mapped to a scoped cloud role and a bucket prefix from one request. Pipelines build images on hosted runners, sign them and attach provenance, and an admission policy verifies signatures before anything runs. Secrets come from a secret manager, not from environment files. Model promotion requires an approval recorded in the registry, with lineage and evaluation attached. Access is reviewed on a schedule using last-used data, and audit logs from the cluster and the cloud account flow to a central store the platform team cannot edit.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "RBAC rules are additive only, with no deny rules, so tenant isolation rests on what is never granted. For ML tenants, bind namespaced Roles to groups from the identity provider, not to individual users, and give training operators and pipeline controllers their own service accounts. Watch the permissions that escalate: creating pods lets a subject mount any secret in the namespace, and the bind, escalate and impersonate verbs bypass normal limits. Custom resources for training jobs and inference services need explicit rules, since built-in roles do not cover them.",
+          "heading": "The part specific to ML platforms"
+        }
+      ],
+      "id": "kubernetes-rbac",
+      "title": "Kubernetes RBAC for ML tenants"
+    },
+    {
+      "body": [
+        {
+          "body": "IAM best practice is to remove long-lived keys. Humans sign in through federation with an identity provider and multi-factor authentication, and workloads assume roles that issue temporary credentials. On Kubernetes, a service account is mapped to a cloud role, so a training job receives short-lived credentials scoped to its own bucket prefix and nothing else. Start from the permissions actually used, then tighten: generate policies from access activity, validate them with a policy analyzer, add conditions such as required encryption or source network, and use permission boundaries and organization-wide guardrails so a team admin cannot grant beyond a ceiling. Review and remove unused roles and permissions regularly.",
+          "heading": "Temporary credentials everywhere"
+        }
+      ],
+      "id": "cloud-iam-workload-identity",
+      "title": "Cloud IAM and workload identity"
+    },
+    {
+      "body": [
+        {
+          "body": "SLSA is a specification for securing the path from source to artifact. Its build track defines levels: at level 1 the build produces provenance describing how the artifact was made; at level 2 the build runs on a hosted platform that signs the provenance; at level 3 the platform is hardened so builds are isolated and the signing material is out of reach of the build steps. Consumers verify provenance against expectations before deploying. For ML, apply the same idea to model artifacts: record the training code commit, data snapshot, base image digest and pipeline run, sign the result, and have admission control reject unsigned images or models.",
+          "heading": "Provenance and build levels"
+        }
+      ],
+      "id": "supply-chain-slsa",
+      "title": "Supply chain integrity with SLSA"
+    },
+    {
+      "body": [
+        {
+          "body": "The NIST AI Risk Management Framework is a voluntary framework organized around four functions. Govern sets policies, roles and accountability. Map establishes the context of a system and identifies its risks. Measure analyzes and tracks those risks with quantitative and qualitative methods. Manage prioritizes and acts on them. The platform supplies the evidence: lineage from data to deployed model, model cards, evaluation results, approval records, access logs and monitoring history. Building these as automatic by-products of the pipeline is far cheaper than assembling them for an audit.",
+          "heading": "NIST AI RMF"
+        },
+        {
+          "body": "LLM applications add an attack surface where untrusted text can steer the model. Treat retrieved documents, tool outputs and user input as data, not instructions. Limit what a model can do through narrowly scoped tool permissions and require human approval for side effects. Run code execution tools in sandboxes with no ambient credentials and restricted network egress. Filter outputs for sensitive data, log prompts and tool calls for audit with redaction, and red-team the system regularly with injection and data exfiltration scenarios, tracking the results as regression tests.",
+          "heading": "LLM-specific controls"
+        }
+      ],
+      "id": "ai-risk-governance-and-llm-security",
+      "title": "AI risk governance and LLM security"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart TB\n  U[Engineer] -->|federated sign-in| G[IdP group]\n  G --> RB[RoleBinding in team namespace]\n  RB --> NS[Namespace workloads]\n  NS --> SA[Service account]\n  SA -->|temporary credentials| R[Scoped cloud role]\n  R --> D[Team data prefix and model store]\n  CI[Hosted build] -->|signed image and provenance| REG[Registry]\n  REG --> ADM[Admission policy verifies signature]\n  ADM --> NS"
+  },
+  "code": [
+    {
+      "code": "apiVersion: rbac.authorization.k8s.io/v1\nkind: Role\nmetadata:\n  namespace: team-fraud\n  name: training-submitter\nrules:\n- apiGroups: [\"kubeflow.org\"]\n  resources: [\"pytorchjobs\"]\n  verbs: [\"create\", \"get\", \"list\", \"watch\", \"delete\"]\n- apiGroups: [\"\"]\n  resources: [\"pods\", \"pods/log\"]\n  verbs: [\"get\", \"list\", \"watch\"]",
+      "lang": "yaml"
+    }
+  ],
+  "technologies": [
+    "Kubernetes RBAC",
+    "AWS IAM",
+    "IAM Roles for Service Accounts",
+    "EKS Pod Identity",
+    "IAM Access Analyzer",
+    "AWS KMS",
+    "AWS Secrets Manager",
+    "SLSA",
+    "Sigstore cosign",
+    "Kyverno",
+    "OPA Gatekeeper",
+    "NIST AI RMF"
+  ],
+  "related": [
+    "aws-and-eks-foundations",
+    "kubernetes-for-ml-workloads",
+    "multi-tenant-platform-design",
+    "model-registry-and-versioning",
+    "github-actions-ci-cd",
+    "gitops-argo-cd-and-terraform",
+    "agents-and-mcp"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Kubernetes: Using RBAC Authorization",
+      "url": "https://kubernetes.io/docs/reference/access-authn-authz/rbac/"
+    },
+    {
+      "kind": "doc",
+      "title": "Security best practices in IAM",
+      "url": "https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html"
+    },
+    {
+      "kind": "spec",
+      "title": "SLSA Specification v1.0",
+      "url": "https://slsa.dev/spec/v1.0/"
+    },
+    {
+      "kind": "guide",
+      "title": "NIST AI Risk Management Framework",
+      "url": "https://www.nist.gov/itl/ai-risk-management-framework"
+    }
+  ],
+  "practice": "practice/security-identity-and-governance",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-12",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    }
+  ]
+}

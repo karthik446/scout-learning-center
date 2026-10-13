@@ -1,0 +1,160 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "rag-vector-databases",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Retrieval-augmented generation with vector databases",
+  "area": "ai-ml",
+  "primary_key": "rag",
+  "secondary_keys": [
+    "vector-databases"
+  ],
+  "keys": [
+    "rag",
+    "vector-databases"
+  ],
+  "summary": "Retrieval-augmented generation supplies a model with relevant passages from an external corpus at request time, so answers are grounded in data the model was never trained on and can cite it. The system has two halves: an offline pipeline that parses, chunks, embeds and indexes documents, and an online path that retrieves, ranks and assembles context for generation. Most quality problems in RAG are retrieval problems, so the engineering effort goes into chunking, search and measurement.",
+  "detail": [],
+  "in_practice": "A team begins with the customer's real documents and a list of real questions, then labels which passages answer each one; that labeled set drives every later decision. Ingestion runs as a repeatable pipeline keyed on content hashes so changed documents are re-chunked and re-embedded while unchanged ones are skipped, and deletions propagate to the index. The embedding model and its version are stored with every vector, since changing the model means re-embedding the corpus. Online, the service applies tenant and access filters, runs hybrid search, reranks, and assembles a cited context block. Recall at k, latency per stage and the rate of declined answers are tracked on dashboards, and index parameters are tuned against the labeled set instead of by intuition.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "The original RAG work described a model with two memories: parametric memory in the weights and non-parametric memory in a dense index of passages, queried by a retriever and consumed by a generator. That framing still guides design choices. Knowledge that changes, is private, or must be attributable belongs in the index, where it can be updated or deleted without retraining. When a corpus is small enough to fit in the window, placing it there directly, with prompt caching, can be simpler and more accurate than retrieval, so check corpus size before building a pipeline.",
+          "heading": "The framing behind the pattern"
+        }
+      ],
+      "id": "rag-architecture",
+      "title": "RAG architecture: parametric and non-parametric memory"
+    },
+    {
+      "body": [
+        {
+          "body": "Splitting a document strips each chunk of its surroundings: a passage stating that revenue grew three percent no longer says which company or quarter. Contextual retrieval addresses this by having a model write a short chunk-specific note that situates the passage within the whole document, then prepending that note to the chunk before it is embedded and before it is added to the keyword index. Anthropic reports a substantial drop in retrieval failures from this step, with further gains when combined with reranking. Prompt caching of the full document keeps the per-chunk generation cost manageable.",
+          "heading": "Restoring context that chunking removes"
+        }
+      ],
+      "id": "chunking-and-contextual-retrieval",
+      "title": "Chunking and contextual retrieval"
+    },
+    {
+      "body": [
+        {
+          "body": "Fused dense and lexical results are a candidate set, not a final ordering. A reranker, usually a cross-encoder that scores the query and each passage together, is more accurate than embedding similarity because it reads both texts jointly, but it is too slow to run over a whole corpus. The standard arrangement is two stages: retrieve a wide set, on the order of a hundred or more candidates, rerank them, and pass only the top few to the generator. This raises precision in the window and reduces tokens spent on marginal passages, at the price of added latency per query.",
+          "heading": "Adding a second ranking stage"
+        }
+      ],
+      "id": "hybrid-search-and-reranking",
+      "title": "Hybrid search and reranking"
+    },
+    {
+      "body": [
+        {
+          "body": "Exact search compares the query vector with every stored vector, which is accurate but linear in corpus size. Approximate indexes trade a little recall for speed. HNSW builds a layered graph and gives a strong speed and recall balance, with slower builds and more memory; its main knobs are graph connectivity, build-time candidate list size and a query-time search width that raises recall when increased. IVFFlat clusters vectors into lists and probes a subset; it builds faster and uses less memory but should be created after data is loaded. The distance metric, cosine, inner product or Euclidean, must match how the embedding model was trained.",
+          "heading": "Approximate nearest neighbor indexes"
+        },
+        {
+          "body": "pgvector adds a vector column type, distance operators and both index types to Postgres, keeping embeddings next to relational data with transactions, joins and existing backups. Dedicated engines such as Qdrant organize data into collections of points, each holding one or more vectors plus a JSON payload, and offer payload indexes for filtered search, quantization to shrink memory, sharding and replication. Filtering is the usual deciding factor: tenant or permission filters applied after an approximate search can return too few results, so the engine must combine filter and vector search during traversal.",
+          "heading": "Postgres extension or dedicated engine"
+        }
+      ],
+      "id": "vector-indexes-and-databases",
+      "title": "Vector indexes and vector databases"
+    },
+    {
+      "body": [
+        {
+          "body": "Evaluate retrieval and generation independently so a failure can be assigned to one of them. For retrieval, build a set of questions with known relevant passages and track recall at k, the share of questions whose needed passage appears in the top k, along with rank-sensitive measures such as mean reciprocal rank. For generation, check faithfulness, meaning every claim is supported by a retrieved passage, and answer relevance. Instruct the model to quote or cite passage ids and to decline when the context does not contain the answer, then verify cited ids exist and support the claim. Enforce document permissions at retrieval time, never by asking the model to withhold text.",
+          "heading": "Measuring the two halves separately"
+        }
+      ],
+      "id": "grounding-citations-and-retrieval-evaluation",
+      "title": "Grounded generation and retrieval evaluation"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  subgraph Offline ingestion\n    A[Source documents] --> B[Parse and clean]\n    B --> C[Chunk and add context note]\n    C --> D[Embed]\n    D --> E[(Vector index)]\n    C --> F[(Keyword index)]\n  end\n  subgraph Online query\n    Q[User question] --> G[Embed query and apply access filters]\n    G --> E\n    Q --> F\n    E --> H[Fuse candidates]\n    F --> H\n    H --> I[Rerank and keep top k]\n    I --> J[Assemble cited context]\n    J --> K[Model generates grounded answer]\n  end"
+  },
+  "code": [
+    {
+      "code": "CREATE EXTENSION IF NOT EXISTS vector;\n\nCREATE TABLE chunks (\n  id bigserial PRIMARY KEY,\n  tenant_id int NOT NULL,\n  doc_id text NOT NULL,\n  body text NOT NULL,\n  embedding vector(1024) NOT NULL\n);\n\n-- HNSW index for cosine distance\nCREATE INDEX ON chunks USING hnsw (embedding vector_cosine_ops);\n\n-- raise recall at query time at the cost of speed\nSET hnsw.ef_search = 100;\n\nSELECT id, doc_id, body, embedding <=> $1 AS distance\nFROM chunks\nWHERE tenant_id = $2\nORDER BY embedding <=> $1\nLIMIT 20;",
+      "lang": "sql"
+    }
+  ],
+  "technologies": [
+    "pgvector",
+    "Qdrant",
+    "Pinecone",
+    "Weaviate",
+    "Elasticsearch",
+    "OpenSearch",
+    "BM25",
+    "Cohere Rerank",
+    "Voyage AI embeddings",
+    "OpenAI embeddings",
+    "LlamaIndex",
+    "LangChain"
+  ],
+  "related": [
+    "llm-fundamentals",
+    "prompt-and-context-engineering",
+    "structured-outputs-tool-calling",
+    "sql-postgres-data-systems",
+    "messy-data-entity-resolution",
+    "llm-agent-evaluation",
+    "agent-architectures",
+    "scaling-performance-cost"
+  ],
+  "sources": [
+    {
+      "kind": "paper",
+      "title": "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "url": "https://arxiv.org/abs/2005.11401"
+    },
+    {
+      "kind": "article",
+      "title": "Introducing Contextual Retrieval",
+      "url": "https://www.anthropic.com/engineering/contextual-retrieval"
+    },
+    {
+      "kind": "repo",
+      "title": "pgvector: vector similarity search for Postgres",
+      "url": "https://github.com/pgvector/pgvector"
+    },
+    {
+      "kind": "guide",
+      "title": "Pinecone: Retrieval-Augmented Generation",
+      "url": "https://www.pinecone.io/learn/retrieval-augmented-generation/"
+    },
+    {
+      "kind": "doc",
+      "title": "Qdrant Documentation: Concepts",
+      "url": "https://qdrant.tech/documentation/concepts/"
+    },
+    {
+      "kind": "doc",
+      "title": "Qdrant Documentation: Search",
+      "url": "https://qdrant.tech/documentation/concepts/search/"
+    },
+    {
+      "kind": "doc",
+      "title": "Qdrant Documentation: Indexing",
+      "url": "https://qdrant.tech/documentation/manage-data/indexing/"
+    }
+  ],
+  "practice": "practice/rag-vector-databases",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    }
+  ]
+}

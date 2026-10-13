@@ -1,0 +1,130 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "model-evaluation-gates",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Model evaluation: regression suites and release gates",
+  "area": "ai-ml",
+  "primary_key": "model-evaluation",
+  "secondary_keys": [],
+  "keys": [
+    "model-evaluation"
+  ],
+  "summary": "An evaluation gate turns the question of whether a model is good enough into an automated, repeatable check that blocks promotion when it fails. It combines the right metrics for the task, a fixed regression suite compared against the current production model, behavioral tests for specific capabilities, and checks on the surrounding system such as latency and data assumptions. The output is a recorded verdict attached to the model version.",
+  "detail": [],
+  "in_practice": "Teams run the gate as a pipeline step triggered by registration of a new version. The job loads the candidate and the current champion from the registry, evaluates both on pinned evaluation datasets, computes slice metrics and behavioral test failure rates, runs a short load test of the packaged model, and compares the results against thresholds kept in version control next to the pipeline. Results are logged to the tracking system and summarized on the model version; a failure blocks promotion and posts the diff to the owning team. Threshold changes go through code review, and a small set of overrides with a named approver exists for cases where a tradeoff is intentional.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "The metric must reflect how predictions are used. For classification, accuracy hides class imbalance, so teams look at precision, recall, F1, ROC AUC or average precision, and at calibration measures such as log loss or Brier score when the score itself is consumed as a probability. Threshold-dependent metrics need the operating threshold fixed as part of the release. For regression, mean absolute error, root mean squared error and R2 weigh large errors differently. Ranking and retrieval use metrics such as NDCG. scikit-learn exposes these as metric functions and as named scorers usable in cross-validation, which keeps offline evaluation consistent between experimentation and the gate.",
+          "heading": "Metric families"
+        },
+        {
+          "body": "A gate usually has one primary metric that must improve or hold, plus guardrails that must not regress: per-slice quality, fairness measures, inference latency, model size and memory footprint.",
+          "heading": "Guardrail metrics"
+        }
+      ],
+      "id": "choosing-metrics",
+      "title": "Choosing metrics that match the decision"
+    },
+    {
+      "body": [
+        {
+          "body": "A regression suite evaluates every candidate on the same versioned datasets and compares it with the current production model evaluated on those same datasets in the same job, never against a number copied from an old report. The suite reports aggregate metrics and metrics per slice, such as region, device, customer tier or rare class, because an overall gain often hides a loss on a segment that matters. Thresholds are written as absolute floors and as maximum allowed regressions relative to the baseline. Since the test set is a sample, the comparison should include confidence intervals or a bootstrap so the gate does not flip on noise. The evaluation set must be kept out of training and refreshed on a schedule, otherwise repeated gating slowly overfits to it.",
+          "heading": "Comparing candidate against champion"
+        }
+      ],
+      "id": "regression-suites",
+      "title": "Regression suites: frozen data, slices and baselines"
+    },
+    {
+      "body": [
+        {
+          "body": "Held-out accuracy overestimates real quality because the test set shares the biases of the training set. Behavioral testing treats the model as a black box and tests capabilities with three test types. A minimum functionality test is a small targeted set of simple cases for one capability, similar to a unit test. An invariance test applies perturbations that should not change the prediction, such as swapping a name or adding a typo, and fails if the output changes. A directional expectation test applies a change that should move the prediction in a known direction. Tests are generated at scale from templates, and failure rates per capability become additional gate criteria alongside the aggregate metrics.",
+          "heading": "The CheckList approach"
+        }
+      ],
+      "id": "behavioral-testing",
+      "title": "Behavioral testing beyond held-out accuracy"
+    },
+    {
+      "body": [
+        {
+          "body": "The ML Test Score rubric groups production readiness checks into four areas: tests for features and data, tests for model development, tests for ML infrastructure, and monitoring tests. Examples include verifying that feature distributions match expectations, that the model beats a simple baseline, that training is reproducible, that the full pipeline has an integration test, that a model can be rolled back, and that serving and training compute features the same way. For a platform engineer the lesson is that a release gate should include non-model checks: schema and signature compatibility with the serving contract, a load test against the latency budget, and a smoke test of the packaged artifact in the real serving image.",
+          "heading": "The ML Test Score view"
+        },
+        {
+          "body": "The gate writes metrics, thresholds, dataset versions and pass or fail onto the model version in the registry, so promotion tooling can refuse anything without a passing record.",
+          "heading": "Recording the verdict"
+        }
+      ],
+      "id": "production-readiness-rubric",
+      "title": "Gating the whole system, not only the model"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart TD\n  A[New model version registered] --> B[Load candidate and champion]\n  B --> C[Evaluate on pinned datasets]\n  C --> D[Aggregate and slice metrics]\n  C --> E[Behavioral tests]\n  B --> F[Load and signature checks]\n  D --> G{All thresholds met?}\n  E --> G\n  F --> G\n  G -- yes --> H[Mark version as passed]\n  G -- no --> I[Block promotion and report diff]"
+  },
+  "code": [
+    {
+      "code": "import sys\nfrom sklearn.metrics import average_precision_score, recall_score\n\nMAX_REGRESSION = 0.005   # allowed drop vs champion\nMIN_SLICE_RECALL = 0.80\n\ndef gate(y, cand, champ, slices, threshold=0.5):\n    failures = []\n    ap_c, ap_b = average_precision_score(y, cand), average_precision_score(y, champ)\n    if ap_c < ap_b - MAX_REGRESSION:\n        failures.append(f\"AP {ap_c:.4f} below champion {ap_b:.4f}\")\n    for name, mask in slices.items():\n        r = recall_score(y[mask], cand[mask] >= threshold)\n        if r < MIN_SLICE_RECALL:\n            failures.append(f\"slice {name} recall {r:.3f}\")\n    return failures\n\nfailures = gate(y_test, cand_scores, champ_scores, slice_masks)\nif failures:\n    sys.exit(\"GATE FAILED: \" + \"; \".join(failures))",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "scikit-learn metrics",
+    "MLflow Model Evaluation",
+    "CheckList",
+    "pytest",
+    "Great Expectations",
+    "Evidently",
+    "Locust",
+    "GitHub Actions"
+  ],
+  "related": [
+    "model-registry-and-versioning",
+    "mlflow-experiment-tracking",
+    "github-actions-ci-cd",
+    "staged-rollouts",
+    "llmops-evals-and-ai-assisted-dev",
+    "model-monitoring-and-drift"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "scikit-learn: Metrics and scoring",
+      "url": "https://scikit-learn.org/stable/modules/model_evaluation.html"
+    },
+    {
+      "kind": "paper",
+      "title": "The ML Test Score: A Rubric for ML Production Readiness",
+      "url": "https://research.google/pubs/the-ml-test-score-a-rubric-for-ml-production-readiness-and-technical-debt-reduction/"
+    },
+    {
+      "kind": "paper",
+      "title": "Beyond Accuracy: Behavioral Testing of NLP Models with CheckList",
+      "url": "https://arxiv.org/abs/2005.04118"
+    },
+    {
+      "kind": "doc",
+      "title": "MLflow Model Evaluation",
+      "url": "https://mlflow.org/docs/latest/ml/evaluation/"
+    }
+  ],
+  "practice": "practice/model-evaluation-gates",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    }
+  ]
+}

@@ -1,0 +1,137 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "observability-opentelemetry-prometheus",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Observability: logs, metrics and traces with OpenTelemetry and Prometheus",
+  "area": "infra",
+  "primary_key": "observability",
+  "secondary_keys": [
+    "logs-metrics-tracing",
+    "telemetry"
+  ],
+  "keys": [
+    "observability",
+    "logs-metrics-tracing",
+    "telemetry"
+  ],
+  "summary": "Observability is the ability to explain a system's internal state from the telemetry it emits, without shipping new code to ask a new question. For an ML platform this means metrics, logs and traces that are correlated with each other and extended with model-specific dimensions such as model version, queue depth and GPU use. OpenTelemetry standardizes how telemetry is produced and transported, and Prometheus is the common store and query engine for metrics.",
+  "detail": [],
+  "in_practice": "A platform team ships observability as a default, not as a per-team project: a base image or library that configures the OpenTelemetry SDK, a Collector deployed as a DaemonSet plus gateway, and Prometheus scraping every pod that carries the right annotation or ServiceMonitor. Model servers expose a metrics endpoint out of the box, and a GPU exporter runs on every GPU node. Dashboards are generated from templates keyed on model name and version, and recording rules precompute the expensive latency and error ratios that alerts and SLO reports reuse. Cardinality is reviewed like any other cost, because one bad label can take down the metrics store.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "OpenTelemetry defines signals: traces, metrics, logs and baggage. The value comes from correlating them. A resource describes the entity producing telemetry (service name, version, Kubernetes pod, cloud region) and is attached to every signal, so a latency spike in a metric can be narrowed to a pod, then to the traces from that pod, then to the log records that carry the same trace and span ids. For ML services, add the model name and model version as resource or span attributes so every signal can be sliced by the artifact that was actually serving.",
+          "heading": "Beyond three separate tools"
+        }
+      ],
+      "id": "signals-and-correlation",
+      "title": "Signals and how they correlate"
+    },
+    {
+      "body": [
+        {
+          "body": "A trace is a tree of spans sharing a trace id. Context propagation carries that id across process boundaries, normally in request headers using the W3C Trace Context format, and through message metadata for queues. OpenTelemetry SDKs do this through propagators, and auto-instrumentation libraries cover common HTTP, gRPC and database clients. In an inference path, useful spans are: gateway, feature lookup, preprocessing, queue wait, model execution and postprocessing. Queue wait as its own span is what separates a slow model from an overloaded one.",
+          "heading": "Standard propagation"
+        },
+        {
+          "body": "Applications export over OTLP to an OpenTelemetry Collector instead of directly to a vendor. The Collector runs receivers, processors and exporters: batching, attribute enrichment from Kubernetes metadata, redaction, and sampling. Tail-based sampling keeps all error and slow traces while dropping most healthy ones, which matters at inference volumes. Running an agent Collector per node plus a gateway Collector deployment is the usual topology, and it lets the backend change without touching application code.",
+          "heading": "The Collector as the pipeline"
+        }
+      ],
+      "id": "tracing-and-context-propagation",
+      "title": "Traces, context propagation and the Collector"
+    },
+    {
+      "body": [
+        {
+          "body": "Prometheus stores time series identified by a metric name and a set of key-value labels. It collects them by pulling over HTTP from targets it finds through service discovery or static configuration, stores them locally without depending on distributed storage, and exposes them through PromQL. Short-lived jobs that cannot be scraped push through an intermediary gateway. Alerting is evaluated in Prometheus and routed by Alertmanager. Each server is autonomous, which is why it remains usable during the outages you need it for.",
+          "heading": "How Prometheus works"
+        },
+        {
+          "body": "The instrumentation guidance splits services by type. Online serving systems expose request count, error count and latency. Offline pipelines expose items in and out and time spent per stage. Batch jobs expose the timestamp of the last success, so the alert is on staleness. Use counters for things that only increase and compute rates at query time, gauges for values that go up and down, and histograms for latency so quantiles can be aggregated across replicas. Keep label cardinality bounded: never put user ids, request ids or raw prompts in labels.",
+          "heading": "What to instrument"
+        }
+      ],
+      "id": "prometheus-model-and-instrumentation",
+      "title": "Prometheus data model and instrumentation practice"
+    },
+    {
+      "body": [
+        {
+          "body": "A model server needs the standard request, error and duration metrics plus dimensions a web service lacks. Track queue depth and queue wait time, batch size distribution, and in-flight requests per replica. For GPUs, export utilization, memory used and temperature per device, mapped to pod and namespace. For LLM serving, track time to first token, tokens generated per second, and input and output token counts, because request latency alone depends on output length. Label by model name and version, not by request content, and record cost drivers such as GPU seconds per tenant so cost can be attributed.",
+          "heading": "What generic service dashboards miss"
+        }
+      ],
+      "id": "ml-serving-metrics",
+      "title": "Metrics specific to model serving"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  A[Model server with OTel SDK] -->|OTLP| B[Collector agent per node]\n  B --> C[Collector gateway]\n  C -->|traces| D[Trace backend]\n  C -->|logs| E[Log backend]\n  A -->|metrics endpoint| F[Prometheus]\n  G[GPU exporter] --> F\n  F --> H[Alertmanager]\n  F --> I[Dashboards]\n  D --> I\n  E --> I"
+  },
+  "code": [
+    {
+      "code": "from prometheus_client import Counter, Histogram, start_http_server\n\nREQS = Counter(\"inference_requests_total\", \"Requests\",\n               [\"model\", \"version\", \"outcome\"])\nLAT = Histogram(\"inference_duration_seconds\", \"Latency\",\n                [\"model\", \"version\"],\n                buckets=[.01, .025, .05, .1, .25, .5, 1, 2.5])\n\ndef predict(model, version, x, run):\n    with LAT.labels(model, version).time():\n        try:\n            y = run(x)\n            REQS.labels(model, version, \"ok\").inc()\n            return y\n        except Exception:\n            REQS.labels(model, version, \"error\").inc()\n            raise\n\nstart_http_server(9100)",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "OpenTelemetry",
+    "OpenTelemetry Collector",
+    "OTLP",
+    "Prometheus",
+    "PromQL",
+    "Alertmanager",
+    "Grafana",
+    "NVIDIA DCGM Exporter",
+    "Jaeger",
+    "Grafana Tempo",
+    "Grafana Loki"
+  ],
+  "related": [
+    "model-monitoring-and-drift",
+    "slos-on-call-and-postmortems",
+    "model-serving-architecture",
+    "nvidia-gpus-on-kubernetes",
+    "autoscaling-and-cost-efficiency"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "OpenTelemetry Signals",
+      "url": "https://opentelemetry.io/docs/concepts/signals/"
+    },
+    {
+      "kind": "doc",
+      "title": "OpenTelemetry Observability primer",
+      "url": "https://opentelemetry.io/docs/concepts/observability-primer/"
+    },
+    {
+      "kind": "doc",
+      "title": "Prometheus Overview",
+      "url": "https://prometheus.io/docs/introduction/overview/"
+    },
+    {
+      "kind": "doc",
+      "title": "Prometheus Instrumentation practices",
+      "url": "https://prometheus.io/docs/practices/instrumentation/"
+    }
+  ],
+  "practice": "practice/observability-opentelemetry-prometheus",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-12",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    }
+  ]
+}

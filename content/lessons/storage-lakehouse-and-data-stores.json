@@ -1,0 +1,186 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "storage-lakehouse-and-data-stores",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Storage for ML: lakehouse, warehouse and operational data stores",
+  "area": "data",
+  "primary_key": "data-lakehouse",
+  "secondary_keys": [
+    "data-warehouse",
+    "storage",
+    "snowflake",
+    "bigquery",
+    "sql",
+    "postgres",
+    "dynamodb",
+    "data-stores",
+    "data-modeling",
+    "data-infrastructure"
+  ],
+  "keys": [
+    "data-lakehouse",
+    "data-warehouse",
+    "storage",
+    "snowflake",
+    "bigquery",
+    "sql",
+    "postgres",
+    "dynamodb",
+    "data-stores",
+    "data-modeling",
+    "data-infrastructure"
+  ],
+  "summary": "ML systems use several stores, each chosen for one access pattern: object storage and lakehouse tables for bulk training data, a warehouse for analytical SQL, a relational database for metadata and transactional state, and a key-value store for low-latency lookups at inference. The core skills are matching the store to the read pattern, laying data out so queries scan little, and managing lifecycle and spend as volume grows.",
+  "detail": [],
+  "in_practice": "A typical platform lands raw data in object storage, refines it with batch jobs into lakehouse or warehouse tables partitioned by date, and exposes curated tables to data scientists through SQL. Service state and ML metadata live in a managed PostgreSQL instance with time-partitioned tables for high-volume logs, and features needed at request time are pushed into DynamoDB or Redis. Platform engineers review table layouts when a table is created, enforce partition filters and expirations by default, publish cost per team, and run scheduled compaction and snapshot expiry. Store selection is written down per access pattern, because most later pain comes from serving point lookups out of an analytical store or analytics out of an operational one.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "A data lake is columnar files, usually Parquet, in object storage, organized by directory partitions. It is cheap and scales without limit, but plain directories give no atomic commits, no safe concurrent writers and slow listing. Lakehouse table formats such as Delta Lake, Apache Iceberg and Apache Hudi add a metadata layer that records which files make up each table version. That brings ACID commits, schema evolution, time travel to an earlier snapshot, and file-level statistics that let engines skip data. For ML, snapshot identifiers make a training set reproducible: a run records the table version it read.",
+          "heading": "Files plus a transaction log"
+        },
+        {
+          "body": "Performance depends on file layout. Partition by a low-cardinality column that most queries filter on, typically date; over-partitioning produces millions of small files and slow planning. Compaction jobs merge small files toward a target size of some hundreds of megabytes, and clustering or sorting within files improves skipping on secondary filter columns. Old snapshots and unreferenced files must be expired on a schedule or storage grows forever. A catalog such as a Hive-compatible metastore, AWS Glue or Unity Catalog maps table names to locations and carries access control.",
+          "heading": "Layout and maintenance"
+        }
+      ],
+      "id": "lakehouse-on-object-storage",
+      "title": "Data lake and lakehouse table formats"
+    },
+    {
+      "body": [
+        {
+          "body": "In BigQuery a partitioned table is divided into segments by a time-unit column, ingestion time or an integer range; a query that filters on the partitioning column scans only matching partitions, and on-demand cost follows bytes scanned. Clustering sorts data within partitions by chosen columns so block-level pruning applies to further filters. Snowflake stores every table automatically in micro-partitions, contiguous units of compressed columnar storage with min and max metadata per column; pruning works when the data is well clustered on the filter columns, and a clustering key can be defined for very large tables whose natural load order does not match query filters.",
+          "heading": "How pruning works in BigQuery and Snowflake"
+        },
+        {
+          "body": "The practical levers are the same in both: always filter on the partition or clustering column, select only needed columns, and avoid wrapping the filter column in a function that defeats pruning. BigQuery can require a partition filter on a table and set partition expiration; dry runs report bytes that would be scanned before paying. In Snowflake, clustering depth indicates how well a table is clustered, and reclustering consumes credits, so keys are reserved for large tables with stable query patterns. Teams add per-team cost attribution through labels or tags and alert on unusually expensive queries.",
+          "heading": "Keeping cost under control"
+        }
+      ],
+      "id": "warehouse-partitioning-and-clustering",
+      "title": "Warehouse partitioning, clustering and spend"
+    },
+    {
+      "body": [
+        {
+          "body": "Most ML platform control planes keep state in PostgreSQL: experiment runs, model registry entries, job status, labels. B-tree is the default index and serves equality and range queries; GIN indexes serve jsonb containment and full-text search; BRIN indexes are tiny and suit very large append-only tables correlated with time. Multicolumn and partial indexes should mirror real query predicates, and every index adds write cost. Declarative partitioning by range, list or hash splits a large table so the planner prunes partitions and old data is removed by detaching or dropping a partition instead of a slow bulk delete. Prefer jsonb over json for stored semi-structured metadata because it is indexable.",
+          "heading": "Indexes, partitioning and JSONB"
+        },
+        {
+          "body": "PostgreSQL uses multiversion concurrency control: each statement sees a snapshot, so readers do not block writers and writers do not block readers. The price is that updates and deletes leave dead row versions that vacuum must reclaim. Long-running transactions, such as an analytics query or an idle open session, hold back cleanup and cause table and index bloat. For platform services this means short transactions, connection pooling, monitoring of autovacuum and oldest transaction age, and sending heavy analytical reads to a replica or to the warehouse.",
+          "heading": "MVCC consequences"
+        }
+      ],
+      "id": "postgres-metadata-and-operational-store",
+      "title": "PostgreSQL as the operational and metadata store"
+    },
+    {
+      "body": [
+        {
+          "body": "Inference-time reads need single-digit millisecond lookups by entity key at high request rates, which is the job of a key-value store such as DynamoDB or Redis. DynamoDB design starts from the list of access patterns, not from a normalized schema: choose a partition key with high cardinality and even traffic so load spreads across partitions, add a sort key to group related items under one partition key, and use secondary indexes sparingly for the few alternate lookups. A hot partition key throttles regardless of total table capacity.",
+          "heading": "Design from access patterns"
+        },
+        {
+          "body": "Keep items small and store large payloads in object storage with a pointer. Use time-to-live attributes to expire stale feature rows, and batch reads to fetch several entities in one round trip. Choose on-demand capacity for spiky or unknown traffic and provisioned capacity with autoscaling for steady traffic. Bulk loads from batch pipelines should be rate-limited or use import features so they do not starve online reads. Redis gives lower latency and richer data types but is bounded by memory, so it suits small, hot feature sets and caches.",
+          "heading": "Operational choices"
+        }
+      ],
+      "id": "key-value-stores-for-online-lookups",
+      "title": "Key-value stores for online lookups"
+    },
+    {
+      "body": [
+        {
+          "body": "Owning storage means more than buckets and tables. Each dataset needs an owner, a schema, a freshness expectation, a sensitivity classification and lineage to the job that produced it, held in a catalog. Training sets are referenced by an immutable identifier, such as a table snapshot or a content hash, recorded with the model so results can be reproduced and audited. Lifecycle rules move cold objects to cheaper storage classes and expire raw data, intermediate outputs and old snapshots after a retention period. Deletion requests must propagate to derived tables, so lineage is a compliance tool as well as a debugging tool.",
+          "heading": "What the platform must track"
+        }
+      ],
+      "id": "lifecycle-metadata-and-governance",
+      "title": "Lifecycle, metadata and dataset versioning"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart TB\n  SRC[Applications and event streams] --> RAW[Object storage raw zone]\n  RAW --> LH[Lakehouse tables partitioned by date]\n  LH --> WH[Warehouse for analytical SQL]\n  LH --> TR[Training jobs read snapshots]\n  LH --> KV[Key-value online store]\n  KV --> INF[Inference services]\n  PG[PostgreSQL metadata store] --> TR\n  PG --> REG[Registry and job state]\n  CAT[Catalog and lineage] --- LH\n  CAT --- WH"
+  },
+  "code": [
+    {
+      "code": "-- PostgreSQL: time-partitioned prediction log with indexed jsonb\nCREATE TABLE prediction_log (\n  id         bigint GENERATED ALWAYS AS IDENTITY,\n  model_name text        NOT NULL,\n  created_at timestamptz NOT NULL,\n  payload    jsonb       NOT NULL\n) PARTITION BY RANGE (created_at);\n\nCREATE TABLE prediction_log_2026_01 PARTITION OF prediction_log\n  FOR VALUES FROM ('2026-01-01') TO ('2026-02-01');\n\nCREATE INDEX ON prediction_log (model_name, created_at);\nCREATE INDEX ON prediction_log USING gin (payload);\n\n-- pruned to one partition by the created_at filter\nSELECT count(*) FROM prediction_log\nWHERE model_name = 'ranker'\n  AND created_at >= '2026-01-10' AND created_at < '2026-01-11';",
+      "lang": "sql"
+    }
+  ],
+  "technologies": [
+    "Amazon S3",
+    "Apache Parquet",
+    "Delta Lake",
+    "Apache Iceberg",
+    "BigQuery",
+    "Snowflake",
+    "PostgreSQL",
+    "Amazon DynamoDB",
+    "Redis",
+    "AWS Glue Data Catalog"
+  ],
+  "related": [
+    "spark-data-pipelines",
+    "feature-stores",
+    "aws-and-eks-foundations",
+    "rag-infrastructure",
+    "autoscaling-and-cost-efficiency",
+    "security-identity-and-governance"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Introduction to partitioned tables (BigQuery)",
+      "url": "https://docs.cloud.google.com/bigquery/docs/partitioned-tables"
+    },
+    {
+      "kind": "doc",
+      "title": "Micro-partitions and Data Clustering (Snowflake)",
+      "url": "https://docs.snowflake.com/en/user-guide/tables-clustering-micropartitions"
+    },
+    {
+      "kind": "doc",
+      "title": "PostgreSQL: Indexes",
+      "url": "https://www.postgresql.org/docs/current/indexes.html"
+    },
+    {
+      "kind": "doc",
+      "title": "Best practices for designing and architecting with DynamoDB",
+      "url": "https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/best-practices.html"
+    },
+    {
+      "kind": "doc",
+      "title": "PostgreSQL Documentation: Table Partitioning",
+      "url": "https://www.postgresql.org/docs/current/ddl-partitioning.html"
+    },
+    {
+      "kind": "doc",
+      "title": "PostgreSQL Documentation: Concurrency Control - Introduction (MVCC)",
+      "url": "https://www.postgresql.org/docs/current/mvcc-intro.html"
+    },
+    {
+      "kind": "doc",
+      "title": "PostgreSQL Documentation: JSON Types",
+      "url": "https://www.postgresql.org/docs/current/datatype-json.html"
+    }
+  ],
+  "practice": "practice/storage-lakehouse-and-data-stores",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    }
+  ]
+}

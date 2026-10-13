@@ -1,0 +1,145 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "agent-architectures",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Agent architectures and agentic workflows with agent SDKs",
+  "area": "ai-ml",
+  "primary_key": "agentic-ai",
+  "secondary_keys": [
+    "sdk"
+  ],
+  "keys": [
+    "agentic-ai",
+    "sdk"
+  ],
+  "summary": "An agentic system sits somewhere between a fixed workflow, where code decides the order of model calls, and an autonomous agent, where the model decides its next step in a loop with tools. The engineering skill is choosing the least autonomy that solves the problem, then expressing it with a small set of primitives: instructions, tools, handoffs and a run loop. Agent SDKs package those primitives so the team spends time on tool design and task definition instead of plumbing.",
+  "detail": [],
+  "in_practice": "A forward deployed team usually begins with the customer's process written as steps, marks which steps are fixed and which need judgement, and builds the fixed parts as a coded workflow with model calls at the judgement points. A full agent loop is introduced only for the open-ended part, with a small tool set, a turn limit and tracing on from day one. The team reads traces daily in the first weeks, fixes tool descriptions before touching prompts, and keeps an eval set of real customer cases so each change to the architecture is compared against the simpler baseline.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "A workflow orchestrates model calls through predefined code paths; an agent lets the model direct its own process and tool usage. Workflows give predictability and are easier to test, agents give flexibility when the number of steps cannot be known in advance. The standard advice is to start with a single well-prompted model call plus retrieval, and add structure only when measurement shows it helps, because every layer of autonomy trades latency and cost for task performance.",
+          "heading": "Two ends of one spectrum"
+        },
+        {
+          "body": "Five workflow patterns cover most deployments. Prompt chaining splits a task into sequential steps with programmatic checks between them. Routing classifies an input and sends it to a specialized prompt or model. Parallelization runs independent subtasks at once, or runs the same task several times and votes. Orchestrator-workers lets one model break a task down dynamically and delegate pieces. Evaluator-optimizer loops a generator against a critic until criteria are met. Naming the pattern in a design doc makes the control flow reviewable.",
+          "heading": "The named patterns"
+        }
+      ],
+      "id": "workflows-vs-agents",
+      "title": "Workflows versus agents and the common patterns"
+    },
+    {
+      "body": [
+        {
+          "body": "The ReAct formulation interleaves reasoning with actions: the model writes a thought about what it needs, emits an action such as a tool call, receives an observation from the environment, and repeats until it can answer. Reasoning helps the model plan and handle exceptions, while actions ground it in external information instead of its own recall. Modern tool-calling APIs implement the same cycle natively: the model returns a structured tool request, the host executes it, and the result is appended to the conversation for the next turn.",
+          "heading": "How the loop works"
+        },
+        {
+          "body": "A loop needs explicit stopping conditions: a final answer without tool calls, a maximum number of turns, a token or cost budget, or a human checkpoint. Typical failures are repeated identical tool calls, drifting from the goal as context fills with observations, and compounding errors where one wrong observation steers every later step. Mitigations are concise tool results, clear error messages returned to the model as observations, turn limits, and environment feedback such as test results that give the loop ground truth at each step.",
+          "heading": "Stopping and failure modes"
+        }
+      ],
+      "id": "react-agent-loop",
+      "title": "The reason and act loop"
+    },
+    {
+      "body": [
+        {
+          "body": "The OpenAI Agents SDK is a representative example. An Agent is a model configured with a name, instructions, tools and optionally an output type that forces structured final output. A Runner executes the loop: call the model, run requested tools, feed back results, stop on final output or a turn limit. Tools can be plain Python functions whose signature and docstring become the schema, hosted tools, or other agents exposed as tools. Guardrails validate input and output alongside the run, sessions hold conversation history, and built-in tracing records each step.",
+          "heading": "What an SDK gives you"
+        },
+        {
+          "body": "A handoff transfers control of the conversation to another agent; it is presented to the model as a tool, and the receiving agent sees the history and takes over. Agents as tools keep the calling agent in charge: the sub-agent runs, returns a result, and the caller continues. Use handoffs for triage where a specialist should own the rest of the interaction, and agents as tools when a manager must combine several specialist outputs into one answer.",
+          "heading": "Handoffs versus agents as tools"
+        }
+      ],
+      "id": "agent-sdk-primitives",
+      "title": "Agent SDK primitives: agents, tools, handoffs, runner"
+    },
+    {
+      "body": [
+        {
+          "body": "The model only knows a tool through its name, description and parameter schema, so those deserve the same care as the system prompt. Good definitions say when to use the tool, give example inputs, state edge cases, and draw boundaries against similar tools. Choose formats the model writes easily: avoid formats that need exact counts or heavy escaping, prefer absolute identifiers over relative ones, and shape arguments so mistakes are hard to make. Then test by running many example inputs, reading where the model misuses a tool, and rewriting the definition.",
+          "heading": "Tools are prompts"
+        }
+      ],
+      "id": "tool-interface-design",
+      "title": "Designing the agent-computer interface"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart TD\n  U[User request] --> A[Agent: instructions plus tools]\n  A --> M[Model call]\n  M --> D{Tool call requested?}\n  D -- yes --> T[Execute tool]\n  T --> O[Observation appended to context]\n  O --> M\n  D -- handoff --> H[Specialist agent takes over]\n  H --> M\n  D -- no --> F[Final output]\n  M --> L{Turn or budget limit hit?}\n  L -- yes --> S[Stop and escalate to human]"
+  },
+  "code": [
+    {
+      "code": "from agents import Agent, Runner, function_tool\n\n@function_tool\ndef lookup_order(order_id: str) -> str:\n    \"\"\"Return the shipping status for one order id.\"\"\"\n    return \"shipped\"\n\nbilling = Agent(name=\"Billing\", instructions=\"Handle refund requests.\")\n\ntriage = Agent(\n    name=\"Triage\",\n    instructions=\"Answer order questions. Hand off refunds to Billing.\",\n    tools=[lookup_order],\n    handoffs=[billing],\n)\n\nresult = Runner.run_sync(triage, \"Where is order 42?\", max_turns=6)\nprint(result.final_output)",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "OpenAI Agents SDK",
+    "Claude Agent SDK",
+    "Pydantic AI",
+    "LangGraph",
+    "Anthropic Messages API tool use",
+    "OpenAI Responses API"
+  ],
+  "related": [
+    "structured-outputs-tool-calling",
+    "prompt-and-context-engineering",
+    "mcp-servers",
+    "agent-orchestration-durable-execution",
+    "llm-agent-evaluation",
+    "observability-agent-traces"
+  ],
+  "sources": [
+    {
+      "kind": "guide",
+      "title": "Building effective agents",
+      "url": "https://www.anthropic.com/engineering/building-effective-agents"
+    },
+    {
+      "kind": "paper",
+      "title": "ReAct: Synergizing Reasoning and Acting in Language Models",
+      "url": "https://arxiv.org/abs/2210.03629"
+    },
+    {
+      "kind": "doc",
+      "title": "OpenAI Agents SDK",
+      "url": "https://openai.github.io/openai-agents-python/"
+    },
+    {
+      "kind": "doc",
+      "title": "OpenAI Agents SDK: Agents",
+      "url": "https://openai.github.io/openai-agents-python/agents/"
+    },
+    {
+      "kind": "doc",
+      "title": "OpenAI Agents SDK: Tools",
+      "url": "https://openai.github.io/openai-agents-python/tools/"
+    },
+    {
+      "kind": "doc",
+      "title": "OpenAI Agents SDK: Handoffs",
+      "url": "https://openai.github.io/openai-agents-python/handoffs/"
+    }
+  ],
+  "practice": null,
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-12",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    }
+  ]
+}

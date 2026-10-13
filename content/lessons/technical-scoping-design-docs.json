@@ -1,0 +1,144 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "technical-scoping-design-docs",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Technical scoping, design docs and solution architecture for customer engagements",
+  "area": "delivery",
+  "primary_key": "technical-scoping",
+  "secondary_keys": [
+    "system-design",
+    "solutions-architecture"
+  ],
+  "keys": [
+    "technical-scoping",
+    "system-design",
+    "solutions-architecture"
+  ],
+  "summary": "Scoping turns a customer's stated need into a bounded technical commitment, and the design document is where the trade-offs behind that commitment are written down and reviewed. This lesson covers the structure of a useful design doc, how to record individual decisions, how to draw architecture at the right level for each audience, and how to check a design against standard quality pillars.",
+  "detail": [],
+  "in_practice": "After discovery, the FDE writes a one-page scope and a short design doc in a shared document tool, with a C4 context and container diagram embedded. The customer's architect and security lead comment directly on the doc, and a review meeting resolves the open threads. Decisions that came out of the review are recorded as numbered ADR files in the engagement repository. Before build starts, the team walks the design through the quality pillars and records gaps as risks. The doc is updated when implementation diverges and is given to the customer's operating team at handover together with the ADR log.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "Scoping starts by restating the customer's problem in measurable terms, then listing constraints: data location, identity provider, network boundaries, compliance regime, latency budget, and who will operate the system. Each requirement is classified as must, should or out. The output is a one-page scope with goals, explicit non-goals, assumptions, dependencies on the customer, and the main risks. An FDE is expected to make most trade-off calls alone, so the discipline is to write each call down with its reasoning, so that it can be challenged later without relitigating from memory.",
+          "heading": "From request to commitment"
+        }
+      ],
+      "id": "scoping-and-tradeoff-calls",
+      "title": "Scoping an engagement and making trade-off calls"
+    },
+    {
+      "body": [
+        {
+          "body": "The format described for Google design docs is informal but consistent. Context and scope gives the reader the background facts briefly. Goals and non-goals lists what the system will do and what it deliberately will not. The design section presents an overview first, usually with a system-context diagram, then APIs, data storage and the degree of constraint the solution operates under. Alternatives considered explains why other reasonable designs were rejected. Cross-cutting concerns covers security, privacy and observability. The emphasis is on trade-offs, not on an implementation manual.",
+          "heading": "Sections that matter"
+        },
+        {
+          "body": "A design doc is worth writing when the solution is ambiguous, when senior review can catch an expensive mistake, or when several teams must agree. If the answer is obvious, skip it and prototype. For a customer engagement, a short doc of a few pages is usually enough, and it should be readable by the customer's architects. The lifecycle is draft and rapid iteration, review, implementation with updates as reality diverges, and a final pass so the doc remains an accurate entry point for whoever operates the system.",
+          "heading": "When and how long"
+        }
+      ],
+      "id": "design-doc-structure",
+      "title": "The design document"
+    },
+    {
+      "body": [
+        {
+          "body": "An architecture decision record (ADR) captures a single significant decision in a short text file kept in the repository. The widely used template by Michael Nygard has a title, a status such as proposed, accepted or superseded, the context that forced the decision, the decision itself, and its consequences, including the negative ones. Records are numbered and never rewritten: a changed decision gets a new record that supersedes the old one. In customer work, ADRs are valuable at handover, because they explain why the system looks the way it does.",
+          "heading": "One decision per record"
+        }
+      ],
+      "id": "architecture-decision-records",
+      "title": "Architecture decision records"
+    },
+    {
+      "body": [
+        {
+          "body": "The C4 model gives four hierarchical diagram types. A system context diagram shows the system as one box with its users and the external systems it talks to. A container diagram opens that box into separately deployable or runnable units such as a web app, an API, a worker and a database. A component diagram shows the major building blocks inside one container. A code diagram shows classes and is rarely worth maintaining by hand. Supplementary views include system landscape, dynamic and deployment diagrams.",
+          "heading": "Four levels of zoom"
+        },
+        {
+          "body": "The context and container levels do most of the work. The context diagram is the one to show executives and security reviewers, because it makes every data flow across the customer boundary visible. The container diagram is what the customer's platform team needs to plan networking, identity and hosting. Each element should carry a name, a technology and a one-line responsibility, and every line should be labeled with what flows and over which protocol. A deployment diagram is added when the customer hosts the system.",
+          "heading": "Use in customer engagements"
+        }
+      ],
+      "id": "c4-diagrams",
+      "title": "Drawing architecture with the C4 model"
+    },
+    {
+      "body": [
+        {
+          "body": "The AWS Well-Architected Framework organizes design review around six pillars: operational excellence, security, reliability, performance efficiency, cost optimization and sustainability. Each pillar has design principles and questions. In a customer engagement the pillars work as a structured walkthrough of the proposed solution with the customer's architects: how is it deployed and observed, who can access what, what happens when a dependency fails, where are the latency and throughput limits, what does it cost per unit of work. Gaps become tracked risks with owners instead of surprises at security review.",
+          "heading": "Pillars as a checklist"
+        }
+      ],
+      "id": "well-architected-review",
+      "title": "Reviewing a design against quality pillars"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart TB\n  U[Customer operations user] --> W[Web app]\n  subgraph S[Deployed solution]\n    W --> API[API service]\n    API --> Q[Worker and LLM orchestration]\n    API --> DB[(Application database)]\n  end\n  Q --> LLM[Model provider API]\n  Q --> CRM[Customer CRM]\n  API --> IDP[Customer identity provider]\n  Q --> DWH[(Customer data warehouse)]"
+  },
+  "code": [
+    {
+      "code": "# ADR 0007: Use the customer's warehouse as the retrieval source\n\n## Status\nAccepted\n\n## Context\nSource documents already land in the customer warehouse nightly.\nSecurity review does not allow a second copy outside their network.\n\n## Decision\nRead documents through a read-only warehouse role and build the\nindex inside the customer's cloud account.\n\n## Consequences\n- No new data egress path to review.\n- Freshness is bounded by the nightly load.\n- Index rebuild cost is paid on the customer's account.",
+      "lang": "markdown"
+    }
+  ],
+  "technologies": [
+    "Google Docs",
+    "Markdown",
+    "adr-tools",
+    "Structurizr",
+    "Mermaid",
+    "PlantUML",
+    "AWS Well-Architected Tool",
+    "GitHub"
+  ],
+  "related": [
+    "fde-delivery-model",
+    "workflow-mapping-automation",
+    "cloud-deployments",
+    "security-compliance-reviews",
+    "networking-restricted-environments"
+  ],
+  "sources": [
+    {
+      "kind": "article",
+      "title": "Design Docs at Google",
+      "url": "https://www.industrialempathy.com/posts/design-docs-at-google/"
+    },
+    {
+      "kind": "repo",
+      "title": "Architecture decision record (ADR) examples and templates",
+      "url": "https://github.com/architecture-decision-record/architecture-decision-record"
+    },
+    {
+      "kind": "guide",
+      "title": "C4 model: Diagrams",
+      "url": "https://c4model.com/diagrams"
+    },
+    {
+      "kind": "doc",
+      "title": "AWS Well-Architected Framework",
+      "url": "https://docs.aws.amazon.com/wellarchitected/latest/framework/welcome.html"
+    }
+  ],
+  "practice": "practice/technical-scoping-design-docs",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    }
+  ]
+}

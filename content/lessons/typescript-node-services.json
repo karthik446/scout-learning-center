@@ -1,0 +1,141 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "typescript-node-services",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "TypeScript and Node.js for services and tooling",
+  "area": "software",
+  "primary_key": "typescript",
+  "secondary_keys": [
+    "javascript",
+    "nodejs"
+  ],
+  "keys": [
+    "typescript",
+    "javascript",
+    "nodejs"
+  ],
+  "summary": "TypeScript adds a static, structural type system on top of JavaScript and compiles away to plain JavaScript that Node.js runs on a single-threaded event loop. In field work it is the language of customer-facing applications, of many SaaS SDKs, and of the tooling around them, so an engineer needs to model external data precisely in types and to understand what the runtime does with asynchronous code.",
+  "detail": [],
+  "in_practice": "Teams that deploy to customers tend to standardize a starter repository: strict TypeScript, one schema library, one HTTP framework, lint and type check in CI, and a pinned Node version. When a new integration starts, the engineer generates or hand-writes types for the customer's API, wraps every response in a schema parse, and writes the business logic against those types. Shared types between the backend and the front end live in one package so a contract change breaks the build instead of production. Scripts that began as one-offs get promoted into a tools directory with real argument parsing once they are run a second time.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "TypeScript checks shapes, not names: any value with the required properties satisfies a type. The everyday building blocks are primitives, arrays, object types, optional properties, union types and literal types. A union says a value is one of several shapes, and narrowing is how the compiler learns which one inside a branch, through typeof checks, the in operator, equality checks or a shared literal field. That last pattern, a discriminated union, is the best way to model API responses and event payloads, because a switch over the discriminant is checked for exhaustiveness. Turn on strict mode, avoid any, and use unknown for data that has not been validated yet.",
+          "heading": "Structural types, unions and narrowing"
+        }
+      ],
+      "id": "type-system-for-external-data",
+      "title": "Modeling data with the type system"
+    },
+    {
+      "body": [
+        {
+          "body": "Types are erased during compilation, so a type annotation on a parsed JSON response is a claim, not a check. If the customer's API returns a string where you declared a number, the program continues with wrong data until something far away breaks. The fix is a schema library such as Zod or Valibot: define the schema once, parse unknown input through it, and infer the static type from the schema so the two can never drift. Apply this at every boundary: HTTP responses, webhook bodies, environment variables, configuration files and model outputs. Inside the boundary, trust the types and keep validation out of business logic.",
+          "heading": "Closing the gap between compile time and the wire"
+        }
+      ],
+      "id": "runtime-validation",
+      "title": "Runtime validation: types do not exist at runtime"
+    },
+    {
+      "body": [
+        {
+          "body": "Node.js runs JavaScript on a single thread and hands I/O to the operating system or a small thread pool, resuming your code through callbacks when results arrive. This lets one process hold thousands of open connections cheaply, and it also means any long synchronous computation blocks every request. Promises and async and await are the standard way to write this code. Promise.all runs operations concurrently and rejects on the first failure, while Promise.allSettled reports every outcome. A forgotten await produces a floating promise whose error is never handled, so enable the lint rule that catches it. CPU-heavy work belongs in worker threads or a separate service.",
+          "heading": "One thread, non-blocking I/O"
+        }
+      ],
+      "id": "event-loop-and-async",
+      "title": "The Node.js event loop and async code"
+    },
+    {
+      "body": [
+        {
+          "body": "The durable parts of a Node service are the same in any framework: a typed request and response contract, schema validation on input, structured logging with a request id, graceful shutdown on SIGTERM so in-flight requests finish, and health endpoints for the orchestrator. What changes over time is the ecosystem: ES modules versus CommonJS, built-in fetch and test runner in recent Node versions, and alternative runtimes such as Bun and Deno. Pin the runtime version in the repository and in the container image so the customer's environment matches.",
+          "heading": "Beyond the basic server"
+        }
+      ],
+      "id": "http-services-in-node",
+      "title": "HTTP services in Node with TypeScript"
+    },
+    {
+      "body": [
+        {
+          "body": "A TypeScript project is defined by package.json for dependencies and scripts, a lock file, and tsconfig.json for compiler options. For scripts and command line tools, run TypeScript directly with a runner such as tsx, or use the type stripping support in recent Node versions, and keep tsc with noEmit as the type check step in CI. ESLint with the TypeScript plugin and Prettier or Biome keep a shared repository consistent. Small internal tools, such as a data backfill command or a configuration validator, are worth writing as proper CLI entry points with argument parsing and exit codes, because they get reused by the customer's team long after the engagement.",
+          "heading": "The minimum viable toolchain"
+        }
+      ],
+      "id": "cli-tooling-and-project-setup",
+      "title": "Tooling, scripts and project setup"
+    }
+  ],
+  "diagram": null,
+  "code": [
+    {
+      "code": "type OrderEvent =\n  | { kind: \"created\"; id: string; total: number }\n  | { kind: \"cancelled\"; id: string; reason: string };\n\nfunction describe(e: OrderEvent): string {\n  switch (e.kind) {\n    case \"created\":\n      return `order ${e.id} for ${e.total}`;\n    case \"cancelled\":\n      return `order ${e.id} cancelled: ${e.reason}`;\n    default: {\n      const unreachable: never = e;\n      return unreachable;\n    }\n  }\n}",
+      "lang": "typescript"
+    },
+    {
+      "code": "import { z } from \"zod\";\n\nconst Customer = z.object({\n  id: z.string(),\n  email: z.string().nullable(),\n  seats: z.number().int().nonnegative(),\n});\ntype Customer = z.infer<typeof Customer>;\n\nexport async function getCustomer(base: string, id: string): Promise<Customer> {\n  const res = await fetch(`${base}/customers/${id}`);\n  if (!res.ok) throw new Error(`upstream ${res.status}`);\n  return Customer.parse(await res.json());\n}",
+      "lang": "typescript"
+    }
+  ],
+  "technologies": [
+    "TypeScript",
+    "Node.js",
+    "Zod",
+    "Fastify",
+    "Express",
+    "tsx",
+    "ESLint",
+    "Prettier",
+    "Vitest",
+    "pnpm",
+    "Bun"
+  ],
+  "related": [
+    "python-for-integrations",
+    "react-nextjs-customer-apps",
+    "rest-apis-json-oauth",
+    "structured-outputs-tool-calling",
+    "mcp-servers"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "The TypeScript Handbook",
+      "url": "https://www.typescriptlang.org/docs/handbook/intro.html"
+    },
+    {
+      "kind": "doc",
+      "title": "TypeScript: Everyday Types",
+      "url": "https://www.typescriptlang.org/docs/handbook/2/everyday-types.html"
+    },
+    {
+      "kind": "doc",
+      "title": "Introduction to Node.js",
+      "url": "https://nodejs.org/learn/getting-started/introduction-to-nodejs"
+    },
+    {
+      "kind": "guide",
+      "title": "MDN JavaScript Guide",
+      "url": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide"
+    }
+  ],
+  "practice": "practice/typescript-node-services",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    }
+  ]
+}

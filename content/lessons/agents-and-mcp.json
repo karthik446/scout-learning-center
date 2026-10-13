@@ -1,0 +1,151 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "agents-and-mcp",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Agent architectures, agent frameworks and the Model Context Protocol",
+  "area": "ai-ml",
+  "primary_key": "agentic-ai",
+  "secondary_keys": [
+    "agent-frameworks",
+    "mcp"
+  ],
+  "keys": [
+    "agentic-ai",
+    "agent-frameworks",
+    "mcp"
+  ],
+  "summary": "An agent is a model that decides its own next step in a loop of reasoning, tool calls and observations, as opposed to a workflow whose steps are fixed in code. A platform for agents provides the tool layer, the runtime that keeps long runs durable and bounded, and the permission model around actions. The Model Context Protocol standardizes how applications connect models to tools and data, so integrations are written once and reused across hosts.",
+  "detail": [],
+  "in_practice": "A platform team usually standardizes three things. First, a tool layer: internal services wrapped as MCP servers, listed in a registry with owners and scopes, reachable over authenticated HTTP. Second, a runtime: an agent loop built on a framework or a workflow engine, with step, cost and time limits, checkpoints, and pause points for human approval of writes. Third, visibility: every model call and tool call is traced with inputs, outputs and cost, and agent behavior is tested with scenario evals before release. New use cases start as a fixed workflow and gain autonomy only where evals show the fixed path is the limit.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "A useful distinction: workflows orchestrate model calls through predefined code paths, while agents let the model direct its own process and tool use. Workflows are more predictable and cheaper; agents handle open-ended tasks where the steps cannot be listed in advance. The standard guidance is to start with a single well-prompted call with retrieval and tools, and add structure only when measurement shows it helps, because each added layer costs latency, money and debuggability.",
+          "heading": "Choosing the simplest structure that works"
+        },
+        {
+          "body": "Recurring workflow patterns are prompt chaining, where each call consumes the previous output; routing, where a classifier sends input to a specialized path; parallelization, where subtasks or votes run concurrently; orchestrator-workers, where one model splits a task and delegates; and evaluator-optimizer, where one call critiques another in a loop. Frameworks package these, but they also hide prompts and control flow, so teams should be able to see and log exactly what is sent to the model.",
+          "heading": "The pattern vocabulary"
+        }
+      ],
+      "id": "workflows-versus-agents",
+      "title": "Workflows, agents and the common patterns"
+    },
+    {
+      "body": [
+        {
+          "body": "MCP is an open protocol that connects AI applications to external systems. A host is the application the user works in; it creates one client per server connection; a server exposes capabilities. Servers offer three primitives: tools, which are functions the model can call; resources, which are data the application can read into context; and prompts, which are reusable templates. Clients can offer features back to servers, such as sampling, where the server asks the host to run a model call, and elicitation, where it asks the user for input.",
+          "heading": "Roles and primitives"
+        },
+        {
+          "body": "Messages are JSON-RPC 2.0 over a stateful connection. A session starts with an initialize exchange in which both sides declare protocol version and capabilities, so features are negotiated and not assumed. Two standard transports exist: stdio, where the host launches the server as a local subprocess, and Streamable HTTP, for remote servers that many clients share. Remote servers are ordinary network services, so they need authentication, TLS, rate limits, versioning and monitoring like any other internal API.",
+          "heading": "Wire protocol and transports"
+        }
+      ],
+      "id": "mcp-architecture",
+      "title": "Model Context Protocol: hosts, clients and servers"
+    },
+    {
+      "body": [
+        {
+          "body": "Tool definitions are prompts: the model chooses and fills them from the name, description and schema alone. Good tools have unambiguous names, parameters that are hard to misuse, descriptions with examples and edge cases, and results that are compact and informative, with errors that say how to recover. Fewer, higher-level tools usually work better than a one-to-one mirror of a REST API, and large results should be paginated or summarized to protect the context window.",
+          "heading": "The agent-computer interface"
+        },
+        {
+          "body": "Wrapping internal services as MCP servers makes the same tools available to every compliant host, including coding assistants and custom agents. A platform team typically keeps a registry of approved servers with owners, scopes and versions, generates schemas from source where possible, and tests tools against real model behavior, since a schema that compiles can still confuse a model. Reference server implementations are a good starting point for structure and conventions.",
+          "heading": "Publishing tools over MCP"
+        }
+      ],
+      "id": "tool-design-and-catalogs",
+      "title": "Designing tools and running a tool catalog"
+    },
+    {
+      "body": [
+        {
+          "body": "The MCP specification puts consent with the host: users should understand and approve tool invocations, and tool descriptions from a server are treated as untrusted unless the server is trusted. For remote servers on HTTP transports, the specification defines an authorization model based on OAuth, so a server receives a token scoped to the user and not a shared super-credential. Platform teams add an allowlist of servers, per-tool scopes, audit logs of every call with arguments, and sandboxing for servers that execute code.",
+          "heading": "Protocol-level controls beyond read-only splits"
+        }
+      ],
+      "id": "agent-permissions-and-approval",
+      "title": "Permissions, approval gates and MCP authorization"
+    },
+    {
+      "body": [
+        {
+          "body": "Beyond durable replay, an agent loop needs explicit bounds: a maximum number of steps, a token and cost budget, a wall-clock limit, and detection of repeated identical tool calls. Context grows with every observation, so runtimes compact history or hand subtasks to sub-agents with fresh context. Agent frameworks supply the loop, state checkpoints and human-in-the-loop pauses; workflow engines supply durable timers and retries around them. The choice between them is mostly about how much control flow the team wants to own.",
+          "heading": "Stopping conditions and frameworks"
+        }
+      ],
+      "id": "durable-agent-runtime",
+      "title": "Durable, bounded agent runs"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  U[User] --> H[Host application with agent loop]\n  H --> M[LLM API]\n  H --> C1[MCP client 1]\n  H --> C2[MCP client 2]\n  C1 -- stdio --> S1[Local MCP server: files, git]\n  C2 -- Streamable HTTP with OAuth --> S2[Remote MCP server: internal services]\n  S2 --> D[Databases and APIs]\n  H --> G[Approval gate for writes]\n  H --> T[Traces and audit log]"
+  },
+  "code": [
+    {
+      "code": "from mcp.server.fastmcp import FastMCP\n\nmcp = FastMCP(\"deploy-info\")\n\n@mcp.tool()\ndef rollout_status(service: str, env: str = \"staging\") -> str:\n    \"\"\"Return rollout state for a service. env is staging or prod.\"\"\"\n    state = get_rollout(service, env)  # read-only lookup\n    return f\"{service} in {env}: {state.phase}, {state.ready}/{state.desired} ready\"\n\nif __name__ == \"__main__\":\n    mcp.run()  # stdio transport by default",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "Model Context Protocol",
+    "MCP Python SDK",
+    "MCP TypeScript SDK",
+    "Claude Agent SDK",
+    "LangGraph",
+    "Pydantic AI",
+    "OpenAI Agents SDK",
+    "Temporal",
+    "JSON-RPC 2.0",
+    "OAuth 2.1"
+  ],
+  "related": [
+    "temporal-durable-workflows",
+    "bedrock-and-claude-apis",
+    "rag-infrastructure",
+    "llmops-evals-and-ai-assisted-dev",
+    "security-identity-and-governance",
+    "golden-paths-self-service"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Model Context Protocol: Introduction",
+      "url": "https://modelcontextprotocol.io/docs/2026-07-28/getting-started/intro"
+    },
+    {
+      "kind": "spec",
+      "title": "Model Context Protocol Specification",
+      "url": "https://modelcontextprotocol.io/specification/2025-06-18"
+    },
+    {
+      "kind": "article",
+      "title": "Building effective agents",
+      "url": "https://www.anthropic.com/engineering/building-effective-agents"
+    },
+    {
+      "kind": "repo",
+      "title": "Model Context Protocol servers repository",
+      "url": "https://github.com/modelcontextprotocol/servers"
+    }
+  ],
+  "practice": "practice/agents-and-mcp",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    }
+  ]
+}

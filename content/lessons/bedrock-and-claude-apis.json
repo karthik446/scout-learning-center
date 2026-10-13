@@ -1,0 +1,148 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "bedrock-and-claude-apis",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Integrating hosted LLMs: AWS Bedrock, the Claude API and prompt engineering",
+  "area": "ai-ml",
+  "primary_key": "aws-bedrock",
+  "secondary_keys": [
+    "claude",
+    "generative-ai",
+    "prompt-engineering"
+  ],
+  "keys": [
+    "aws-bedrock",
+    "claude",
+    "generative-ai",
+    "prompt-engineering"
+  ],
+  "summary": "Hosted LLMs turn model serving into an API integration problem: the platform team does not run GPUs, but it owns access, quotas, cost, latency and the contract that application code uses. Amazon Bedrock exposes foundation models from several providers behind AWS identity and networking, and its Converse API gives one message format across them. Prompts become versioned, tested artifacts, not strings buried in code.",
+  "detail": [],
+  "in_practice": "A team usually starts by enabling a small set of approved models in one or two regions and exposing them through an internal gateway or a thin client library. Access is granted per workload role with IAM, invocation logging is switched on with a retention and redaction policy, and every call carries team and application labels. Prompts live in the repository next to the code that uses them, with a version identifier in the logs. Dashboards show tokens, cost, time to first token and throttle rate per team; quota increases and provisioned capacity are planned from those numbers. Model upgrades are treated as releases: run the eval suite, shadow or canary the new model, then switch the logical model name.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "Amazon Bedrock is a fully managed service that offers foundation models from multiple providers through one AWS API surface. There is no cluster to operate: a caller names a model identifier and sends a request. For a platform team the value is that the usual AWS controls apply. IAM policies decide which roles may invoke which models, requests can stay on private networking through VPC endpoints, invocations can be logged, and usage lands on the AWS bill where it can be tagged and attributed.",
+          "heading": "A managed model catalog behind AWS controls"
+        },
+        {
+          "body": "Bedrock separates management operations from inference. The control plane lists models and manages resources such as guardrails, knowledge bases and provisioned capacity. The runtime endpoint is the one applications call for inference. Model availability and quotas differ per region, so a platform must record which model is served from which region, request quota increases ahead of launches, and decide whether cross-region inference is acceptable for the data involved.",
+          "heading": "Control plane and runtime"
+        }
+      ],
+      "id": "bedrock-service-model",
+      "title": "How Bedrock exposes foundation models"
+    },
+    {
+      "body": [
+        {
+          "body": "The Converse API gives a consistent interface for message-based models. A request carries a model identifier, an optional system prompt, a list of messages with alternating user and assistant roles, and an inference configuration with fields such as maximum tokens, temperature and top-p. Each message holds content blocks, which can be text, images, documents or tool results. Because the shape is the same for every supporting model, swapping models becomes a configuration change, with provider-specific options passed in a separate field.",
+          "heading": "One request shape across models"
+        },
+        {
+          "body": "Tools are declared with a name, a description and a JSON schema. When the model wants a tool, the response stops with a tool-use stop reason and a content block holding the arguments; the caller runs the tool and sends back a tool result message. The response also reports token usage and latency, which are the raw inputs for cost and performance dashboards. A streaming variant returns incremental events so user interfaces can render text as it is generated.",
+          "heading": "Tool use, stop reasons and streaming"
+        }
+      ],
+      "id": "converse-api-contract",
+      "title": "The Converse API: messages, tools and streaming"
+    },
+    {
+      "body": [
+        {
+          "body": "A production prompt has stable parts and variable parts. The system prompt states role, constraints and output format; examples show the expected behavior; retrieved context and the user input are inserted into clearly delimited sections so the model can tell instructions from data. Asking for structured output against a schema, and validating it in code, makes downstream handling deterministic. Lower temperature suits extraction and classification; higher values suit drafting.",
+          "heading": "Structure of a production prompt"
+        },
+        {
+          "body": "Prompts change behavior as much as code does, so they are stored in version control or a prompt registry, reviewed, and released with an identifier that is logged on every call. A prompt change runs through the same evaluation suite as a model change, because a new model version can break a prompt that was tuned for the old one. Keeping the stable prefix of a prompt identical across calls also makes prompt caching effective where the provider supports it.",
+          "heading": "Versioning and release"
+        }
+      ],
+      "id": "prompts-as-versioned-artifacts",
+      "title": "Prompt engineering as an engineering practice"
+    },
+    {
+      "body": [
+        {
+          "body": "Cost is driven by input and output tokens, priced per model. Latency has two parts: time to first token, and generation time, which grows with output length. The practical levers are choosing a smaller model for simple tasks, capping output tokens, trimming context, caching repeated prefixes, and moving non-interactive work to batch inference. On-demand capacity is subject to request and token quotas per account and region; steady high-volume workloads can buy provisioned throughput instead.",
+          "heading": "What drives the bill and the latency"
+        },
+        {
+          "body": "Quota exhaustion shows up as throttling errors, so clients need exponential backoff with jitter, timeouts sized for long generations, and a fallback path to another model or region. Per-team budgets and rate limits stop one tenant from consuming the shared quota. Token counts returned by each call should be emitted as metrics with team, application and model labels, so spend can be attributed and anomalies alerted on before the invoice arrives.",
+          "heading": "Throttling and resilience"
+        }
+      ],
+      "id": "cost-latency-and-capacity",
+      "title": "Managing cost, latency and quota at scale"
+    },
+    {
+      "body": [
+        {
+          "body": "Most platform teams put a gateway between applications and model providers. Applications call one internal endpoint with a team credential; the gateway maps a logical model name to a provider and model version, applies rate limits and budgets, attaches guardrails, records traces and token usage, and handles retries and failover. This keeps provider keys out of application code and makes it possible to migrate a model, add a provider, or enforce a data policy in one place. The cost is an extra hop and a component that must be highly available, so it is deployed like any other critical proxy: stateless, horizontally scaled, with its own service level objectives.",
+          "heading": "One internal entry point for all model traffic"
+        }
+      ],
+      "id": "llm-gateway-pattern",
+      "title": "The LLM gateway as a platform component"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  A[Application service] --> G[LLM gateway]\n  G --> P[Policy: auth, rate limit, budget]\n  P --> R[Model router]\n  R --> B[Bedrock runtime]\n  R --> C[Other provider API]\n  B --> M[Foundation model]\n  G --> T[Traces and token metrics]\n  G --> L[Invocation logs]"
+  },
+  "code": [
+    {
+      "code": "import boto3\n\nclient = boto3.client(\"bedrock-runtime\", region_name=\"us-east-1\")\n\nresp = client.converse(\n    modelId=MODEL_ID,\n    system=[{\"text\": \"You write concise release notes.\"}],\n    messages=[{\"role\": \"user\", \"content\": [{\"text\": \"Summarize this diff: ...\"}]}],\n    inferenceConfig={\"maxTokens\": 512, \"temperature\": 0.2},\n)\n\nprint(resp[\"output\"][\"message\"][\"content\"][0][\"text\"])\nprint(resp[\"stopReason\"], resp[\"usage\"], resp[\"metrics\"][\"latencyMs\"])",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "Amazon Bedrock",
+    "Bedrock Converse API",
+    "Claude API",
+    "boto3",
+    "AWS IAM",
+    "AWS PrivateLink",
+    "Amazon CloudWatch",
+    "LiteLLM",
+    "OpenAI API",
+    "Gemini API"
+  ],
+  "related": [
+    "aws-and-eks-foundations",
+    "llm-serving-vllm-sglang",
+    "rag-infrastructure",
+    "agents-and-mcp",
+    "llmops-evals-and-ai-assisted-dev",
+    "autoscaling-and-cost-efficiency",
+    "security-identity-and-governance"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "What is Amazon Bedrock?",
+      "url": "https://docs.aws.amazon.com/bedrock/latest/userguide/what-is-bedrock.html"
+    },
+    {
+      "kind": "doc",
+      "title": "Amazon Bedrock: Converse API",
+      "url": "https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference.html"
+    }
+  ],
+  "practice": "practice/bedrock-and-claude-apis",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    }
+  ]
+}

@@ -1,0 +1,151 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "airflow-dagster-pipelines",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Data pipeline orchestration with Airflow and Dagster",
+  "area": "data",
+  "primary_key": "airflow",
+  "secondary_keys": [
+    "dagster",
+    "data-pipelines"
+  ],
+  "keys": [
+    "airflow",
+    "dagster",
+    "data-pipelines"
+  ],
+  "summary": "An orchestrator schedules pipeline steps, runs them in dependency order, retries failures and records what happened. Airflow models a pipeline as a DAG of tasks and is the tool most customers already run; Dagster models it as a graph of data assets and is common in newer stacks. Knowing both lets a forward deployed engineer extend whatever the customer has, without introducing another system.",
+  "detail": [],
+  "in_practice": "A typical customer pipeline has an ingestion step landing raw files or tables, a dbt build triggered when ingestion succeeds, then Python steps for entity resolution, embedding or model scoring, and finally a publish step with quality checks. The team develops locally against a small sample, tests task logic as plain functions, and ships DAG or asset code through pull requests into the customer's deployment. Each step is idempotent per partition so on-call engineers can clear and rerun safely. Failures alert a shared channel with a runbook link, and the handover includes the schedule, owners, expected runtimes and the procedure for backfilling after a fix.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "An Airflow installation has a scheduler that triggers scheduled workflows and submits tasks to an executor, a DAG processor that parses DAG files, a web interface and API for inspecting and triggering runs, and a metadata database that stores the state of every DAG run and task instance. The executor decides where tasks run: locally in small setups, or on remote workers through Celery or Kubernetes in production. An optional triggerer handles deferred tasks that wait on external events without occupying a worker. DAG files are plain Python that all components must be able to read.",
+          "heading": "Components"
+        },
+        {
+          "body": "A DAG declares tasks and their dependencies plus a schedule. A task is an instance of an operator, a template for a unit of work such as running a bash command, a Python function or a SQL statement; sensors wait for a condition. Airflow orchestrates; heavy computation should run in the warehouse or a separate compute service, not in the worker process.",
+          "heading": "DAGs, tasks and operators"
+        }
+      ],
+      "id": "airflow-architecture",
+      "title": "Airflow architecture and core concepts"
+    },
+    {
+      "body": [
+        {
+          "body": "Orchestrators retry and backfill, so a task must give the same result when run twice for the same interval. Parameterize work by the run's logical date and data interval, never by the wall clock. Write with overwrite-partition or merge semantics, not blind appends. Set retries and retry delay in default arguments, add timeouts, and keep tasks small enough that a retry is cheap. Pass only small values between tasks through XCom; put real data in storage and pass its location. Keep top-level DAG file code light, because the file is parsed repeatedly. Decide deliberately whether catchup should create runs for past intervals, and use backfill to reprocess history after a logic fix.",
+          "heading": "Design each task to be rerun"
+        }
+      ],
+      "id": "dag-authoring-idempotency-backfills",
+      "title": "Authoring DAGs: idempotency, retries and backfills"
+    },
+    {
+      "body": [
+        {
+          "body": "Dagster's central abstraction is the asset: an object in persistent storage, such as a table, file or trained model, defined in code by a function that produces it. Decorating a function as an asset declares the thing, and naming other assets as its inputs declares dependencies, so the lineage graph comes from the code itself and no separate wiring is needed. Dagster then materializes assets, records metadata about each materialization, and shows which assets are stale relative to their upstream. Partitions, schedules, sensors and asset checks attach to assets.",
+          "heading": "Declare what should exist"
+        },
+        {
+          "body": "Because assets are ordinary Python functions with resources injected, they can be unit tested and run locally with a development server before deployment. The asset graph also answers the questions customers ask most: where does this table come from, and when was it last refreshed. Integrations can load dbt models as assets, so SQL transformations and Python steps share one lineage view.",
+          "heading": "Consequences for development"
+        }
+      ],
+      "id": "dagster-assets",
+      "title": "Dagster and the asset model"
+    },
+    {
+      "body": [
+        {
+          "body": "The deciding factor on an engagement is rarely features. If the customer has Airflow with an on-call rotation, add a DAG there, even if you would pick differently on a blank slate. Task-centric Airflow suits heterogeneous jobs across many systems and has the largest ecosystem of provider packages and managed offerings. Asset-centric Dagster suits teams that think in tables and want lineage, local testing and data quality checks built in. Prefect is a third common option with a Python-first flow model.",
+          "heading": "Default to what the customer runs"
+        },
+        {
+          "body": "Whichever tool is used, plan for secrets held in connections or a secrets backend, never in code; alerting on failure and on missed service-level targets; concurrency limits so backfills do not overload the warehouse; and deployment of pipeline code through CI. Event-driven triggers from queues such as Kafka, SQS or Pub/Sub complement schedules when data arrives irregularly, and columnar files such as Parquet are the usual interchange format between steps.",
+          "heading": "Operating concerns"
+        }
+      ],
+      "id": "choosing-and-operating",
+      "title": "Choosing an orchestrator and operating it"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart TB\n  DF[DAG files in Python] --> DP[DAG processor]\n  DP --> DB[(Metadata database)]\n  SCH[Scheduler] --> DB\n  SCH --> EX[Executor]\n  EX --> W1[Worker]\n  EX --> W2[Worker]\n  W1 --> DB\n  W2 --> DB\n  UI[Web UI and API] --> DB\n  W1 --> WH[Warehouse or lakehouse]\n  W2 --> WH"
+  },
+  "code": [
+    {
+      "code": "from datetime import datetime, timedelta\nfrom airflow.sdk import dag, task\n\n@dag(schedule='@daily', start_date=datetime(2026, 1, 1), catchup=False,\n     default_args={'retries': 2, 'retry_delay': timedelta(minutes=5)})\ndef customer_orders():\n    @task\n    def extract(data_interval_start=None) -> str:\n        day = data_interval_start.strftime('%Y-%m-%d')\n        return f'landing/orders/dt={day}/orders.parquet'\n\n    @task\n    def load(path: str) -> None:\n        print(f'overwrite partition from {path}')\n\n    load(extract())\n\ncustomer_orders()",
+      "lang": "python"
+    },
+    {
+      "code": "import dagster as dg\nimport pandas as pd\n\n@dg.asset\ndef raw_orders() -> pd.DataFrame:\n    return pd.read_parquet('landing/orders.parquet')\n\n@dg.asset\ndef clean_orders(raw_orders: pd.DataFrame) -> pd.DataFrame:\n    return raw_orders.dropna(subset=['order_id']).drop_duplicates('order_id')\n\ndefs = dg.Definitions(assets=[raw_orders, clean_orders])",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "Apache Airflow",
+    "Dagster",
+    "Prefect",
+    "Celery",
+    "Kubernetes",
+    "dbt",
+    "Kafka",
+    "Amazon SQS",
+    "Google Pub/Sub",
+    "Parquet"
+  ],
+  "related": [
+    "dbt-elt-transformations",
+    "snowflake-databricks-platforms",
+    "webhooks-kafka-events",
+    "agent-orchestration-durable-execution",
+    "python-for-integrations",
+    "containers-cicd-serverless",
+    "observability-agent-traces"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Airflow: Architecture Overview",
+      "url": "https://airflow.apache.org/docs/apache-airflow/stable/core-concepts/overview.html"
+    },
+    {
+      "kind": "tutorial",
+      "title": "Airflow 101: Building Your First Workflow",
+      "url": "https://airflow.apache.org/docs/apache-airflow/stable/tutorial/fundamentals.html"
+    },
+    {
+      "kind": "doc",
+      "title": "Dagster: Quickstart",
+      "url": "https://dagster.io/docs/getting-started/quickstart"
+    },
+    {
+      "kind": "doc",
+      "title": "Dagster: Assets",
+      "url": "https://dagster.io/docs/guides/build/assets"
+    },
+    {
+      "kind": "repo",
+      "title": "Dagster",
+      "url": "https://github.com/dagster-io/dagster"
+    }
+  ],
+  "practice": "practice/airflow-dagster-pipelines",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    }
+  ]
+}

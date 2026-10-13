@@ -1,0 +1,123 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "mlflow-experiment-tracking",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Experiment tracking with MLflow",
+  "area": "ai-ml",
+  "primary_key": "mlflow",
+  "secondary_keys": [
+    "experimentation",
+    "model-training"
+  ],
+  "keys": [
+    "mlflow",
+    "experimentation",
+    "model-training"
+  ],
+  "summary": "Experiment tracking records what was run, with which inputs, and what came out, so any model can be traced back to its code, data and hyperparameters. MLflow Tracking is the most common open-source implementation: a client API that logs runs, and a server that stores metadata and artifacts. For a platform engineer the job is mostly running that server reliably and making logging the default path for every training job.",
+  "detail": [],
+  "in_practice": "A platform team runs the tracking server as a small replicated deployment on Kubernetes in front of a managed PostgreSQL database and an object storage bucket, behind the company's single sign-on. Training job templates inject the tracking address and default tags as environment variables, and a shared helper library starts the run, turns on autologging and attaches the git commit and image digest. Experiments are named per team or project, old runs are pruned by a retention job, and database and bucket are backed up because losing tracking history means losing the lineage of every registered model. Teams that use Weights and Biases instead follow the same pattern with a hosted backend.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "MLflow organises work into experiments, each holding many runs. A run is one execution of training code and carries four kinds of data. Parameters are key-value inputs such as learning rate or batch size, written once. Metrics are numeric values that can be logged repeatedly with a step and timestamp, which gives loss and accuracy curves. Tags are free-form metadata such as git commit, owner or dataset version. Artifacts are files of any size: model weights, plots, config files, evaluation reports. Every run has a unique run ID, a start and end time, and a status, and that ID is the handle everything downstream uses.",
+          "heading": "What gets recorded"
+        },
+        {
+          "body": "Parameters, metrics and tags are small and queryable, so they live in a database. Artifacts are large and opaque, so they live in object or file storage and the run only stores their location. This split drives the server architecture and the cost profile: metadata queries must be fast for the UI and search API, while artifact storage must be cheap and durable. Teams usually agree on a small set of mandatory tags so runs can be filtered consistently across projects.",
+          "heading": "Why the split matters"
+        }
+      ],
+      "id": "tracking-data-model",
+      "title": "The tracking data model: experiments, runs, params, metrics, artifacts"
+    },
+    {
+      "body": [
+        {
+          "body": "A production MLflow deployment has three parts. The tracking server is a stateless HTTP service that exposes the REST API and the UI. The backend store is a SQL database, typically PostgreSQL or MySQL, holding experiments, runs, params, metrics and tags. The artifact store is object storage such as S3, GCS or Azure Blob. Clients can upload artifacts directly to the bucket with their own credentials, or the server can proxy artifact access so that clients only need to reach the server and never hold bucket credentials. Proxied access simplifies identity management but puts large uploads through the server, so it needs enough replicas and sensible timeouts.",
+          "heading": "Two stores behind one server"
+        }
+      ],
+      "id": "tracking-server-architecture",
+      "title": "Tracking server architecture: backend store and artifact store"
+    },
+    {
+      "body": [
+        {
+          "body": "Explicit logging wraps training in a run context and calls log_param, log_metric and log_artifact where needed. It is precise but relies on every author remembering to do it. Autologging is switched on with a single call and hooks into supported frameworks such as PyTorch Lightning, scikit-learn, XGBoost and Keras to capture parameters, per-epoch metrics and the trained model without code changes. Platforms usually combine both: autologging for the baseline, plus a thin wrapper that adds mandatory tags like git commit, container image and dataset version. The client finds the server through the MLFLOW_TRACKING_URI environment variable, which the platform injects into every training pod so user code contains no addresses.",
+          "heading": "Two ways to log"
+        }
+      ],
+      "id": "autologging-and-instrumentation",
+      "title": "Instrumenting training code: explicit logging and autologging"
+    },
+    {
+      "body": [
+        {
+          "body": "The value of tracking appears when runs are compared. The MLflow UI and the search API filter runs by parameter, metric or tag and plot metric curves side by side, which answers questions like which learning rate converged fastest. Reproducibility needs more than hyperparameters: the run should also record the source revision, the environment or image, the dataset version and the random seed. With those in place, a run ID becomes a complete recipe. The same ID then links forward into the model registry, so a model version in production can be traced back to the exact run, metrics and artifacts that produced it.",
+          "heading": "From a list of runs to a decision"
+        }
+      ],
+      "id": "comparing-runs-and-reproducibility",
+      "title": "Comparing runs and making results reproducible"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  A[Training job with MLflow client] -->|REST: params, metrics, tags| B[MLflow tracking server]\n  A -->|artifact upload| B\n  B --> C[(Backend store: SQL database)]\n  B --> D[(Artifact store: object storage)]\n  E[Engineer in MLflow UI] --> B\n  B --> F[Model registry]"
+  },
+  "code": [
+    {
+      "code": "import os\nimport mlflow\n\n# MLFLOW_TRACKING_URI is injected by the platform\nmlflow.set_experiment(\"fraud-classifier\")\n\nwith mlflow.start_run(run_name=\"baseline\") as run:\n    mlflow.set_tag(\"git_commit\", os.environ.get(\"GIT_SHA\", \"unknown\"))\n    mlflow.log_params({\"lr\": 3e-4, \"batch_size\": 256})\n    for epoch in range(3):\n        loss = 1.0 / (epoch + 1)  # stand-in for a real training step\n        mlflow.log_metric(\"train_loss\", loss, step=epoch)\n    with open(\"report.txt\", \"w\") as f:\n        f.write(\"evaluation summary\")\n    mlflow.log_artifact(\"report.txt\")\n    print(\"run id:\", run.info.run_id)",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "MLflow",
+    "PostgreSQL",
+    "Amazon S3",
+    "Weights and Biases",
+    "PyTorch Lightning",
+    "Kubernetes"
+  ],
+  "related": [
+    "model-registry-and-versioning",
+    "model-evaluation-gates",
+    "distributed-training",
+    "storage-lakehouse-and-data-stores",
+    "mlops-and-ml-lifecycle"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "MLflow Tracking",
+      "url": "https://mlflow.org/docs/latest/ml/tracking/"
+    },
+    {
+      "kind": "tutorial",
+      "title": "MLflow Getting Started",
+      "url": "https://mlflow.org/docs/latest/ml/getting-started/"
+    },
+    {
+      "kind": "repo",
+      "title": "MLflow repository",
+      "url": "https://github.com/mlflow/mlflow"
+    }
+  ],
+  "practice": "practice/mlflow-experiment-tracking",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    }
+  ]
+}

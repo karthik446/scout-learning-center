@@ -1,0 +1,148 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "mlops-and-ml-lifecycle",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "MLOps and the ML lifecycle: from experiment to production system",
+  "area": "ai-ml",
+  "primary_key": "mlops",
+  "secondary_keys": [
+    "ml-lifecycle",
+    "machine-learning",
+    "ml-platform"
+  ],
+  "keys": [
+    "mlops",
+    "ml-lifecycle",
+    "machine-learning",
+    "ml-platform"
+  ],
+  "summary": "MLOps applies DevOps discipline to systems whose behavior depends on data and trained artifacts as well as code. The lifecycle runs from data preparation through training, evaluation, release and monitoring, then loops back through retraining. The platform engineer's job is to make that loop automated, reproducible and observable, so that model code is only a small part of a well-run system.",
+  "detail": [],
+  "in_practice": "A platform team usually starts by picking one real model and building a thin end-to-end path for it: a pipeline definition in an orchestrator, a tracked training run, a registered model, an automated evaluation gate and a deployment with basic monitoring. They then turn that path into templates other teams can copy. Reviews focus on the seams: is the data validated before training, is the model compared against the production baseline, can any deployed model be traced to its data and commit, and what triggers retraining. Maturity is raised stage by stage where the pain is highest, not everywhere at once.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "A production ML system moves through data extraction, data validation, data preparation, model training, model evaluation, model validation, serving and monitoring. Each stage produces an artifact the next one consumes: a dataset snapshot, a feature set, a trained model file, an evaluation report, a deployed endpoint. The platform view is to treat every stage as a pipeline step with declared inputs and outputs, so it can be rerun, cached and audited. Monitoring closes the loop, because signals from production such as data drift or falling accuracy are what trigger a new run.",
+          "heading": "Stages and artifacts"
+        },
+        {
+          "body": "Three things change together in ML: code, data and model. A release can break with no code change at all, because the input distribution moved. Testing therefore covers data schemas and value ranges, model quality against a baseline, and the serving infrastructure itself. Deployment is often a multi-step pipeline that deploys another service, the prediction service, instead of a single binary. Teams also include researchers who are not primarily software engineers, so the platform has to make the correct path the easy one.",
+          "heading": "Why it differs from ordinary software"
+        }
+      ],
+      "id": "ml-lifecycle-stages",
+      "title": "The lifecycle stages and what flows between them"
+    },
+    {
+      "body": [
+        {
+          "body": "A widely used model describes three levels. At level 0 everything is manual: notebooks, a hand-trained model passed to engineers, infrequent releases and no monitoring. At level 1 the training pipeline itself is automated and deployed, which enables continuous training: the pipeline reruns on a schedule, on new data, or on a drift trigger, with automated data and model validation. At level 2 the pipeline code has its own CI/CD system, so new pipeline components are built, tested and rolled out automatically. Level 1 adds a feature store, a metadata store and pipeline triggers as supporting components.",
+          "heading": "Level 0 to level 2"
+        },
+        {
+          "body": "The levels are useful for deciding what to build next, not as a score. A team with a handful of models that rarely change may be well served at level 0 with good versioning. The move to level 1 pays off when retraining is frequent or the data shifts quickly. Level 2 matters when many people change pipelines and experiments need to reach production fast. A sound first step in most organisations is one end-to-end pipeline that is simple but fully automated, then improving each stage.",
+          "heading": "Using the model as a roadmap"
+        }
+      ],
+      "id": "mlops-maturity-levels",
+      "title": "Maturity levels: manual, pipeline automation, CI/CD automation"
+    },
+    {
+      "body": [
+        {
+          "body": "Continuous integration in ML tests and validates data, data schemas and models in addition to code. Continuous delivery ships a training pipeline, which in turn ships a prediction service, so there are two delivery targets. Continuous training is the ML-specific addition: the system retrains and redeploys models automatically. Typical triggers are a schedule, the arrival of new data, a drop in model performance, or a significant change in data distributions. Each automated run needs gates: data validation decides whether to train at all, and model validation decides whether the new model may replace the current one.",
+          "heading": "What each term means for ML"
+        }
+      ],
+      "id": "ci-cd-ct",
+      "title": "CI, CD and continuous training"
+    },
+    {
+      "body": [
+        {
+          "body": "The classic paper on this topic argues that ML systems carry all the maintenance problems of ordinary code plus ML-specific ones. Entanglement means changing one input feature changes the behavior of everything else. Unstable or underused data dependencies are harder to detect than code dependencies. Feedback loops arise when a model influences its own future training data. Glue code and pipeline jungles grow around general-purpose packages, and configuration becomes a large, untested surface. The model code itself is a small box in the middle of serving infrastructure, data collection, feature extraction, monitoring and resource management.",
+          "heading": "Sources of debt"
+        },
+        {
+          "body": "Platform work is largely debt prevention. Shared pipeline components replace glue code. Schema checks and data validation catch dependency changes at the boundary. Versioned, reviewed configuration replaces ad hoc flags. Monitoring of prediction distributions and input features detects silent failures. Practical guidance from large ML teams adds: launch with a simple model and solid infrastructure first, test the infrastructure independently from the model, and watch for training-serving skew by logging features at serving time and reusing them for training.",
+          "heading": "What a platform does about it"
+        }
+      ],
+      "id": "ml-technical-debt",
+      "title": "Hidden technical debt in ML systems"
+    },
+    {
+      "body": [
+        {
+          "body": "A model is reproducible when the code version, the data version, the configuration and the environment that produced it can all be recovered. Code goes in Git. Data is versioned by immutable snapshots or by a data versioning tool that stores pointers alongside the code. Models are stored in a registry with lineage back to the run that produced them. Environments are pinned through locked dependencies and container image digests. An ML metadata store records each pipeline run: parameters, input artifacts, output artifacts and metrics, which makes it possible to compare runs, debug regressions and roll back.",
+          "heading": "The three axes"
+        }
+      ],
+      "id": "reproducibility-and-versioning",
+      "title": "Reproducibility: versioning code, data and models"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  A[Data extraction] --> B[Data validation]\n  B --> C[Data preparation]\n  C --> D[Model training]\n  D --> E[Model evaluation]\n  E --> F[Model validation gate]\n  F --> G[Model registry]\n  G --> H[Serving]\n  H --> I[Monitoring]\n  I -->|drift or schedule trigger| A\n  M[(Metadata store)] --- D\n  M --- E\n  M --- G"
+  },
+  "code": [],
+  "technologies": [
+    "MLflow",
+    "Kubeflow Pipelines",
+    "Apache Airflow",
+    "DVC",
+    "TensorFlow Extended",
+    "Amazon SageMaker Pipelines",
+    "Vertex AI Pipelines",
+    "Great Expectations",
+    "GitHub Actions"
+  ],
+  "related": [
+    "mlflow-experiment-tracking",
+    "model-registry-and-versioning",
+    "model-evaluation-gates",
+    "airflow-pipelines",
+    "ml-native-orchestrators",
+    "model-monitoring-and-drift",
+    "github-actions-ci-cd"
+  ],
+  "sources": [
+    {
+      "kind": "guide",
+      "title": "MLOps: Continuous delivery and automation pipelines in machine learning",
+      "url": "https://docs.cloud.google.com/architecture/mlops-continuous-delivery-and-automation-pipelines-in-machine-learning"
+    },
+    {
+      "kind": "guide",
+      "title": "MLOps Principles",
+      "url": "https://ml-ops.org/content/mlops-principles"
+    },
+    {
+      "kind": "paper",
+      "title": "Hidden Technical Debt in Machine Learning Systems",
+      "url": "https://papers.nips.cc/paper/2015/hash/86df7dcfd896fcaf2674f757a2463eba-Abstract.html"
+    },
+    {
+      "kind": "guide",
+      "title": "Rules of Machine Learning",
+      "url": "https://developers.google.com/machine-learning/guides/rules-of-ml"
+    }
+  ],
+  "practice": null,
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-12",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    }
+  ]
+}

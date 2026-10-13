@@ -1,0 +1,153 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "gpu-inference-serving",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "GPU infrastructure and model serving for inference workloads",
+  "area": "ai-ml",
+  "primary_key": "gpu-compute",
+  "secondary_keys": [
+    "inference",
+    "ai-workloads",
+    "data-center"
+  ],
+  "keys": [
+    "gpu-compute",
+    "inference",
+    "ai-workloads",
+    "data-center"
+  ],
+  "summary": "When a customer cannot or will not call a hosted model API, the forward deployed engineer has to run open-weight models on GPUs inside the customer environment. This lesson covers how GPUs are exposed to containers and scheduled in Kubernetes, what an inference server does, and how to size and share scarce accelerators. The aim is to stand up and reason about a serving stack, not to train models.",
+  "detail": [],
+  "in_practice": "A team first confirms the hardware the customer actually has, then picks a model and precision that fit its memory with headroom for the context lengths the use case needs. They install the GPU Operator or validate the existing driver setup, deploy the inference server as a Deployment on a tainted GPU node pool with weights loaded from an internal store, and expose it only inside the cluster behind an OpenAI-compatible interface. Load tests with realistic prompt and output lengths set the concurrency limit, and GPU utilization, memory, queue depth and time to first token are scraped into the customer's monitoring. The evaluation suite is rerun against the self-hosted model before anyone promises quality.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "A container does not see a GPU by default. The host needs the NVIDIA driver; the NVIDIA Container Toolkit then configures the container runtime, such as containerd or Docker, so that a container started with a GPU request gets the device files and driver libraries mounted in. On Kubernetes a device plugin advertises the GPUs on each node to the scheduler as an extended resource. Version alignment across driver, toolkit, CUDA libraries in the image and the framework is a frequent cause of failed starts, so record the versions you tested.",
+          "heading": "Layers between the card and the container"
+        },
+        {
+          "body": "The NVIDIA GPU Operator uses the Kubernetes operator pattern to manage all of that software as cluster components: the driver as a container, the container toolkit, the device plugin, node labeling through GPU feature discovery, and monitoring through a DCGM-based exporter. It is installed with Helm and lets GPU nodes run the same base operating system image as CPU nodes, since nothing is preinstalled by hand. In customer clusters, check first whether drivers are already baked into node images, in which case the operator is configured not to deploy its own. In disconnected environments every operator image must be mirrored to the internal registry beforehand.",
+          "heading": "What the GPU Operator automates"
+        }
+      ],
+      "id": "gpu-node-stack",
+      "title": "The GPU node stack: drivers, container toolkit, operator"
+    },
+    {
+      "body": [
+        {
+          "body": "Pods request GPUs through a vendor resource name such as nvidia.com/gpu, set under resource limits. GPUs are specified in limits; if a request is also given it must equal the limit. By default the count is a whole number, devices are not overcommitted, and a container cannot ask for a fraction of one. Nodes carry labels describing the GPU model and memory, added by node feature discovery, so workloads can use node selectors or affinity to land on the right hardware. GPU node pools are normally tainted so ordinary pods stay off them, and inference pods carry the matching toleration. Because nodes are expensive and slow to provision, plan for image pull time and model load time when designing autoscaling and readiness probes.",
+          "heading": "Extended resources and their rules"
+        }
+      ],
+      "id": "gpu-scheduling",
+      "title": "Scheduling GPUs in Kubernetes"
+    },
+    {
+      "body": [
+        {
+          "body": "Loading a model in a script handles one request at a time. A serving engine schedules many concurrent requests onto the GPU. vLLM is a high-throughput, memory-efficient inference and serving engine for LLMs; its core techniques are continuous batching, where new requests join the running batch at each generation step instead of waiting for a batch to finish, and efficient management of attention key-value memory through PagedAttention. It exposes an OpenAI-compatible HTTP server, so application code written against a hosted API can be pointed at it by changing the base address and model name. It also supports streaming, quantized weights, and tool calling and structured output for models that have suitable chat templates.",
+          "heading": "What a serving engine adds"
+        },
+        {
+          "body": "Hugging Face Text Generation Inference is a toolkit for deploying and serving LLMs with token streaming, continuous batching, quantization options, and production features such as Prometheus metrics and distributed tracing. Selection in practice depends on which engine supports the customer's approved model and hardware, how well it handles your structured output and tool calling needs, and what the customer platform team is willing to operate. Whichever you choose, put it behind the same client interface as hosted models, and rerun your evaluation suite: a smaller open-weight model will behave differently on prompts tuned for a frontier model.",
+          "heading": "Text Generation Inference and choosing"
+        }
+      ],
+      "id": "inference-servers",
+      "title": "Inference servers: vLLM and Text Generation Inference"
+    },
+    {
+      "body": [
+        {
+          "body": "GPU memory decides whether a model fits: the weights at the chosen precision, plus the key-value cache that grows with context length and the number of concurrent sequences. Quantization reduces the weight footprint at some quality cost that you must measure. Throughput is then tuned through maximum context length, concurrency limits and batch behavior. Measure time to first token, tokens per second per request and total tokens per second under realistic concurrency, since batching raises total throughput while slowing each individual stream.",
+          "heading": "Memory first, then throughput"
+        },
+        {
+          "body": "The GPU Operator supports time-slicing, which advertises each physical GPU as several replicas so multiple pods can be scheduled onto it and take turns. This is oversubscription: there is no memory isolation or fault isolation between the pods, so one workload can exhaust memory for the others. It suits development, embedding models and light workloads. Where isolation matters, hardware partitioning through Multi-Instance GPU on supported cards provides dedicated memory and compute slices. Large generation models generally get dedicated GPUs.",
+          "heading": "Sharing a GPU"
+        }
+      ],
+      "id": "sizing-and-sharing",
+      "title": "Sizing, sharing and measuring GPU capacity"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart TB\n  APP[Application and agents] -->|OpenAI-compatible HTTP| SVC[Kubernetes Service]\n  SVC --> POD[Inference server pod: vLLM or TGI]\n  POD -->|requests nvidia.com/gpu| DP[Device plugin]\n  subgraph Node[GPU node]\n    DP --> RT[Container runtime with NVIDIA Container Toolkit]\n    RT --> DRV[NVIDIA driver]\n    DRV --> GPU[Physical GPU]\n  end\n  OP[GPU Operator] -.manages.-> DP\n  OP -.manages.-> RT\n  OP -.manages.-> DRV\n  POD --> W[(Model weights in internal store)]\n  EXP[DCGM exporter] --> MON[Monitoring]"
+  },
+  "code": [
+    {
+      "code": "apiVersion: v1\nkind: Pod\nmetadata:\n  name: llm-server\nspec:\n  tolerations:\n    - {key: nvidia.com/gpu, operator: Exists, effect: NoSchedule}\n  containers:\n    - name: vllm\n      image: REGISTRY_HOST/vllm-openai@sha256:DIGEST\n      args: [\"--model\", \"/models/served-model\", \"--max-model-len\", \"16384\"]\n      ports: [{containerPort: 8000}]\n      resources:\n        limits:\n          nvidia.com/gpu: 1\n      volumeMounts: [{name: weights, mountPath: /models}]\n  volumes:\n    - name: weights\n      persistentVolumeClaim: {claimName: model-weights}",
+      "lang": "yaml"
+    }
+  ],
+  "technologies": [
+    "vLLM",
+    "Hugging Face Text Generation Inference",
+    "NVIDIA GPU Operator",
+    "NVIDIA Container Toolkit",
+    "NVIDIA device plugin for Kubernetes",
+    "Node Feature Discovery",
+    "NVIDIA DCGM Exporter",
+    "NVIDIA Triton Inference Server",
+    "KServe",
+    "Karpenter",
+    "Prometheus"
+  ],
+  "related": [
+    "networking-restricted-environments",
+    "scaling-performance-cost",
+    "llm-fundamentals",
+    "llm-agent-evaluation",
+    "observability-agent-traces"
+  ],
+  "sources": [
+    {
+      "kind": "repo",
+      "title": "vLLM",
+      "url": "https://github.com/vllm-project/vllm"
+    },
+    {
+      "kind": "doc",
+      "title": "Kubernetes: Schedule GPUs",
+      "url": "https://kubernetes.io/docs/tasks/manage-gpus/scheduling-gpus/"
+    },
+    {
+      "kind": "doc",
+      "title": "NVIDIA GPU Operator",
+      "url": "https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/index.html"
+    },
+    {
+      "kind": "doc",
+      "title": "Hugging Face Text Generation Inference",
+      "url": "https://huggingface.co/docs/text-generation-inference/index"
+    },
+    {
+      "kind": "doc",
+      "title": "NVIDIA GPU Operator: Time-Slicing GPUs in Kubernetes",
+      "url": "https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/gpu-sharing.html"
+    },
+    {
+      "kind": "doc",
+      "title": "NVIDIA Container Toolkit: Installation Guide",
+      "url": "https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html"
+    }
+  ],
+  "practice": null,
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-12",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    }
+  ]
+}

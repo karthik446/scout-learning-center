@@ -1,0 +1,149 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "snowflake-databricks-platforms",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Working in customer data platforms: Snowflake and Databricks",
+  "area": "data",
+  "primary_key": "snowflake",
+  "secondary_keys": [
+    "databricks",
+    "data-infrastructure",
+    "analytics"
+  ],
+  "keys": [
+    "snowflake",
+    "databricks",
+    "data-infrastructure",
+    "analytics"
+  ],
+  "summary": "Most enterprise customers already keep their analytical data in Snowflake or Databricks, so AI work starts inside an account someone else owns and governs. Both platforms separate storage from compute, but they differ in how compute is provisioned, how data is stored, and how access is granted. A forward deployed engineer needs to read the architecture quickly, work within the customer's roles and budgets, and find the right tables in a warehouse nobody documented.",
+  "detail": [],
+  "in_practice": "On arrival the team requests a service identity, a scoped role, a sandbox schema and a small dedicated warehouse or job cluster, then spends the first days exploring metadata and query history with a customer analyst on call. Findings go into a short data map listing trusted tables, their grain, owners and refresh times. Development happens in the sandbox schema against production data read-only, with cost monitored per warehouse or cluster tag. Before go-live the customer's platform team reviews grants, network configuration and expected monthly spend, and production jobs run under the service identity, not under an engineer's personal login.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "Snowflake is a managed service with three layers. Storage holds data in a compressed, columnar internal format that Snowflake reorganizes and manages; you reach it only through SQL. Compute is provided by virtual warehouses, independent clusters that each run queries without sharing compute with other warehouses, so a heavy load job does not slow a dashboard. The cloud services layer coordinates everything: authentication, access control, metadata, query parsing and optimization. The design is a hybrid of shared-disk, with one central data repository, and shared-nothing, with massively parallel compute clusters.",
+          "heading": "Three layers"
+        },
+        {
+          "body": "Cost follows warehouse size and running time, so ask which warehouse you may use, set auto-suspend, and avoid leaving it running for an idle service. Scale up for a complex query, scale out for concurrency. Since each warehouse is isolated, request a dedicated one for your workload so its spend and performance are attributable.",
+          "heading": "What it means on an engagement"
+        }
+      ],
+      "id": "snowflake-architecture",
+      "title": "Snowflake architecture: storage, virtual warehouses, cloud services"
+    },
+    {
+      "body": [
+        {
+          "body": "Databricks is a unified platform for data engineering, analytics and AI, built around the lakehouse idea: data sits in the customer's own cloud object storage in open table formats such as Delta Lake, and managed compute reads it in place. A workspace is the working environment holding notebooks, jobs, SQL editors and dashboards. Compute comes in several forms: all-purpose clusters for interactive notebooks, job compute that starts for a scheduled run and stops, SQL warehouses for BI-style queries, and serverless options. Unity Catalog provides governance with a three-level namespace of catalog, schema and table.",
+          "heading": "Open storage with a unified platform"
+        },
+        {
+          "body": "Expect to work in Python and SQL side by side, with Spark DataFrames for large data. Since files live in the customer's bucket, network paths, storage credentials and table maintenance matter more than in a fully managed warehouse. Choose job compute for production runs; interactive clusters are for development.",
+          "heading": "Practical differences from a warehouse"
+        }
+      ],
+      "id": "databricks-lakehouse",
+      "title": "Databricks: the lakehouse, workspaces and compute"
+    },
+    {
+      "body": [
+        {
+          "body": "Both platforms use role-based access control, with privileges granted on securable objects to roles or groups, never to individuals where it can be avoided. Request a dedicated service principal or service user for your application, a role with read access to named schemas only, a separate schema where you may create objects, and a dedicated compute resource. Prefer key-pair or OAuth authentication to passwords. Sensitive columns may be protected by masking policies and row-level filters, which means the same query returns different results for different roles; confirm which role production will run as before validating outputs.",
+          "heading": "Ask for the narrowest working grant"
+        },
+        {
+          "body": "Establish whether data may leave the platform, whether model calls to an external provider are permitted for these columns, what region the data must stay in, and who approves new grants. Access requests often take longer than the build, so file them on day one.",
+          "heading": "Governance questions to settle early"
+        }
+      ],
+      "id": "access-and-governance",
+      "title": "Access, roles and governance in an account you do not own"
+    },
+    {
+      "body": [
+        {
+          "body": "Documentation is usually stale, but metadata is not. Query the information schema for tables, columns, types and row counts, and sort by last altered time to separate live tables from abandoned ones. Query history shows which tables people and tools really read, how they join them, and which filters they apply; the most frequent queries from the BI service account are the best guide to trusted tables. Lineage views, where enabled, show which jobs write each table. Look at view definitions and existing dbt or notebook code before writing your own logic.",
+          "heading": "Use the platform's own metadata"
+        },
+        {
+          "body": "For a candidate table, check grain by counting rows against distinct keys, check freshness by the maximum load timestamp, and reconcile one known total, such as last month's revenue, against a number the business already reports. Write down what you learn; it often becomes the customer's first real data dictionary.",
+          "heading": "Verify before you trust"
+        }
+      ],
+      "id": "navigating-undocumented-warehouses",
+      "title": "Finding your way in an undocumented warehouse"
+    },
+    {
+      "body": [
+        {
+          "body": "Customers often prefer that data never leaves their governed platform. Both vendors offer ways to do that: Databricks positions itself as a platform for building and deploying AI alongside data, with model serving, vector search and experiment tracking in the workspace, and Snowflake offers in-account functions and container-based compute for similar purposes. The alternative is an external application that queries the platform through a driver or SQL API and calls models elsewhere. The first keeps governance simple and reuses existing permissions; the second gives more control over models, latency and tooling. Decide with the customer's security team, and whichever path is chosen, read from curated tables with a dedicated role, never from raw landing zones.",
+          "heading": "Bring the model to the data when you can"
+        }
+      ],
+      "id": "ai-workloads-on-the-platform",
+      "title": "Running AI workloads next to the data"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart TB\n  subgraph Snowflake\n    S1[Cloud services: auth, metadata, optimizer]\n    S2[Virtual warehouse A]\n    S3[Virtual warehouse B]\n    S4[Managed columnar storage]\n    S1 --> S2\n    S1 --> S3\n    S2 --> S4\n    S3 --> S4\n  end\n  subgraph Databricks\n    D1[Workspace: notebooks, jobs, SQL]\n    D2[Unity Catalog governance]\n    D3[Clusters and SQL warehouses]\n    D4[Delta tables in customer object storage]\n    D1 --> D3\n    D2 --> D3\n    D3 --> D4\n  end\n  APP[FDE application with scoped role] --> S1\n  APP --> D1"
+  },
+  "code": [
+    {
+      "code": "-- which tables are alive, and how big are they?\nselect table_schema, table_name, row_count, last_altered\nfrom information_schema.tables\nwhere table_type = 'BASE TABLE'\norder by last_altered desc\nlimit 50;\n\n-- check the grain of a candidate table\nselect count(*) as row_count,\n       count(distinct order_id) as distinct_orders,\n       max(loaded_at) as freshest\nfrom analytics.orders;",
+      "lang": "sql"
+    }
+  ],
+  "technologies": [
+    "Snowflake",
+    "Databricks",
+    "Delta Lake",
+    "Unity Catalog",
+    "Apache Spark",
+    "BigQuery",
+    "Looker"
+  ],
+  "related": [
+    "sql-postgres-data-systems",
+    "dbt-elt-transformations",
+    "airflow-dagster-pipelines",
+    "security-compliance-reviews",
+    "scaling-performance-cost",
+    "rag-vector-databases"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Snowflake: Key concepts and architecture",
+      "url": "https://docs.snowflake.com/en/user-guide/intro-key-concepts"
+    },
+    {
+      "kind": "doc",
+      "title": "Databricks: Get started",
+      "url": "https://docs.databricks.com/aws/en/getting-started/"
+    },
+    {
+      "kind": "doc",
+      "title": "Databricks: What is Databricks?",
+      "url": "https://docs.databricks.com/aws/en/introduction/"
+    }
+  ],
+  "practice": "practice/snowflake-databricks-platforms",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    }
+  ]
+}

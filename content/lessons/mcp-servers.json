@@ -1,0 +1,134 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "mcp-servers",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Building Model Context Protocol (MCP) servers",
+  "area": "ai-ml",
+  "primary_key": "mcp",
+  "secondary_keys": [],
+  "keys": [
+    "mcp"
+  ],
+  "summary": "The Model Context Protocol is an open standard for connecting AI applications to external systems, so one integration works across many hosts instead of being rewritten per agent framework. A server exposes tools, resources and prompts over JSON-RPC; a host application runs clients that discover and call them. For a forward deployed engineer, an MCP server is often the cleanest way to hand a customer's internal systems to an agent with a clear contract and a clear trust boundary.",
+  "detail": [],
+  "in_practice": "A team typically wraps one customer system per server, starting with three to six read-only tools shaped around the questions agents actually need answered, and adds write tools later behind explicit approval in the host. Development starts on stdio for fast local iteration, then the same server is deployed over Streamable HTTP behind the customer's identity provider so several agents and teams share it. The server lives in the customer's repository with tests and versioned tool schemas, and changes to tool names or descriptions are reviewed like API changes because they alter agent behavior.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "A host is the AI application the user works in, such as a desktop assistant, an IDE or a custom agent. The host creates one client per server, and each client holds a dedicated connection to that server. A server is a program that provides context and capabilities. Messages are JSON-RPC 2.0 requests, responses and notifications. A connection starts with an initialize exchange in which both sides state protocol version and capabilities, so each knows which features the other supports before any tool is listed or called.",
+          "heading": "The three roles"
+        },
+        {
+          "body": "Two standard transports exist. With stdio, the host launches the server as a subprocess and exchanges messages over standard input and output; this suits local tools and gives the server the user's local permissions. With Streamable HTTP, the server runs as an independent service that handles many clients over HTTP, optionally streaming server messages; this suits shared, remotely hosted integrations and is where authorization matters. The message format is identical in both, so server logic does not change with the transport.",
+          "heading": "Transports"
+        }
+      ],
+      "id": "mcp-architecture",
+      "title": "Hosts, clients, servers and the protocol lifecycle"
+    },
+    {
+      "body": [
+        {
+          "body": "Tools are functions the model may call, each with a name, description and JSON Schema for inputs; they are model-controlled and can have side effects. Resources are data identified by URI that the application can read and place in context, such as a file, a record or a schema; they are application-controlled. Prompts are reusable templates the user selects, such as a slash command. Clients discover each with list requests and are told about changes through notifications. Picking the right primitive matters: read-only reference data is usually a resource, an action is a tool.",
+          "heading": "Server primitives"
+        },
+        {
+          "body": "The protocol also lets servers ask things of the client. Sampling lets a server request a model completion through the host, so the server needs no model key of its own. Roots tell a server which filesystem or URI boundaries it should work within. Elicitation lets a server ask the user for additional information mid-operation. Hosts vary in which of these they support, so a server should check negotiated capabilities and degrade gracefully instead of assuming every feature exists.",
+          "heading": "Client features"
+        }
+      ],
+      "id": "mcp-primitives",
+      "title": "Tools, resources and prompts"
+    },
+    {
+      "body": [
+        {
+          "body": "The official SDKs remove most protocol work. In the Python SDK, the FastMCP class turns decorated functions into tools: type hints become the input schema and the docstring becomes the description the model reads. Resources are declared with a URI template and prompts with another decorator. A practical rule for stdio servers is never to write to standard output except protocol messages, because stray prints corrupt the JSON-RPC stream; log to standard error or a file. Return compact, structured results and clear error text, since the model reads both.",
+          "heading": "From function to tool"
+        },
+        {
+          "body": "Test a server at three levels: unit tests on the underlying functions, protocol-level checks with an inspector tool that lists and calls tools interactively, and end-to-end runs in a real host to see whether the model picks the right tool. The reference servers repository shows idiomatic implementations for filesystems, git, fetch and memory and is a useful base for conventions. Keep the tool count small and task-shaped; a server that mirrors every REST endpoint gives the model too many near-identical choices.",
+          "heading": "Testing and reuse"
+        }
+      ],
+      "id": "building-mcp-server",
+      "title": "Building a server with an SDK"
+    },
+    {
+      "body": [
+        {
+          "body": "The specification puts user consent and control at the center: users should understand and approve what data is shared and which tools run, and hosts should treat tool descriptions from untrusted servers as untrusted. For HTTP transports the specification defines an authorization flow based on OAuth, so a remote server acts as a protected resource and validates tokens issued for it. For stdio servers, credentials come from the environment. In both cases apply least privilege: scope tokens narrowly, separate read tools from write tools, validate every argument server-side, and log each call for audit.",
+          "heading": "Security model"
+        }
+      ],
+      "id": "mcp-security-deployment",
+      "title": "Trust, authorization and deployment"
+    }
+  ],
+  "diagram": {
+    "source": "sequenceDiagram\n  participant H as Host with MCP client\n  participant S as MCP server\n  participant B as Customer system\n  H->>S: initialize with capabilities\n  S-->>H: server capabilities\n  H->>S: tools/list\n  S-->>H: tool names and schemas\n  Note over H: model decides to call a tool\n  H->>S: tools/call get_order\n  S->>B: query with scoped credentials\n  B-->>S: record\n  S-->>H: structured result\n  Note over H: result added to model context"
+  },
+  "code": [],
+  "technologies": [
+    "MCP Python SDK",
+    "FastMCP",
+    "MCP TypeScript SDK",
+    "MCP Inspector",
+    "JSON-RPC 2.0",
+    "OAuth 2.1",
+    "Claude Desktop",
+    "Claude Code"
+  ],
+  "related": [
+    "agent-architectures",
+    "structured-outputs-tool-calling",
+    "rest-apis-json-oauth",
+    "security-compliance-reviews",
+    "reusable-platform-internal-tooling",
+    "networking-restricted-environments"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "What is the Model Context Protocol (MCP)?",
+      "url": "https://modelcontextprotocol.io/docs/2026-07-28/getting-started/intro"
+    },
+    {
+      "kind": "tutorial",
+      "title": "MCP: Build an MCP server",
+      "url": "https://modelcontextprotocol.io/docs/2026-07-28/develop/build-server"
+    },
+    {
+      "kind": "spec",
+      "title": "Model Context Protocol Specification",
+      "url": "https://modelcontextprotocol.io/specification/2025-06-18"
+    },
+    {
+      "kind": "repo",
+      "title": "Model Context Protocol reference servers",
+      "url": "https://github.com/modelcontextprotocol/servers"
+    },
+    {
+      "kind": "repo",
+      "title": "MCP Python SDK",
+      "url": "https://github.com/modelcontextprotocol/python-sdk"
+    }
+  ],
+  "practice": "practice/mcp-servers",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    }
+  ]
+}

@@ -1,0 +1,128 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "prompt-and-context-engineering",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Prompt engineering and context engineering",
+  "area": "ai-ml",
+  "primary_key": "prompt-engineering",
+  "secondary_keys": [
+    "context-engineering"
+  ],
+  "keys": [
+    "prompt-engineering",
+    "context-engineering"
+  ],
+  "summary": "Prompt engineering is the practice of writing instructions a model can follow reliably; context engineering is deciding what information occupies the window at each step and in what form. Together they are the main control surface for model behavior that does not require training. The discipline is empirical: define success, write a first version, measure, and change one thing at a time.",
+  "detail": [],
+  "in_practice": "A deployed team starts by writing down success criteria with the customer and collecting a few dozen real inputs, including the awkward ones. The first prompt is plain and explicit; it is run against the cases, failures are read one by one, and each revision targets a named failure class. Prompts live in the repository as templates with typed variables, are reviewed like code, and are tagged with the model id they were tuned for. Customer documents, user input and tool results are wrapped in delimiters and treated as data, never spliced into the instruction text. When context grows, the team measures which sections the answers depend on and removes or summarizes the rest before reaching for a larger window.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "A dependable prompt separates concerns. The system or developer message carries the role, the task, the audience, constraints and the definition of done. Reference material goes in clearly delimited sections, commonly with XML-style tags or headed blocks, so the model can tell instructions from data. The user turn carries the specific request. An output specification states the format and what to do when the answer is unknown. Variable parts are filled from a template so the fixed text stays identical across calls and can be versioned and cached.",
+          "heading": "Parts and their jobs"
+        },
+        {
+          "body": "Be explicit and direct, as if briefing a capable colleague with no background on the account. State what to do instead of only what to avoid, and give the reason behind a rule, since models generalize better from intent than from a bare prohibition. Put long documents near the top and the question after them. Remove contradictory or leftover instructions; most erratic behavior traces back to a prompt that asks for two incompatible things.",
+          "heading": "Writing instructions that hold"
+        }
+      ],
+      "id": "prompt-anatomy",
+      "title": "Anatomy of a production prompt"
+    },
+    {
+      "body": [
+        {
+          "body": "Zero-shot prompting gives only instructions; few-shot prompting adds worked input and output pairs. Examples are the strongest signal for format, tone and edge-case handling, and the model will imitate them closely, so make them varied and representative. A set of three to five diverse examples usually outperforms one, and near-identical examples cause the model to copy surface details. Include at least one example of the hard or negative case, such as the correct response when the input lacks the needed information.",
+          "heading": "Few-shot examples"
+        },
+        {
+          "body": "Asking the model to reason step by step before answering, known as chain of thought, improves accuracy on multi-step problems at the cost of more output tokens; models with a built-in reasoning mode expose this as a setting. Keep the reasoning separate from the final answer so code can parse only the answer. When one prompt tries to do too much, split it into a chain of smaller calls, each with a single job and its own check, which makes failures easy to locate.",
+          "heading": "Reasoning and decomposition"
+        }
+      ],
+      "id": "examples-and-reasoning-techniques",
+      "title": "Examples, reasoning and chaining"
+    },
+    {
+      "body": [
+        {
+          "body": "The model can only use what is in the window, and everything in the window competes for attention. Context engineering treats each call as an assembly step: choose the minimal set of facts, documents, history and tool results that the current step requires; compress the rest into summaries or references that can be fetched on demand; and order the result so stable content comes first and the live question last. For long-running work, keep durable state outside the window in files or a database and load slices of it, instead of carrying an ever-growing transcript.",
+          "heading": "Selection, compression and ordering"
+        }
+      ],
+      "id": "context-selection-and-assembly",
+      "title": "Context engineering: selecting and assembling what the model sees"
+    },
+    {
+      "body": [
+        {
+          "body": "Prompts are code and should be handled as such: stored in version control, changed through review, and gated by a regression run on a fixed case set before release. Two additions make the loop sturdier. First, re-run the full set whenever the model id changes, since a prompt tuned for one model version can regress on the next. Second, keep failures found in production as new cases, so the set tracks the real input distribution instead of the one imagined at design time.",
+          "heading": "Beyond the basic loop"
+        }
+      ],
+      "id": "eval-driven-prompt-iteration",
+      "title": "Iterating on prompts with evaluations"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart TD\n  A[Success criteria and real cases] --> B[Prompt template]\n  C[Stable context: role, rules, tools] --> D[Assemble window]\n  E[Selected documents and history summary] --> D\n  F[Current user request] --> D\n  B --> D\n  D --> G[Model call]\n  G --> H[Score against cases]\n  H -->|failures by class| B\n  H -->|pass| I[Release with pinned model id]"
+  },
+  "code": [
+    {
+      "code": "SYSTEM = \"\"\"You are a support analyst for a billing platform.\nAnswer only from the material inside <documents>.\nIf the answer is not there, reply exactly: NOT_FOUND.\nGive the answer inside <answer> tags, one short paragraph.\"\"\"\n\ndef build_user_turn(docs: list[str], question: str) -> str:\n    blocks = \"\\n\".join(\n        f\"<document index=\\\"{i}\\\">\\n{d}\\n</document>\" for i, d in enumerate(docs)\n    )\n    # long reference material first, the question last\n    return f\"<documents>\\n{blocks}\\n</documents>\\n\\nQuestion: {question}\"",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "Anthropic Console Workbench",
+    "OpenAI Playground",
+    "Jinja2",
+    "Promptfoo",
+    "LangSmith",
+    "Langfuse",
+    "DSPy",
+    "Pydantic AI"
+  ],
+  "related": [
+    "llm-fundamentals",
+    "structured-outputs-tool-calling",
+    "rag-vector-databases",
+    "agent-architectures",
+    "llm-agent-evaluation",
+    "responsible-ai-guardrails"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Claude Docs: Prompt engineering overview",
+      "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/overview"
+    },
+    {
+      "kind": "doc",
+      "title": "OpenAI Docs: Prompt engineering",
+      "url": "https://developers.openai.com/api/docs/guides/prompt-engineering"
+    },
+    {
+      "kind": "guide",
+      "title": "Prompt Engineering Guide: Techniques",
+      "url": "https://www.promptingguide.ai/techniques"
+    }
+  ],
+  "practice": "practice/prompt-and-context-engineering",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    }
+  ]
+}

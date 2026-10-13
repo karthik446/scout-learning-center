@@ -1,0 +1,146 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "workload-scheduling-and-cluster-ops",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Workload scheduling, capacity management and GPU cluster operations",
+  "area": "infra",
+  "primary_key": "workload-scheduling",
+  "secondary_keys": [
+    "cluster-operations",
+    "on-premises",
+    "data-center"
+  ],
+  "keys": [
+    "workload-scheduling",
+    "cluster-operations",
+    "on-premises",
+    "data-center"
+  ],
+  "summary": "A shared GPU cluster has more demand than capacity, so something must decide which jobs run, in what order, and on whose budget. The default Kubernetes scheduler places individual pods but has no notion of queues, team quotas or all-or-nothing job groups. Batch systems such as Kueue and Volcano add those on Kubernetes, while Slurm is the long-established scheduler on HPC-style clusters.",
+  "detail": [],
+  "in_practice": "A platform team gives each group a LocalQueue backed by a ClusterQueue with a guaranteed GPU quota, places all queues in one cohort so idle capacity is borrowed, and defines a few priority classes such as production retraining, research and best-effort. Training job templates are created suspended with the queue label already set, and multi-worker jobs use all-or-nothing admission. Capacity planning runs on a regular cadence from metrics: pending time per queue, GPU allocation versus actual utilisation, and fragmentation across node types. Operations work includes cordoning and draining nodes for driver upgrades, handling failing GPUs, running reserved and spot capacity as separate flavors, and reviewing quota with team leads when wait times grow.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "The Kubernetes scheduler watches for pods with no node assigned and places them one at a time. In the filtering phase it removes nodes that cannot run the pod because of insufficient resources, taints, affinity rules or other constraints. In the scoring phase it ranks the remaining feasible nodes and picks the highest, then binds the pod. This design is built for long-running services and works well for them. Its behaviour is extensible through scheduling framework plugins and profiles.",
+          "heading": "Filter, score, bind"
+        },
+        {
+          "body": "Three things are missing for batch. There is no job queue: a pod that does not fit simply stays pending, with no fair ordering between teams. There is no group awareness: a four-worker training job can get three pods placed and one stuck, holding three GPUs idle. And quota is a hard namespace cap through ResourceQuota, with no way to lend unused capacity to another team and take it back. Batch schedulers exist to fill these gaps.",
+          "heading": "The gaps for training workloads"
+        }
+      ],
+      "id": "default-scheduler-limits",
+      "title": "What kube-scheduler does and where it falls short for batch"
+    },
+    {
+      "body": [
+        {
+          "body": "Kueue does not replace the scheduler. It decides when a job is allowed to start, then lets kube-scheduler place the pods. Jobs are created suspended; Kueue unsuspends them once quota is available. The main objects are the ResourceFlavor, which describes a kind of capacity such as a GPU model or spot versus on-demand nodes; the ClusterQueue, which holds quota per flavor and resource and the queueing and preemption policy; and the LocalQueue, a namespaced entry point that a team's jobs point to with a label. It works with batch Jobs, JobSet, Kubeflow jobs, Ray jobs and others.",
+          "heading": "Admission instead of placement"
+        },
+        {
+          "body": "ClusterQueues can be grouped in a cohort. A queue with unused nominal quota lends it to others in the cohort, and a queue under pressure can borrow up to a configured limit. When the owner needs its capacity back, preemption evicts borrowing workloads according to priority. This gives each team a guaranteed share while keeping GPUs busy. Workload priority classes decide ordering within a queue, and admission can be made all-or-nothing so a job starts only when every pod can be admitted.",
+          "heading": "Borrowing and preemption"
+        }
+      ],
+      "id": "kueue-quotas-and-queues",
+      "title": "Kueue: job queueing, quotas and fair sharing"
+    },
+    {
+      "body": [
+        {
+          "body": "Gang scheduling means a group of pods is scheduled only if a minimum number of them can run at the same time. This is what distributed training and MPI jobs require, since a partial group does no useful work and wastes the GPUs it holds. Volcano is a batch scheduler for Kubernetes that implements this with a PodGroup object carrying a minimum member count. It runs as an additional scheduler that pods opt into by scheduler name, and it adds its own queues with weights and capacity, fair-share and priority policies, preemption and reclaim between queues, and bin-packing style placement that reduces GPU fragmentation. It integrates with frameworks such as Spark, PyTorch, TensorFlow, MPI and Ray. The choice between Volcano and Kueue often comes down to whether a team wants to replace placement logic or only add admission control on top of the default scheduler.",
+          "heading": "All or nothing placement"
+        }
+      ],
+      "id": "gang-scheduling-volcano",
+      "title": "Gang scheduling and Volcano"
+    },
+    {
+      "body": [
+        {
+          "body": "Many large GPU clusters run Slurm rather than Kubernetes. A central controller daemon, slurmctld, tracks resources and the job queue, and a slurmd daemon on each compute node launches work. Nodes are grouped into partitions, which act as queues with their own limits. Users interact through a small set of commands: sbatch submits a batch script for later execution, srun launches a job or a step interactively, salloc reserves an allocation, squeue lists queued and running jobs, sinfo shows partition and node state, and scancel removes a job. A job requests nodes, tasks, GPUs and a time limit, waits until the allocation is available, then runs on bare metal with direct access to the hardware and interconnect.",
+          "heading": "Daemons, partitions and commands"
+        },
+        {
+          "body": "Slurm treats a multi-node job as a single unit by default, so gang scheduling is inherent, and time limits let it backfill short jobs into gaps. Kubernetes offers stronger isolation through containers, a richer API and better fit for services. Platform teams increasingly need both mental models.",
+          "heading": "How it compares"
+        }
+      ],
+      "id": "slurm-model",
+      "title": "Slurm: the HPC scheduling model"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  J[Job created suspended with queue label] --> LQ[LocalQueue in team namespace]\n  LQ --> CQ[ClusterQueue with quota per ResourceFlavor]\n  CQ <-->|borrow and lend| CO[Cohort of ClusterQueues]\n  CQ -->|quota available: admit and unsuspend| JC[Job controller creates pods]\n  JC --> KS[kube-scheduler filters and scores nodes]\n  KS --> N[GPU nodes]\n  CQ -->|no quota: wait or preempt lower priority| LQ"
+  },
+  "code": [
+    {
+      "code": "apiVersion: batch/v1\nkind: Job\nmetadata:\n  generateName: finetune-\n  namespace: team-nlp\n  labels:\n    kueue.x-k8s.io/queue-name: team-nlp-queue\nspec:\n  suspend: true          # Kueue unsuspends on admission\n  parallelism: 1\n  completions: 1\n  template:\n    spec:\n      restartPolicy: Never\n      containers:\n        - name: train\n          image: registry.example/train:1.0\n          resources:\n            limits:\n              nvidia.com/gpu: 4",
+      "lang": "yaml"
+    },
+    {
+      "code": "#!/bin/bash\n#SBATCH --job-name=finetune\n#SBATCH --partition=gpu\n#SBATCH --nodes=2\n#SBATCH --gres=gpu:4\n#SBATCH --time=12:00:00\nsrun python train.py --epochs 3\n# submit with: sbatch train.sbatch ; inspect with: squeue -u $USER",
+      "lang": "bash"
+    }
+  ],
+  "technologies": [
+    "Kueue",
+    "Volcano",
+    "Slurm",
+    "kube-scheduler",
+    "Kubernetes ResourceQuota",
+    "Kubernetes PriorityClass",
+    "JobSet",
+    "Cluster Autoscaler",
+    "Prometheus"
+  ],
+  "related": [
+    "nvidia-gpus-on-kubernetes",
+    "distributed-training",
+    "kubernetes-for-ml-workloads",
+    "autoscaling-and-cost-efficiency",
+    "multi-tenant-platform-design",
+    "golden-paths-self-service"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Kueue Overview",
+      "url": "https://kueue.sigs.k8s.io/docs/overview/"
+    },
+    {
+      "kind": "doc",
+      "title": "Slurm Quick Start User Guide",
+      "url": "https://slurm.schedmd.com/quickstart.html"
+    },
+    {
+      "kind": "doc",
+      "title": "Kubernetes Scheduler",
+      "url": "https://kubernetes.io/docs/concepts/scheduling-eviction/kube-scheduler/"
+    },
+    {
+      "kind": "repo",
+      "title": "Volcano repository",
+      "url": "https://github.com/volcano-sh/volcano"
+    }
+  ],
+  "practice": "practice/workload-scheduling-and-cluster-ops",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    }
+  ]
+}

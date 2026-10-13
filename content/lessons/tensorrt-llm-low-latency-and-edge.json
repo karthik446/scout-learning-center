@@ -1,0 +1,138 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "tensorrt-llm-low-latency-and-edge",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Low-latency inference: TensorRT-LLM, quantization and edge deployment",
+  "area": "ai-ml",
+  "primary_key": "tensorrt-llm",
+  "secondary_keys": [
+    "low-latency",
+    "edge-deployment"
+  ],
+  "keys": [
+    "tensorrt-llm",
+    "low-latency",
+    "edge-deployment"
+  ],
+  "summary": "When latency or hardware budget is tight, the model itself is optimised for the target device instead of only scaling the service around it. TensorRT-LLM compiles LLMs into engines tuned for NVIDIA GPUs, quantization reduces the numeric precision of weights and activations to cut memory and compute, and edge deployment pushes the result onto constrained devices. Each step trades flexibility or accuracy for speed, so each needs measurement.",
+  "detail": [],
+  "in_practice": "Teams add an optimisation stage to the release pipeline after training and evaluation: export, quantize, compile for each target GPU or device class, then rerun the evaluation suite and a latency benchmark on the real hardware. Only variants that hold accuracy within an agreed tolerance and beat the baseline on cost at the latency objective are promoted. Engines are stored as versioned artifacts with build metadata, served through Triton or the bundled server in the data centre, and shipped as signed packages with staged rollout to edge fleets.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "TensorRT-LLM is NVIDIA's open-source library for optimising LLM inference on its GPUs. It provides a Python API for loading and running models, a command-line server with an OpenAI-compatible endpoint, and a backend for Triton Inference Server for production serving. Under the hood it applies GPU-specific kernels and graph optimisations together with LLM serving techniques: in-flight batching (its name for continuous batching), a paged KV cache with reuse, multi-GPU execution, and several quantization formats. It also supports speculative decoding and guided decoding.",
+          "heading": "What it is"
+        },
+        {
+          "body": "An optimised engine is specific to the model, the precision, the shape limits and the GPU architecture it was built for, and is tied to the library version. That makes the build a pipeline stage with its own artifacts: build on the same GPU type that will serve, store the engine in the registry beside the source weights with all build parameters, and rebuild on every model, driver or library upgrade. The reward is typically lower latency and higher throughput than a general-purpose runtime on the same hardware.",
+          "heading": "The cost of compilation"
+        }
+      ],
+      "id": "tensorrt-llm-engines",
+      "title": "TensorRT-LLM: compiled engines for NVIDIA GPUs"
+    },
+    {
+      "body": [
+        {
+          "body": "Quantization maps floating-point values to low-bit integers with a scale and a zero point, so that a real value is approximately scale times the integer minus the zero point. ONNX Runtime documents three routes. Dynamic quantization computes activation ranges at run time and needs no data, which suits transformer and recurrent models on CPU. Static quantization runs a calibration dataset through the model beforehand to fix the ranges, which is faster at inference and suits convolutional models. Quantization-aware training simulates quantization during training to recover accuracy when the post-training methods lose too much.",
+          "heading": "Core idea and the three methods"
+        },
+        {
+          "body": "A quantized ONNX model is expressed either with quantized operators or with quantize and dequantize node pairs around normal operators; the second is what accelerator back ends usually consume. Preprocessing the graph with shape inference and fusion before quantizing improves results, and a debugging tool compares tensors between the float and quantized models to find the layers that hurt. For LLMs, common schemes are 8-bit floating point on recent GPUs and 4-bit weight-only methods. Every quantized model must pass the same evaluation gate as the original.",
+          "heading": "Formats and LLM-specific schemes"
+        }
+      ],
+      "id": "quantization",
+      "title": "Quantization: methods and accuracy control"
+    },
+    {
+      "body": [
+        {
+          "body": "Right-sizing for inference starts from a latency objective and a request profile, then compares cost per thousand requests or per million tokens across candidates: CPU instances for small tree and linear models, mid-range GPUs for vision and embedding models, large-memory GPUs for LLMs, and purpose-built inference accelerators where the framework supports them. The deciding numbers come from a benchmark at the latency objective, not from peak throughput. Memory fit is the first filter for LLMs: weights plus KV cache at the intended concurrency must fit, which is where quantization changes the answer. Sharing a GPU among small models through multi-model servers or fractional allocation raises utilisation.",
+          "heading": "Matching hardware to the model"
+        }
+      ],
+      "id": "right-sizing-compute",
+      "title": "Right-sizing compute for latency and cost"
+    },
+    {
+      "body": [
+        {
+          "body": "Edge targets such as embedded GPU modules, industrial PCs and mobile devices have fixed memory, limited power and thermal headroom, and intermittent connectivity. The usual path is to export the model to an interchange format, quantize it, and run it with a runtime that has an execution provider for the device accelerator; ONNX Runtime and TensorRT are common, and compiled engines must be built for the exact device family. Small language models and vision models are the typical workloads.",
+          "heading": "Constraints and the toolchain"
+        },
+        {
+          "body": "The platform problem shifts from scaling to fleet management: signed model packages, staged over-the-air rollout by device cohort, on-device version reporting, rollback to the previous model on failed health checks, and buffered telemetry uploaded when connectivity returns. Since ground truth rarely reaches the device, monitoring relies on input statistics and confidence distributions shipped back in summary form. A cloud fallback path handles requests the device model cannot answer within its limits.",
+          "heading": "Operating a fleet"
+        }
+      ],
+      "id": "edge-deployment",
+      "title": "Edge deployment"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  W[Trained weights] --> X[Export and graph preprocessing]\n  X --> Q[Quantize with calibration data]\n  Q --> B[Build engine per target GPU]\n  B --> E[Evaluation gate and latency benchmark]\n  E -->|pass| R[(Registry with build metadata)]\n  E -->|fail| Q\n  R --> T[Triton or bundled server in data centre]\n  R --> O[Signed package and staged rollout to edge]"
+  },
+  "code": [
+    {
+      "code": "from onnxruntime.quantization import quantize_dynamic, QuantType\nimport onnxruntime as ort\n\nquantize_dynamic(\n    model_input=\"model.onnx\",\n    model_output=\"model.int8.onnx\",\n    weight_type=QuantType.QInt8,\n)\n\nsess = ort.InferenceSession(\"model.int8.onnx\")\nprint([i.name for i in sess.get_inputs()])",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "TensorRT-LLM",
+    "NVIDIA TensorRT",
+    "NVIDIA Triton Inference Server",
+    "ONNX Runtime",
+    "ONNX",
+    "NVIDIA Jetson",
+    "AWS Inferentia"
+  ],
+  "related": [
+    "llm-serving-vllm-sglang",
+    "nvidia-gpus-on-kubernetes",
+    "model-serving-architecture",
+    "model-evaluation-gates",
+    "autoscaling-and-cost-efficiency",
+    "model-registry-and-versioning"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "TensorRT-LLM Overview",
+      "url": "https://nvidia.github.io/TensorRT-LLM/overview.html"
+    },
+    {
+      "kind": "doc",
+      "title": "TensorRT-LLM Quick Start Guide",
+      "url": "https://nvidia.github.io/TensorRT-LLM/quick-start-guide.html"
+    },
+    {
+      "kind": "repo",
+      "title": "TensorRT-LLM repository",
+      "url": "https://github.com/NVIDIA/TensorRT-LLM"
+    },
+    {
+      "kind": "doc",
+      "title": "ONNX Runtime: Quantize ONNX models",
+      "url": "https://onnxruntime.ai/docs/performance/model-optimizations/quantization.html"
+    }
+  ],
+  "practice": "practice/tensorrt-llm-low-latency-and-edge",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    }
+  ]
+}

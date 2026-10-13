@@ -1,0 +1,166 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "feature-stores",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Feature stores and feature pipelines: offline/online consistency",
+  "area": "ai-ml",
+  "primary_key": "feature-store",
+  "secondary_keys": [
+    "feature-pipelines"
+  ],
+  "keys": [
+    "feature-store",
+    "feature-pipelines"
+  ],
+  "summary": "A feature store is the system that defines features once and serves the same values to training and to online inference. It pairs an offline store holding timestamped history with an online store holding the latest value per entity, plus a registry of definitions. Its main purpose is correctness: training rows must see only what was known at the time, and serving must compute features the same way training did.",
+  "detail": [],
+  "in_practice": "A team keeps feature definitions in a Git repository next to the pipelines that compute them; CI runs a plan against the registry and merges apply the change. Batch pipelines write timestamped feature tables to the offline store, an orchestrator task runs incremental materialization after each successful load, and a streaming job pushes the few features that need minute-level freshness. Data scientists build training sets by passing an entity dataframe with label timestamps to historical retrieval, and the serving code fetches the same feature service by name. The platform team owns the online store capacity, freshness alerts per feature view, access control on feature groups, and a periodic offline versus online consistency check.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "The registry holds feature definitions as versioned metadata: which entities exist, which features belong to which view, where the source data lives. The offline store is a warehouse or lakehouse table set with full history, read in bulk to build training sets. The online store is a key-value database holding only the latest values per entity key, read at request time with low latency. Feast is an open-source implementation that plugs into existing stores instead of replacing them; it does not run the transformations that produce batch features, which stay in upstream pipelines. Amazon SageMaker Feature Store offers the same split as a managed service through feature groups with an online store, an offline store, or both.",
+          "heading": "Three components and two read paths"
+        },
+        {
+          "body": "The cost is another system to operate, so the case rests on reuse and correctness. It pays off when several models share features, when models serve online and need the same values that were used offline, and when training needs history joined at the correct time. A single batch-scored model with features computed in one SQL query usually does not need one. Platform teams often start with only the offline path and conventions for timestamped feature tables, then add online serving when the first real-time model arrives.",
+          "heading": "When a feature store is worth it"
+        }
+      ],
+      "id": "feature-store-architecture",
+      "title": "Architecture: registry, offline store, online store"
+    },
+    {
+      "body": [
+        {
+          "body": "In Feast, an entity is the business object features describe, identified by a join key such as a user id. A data source points to a table or file with an event timestamp column. A feature view groups a set of features over one source for one or more entities, with a schema and a time-to-live that bounds how far back a value may be used. A feature service names the exact set of features one model version consumes, which gives a stable contract between the model and the store. Definitions are Python files in a repository; running the apply command registers them and prepares the infrastructure.",
+          "heading": "The definition objects"
+        },
+        {
+          "body": "Some features cannot be precomputed because they depend on the request, for example the ratio between a transaction amount in the request and a stored average. On-demand feature views express such transformations so they run in both historical retrieval and online retrieval, keeping one definition. Features with tight freshness needs arrive from a stream processor that pushes values into the online store and logs them to the offline store. In SageMaker Feature Store the equivalent unit is a feature group, where every record carries a record identifier and an event time.",
+          "heading": "On-demand and streaming features"
+        }
+      ],
+      "id": "entities-feature-views-and-services",
+      "title": "Defining entities, feature views and feature services"
+    },
+    {
+      "body": [
+        {
+          "body": "Historical retrieval takes an entity dataframe, one row per training example with entity keys and an event timestamp (usually the moment the label's prediction would have been made). For each row and each feature view, the store selects the most recent feature row whose timestamp is at or before the example timestamp and no older than the view's time-to-live; otherwise the feature is null. This as-of join is what prevents label leakage from future values. It is expensive on large tables, so offline stores implement it as a windowed SQL query, and teams keep feature tables partitioned by time to bound the scan.",
+          "heading": "The join a feature store performs"
+        }
+      ],
+      "id": "point-in-time-joins",
+      "title": "Point-in-time correct training sets"
+    },
+    {
+      "body": [
+        {
+          "body": "Materialization copies the latest feature values per entity from the offline store into the online store for a time range. An incremental materialize run processes only the interval since the previous run, and is scheduled from an orchestrator at the cadence the freshness requirement allows. Because the online store keeps one row per entity key per view, a rerun overwrites the same keys and is safe to retry. Failures here are silent for the model, which keeps serving stale values, so the platform tracks the last successful materialization time per view and alerts when it exceeds the expected interval.",
+          "heading": "Loading the online store"
+        },
+        {
+          "body": "At inference the model service requests features for a list of entity rows, either through the SDK in process or through a feature server over the network. Latency is dominated by the online store read, so features for one request are batched into a single call, feature services limit the fetch to what the model needs, and missing entities return nulls that the model must handle with defaults. Capacity planning treats the online store as a tier-one dependency of the model endpoint: it shares the endpoint's availability target, timeouts and fallbacks.",
+          "heading": "Serving path"
+        }
+      ],
+      "id": "materialization-and-online-serving",
+      "title": "Materialization and online retrieval"
+    },
+    {
+      "body": [
+        {
+          "body": "Skew is any difference between the feature values a model trained on and the values it receives in production. Common causes are two implementations of the same logic (SQL offline, application code online), different handling of nulls and defaults, timezone or window boundary differences, stale online values after a failed materialization, and backfills that use data which was not yet available at the original time. A feature store removes the first cause by having one definition and one retrieval interface for both paths, but freshness and backfill discipline remain the team's responsibility.",
+          "heading": "Sources of skew"
+        },
+        {
+          "body": "The strongest control is to log the features actually served with each prediction and train on those logs, or at least compare them with offline-computed values for the same entity and timestamp and track the mismatch rate per feature. Other controls are schema and range validation on feature tables before materialization, pinning a model version to a feature service version, and treating a feature definition change like an API change with review and a migration plan. Distribution monitoring on served features catches drift that tests cannot.",
+          "heading": "Controls"
+        }
+      ],
+      "id": "training-serving-skew",
+      "title": "Detecting and preventing training-serving skew"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  P[Batch and streaming pipelines] --> OFF[Offline store with history]\n  DEF[Feature definitions in Git] --> REG[Registry]\n  REG --> OFF\n  REG --> ON[Online store latest values]\n  OFF -->|materialize| ON\n  P -->|push fresh values| ON\n  ED[Entity dataframe with timestamps] --> PIT[Point-in-time join]\n  OFF --> PIT\n  PIT --> TRAIN[Training job]\n  ON --> SVC[Model service]\n  SVC --> LOG[Served feature log]\n  LOG --> OFF"
+  },
+  "code": [
+    {
+      "code": "from datetime import timedelta\nfrom feast import Entity, FeatureView, Field, FileSource\nfrom feast.types import Float32, Int64\n\ndriver = Entity(name='driver', join_keys=['driver_id'])\n\nsource = FileSource(\n    path='data/driver_stats.parquet',\n    timestamp_field='event_timestamp',\n)\n\ndriver_stats = FeatureView(\n    name='driver_hourly_stats',\n    entities=[driver],\n    ttl=timedelta(days=1),\n    schema=[Field(name='conv_rate', dtype=Float32),\n            Field(name='avg_daily_trips', dtype=Int64)],\n    source=source,\n)",
+      "lang": "python"
+    },
+    {
+      "code": "import pandas as pd\nfrom feast import FeatureStore\n\nstore = FeatureStore(repo_path='.')\nfeatures = ['driver_hourly_stats:conv_rate',\n            'driver_hourly_stats:avg_daily_trips']\n\n# training: as-of join at each label timestamp\nentity_df = pd.DataFrame({\n    'driver_id': [1001, 1002],\n    'event_timestamp': pd.to_datetime(['2026-01-05 10:00', '2026-01-06 09:30']),\n})\ntrain_df = store.get_historical_features(\n    entity_df=entity_df, features=features).to_df()\n\n# serving: latest values from the online store\nonline = store.get_online_features(\n    features=features, entity_rows=[{'driver_id': 1001}]).to_dict()",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "Feast",
+    "Amazon SageMaker Feature Store",
+    "Tecton",
+    "Redis",
+    "Amazon DynamoDB",
+    "BigQuery",
+    "Snowflake",
+    "Apache Spark",
+    "Apache Kafka"
+  ],
+  "related": [
+    "spark-data-pipelines",
+    "storage-lakehouse-and-data-stores",
+    "airflow-pipelines",
+    "model-serving-architecture",
+    "model-monitoring-and-drift",
+    "mlops-and-ml-lifecycle"
+  ],
+  "sources": [
+    {
+      "kind": "tutorial",
+      "title": "Feast Quickstart",
+      "url": "https://docs.feast.dev/getting-started/quickstart"
+    },
+    {
+      "kind": "doc",
+      "title": "Feast Concepts",
+      "url": "https://docs.feast.dev/getting-started/concepts"
+    },
+    {
+      "kind": "doc",
+      "title": "Amazon SageMaker Feature Store",
+      "url": "https://docs.aws.amazon.com/sagemaker/latest/dg/feature-store.html"
+    },
+    {
+      "kind": "doc",
+      "title": "Feast Documentation: Feature view",
+      "url": "https://docs.feast.dev/getting-started/concepts/feature-view"
+    },
+    {
+      "kind": "doc",
+      "title": "Feast Documentation: Point-in-time joins",
+      "url": "https://docs.feast.dev/getting-started/concepts/point-in-time-joins"
+    },
+    {
+      "kind": "doc",
+      "title": "Feast Documentation: Feature retrieval",
+      "url": "https://docs.feast.dev/getting-started/concepts/feature-retrieval"
+    }
+  ],
+  "practice": "practice/feature-stores",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    }
+  ]
+}

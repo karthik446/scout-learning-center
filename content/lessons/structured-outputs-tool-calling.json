@@ -1,0 +1,156 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "structured-outputs-tool-calling",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Structured outputs and tool calling",
+  "area": "ai-ml",
+  "primary_key": "structured-outputs",
+  "secondary_keys": [
+    "tool-calling"
+  ],
+  "keys": [
+    "structured-outputs",
+    "tool-calling"
+  ],
+  "summary": "Structured outputs make a model return data that conforms to a schema, so downstream code can consume it without parsing free text. Tool calling extends the same idea to actions: the model emits a typed request to call a function, the application executes it and returns the result, and the model continues. These two mechanisms are what connect a language model to real systems.",
+  "detail": [],
+  "in_practice": "Teams define each output and tool input once as a typed model in application code and generate the JSON Schema from it, so the contract, the validator and the documentation cannot drift. Extraction and classification steps use strict structured outputs; anything touching customer systems goes through tools with narrow scopes, read tools separated from write tools, and writes gated by approval or policy. The executor layer handles timeouts, retries, idempotency keys and logging, and returns errors to the model as tool results. Before go-live the team runs an evaluation set that checks not only final answers but also which tools were called with which arguments, since a correct answer reached through a wrong call is a latent incident.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "Both structured outputs and tool parameters are described with JSON Schema. The working vocabulary is small: type, properties, required, enum for closed sets, items for arrays, nested objects, anyOf for alternatives, and additionalProperties set to false to forbid unexpected keys. Descriptions on fields are read by the model and act as inline instructions. Strict modes accept only a subset of the specification; constraints such as string patterns, numeric ranges or deep recursion may be unsupported or limited depending on the provider, so check the supported subset and enforce the remaining rules in application code after parsing.",
+          "heading": "The parts that matter for models"
+        }
+      ],
+      "id": "json-schema-contracts",
+      "title": "JSON Schema as the contract language"
+    },
+    {
+      "body": [
+        {
+          "body": "Validation catches shape errors, not meaning errors: a schema-valid object can still hold a wrong value. Add semantic checks after parsing, such as cross-field consistency, ids that must exist in a system of record, and figures that must appear in the source. When a retry is needed, send the validation error text back to the model instead of repeating the same request, and cap attempts so a persistent failure becomes a handled error. Design schemas with an explicit way to express absence, for example a nullable field or a status enum, so the model is not forced to invent a value.",
+          "heading": "Beyond the basic pattern"
+        }
+      ],
+      "id": "validate-and-retry-typed-outputs",
+      "title": "Typed outputs with validation and bounded retry"
+    },
+    {
+      "body": [
+        {
+          "body": "There are three levels of structure. Asking for JSON in the prompt is best effort. JSON mode guarantees syntactically valid JSON but not a particular shape. Strict structured outputs go further: the provider compiles the schema into a grammar and, at each generation step, masks out tokens that would violate it, so the result always parses and matches the schema. This requires a supported schema subset, typically with every property listed as required and additionalProperties false, with optional values modeled as a union with null.",
+          "heading": "How schema adherence is guaranteed"
+        },
+        {
+          "body": "A guarantee on shape does not cover every outcome. Output cut off by the token limit can be incomplete, and a model may return a refusal instead of the object, which the API reports separately; handle both before using the data. The first request with a new schema can be slower while the grammar is prepared. Field order in the schema affects quality, since generation is sequential: place a reasoning or evidence field before the verdict field that depends on it.",
+          "heading": "Limits to plan for"
+        }
+      ],
+      "id": "strict-mode-constrained-decoding",
+      "title": "Strict mode and constrained decoding"
+    },
+    {
+      "body": [
+        {
+          "body": "The application sends tool definitions, each with a name, a description and an input schema. When the model decides a tool is needed, the response stops with a tool-use stop reason and contains one or more call blocks, each with an id, the tool name and JSON arguments. The application, not the model, executes the call, then sends a new request that includes the earlier assistant turn plus a tool result tied to the call id. The model reads the result and either calls another tool or answers. A model may request several calls in one turn, which can be executed in parallel.",
+          "heading": "Protocol"
+        },
+        {
+          "body": "A tool choice setting lets the application allow any tool, force a specific tool, or disable tools for a turn; forcing a single tool is a common way to get structured output. Client tools run in application code, while some providers also offer server tools they execute themselves. Cap the number of loop iterations, apply a timeout to every execution, and return failures as tool results marked as errors so the model can recover instead of the loop crashing.",
+          "heading": "Controls"
+        }
+      ],
+      "id": "tool-calling-loop",
+      "title": "The tool calling loop"
+    },
+    {
+      "body": [
+        {
+          "body": "The description is the main factor in whether a tool is chosen and called correctly. State what the tool does, when to use it and when not to, what each parameter means with its format, and what comes back. Prefer a small number of task-shaped tools over a one-to-one mirror of an internal API, use enums and required fields to shrink the space of bad calls, and give tools distinct names so they are not confused. Keep results compact and relevant, since they are added to the window, and make error messages actionable, for example naming the invalid parameter and the accepted values.",
+          "heading": "Interface design for a model reader"
+        }
+      ],
+      "id": "tool-design-and-descriptions",
+      "title": "Designing tools a model can use well"
+    },
+    {
+      "body": [
+        {
+          "body": "Arguments produced by a model are untrusted input: validate them against the schema and against the caller's own permissions, since the model must never hold more authority than the user it acts for. Because a loop can retry or repeat a call, give every mutating tool an idempotency key so a duplicate request has no second effect. When calls run in parallel, make sure writes that depend on each other are sequenced by the application. Record each call, its arguments and its result with the request trace so any action can be audited later.",
+          "heading": "Beyond read and write separation"
+        }
+      ],
+      "id": "tool-side-effects-and-approval",
+      "title": "Side effects, idempotency and approval"
+    }
+  ],
+  "diagram": {
+    "source": "sequenceDiagram\n  participant U as User\n  participant A as Application\n  participant M as Model\n  participant S as Customer system\n  U->>A: request\n  A->>M: messages plus tool definitions\n  M-->>A: stop reason tool use, call id, name, arguments\n  A->>A: validate arguments, check permissions\n  A->>S: execute with timeout and idempotency key\n  S-->>A: result or error\n  A->>M: tool result tied to call id\n  M-->>A: final answer or next tool call\n  A-->>U: response"
+  },
+  "code": [
+    {
+      "code": "{\n  \"name\": \"get_invoice\",\n  \"description\": \"Fetch one invoice by id. Use when the user asks about a specific invoice amount, status or due date. Do not use for listing invoices.\",\n  \"input_schema\": {\n    \"type\": \"object\",\n    \"properties\": {\n      \"invoice_id\": {\n        \"type\": \"string\",\n        \"description\": \"Invoice id, for example INV-20417\"\n      },\n      \"include_line_items\": {\n        \"type\": \"boolean\",\n        \"description\": \"Return line items as well as totals\"\n      }\n    },\n    \"required\": [\"invoice_id\", \"include_line_items\"],\n    \"additionalProperties\": false\n  }\n}",
+      "lang": "json"
+    }
+  ],
+  "technologies": [
+    "JSON Schema",
+    "Pydantic",
+    "Zod",
+    "Anthropic tool use",
+    "OpenAI function calling",
+    "OpenAI Structured Outputs",
+    "Instructor",
+    "Pydantic AI",
+    "Vercel AI SDK",
+    "Model Context Protocol"
+  ],
+  "related": [
+    "llm-fundamentals",
+    "prompt-and-context-engineering",
+    "agent-architectures",
+    "mcp-servers",
+    "rest-apis-json-oauth",
+    "responsible-ai-guardrails",
+    "llm-agent-evaluation"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Claude Docs: Tool use overview",
+      "url": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview"
+    },
+    {
+      "kind": "doc",
+      "title": "OpenAI Docs: Function calling",
+      "url": "https://developers.openai.com/api/docs/guides/function-calling"
+    },
+    {
+      "kind": "doc",
+      "title": "OpenAI Docs: Structured outputs",
+      "url": "https://developers.openai.com/api/docs/guides/structured-outputs"
+    },
+    {
+      "kind": "guide",
+      "title": "Understanding JSON Schema",
+      "url": "https://json-schema.org/understanding-json-schema/reference"
+    }
+  ],
+  "practice": "practice/structured-outputs-tool-calling",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    }
+  ]
+}

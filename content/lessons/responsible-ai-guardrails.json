@@ -1,0 +1,131 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "responsible-ai-guardrails",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Responsible AI controls and guardrails",
+  "area": "ai-ml",
+  "primary_key": "responsible-ai",
+  "secondary_keys": [
+    "ai-strategy"
+  ],
+  "keys": [
+    "responsible-ai",
+    "ai-strategy"
+  ],
+  "summary": "Responsible AI work combines a governance process that identifies and tracks risk with technical controls that limit what a model-driven system can see, say and do. Frameworks such as the NIST AI Risk Management Framework give the process; the OWASP Top 10 for LLM applications gives the threat list; layered guardrails give the enforcement. In customer deployments this is what gets a system through risk review and keeps it there.",
+  "detail": [],
+  "in_practice": "A deployment team threat-models the agent with the customer's security group early, walking the OWASP list against the actual data flows and tool permissions and recording each risk with an owner. Controls are then built as code around the model, not as prompt text alone: input and output filters, scoped credentials, approval steps and audit logging, each covered by adversarial test cases that run in CI. The resulting evidence pack of risk register, eval results and monitoring plan is what the customer's governance board signs off, and it is updated whenever a tool, model or data source changes.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "The NIST AI Risk Management Framework is a voluntary framework for managing risks of AI systems to individuals, organizations and society. Its core has four functions. Govern establishes policies, roles and accountability across the organization. Map sets the context: intended use, affected people, and where harm could arise. Measure assesses and tracks identified risks with quantitative and qualitative methods. Manage prioritizes and acts on them, including monitoring and incident response. A companion profile addresses generative AI specifically. The framework describes trustworthy systems as valid and reliable, safe, secure and resilient, accountable and transparent, explainable, privacy-enhanced and fair.",
+          "heading": "The four functions"
+        },
+        {
+          "body": "Customers in regulated industries often structure their AI review around these functions, so it helps to deliver artifacts that map to them: a use-case description with intended and out-of-scope uses, a risk register with owner and mitigation per risk, evaluation results as measurement evidence, and a monitoring and escalation plan. A customer impact assessment asks who is affected by a wrong or harmful output, how they would find out, and what recourse exists. Writing this alongside the design doc is cheaper than retrofitting it at review time.",
+          "heading": "Using it on an engagement"
+        }
+      ],
+      "id": "nist-ai-rmf",
+      "title": "Risk management with the NIST AI RMF"
+    },
+    {
+      "body": [
+        {
+          "body": "The OWASP list is the common vocabulary for security review of model-backed applications. It covers prompt injection, direct and indirect; sensitive information disclosure; supply chain weaknesses in models, data and dependencies; data and model poisoning; improper handling of model output by downstream code; excessive agency, where a system has more functionality, permission or autonomy than the task needs; system prompt leakage; weaknesses in vector and embedding stores; misinformation and overreliance; and unbounded consumption of resources. Each entry lists example scenarios and mitigations.",
+          "heading": "The threat list"
+        },
+        {
+          "body": "Three entries dominate agent designs. Indirect prompt injection arrives through content the agent reads, such as a web page, a document or a tool result, so all retrieved content is untrusted input. Improper output handling means model output must be validated and encoded before it reaches a shell, a query or a browser. Excessive agency is addressed by design: minimal tool sets, narrowly scoped credentials, authorization checks in the downstream system instead of in the prompt, and human approval for high-impact actions.",
+          "heading": "Reading it for agents"
+        }
+      ],
+      "id": "owasp-llm-top-10",
+      "title": "The OWASP Top 10 for LLM applications"
+    },
+    {
+      "body": [
+        {
+          "body": "No single control stops adversarial input, so controls are stacked. Screen inputs with a lightweight model or classifier before the main call. Validate inputs for known attack patterns. Write system prompts that state the role, the boundaries and how to respond to out-of-scope requests. Separate instructions from untrusted content with clear delimiters and tell the model that delimited content is data. Check outputs before returning or acting on them. Monitor continuously: log refusals and flagged inputs, look for repeat offenders, and throttle or block accounts that probe repeatedly.",
+          "heading": "Defense in depth"
+        },
+        {
+          "body": "Guardrails need their own evals. Maintain a red-team set of known jailbreak and injection attempts alongside a set of benign inputs that resemble attacks, and measure both the block rate and the false-positive rate, since an overly strict filter breaks legitimate use. Include indirect cases where the malicious instruction is planted in a retrieved document or a tool response. Rerun the set on every prompt or model change, and add each real incident as a new case.",
+          "heading": "Testing the controls"
+        }
+      ],
+      "id": "prompt-injection-jailbreak-defense",
+      "title": "Layered defenses against jailbreaks and prompt injection"
+    },
+    {
+      "body": [
+        {
+          "body": "Beyond redacting data before the model sees it and gating mutations behind a person, production reviews expect the surrounding record: a data-flow map showing which fields reach which model provider and under what retention terms, per-user authorization so an agent never retrieves what its user could not, audit logs linking each action to a user, a run and an approver, and a documented way to disable a tool or the whole agent quickly.",
+          "heading": "What to add around the core controls"
+        }
+      ],
+      "id": "privacy-least-privilege-approval",
+      "title": "Privacy, least privilege and human approval"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  I[User input and retrieved content] --> S[Input screen and validation]\n  S -- flagged --> B[Block, log, rate limit]\n  S -- clean --> R[Redact sensitive fields]\n  R --> M[Model with bounded system prompt]\n  M --> O[Output validation]\n  O --> T{Action requested?}\n  T -- read only --> X[Execute with scoped credentials]\n  T -- high impact --> A[Human approval]\n  A --> X\n  T -- none --> U[Response to user]\n  X --> U\n  X --> L[(Audit log)]\n  B --> L"
+  },
+  "code": [],
+  "technologies": [
+    "NIST AI RMF",
+    "OWASP Top 10 for LLM Applications",
+    "Amazon Bedrock Guardrails",
+    "Llama Guard",
+    "Microsoft Presidio",
+    "OpenAI Agents SDK guardrails",
+    "NVIDIA NeMo Guardrails"
+  ],
+  "related": [
+    "security-compliance-reviews",
+    "llm-agent-evaluation",
+    "agent-architectures",
+    "mcp-servers",
+    "observability-agent-traces",
+    "technical-scoping-design-docs"
+  ],
+  "sources": [
+    {
+      "kind": "spec",
+      "title": "NIST AI Risk Management Framework",
+      "url": "https://www.nist.gov/itl/ai-risk-management-framework"
+    },
+    {
+      "kind": "guide",
+      "title": "OWASP Top 10 for Large Language Model Applications",
+      "url": "https://owasp.org/projects/top-10-for-large-language-model-applications"
+    },
+    {
+      "kind": "guide",
+      "title": "OWASP GenAI Security Project: LLM Top 10",
+      "url": "https://genai.owasp.org/llm-top-10/"
+    },
+    {
+      "kind": "doc",
+      "title": "Claude Docs: Mitigate jailbreaks and prompt injections",
+      "url": "https://platform.claude.com/docs/en/test-and-evaluate/strengthen-guardrails/mitigate-jailbreaks"
+    }
+  ],
+  "practice": "practice/responsible-ai-guardrails",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    }
+  ]
+}

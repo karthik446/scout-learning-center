@@ -1,0 +1,132 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "slos-on-call-and-postmortems",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Reliability practice: SLOs, on-call runbooks and postmortems",
+  "area": "infra",
+  "primary_key": "reliability",
+  "secondary_keys": [
+    "on-call",
+    "sre",
+    "production-systems"
+  ],
+  "keys": [
+    "reliability",
+    "on-call",
+    "sre",
+    "production-systems"
+  ],
+  "summary": "Reliability practice turns the vague goal of a stable service into numbers and routines: service level objectives that define good enough, alerts tied to those objectives, an on-call rotation with runbooks, and postmortems that turn incidents into fixes. For ML platforms the same method applies, with objectives extended to cover freshness and model quality as well as availability and latency.",
+  "detail": [],
+  "in_practice": "A platform team writes SLOs per service tier in a short document agreed with the teams that depend on it, encodes the indicators as recording rules, and generates burn-rate alerts from them so nobody hand-writes thresholds. Pages go to a rotation through an incident tool, with a secondary and an escalation path, and each alert links to a runbook kept in the same repository as the service. A weekly review looks at pages received, budget remaining and open postmortem actions. When a budget is exhausted, the agreed policy applies: feature rollouts pause and reliability work takes priority until the service is back inside its objective.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "A service level indicator is a measured quantity, best expressed as a ratio of good events to valid events: requests answered without error, or requests faster than a threshold. A service level objective is a target for that indicator over a window, such as 99.9 percent over 30 days. A service level agreement is a contract with consequences and is normally looser than the internal objective. The error budget is one minus the objective: the amount of failure allowed in the window. When the budget is spent, risky changes slow down, which gives product and platform teams a shared rule.",
+          "heading": "Definitions"
+        },
+        {
+          "body": "Pick a few indicators that reflect what users experience. For online inference: availability and latency at a high percentile measured at the gateway, not inside the model server. For LLM endpoints: time to first token and successful completion ratio. For batch scoring and feature pipelines: freshness, meaning the share of time the newest output is younger than a threshold, and correctness of the output. Use percentiles, not averages, because averages hide the slow tail. Do not set the target at 100 percent, and do not set it higher than your dependencies can support.",
+          "heading": "Choosing SLIs for ML systems"
+        }
+      ],
+      "id": "slis-slos-error-budgets",
+      "title": "SLIs, SLOs and error budgets"
+    },
+    {
+      "body": [
+        {
+          "body": "Burn rate is how fast the error budget is consumed relative to a rate that would exhaust it exactly at the end of the window. A burn rate of 1 uses the whole 30-day budget in 30 days. The recommended pattern pages when 2 percent of the budget is consumed in one hour (burn rate 14.4) or 5 percent in six hours (burn rate 6), and opens a ticket when 10 percent is consumed in three days (burn rate 1). Each condition also checks a short window, one twelfth of the long one, so the alert resets quickly after recovery. This gives good precision and recall compared with simple threshold alerts.",
+          "heading": "Multiwindow, multi-burn-rate"
+        }
+      ],
+      "id": "burn-rate-alerting",
+      "title": "Alerting on SLOs with burn rates"
+    },
+    {
+      "body": [
+        {
+          "body": "On-call guidance from site reliability practice caps operational work at half of an engineer's time, keeps the number of incidents per shift low enough that each can be handled and followed up properly, and defines response times by service criticality. Every page must be actionable and linked to a runbook. A runbook for model serving states the symptom, the dashboard to open, the checks in order, and the safe mitigations: roll back to the previous model version, shift traffic away from a canary, scale replicas, fall back to a smaller model or a cached answer. Mitigate first, diagnose after.",
+          "heading": "Sustainable rotations and usable runbooks"
+        }
+      ],
+      "id": "on-call-and-runbooks",
+      "title": "On-call design and runbooks"
+    },
+    {
+      "body": [
+        {
+          "body": "A postmortem is a written record of an incident: impact, timeline, root causes, what went well, what went badly, and action items with owners. Triggers are agreed beforehand, for example user-visible downtime beyond a threshold, data loss, a manual rollback, or a monitoring failure. Blameless means the document examines why the system allowed the mistake, not who made it, so people report honestly. Postmortems are reviewed by peers, stored where others can search them, and their action items are tracked to completion. For ML incidents, record the model version, data window and whether monitoring detected the problem before users did.",
+          "heading": "The written review"
+        }
+      ],
+      "id": "blameless-postmortems",
+      "title": "Blameless postmortems"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  S[SLI: good events over valid events] --> O[SLO target over 30 days]\n  O --> B[Error budget]\n  B --> R[Burn rate alerts]\n  R -->|fast burn| P[Page on-call]\n  R -->|slow burn| T[Ticket]\n  P --> M[Mitigate with runbook]\n  M --> PM[Blameless postmortem]\n  PM --> A[Tracked action items]\n  A --> S"
+  },
+  "code": [
+    {
+      "code": "# 99.9 percent SLO, budget = 0.001\n- alert: InferenceErrorBudgetFastBurn\n  expr: |\n    (\n      sum(rate(inference_requests_total{outcome=\"error\"}[1h]))\n      / sum(rate(inference_requests_total[1h])) > 14.4 * 0.001\n    ) and (\n      sum(rate(inference_requests_total{outcome=\"error\"}[5m]))\n      / sum(rate(inference_requests_total[5m])) > 14.4 * 0.001\n    )\n  labels:\n    severity: page\n  annotations:\n    summary: \"2 percent of monthly budget burned in 1h\"\n    runbook: \"runbooks/inference-errors\"",
+      "lang": "yaml"
+    }
+  ],
+  "technologies": [
+    "Prometheus",
+    "Alertmanager",
+    "Grafana",
+    "PagerDuty",
+    "Opsgenie",
+    "Sloth",
+    "Pyrra",
+    "OpenSLO"
+  ],
+  "related": [
+    "observability-opentelemetry-prometheus",
+    "model-monitoring-and-drift",
+    "staged-rollouts",
+    "model-serving-architecture",
+    "design-docs-and-adrs"
+  ],
+  "sources": [
+    {
+      "kind": "book",
+      "title": "SRE Book: Service Level Objectives",
+      "url": "https://sre.google/sre-book/service-level-objectives/"
+    },
+    {
+      "kind": "book",
+      "title": "SRE Book: Being On-Call",
+      "url": "https://sre.google/sre-book/being-on-call/"
+    },
+    {
+      "kind": "book",
+      "title": "SRE Book: Postmortem Culture",
+      "url": "https://sre.google/sre-book/postmortem-culture/"
+    },
+    {
+      "kind": "book",
+      "title": "SRE Workbook: Alerting on SLOs",
+      "url": "https://sre.google/workbook/alerting-on-slos/"
+    }
+  ],
+  "practice": null,
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-12",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    }
+  ]
+}

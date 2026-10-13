@@ -1,0 +1,153 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "llmops-evals-and-ai-assisted-dev",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "LLMOps: evals, tracing, guardrails and AI-assisted development with Claude Code and Cursor",
+  "area": "ai-ml",
+  "primary_key": "llmops",
+  "secondary_keys": [
+    "responsible-ai",
+    "ai-assisted-development",
+    "cursor",
+    "claude"
+  ],
+  "keys": [
+    "llmops",
+    "responsible-ai",
+    "ai-assisted-development",
+    "cursor",
+    "claude"
+  ],
+  "summary": "LLMOps applies the release and operations discipline of MLOps to systems whose behavior is set by prompts, models, retrieval and tools together. The core loop is evaluate before release, trace everything in production, enforce guardrails on inputs and outputs, and feed production failures back into the eval set. The same practices apply to AI coding assistants, which a platform team configures and governs as shared engineering tooling.",
+  "detail": [],
+  "in_practice": "Teams wire LLMOps into the tooling they already have. A prompt or model change opens a pull request; CI runs the eval suite and posts a score diff; a release tags the prompt and model versions that every trace then carries. In production, traces go through OpenTelemetry to the observability stack or an LLM tracing tool, with redaction at the collector. Guardrails sit at the gateway so every application inherits them, and their intervention rates are on a dashboard next to cost and latency. A weekly review turns flagged traces into new eval cases. For coding assistants, the platform team owns the shared rules, the MCP server allowlist and usage reporting.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "An eval harness becomes platform infrastructure when it gates releases. The suite runs in CI on any change to a prompt, model identifier, retrieval setting or tool schema, compares scores against the current baseline, and blocks the merge on regression beyond a threshold. Online, a sample of production traffic is scored by the same graders, and user feedback and failed traces are triaged into new cases. Datasets, graders and judge prompts are versioned, since changing any of them changes what a score means.",
+          "heading": "From a harness to a pipeline stage"
+        }
+      ],
+      "id": "evals-as-release-gates",
+      "title": "Evals as release gates and online checks"
+    },
+    {
+      "body": [
+        {
+          "body": "An LLM trace is a tree of spans: the request, each retrieval, each model call and each tool call. Model spans record the model identifier, prompt version, parameters, input and output token counts, time to first token, total latency, stop reason and cost. With that, a bad answer can be replayed step by step, and aggregate views show cost and latency per feature. OpenTelemetry defines semantic conventions for generative AI spans, so traces can flow into an existing observability stack or into an LLM-specific tool.",
+          "heading": "What a trace must contain"
+        },
+        {
+          "body": "Prompts and completions are the most useful debugging data and the most sensitive. Teams decide per environment whether content is captured in full, redacted or dropped, set retention limits, and restrict who can read traces. Sampling keeps storage in check: keep all errors and flagged outputs, and a fraction of normal traffic. Trace identifiers should be returned to the caller so a user report can be tied to the exact run.",
+          "heading": "Content capture and privacy"
+        }
+      ],
+      "id": "llm-tracing",
+      "title": "Tracing LLM and agent runs"
+    },
+    {
+      "body": [
+        {
+          "body": "The OWASP Top 10 for LLM applications names the recurring risks. Prompt injection leads the list: text in a user message, a retrieved document or a tool result that the model treats as instructions. Others include sensitive information disclosure, improper handling of model output by downstream code, excessive agency where a model holds more permissions than its task needs, supply chain and data poisoning risks, and unbounded resource consumption. Most mitigations are ordinary security engineering: least privilege, input and output validation, isolation, and limits.",
+          "heading": "The threat model"
+        },
+        {
+          "body": "Amazon Bedrock Guardrails evaluates both user inputs and model responses against configurable policies: content filters for harmful categories and prompt attacks, denied topics, word filters, sensitive information filters that block or mask personal data, and contextual grounding checks that flag answers unsupported by the provided source. A guardrail can be attached to model invocations or applied on its own to arbitrary text, so it also works in front of other models. Guardrails add latency and cost per check and produce false positives, so they are versioned, evaluated on a labeled set, and monitored for intervention rate.",
+          "heading": "Managed guardrails"
+        }
+      ],
+      "id": "guardrails-and-llm-threats",
+      "title": "Guardrails and the OWASP LLM risk list"
+    },
+    {
+      "body": [
+        {
+          "body": "Coding assistants run an agent loop inside the editor or terminal: the model searches the codebase, reads files, edits them, runs commands and tests, and iterates on the results. Quality depends on context. Rules files hold persistent instructions that are added to the model context; in Cursor, project rules live in the repository and are version controlled, can be scoped to paths, and sit alongside user-level rules. Claude Code reads a project instruction file in a similar way. Both connect to external tools through MCP servers.",
+          "heading": "How coding agents work"
+        },
+        {
+          "body": "The platform role is to make assistants productive and safe across teams. That means shared rules that encode conventions, build commands and review expectations; an approved set of MCP servers for internal docs, tickets and read-only infrastructure queries; and permission settings that decide which commands run without confirmation. It also means policy on which code and data may leave the network, usage and cost reporting, and keeping human review and CI gates as the control on what merges.",
+          "heading": "What the platform team standardizes"
+        }
+      ],
+      "id": "ai-assisted-development-governance",
+      "title": "AI-assisted development with Cursor and Claude Code"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  PR[Prompt or model change] --> CI[CI eval suite]\n  CI -- pass --> REL[Release with version tags]\n  CI -- regress --> FIX[Block and fix]\n  REL --> IN[Input guardrail]\n  IN --> LLM[Model and tools]\n  LLM --> OUT[Output guardrail]\n  OUT --> USER[Response]\n  LLM --> TR[Traces: tokens, latency, cost]\n  TR --> ON[Online scoring and review]\n  ON --> DS[New eval cases]\n  DS --> CI"
+  },
+  "code": [
+    {
+      "code": "import json\n\nBASELINE = 0.92\n\ndef load_cases(path):\n    with open(path) as f:\n        return [json.loads(line) for line in f]\n\ndef test_eval_gate():\n    cases = load_cases(\"evals/golden.jsonl\")\n    results = [grade(run_app(c[\"input\"]), c[\"expected\"]) for c in cases]\n    pass_rate = sum(results) / len(results)\n    assert pass_rate >= BASELINE, f\"pass rate {pass_rate:.2%} below gate\"",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "Amazon Bedrock Guardrails",
+    "OWASP Top 10 for LLM Applications",
+    "OpenTelemetry",
+    "Langfuse",
+    "LangSmith",
+    "MLflow",
+    "promptfoo",
+    "pytest",
+    "Cursor",
+    "Claude Code",
+    "Model Context Protocol"
+  ],
+  "related": [
+    "model-evaluation-gates",
+    "observability-opentelemetry-prometheus",
+    "agents-and-mcp",
+    "bedrock-and-claude-apis",
+    "rag-infrastructure",
+    "github-actions-ci-cd",
+    "security-identity-and-governance",
+    "model-monitoring-and-drift"
+  ],
+  "sources": [
+    {
+      "kind": "guide",
+      "title": "OWASP Top 10 for Large Language Model Applications",
+      "url": "https://owasp.org/projects/top-10-for-large-language-model-applications"
+    },
+    {
+      "kind": "doc",
+      "title": "Amazon Bedrock Guardrails",
+      "url": "https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails.html"
+    },
+    {
+      "kind": "doc",
+      "title": "Cursor Docs: Rules",
+      "url": "https://cursor.com/docs/rules"
+    },
+    {
+      "kind": "doc",
+      "title": "Cursor Docs: Agent overview",
+      "url": "https://cursor.com/docs/agent/overview"
+    },
+    {
+      "kind": "doc",
+      "title": "Cursor Docs: Model Context Protocol (MCP)",
+      "url": "https://cursor.com/docs/mcp"
+    }
+  ],
+  "practice": "practice/llmops-evals-and-ai-assisted-dev",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-12",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    }
+  ]
+}

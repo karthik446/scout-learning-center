@@ -1,0 +1,154 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "llm-serving-vllm-sglang",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Serving open-weight LLMs with vLLM and SGLang",
+  "area": "ai-ml",
+  "primary_key": "vllm",
+  "secondary_keys": [
+    "sglang",
+    "llm"
+  ],
+  "keys": [
+    "vllm",
+    "sglang",
+    "llm"
+  ],
+  "summary": "Serving open-weight LLMs is a distinct discipline because generation is autoregressive: each request holds GPU memory for its whole lifetime and produces output token by token. Engines such as vLLM and SGLang exist to pack many concurrent sequences onto a GPU through continuous batching and careful management of the key-value cache. The platform engineer deploys these engines behind an OpenAI-compatible API, benchmarks them and tunes them for a latency and cost target.",
+  "detail": [],
+  "in_practice": "A platform team packages each engine as a pinned container image, deploys one model per GPU pool, and fronts everything with a gateway that exposes a single OpenAI-compatible surface with per-tenant keys and token-based rate limits. Before a model is offered, it goes through a benchmark run on the target GPU with production-shaped prompts; the result sets replica limits and the autoscaling threshold. Engine upgrades are treated like model releases, with a canary and a comparison of latency percentiles and output quality on an evaluation set.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "A classic model runs one forward pass per request. An LLM runs a prefill pass over the prompt and then one decode step per output token, reusing attention keys and values cached from earlier tokens. That cache grows with sequence length and dominates GPU memory after the weights. Requests have unknown and very different lengths, so static batching wastes capacity. Continuous batching fixes this: the scheduler admits new sequences into the running batch at every decode step and evicts finished ones, so the GPU stays full.",
+          "heading": "Autoregression and the KV cache"
+        },
+        {
+          "body": "LLM endpoints are measured by time to first token, which reflects queueing plus prefill; inter-token latency, which reflects decode speed under the current batch; and total output tokens per second across all requests, which determines cost. These trade against each other: more concurrency raises throughput and worsens per-request token speed. Objectives are therefore written per metric and per workload, for example interactive chat versus offline summarisation.",
+          "heading": "Metrics that replace plain latency"
+        }
+      ],
+      "id": "llm-serving-fundamentals",
+      "title": "Why LLM serving differs from classic model serving"
+    },
+    {
+      "body": [
+        {
+          "body": "Earlier systems reserved one contiguous slab of KV cache per request, sized for the maximum possible length. Most of it stayed unused, and free memory fragmented, which capped batch size. PagedAttention, introduced with vLLM, borrows virtual memory paging from operating systems: the cache is divided into fixed-size blocks allocated on demand and mapped through a block table, so blocks need not be contiguous. Waste is limited to the last partial block per sequence. Blocks can also be shared between sequences with copy on write, which helps parallel sampling and beam search. The paper reports throughput gains of roughly two to four times at the same latency against the systems it compared with.",
+          "heading": "The memory problem and the paging answer"
+        },
+        {
+          "body": "Because memory is pooled, the engine preallocates a fraction of GPU memory at start and admits requests until blocks run out, at which point requests queue or are preempted. Key settings are the memory fraction given to the engine, the maximum context length, and tensor parallelism across GPUs for models that do not fit on one device.",
+          "heading": "Operating consequences"
+        }
+      ],
+      "id": "pagedattention-and-vllm",
+      "title": "PagedAttention and vLLM"
+    },
+    {
+      "body": [
+        {
+          "body": "SGLang is a serving framework for language and multimodal models with a fast runtime and a set of features aimed at agentic and structured workloads. Its runtime keeps the KV cache of earlier requests and reuses it automatically when a new prompt shares a prefix, which pays off for long system prompts, few-shot templates, multi-turn chat and tool loops. It also provides continuous batching, paged attention, constrained decoding for JSON or grammar-bound output, tensor parallelism and quantized model support.",
+          "heading": "What SGLang adds"
+        },
+        {
+          "body": "The server is started with a launch command that takes a model path, host and port, and is installed with pip, from source, or as a container image. Server arguments control memory fraction, context length, parallelism, the chat template and API keys. It exposes OpenAI-compatible completion and chat endpoints plus a native generate endpoint, so the same client code works against either engine.",
+          "heading": "Running it"
+        }
+      ],
+      "id": "sglang-runtime",
+      "title": "SGLang: prefix reuse and structured generation"
+    },
+    {
+      "body": [
+        {
+          "body": "Both engines speak the OpenAI wire format for chat completions, completions and streaming via server-sent events. Standardising on it lets a gateway route by model name to different engines, apply auth, quotas and token accounting, and swap runtimes without client changes. On Kubernetes each model is a Deployment or serving resource requesting whole GPUs, with weights pulled from object storage or a cache volume to keep start time down, a readiness probe that passes only after the model is loaded, and a generous termination grace period so that in-flight streams finish. Autoscaling keys on queue depth or running requests, not on CPU.",
+          "heading": "The API as the portability layer"
+        }
+      ],
+      "id": "openai-compatible-serving-on-kubernetes",
+      "title": "OpenAI-compatible endpoints and Kubernetes deployment"
+    },
+    {
+      "body": [
+        {
+          "body": "Benchmark with a prompt and output length distribution drawn from the real workload, since synthetic fixed lengths mislead. Sweep concurrency or arrival rate upward and record time to first token, inter-token latency and total tokens per second at each step; the operating point is the highest load at which the latency objectives still hold. Then change one variable at a time: context length cap, memory fraction, quantized versus full weights, number of GPUs per replica, and prefix caching with a shared system prompt. Record engine version, model revision and GPU type with every result, because releases shift numbers noticeably.",
+          "heading": "A repeatable method"
+        }
+      ],
+      "id": "benchmarking-and-tuning",
+      "title": "Benchmarking and tuning an LLM endpoint"
+    }
+  ],
+  "diagram": {
+    "source": "sequenceDiagram\n  participant C as Client\n  participant G as Gateway\n  participant E as Engine scheduler\n  participant K as KV cache blocks\n  C->>G: chat completion with stream\n  G->>E: route by model name\n  E->>K: look up shared prefix\n  E->>K: allocate blocks for prefill\n  loop each decode step\n    E->>E: admit waiting sequences into batch\n    E-->>C: next token\n  end\n  E->>K: free or keep blocks for reuse"
+  },
+  "code": [
+    {
+      "code": "# vLLM\nvllm serve MODEL_ID --port 8000 \\\n  --max-model-len 8192 --gpu-memory-utilization 0.90\n\n# SGLang\npython -m sglang.launch_server --model-path MODEL_ID \\\n  --host 0.0.0.0 --port 30000",
+      "lang": "bash"
+    }
+  ],
+  "technologies": [
+    "vLLM",
+    "SGLang",
+    "PagedAttention",
+    "OpenAI-compatible API",
+    "Kubernetes",
+    "NVIDIA GPUs",
+    "Hugging Face Hub",
+    "Prometheus"
+  ],
+  "related": [
+    "nvidia-gpus-on-kubernetes",
+    "model-serving-architecture",
+    "tensorrt-llm-low-latency-and-edge",
+    "autoscaling-and-cost-efficiency",
+    "llmops-evals-and-ai-assisted-dev",
+    "bedrock-and-claude-apis"
+  ],
+  "sources": [
+    {
+      "kind": "repo",
+      "title": "SGLang repository",
+      "url": "https://github.com/sgl-project/sglang"
+    },
+    {
+      "kind": "paper",
+      "title": "Efficient Memory Management for LLM Serving with PagedAttention",
+      "url": "https://arxiv.org/abs/2309.06180"
+    },
+    {
+      "kind": "doc",
+      "title": "SGLang Documentation: Install SGLang",
+      "url": "https://docs.sglang.io/docs/get-started/install"
+    },
+    {
+      "kind": "doc",
+      "title": "SGLang Documentation: Sending Requests",
+      "url": "https://docs.sglang.io/docs/basic_usage/send_request"
+    },
+    {
+      "kind": "doc",
+      "title": "SGLang Documentation: Server Arguments",
+      "url": "https://docs.sglang.io/docs/advanced_features/server_arguments"
+    }
+  ],
+  "practice": "practice/llm-serving-vllm-sglang",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    }
+  ]
+}

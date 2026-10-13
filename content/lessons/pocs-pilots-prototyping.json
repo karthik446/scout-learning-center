@@ -1,0 +1,152 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "pocs-pilots-prototyping",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Rapid prototyping, POCs and pilots with measurable success criteria",
+  "area": "delivery",
+  "primary_key": "pocs-and-pilots",
+  "secondary_keys": [
+    "prototyping",
+    "measurable-outcomes"
+  ],
+  "keys": [
+    "pocs-and-pilots",
+    "prototyping",
+    "measurable-outcomes"
+  ],
+  "summary": "Prototypes, proofs of concept and pilots are how an FDE reduces uncertainty quickly and gives the customer evidence for a go or no-go decision. The work is only useful if the question being answered, the time allowed and the pass criteria are fixed before building starts. This lesson covers the distinction between the stages, how to write measurable criteria, how to bound the effort, and how to build and evaluate fast.",
+  "detail": [],
+  "in_practice": "The team writes a one-page POC or pilot charter: the question, the appetite in weeks, the dataset, the criteria with thresholds, the decision owner and the next step on pass. The FDE builds a thin Streamlit or notebook front end over a pipeline function within days and demos on real customer cases. Every run is logged, a customer expert labels a sample each week, and failures are added to the evaluation set. A weekly readout shows the metrics against the thresholds and the baseline. At the end date the team presents results against the charter and the customer decides, instead of extending by default.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "A prototype answers whether an idea is worth pursuing: it is built in hours or days, often on sample data, to make the concept concrete for stakeholders. A proof of concept answers whether it is technically feasible on this customer's data and systems, and it targets the riskiest assumption, such as extraction accuracy or an integration path. A pilot answers whether it delivers value in real use: a limited group of real users runs real cases over a few weeks, with production-grade access control, logging and support, even if scale and polish are limited.",
+          "heading": "Three different questions"
+        },
+        {
+          "body": "A POC without an agreed exit drifts into an open-ended free trial. Before starting, write down the decision it informs, who makes that decision, the date, the criteria, and what happens on pass: typically a paid pilot or production rollout with a named budget owner. Also agree what the customer must supply, such as data samples, a subject matter expert for labeling and access to a test environment. If these cannot be agreed, that is itself a signal about the engagement.",
+          "heading": "Avoiding the stalled POC"
+        }
+      ],
+      "id": "prototype-poc-pilot",
+      "title": "Prototype, POC and pilot: what each one proves"
+    },
+    {
+      "body": [
+        {
+          "body": "Anthropic's guidance on defining success asks for criteria that are specific about the task, measurable with a number or a well-defined qualitative scale, achievable given current model capability, and relevant to the application's purpose. A weak criterion is that the assistant should answer well. A strong one states the metric, the dataset and the threshold, for example an F1 score of at least a stated value on a held-out set of labeled customer cases. Most use cases need several dimensions at once: task fidelity, consistency, tone, privacy preservation, latency and price.",
+          "heading": "Specific, measurable, achievable, relevant"
+        },
+        {
+          "body": "Criteria carry weight with a sponsor when they are expressed against the current process. Use the baseline from discovery: handling time per case, error or rework rate, backlog age, cost per case. A pilot criterion then reads as a comparison, such as median handling time reduced by a stated fraction with no increase in error rate on audited samples. Add guardrail criteria that must not regress, such as zero leakage of restricted fields, and agree who audits the samples and how disagreements are settled.",
+          "heading": "Tying criteria to the baseline"
+        }
+      ],
+      "id": "measurable-success-criteria",
+      "title": "Writing measurable success criteria"
+    },
+    {
+      "body": [
+        {
+          "body": "Shape Up starts from appetite: decide how much time the problem is worth, then design a solution that fits, instead of estimating an imagined solution. Fixing time and varying scope forces trade-off decisions early. Two further habits apply directly to POCs. Narrow the problem by asking what specifically went wrong in the cases that prompted the request, which often reveals a much smaller target than the original ask. Watch for grab-bags, requests like a redesign or a general assistant with no single problem behind them, and decline to start until one concrete use case is chosen.",
+          "heading": "Fixed time, variable scope"
+        }
+      ],
+      "id": "appetite-and-boundaries",
+      "title": "Setting an appetite and narrowing the problem"
+    },
+    {
+      "body": [
+        {
+          "body": "For a prototype or POC, the interface only needs to let a stakeholder put in a real case and see the result with its evidence. Streamlit turns a plain Python script into an interactive web app: widgets such as text inputs, file uploaders and buttons are function calls, and the script reruns from top to bottom on each interaction, with session state and caching for anything that should persist. That keeps the engineer's time on the pipeline itself: data access, prompts, retrieval and output validation. Notebooks and simple chat front ends serve the same purpose.",
+          "heading": "Thin UI over real logic"
+        },
+        {
+          "body": "Decide at the start which parts are disposable. The UI usually is. The pipeline function, the prompt and schema definitions, the dataset of customer cases and the evaluation script are not, and should live in a repository with tests from the first day. Keep the pipeline behind a plain function or API boundary so the prototype UI can be replaced by the production surface without rewriting the logic. Log every input, output and intermediate step so that failures seen in demos become test cases.",
+          "heading": "What to keep and what to throw away"
+        }
+      ],
+      "id": "rapid-prototyping-tooling",
+      "title": "Building the prototype fast"
+    },
+    {
+      "body": [
+        {
+          "body": "Hamel Husain's framing has three levels: cheap assertion-style unit tests run on every change, human and model-graded review of logged traces on a regular cadence, and A/B testing once there are real users. In a pilot, the specific additions are that customer subject matter experts do the human review, so the trace viewer must be simple enough for them to use, and that the pass rate on the agreed dataset is reported to the sponsor each week as the evidence for the exit decision.",
+          "heading": "Levels of evaluation in a customer pilot"
+        }
+      ],
+      "id": "eval-loop-during-pilot",
+      "title": "Running the evaluation loop during a pilot"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  A[Charter: question, appetite, criteria] --> B[Prototype on real cases]\n  B --> C[Log traces]\n  C --> D[Expert review and labels]\n  D --> E[Eval set grows]\n  E --> F[Run evals on each change]\n  F --> B\n  F --> G{Criteria met by end date}\n  G -->|yes| H[Pilot or production rollout]\n  G -->|no| I[Stop or reshape]"
+  },
+  "code": [
+    {
+      "code": "import streamlit as st\nfrom pipeline import extract_claim  # the part you keep\n\nst.title(\"Claim intake POC\")\ndoc = st.file_uploader(\"Upload a claim document\", type=[\"pdf\", \"txt\"])\n\nif doc and st.button(\"Extract\"):\n    with st.spinner(\"Running pipeline\"):\n        result = extract_claim(doc.read())\n    st.subheader(\"Extracted fields\")\n    st.json(result.fields)\n    st.subheader(\"Evidence\")\n    for cite in result.citations:\n        st.markdown(f\"- page {cite.page}: {cite.quote}\")\n    ok = st.radio(\"Is this correct?\", [\"yes\", \"no\"], index=None)\n    if ok:\n        result.save_label(ok)  # feeds the eval set",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "Streamlit",
+    "Jupyter",
+    "Gradio",
+    "Python",
+    "pytest",
+    "Claude API",
+    "Langfuse",
+    "LangSmith",
+    "Braintrust",
+    "Vercel"
+  ],
+  "related": [
+    "fde-delivery-model",
+    "workflow-mapping-automation",
+    "technical-scoping-design-docs",
+    "llm-agent-evaluation",
+    "python-for-integrations",
+    "rag-vector-databases",
+    "observability-agent-traces"
+  ],
+  "sources": [
+    {
+      "kind": "book",
+      "title": "Shape Up: Set Boundaries",
+      "url": "https://basecamp.com/shapeup/1.2-chapter-03"
+    },
+    {
+      "kind": "doc",
+      "title": "Define your success criteria",
+      "url": "https://platform.claude.com/docs/en/test-and-evaluate/develop-tests"
+    },
+    {
+      "kind": "doc",
+      "title": "Streamlit: Get started",
+      "url": "https://docs.streamlit.io/get-started"
+    },
+    {
+      "kind": "article",
+      "title": "Your AI Product Needs Evals",
+      "url": "https://hamel.dev/blog/posts/evals/"
+    }
+  ],
+  "practice": "practice/pocs-pilots-prototyping",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    }
+  ]
+}

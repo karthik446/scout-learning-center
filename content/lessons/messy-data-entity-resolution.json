@@ -1,0 +1,150 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "messy-data-entity-resolution",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Cleaning messy customer data: data mapping and entity resolution",
+  "area": "data",
+  "primary_key": "messy-data",
+  "secondary_keys": [
+    "data-mapping",
+    "entity-resolution"
+  ],
+  "keys": [
+    "messy-data",
+    "data-mapping",
+    "entity-resolution"
+  ],
+  "summary": "Customer data arrives as overlapping exports from CRMs, ERPs and spreadsheets, with inconsistent formats, missing values and the same real-world entity recorded many times. The work is to profile it, map it onto a target schema, normalize it, and then decide which records refer to the same entity. Done well, this yields a traceable, reversible set of golden records that downstream AI features can trust.",
+  "detail": [],
+  "in_practice": "A forward deployed team usually gets a sample export in week one, profiles it in a notebook, and returns a short findings document with null rates, duplicate estimates and open questions for the data owner. The mapping spec and crosswalks live in a shared sheet or repo the customer can edit. Normalization and matching run as versioned pipeline steps, not one-off scripts, with a review queue for uncertain pairs staffed by someone on the customer side who knows the domain. Every merge is logged with its evidence, a labeled sample is kept as a regression set, and match quality is reported alongside pipeline health so data owners see drift when a new source is onboarded.",
+  "subtopics": [
+    {
+      "body": [
+        {
+          "body": "Start every engagement by measuring the data, not by reading its documentation. For each column compute the null rate, distinct count, top values, min and max, and string length distribution. In pandas, isna and notna detect missing values, and the library uses different sentinels by dtype: NaN for floats, NaT for datetimes, and NA for the nullable extension dtypes such as Int64, boolean and string. Loading an integer column with gaps silently converts it to float unless a nullable dtype is requested, which breaks identifiers. Also look for disguised nulls: empty strings, N/A, 0000-00-00, or a placeholder contact name reused thousands of times.",
+          "heading": "Profile before you transform"
+        },
+        {
+          "body": "Missing data has three honest treatments: drop the row with dropna, fill it with fillna or interpolate, or keep it missing and let consumers handle it. The right choice depends on meaning. A missing discount can be zero; a missing birth date cannot be guessed. Comparisons with NA propagate as unknown rather than False, so filters can quietly drop rows. Record each rule in a short data contract the customer signs off on.",
+          "heading": "Decide per column, and write it down"
+        }
+      ],
+      "id": "profiling-and-missing-data",
+      "title": "Profiling an unknown extract and handling missing values"
+    },
+    {
+      "body": [
+        {
+          "body": "A data mapping is a table with one row per target field: source system, source path, type, transformation rule, default, and owner. For JSON and XML payloads the source path is a JSONPath or XPath expression, and the spec must say what happens with repeated elements, namespaces, and optional nodes. Enumerations need crosswalk tables, for example mapping five spellings of a status code from three systems onto one canonical value. Keep crosswalks as data, not as CASE statements buried in code, so the customer can review and extend them.",
+          "heading": "The mapping spec is the deliverable"
+        },
+        {
+          "body": "Watch for fields with the same name and different meaning across systems, local time stored without a zone, currency without a code, free-text fields carrying structured data, and identifiers that were recycled. Always carry the source system and source primary key through to the target so any record can be traced back. Validate the mapping by reconciling row counts and control totals between source and target.",
+          "heading": "Common traps"
+        }
+      ],
+      "id": "data-mapping-crosswalks",
+      "title": "Data mapping: source-to-target specs and crosswalks"
+    },
+    {
+      "body": [
+        {
+          "body": "Most duplicates disappear once values are put in a canonical form. Trim and collapse whitespace, case-fold, strip punctuation and diacritics, parse phone numbers to a single international format, lower-case email addresses, parse dates to ISO form, and standardize addresses and company suffixes. Keep the raw value next to the cleaned one. In pandas, duplicated flags repeated rows over a chosen subset of columns and drop_duplicates removes them with a keep policy; index uniqueness can be checked with is_unique and enforced by disallowing duplicate labels. OpenRefine does the same work interactively, with facets to see value distributions and key-collision clustering that groups variants such as differently ordered or punctuated names, and it records every operation as a replayable history.",
+          "heading": "Standardize, then compare"
+        }
+      ],
+      "id": "normalization-and-exact-dedup",
+      "title": "Normalization and deterministic deduplication"
+    },
+    {
+      "body": [
+        {
+          "body": "When no shared identifier exists, records must be linked on fuzzy evidence: a similar name, the same birth date, a nearby address. The Fellegi-Sunter model treats each field comparison as evidence. For each comparison level it estimates m, the probability of that outcome among true matches, and u, the probability among non-matches. Their ratio gives a match weight, and the weights sum to an overall match probability. Agreement on a rare surname counts for more than agreement on a common one when term frequency adjustments are enabled.",
+          "heading": "Why exact keys are not enough"
+        },
+        {
+          "body": "Comparing every pair is quadratic, so blocking rules restrict candidate pairs to those sharing something cheap, such as the first letters of a surname plus birth year. Use several blocking rules so one typo does not hide a match. Splink implements this workflow in SQL over backends such as DuckDB and Spark, estimates parameters without labeled data using expectation maximization, and provides charts to inspect weights. Pairs above a threshold are clustered into entities using connected components.",
+          "heading": "Making it scale"
+        },
+        {
+          "body": "Set two thresholds, not one: auto-merge above the upper, reject below the lower, and send the band between to human review. Measure precision and recall on a labeled sample the customer helped create, because the cost of a false merge is usually much higher than a missed one.",
+          "heading": "Choosing thresholds"
+        }
+      ],
+      "id": "probabilistic-record-linkage",
+      "title": "Probabilistic record linkage with blocking and match weights"
+    },
+    {
+      "body": [
+        {
+          "body": "Once records are clustered, survivorship rules pick the value for each field of the golden record: most trusted source, most recent update, most complete value, or majority vote. Rules are set per field, since the billing system may win for address while the CRM wins for contact name. Never destroy the inputs. Keep a link table from each source record to its entity id, with the rule and score that put it there, so a wrong merge can be split and the entity rebuilt. Assign stable entity ids so downstream joins survive reruns, and version the matching model so changes in clustering can be explained.",
+          "heading": "From clusters to one record"
+        }
+      ],
+      "id": "survivorship-and-golden-records",
+      "title": "Survivorship, golden records and reversibility"
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  A[Source extracts] --> B[Profile]\n  B --> C[Map to target schema]\n  C --> D[Normalize fields]\n  D --> E[Exact dedup]\n  E --> F[Blocking rules]\n  F --> G[Pairwise scoring]\n  G --> H{Match probability}\n  H -->|high| I[Cluster into entities]\n  H -->|uncertain| J[Human review]\n  J --> I\n  I --> K[Survivorship rules]\n  K --> L[Golden records plus link table]"
+  },
+  "code": [
+    {
+      "code": "import pandas as pd\n\ndf = pd.read_csv('contacts.csv', dtype={'customer_id': 'Int64', 'email': 'string'})\n\n# profile: null rate and cardinality per column\nprofile = pd.DataFrame({'null_rate': df.isna().mean(), 'distinct': df.nunique()})\nprint(profile.sort_values('null_rate', ascending=False))\n\n# normalize, keeping the raw value\ndf['email_clean'] = df['email'].str.strip().str.lower()\ndf['name_clean'] = (df['name'].str.lower()\n                    .str.replace(r'[^a-z0-9 ]', '', regex=True)\n                    .str.split().str.join(' '))\n\n# deterministic duplicates on the cleaned key\ndupes = df[df.duplicated(subset=['email_clean'], keep=False)]\ndeduped = df.drop_duplicates(subset=['email_clean'], keep='first')\nprint(len(df), len(deduped), len(dupes))",
+      "lang": "python"
+    }
+  ],
+  "technologies": [
+    "pandas",
+    "Splink",
+    "OpenRefine",
+    "DuckDB",
+    "Apache Spark",
+    "SQL"
+  ],
+  "related": [
+    "sql-postgres-data-systems",
+    "legacy-systems-migrations",
+    "snowflake-databricks-platforms",
+    "dbt-elt-transformations",
+    "rest-apis-json-oauth"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "pandas User Guide: Working with missing data",
+      "url": "https://pandas.pydata.org/docs/user_guide/missing_data.html"
+    },
+    {
+      "kind": "doc",
+      "title": "pandas User Guide: Duplicate labels",
+      "url": "https://pandas.pydata.org/docs/user_guide/duplicates.html"
+    },
+    {
+      "kind": "repo",
+      "title": "Splink: probabilistic record linkage",
+      "url": "https://github.com/moj-analytical-services/splink"
+    },
+    {
+      "kind": "doc",
+      "title": "OpenRefine User Manual",
+      "url": "https://openrefine.org/docs"
+    }
+  ],
+  "practice": "practice/messy-data-entity-resolution",
+  "provenance": {
+    "generated_by": "Claude through GigAI 0.1.11.10",
+    "generated_on": "2026-10-11",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    }
+  ]
+}
