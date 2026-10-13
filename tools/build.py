@@ -468,11 +468,70 @@ def render_practice_steps(steps: list[dict]) -> str:
     return f'<ul class="practice-steps">{"".join(items)}</ul>'
 
 
+MODEL_WRITTEN_NOTE = "Written by a model for this lesson, not by a person: read it as one way to do it, not the only one."
+
+
+def written_list(lines: list[str]) -> str:
+    return "<ul>" + "".join(f"<li>{esc(line)}</li>" for line in lines) + "</ul>"
+
+
+def tick_list(lines: list[str]) -> str:
+    """A list the reader ticks mentally: a plain [ ] in front of every line (no script, no form control)."""
+    return '<ul class="practice-steps">' + "".join(
+        f'<li><p class="practice-step-title"><span class="path-number">[&nbsp;]</span> {esc(line)}</p></li>' for line in lines) + "</ul>"
+
+
+def written_sections(sections: list[dict], text_key: str) -> str:
+    return "".join(f"<h3>{esc(s['title'])}</h3><p>{esc(s[text_key])}</p>" for s in sections)
+
+
+def written_body(l: dict, pr: dict) -> list[str]:
+    """The page body of a case or artifact practice (the product's variants, gigai.scout.learning_render.render_case_page and
+    render_artifact_page): sections, a tick list, the model line, the attribution; no tool, no steps, no 'Done when'."""
+    h2 = '<h2 class="practice-section-title">{}</h2>'.format
+    if pr["kind"] == "case":
+        return [
+            f"<h1>Case exercise: {esc(l['title'])}</h1>", attribution(pr["provenance"]),
+            '<p class="practice-lead">A case, not a tool: attempt it on paper before you open the reference answer.</p>',
+            h2("Scenario"), f"<p>{esc(pr['scenario'])}</p>",
+            h2("Constraints and numbers"), written_list(pr["constraints"]),
+            h2("Deliverable"), f"<p>{esc(pr['deliverable'])}</p>",
+            h2("Reference answer"), f'<p class="muted">{esc(MODEL_WRITTEN_NOTE)}</p>',
+            "<details><summary>Show the reference answer</summary>", written_sections(pr["reference_answer"], "body"), "</details>",
+            h2("Check your answer"),
+            '<p class="muted">Read each line and tick it in your head: your answer either does it or it does not.</p>',
+            tick_list(pr["rubric"]),
+            h2("Common mistakes"), written_list(pr["common_mistakes"]),
+        ]
+    ex = pr["reference_example"]
+    return [
+        f"<h1>Write a {esc(pr['artifact_name'])}: {esc(l['title'])}</h1>", attribution(pr["provenance"]),
+        '<p class="practice-lead">An artifact, not a tool: fill the template for a case of your own, then review it against the checklist.</p>',
+        h2("Template"), written_sections(pr["template"], "prompt"),
+        h2("Example, filled in"), f'<p class="muted">{esc(MODEL_WRITTEN_NOTE)}</p>',
+        f"<p><strong>Situation (made up):</strong> {esc(ex['situation'])}</p>",
+        "<details><summary>Show the filled example</summary>", written_sections(ex["sections"], "body"), "</details>",
+        h2("Review checklist"), tick_list(pr["review_checklist"]),
+    ]
+
+
 def render_practice(lib: Library, pr: dict) -> tuple[str, str]:
     lid = pr["lesson"]
     l = lib.lessons[lid]
     pid, _ = lib.home_of.get(lid, (None, None))
     here = f"/learn/practice/{lid}/"
+    if pr.get("kind", "tool") != "tool":
+        body = written_body(l, pr)
+        body.append(f'<p class="practice-back-link">{a(f"/learn/lessons/{lid}/", "Back to " + esc(l["title"]))}</p>')
+        crumbs = [("/learn/", "Learning center")]
+        if pid:
+            fam = lib.pathways[pid]["family"]
+            crumbs += [(f"/learn/families/{fam}/", lib.families[fam]["title"]), (f"/learn/pathways/{pid}/", lib.pathways[pid]["title"])]
+        crumbs += [(f"/learn/lessons/{lid}/", l["title"]), (here, "Practice")]
+        what = "Case exercise" if pr["kind"] == "case" else "Artifact exercise"
+        page = lesson_shell(lib, f"{what}: {l['title']} - Learning center", "\n".join(body), pid=pid, current=here, crumbs=crumbs,
+                            description=f"{what} for {l['title']}, written by a model for this lesson.")
+        return here, page
     body = [f"<h1>Practice: {esc(l['title'])}</h1>", attribution(pr["provenance"])]
     lead = []
     if pr["tool"]:
@@ -669,7 +728,7 @@ def render_key(lib: Library, k: dict) -> tuple[str, str]:
         body.append("<h2>The lesson for this</h2>" + lesson_list(prim))
     if also:
         body.append("<h2>Also covered in</h2>" + lesson_list(also))
-    prac = [p["lesson"] for p in lib.practice.values() if p["tool_key"] == key]
+    prac = [p["lesson"] for p in lib.practice.values() if p.get("tool_key") == key]
     if prac:
         body.append("<h2>Practice paths with this tool</h2><ul>" + "".join(f'<li>{a(f"/learn/practice/{i}/", esc("Practice: " + lib.lessons[i]["title"]))}</li>' for i in sorted(prac)) + "</ul>")
     pws = sorted({p for l in lib.lessons_by_key.get(key, []) for p in lib.pathways_of.get(l, [])})
