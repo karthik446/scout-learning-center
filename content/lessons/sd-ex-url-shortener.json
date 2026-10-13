@@ -1,0 +1,387 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "kind": "design-exercise",
+  "id": "sd-ex-url-shortener",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Design exercise: URL shortener and key-value service",
+  "area": "software",
+  "primary_key": "system-design",
+  "secondary_keys": [
+    "apis",
+    "data-stores",
+    "scaling"
+  ],
+  "keys": [
+    "system-design",
+    "apis",
+    "data-stores",
+    "scaling"
+  ],
+  "summary": "A classic design exercise: a service that shortens URLs, redirects for years and counts clicks. The reference answer sizes the system from stated assumptions, chooses a random base-62 code, keeps the redirect path read-only and independent of the primary database, and counts clicks asynchronously. Converted by hand from the module outline's reference answer; every number and source is kept.",
+  "detail": [],
+  "in_practice": "",
+  "subtopics": [],
+  "diagram": null,
+  "code": [],
+  "technologies": [],
+  "related": [
+    "sd-numbers",
+    "sd-storage-engines",
+    "sd-replication-partitioning",
+    "sd-caching",
+    "sd-api-design",
+    "sd-data-modelling"
+  ],
+  "sources": [
+    {
+      "kind": "repo",
+      "title": "System Design Primer: Pastebin worked solution",
+      "url": "https://github.com/donnemartin/system-design-primer/blob/master/solutions/system_design/pastebin/README.md"
+    },
+    {
+      "kind": "repo",
+      "title": "Snowflake: time-ordered 64-bit unique ids",
+      "url": "https://github.com/twitter-archive/snowflake"
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 9110: HTTP Semantics",
+      "url": "https://www.rfc-editor.org/rfc/rfc9110.html"
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 9111: HTTP Caching",
+      "url": "https://www.rfc-editor.org/rfc/rfc9111.html"
+    },
+    {
+      "kind": "doc",
+      "title": "Amazon Builders' Library: Caching challenges and strategies",
+      "url": "https://builder.aws.com/content/3K9TeXp6strMiJ4vhakpRD7BQWO/caching-challenges-and-strategies"
+    },
+    {
+      "kind": "doc",
+      "title": "Redis: key eviction policies",
+      "url": "https://redis.io/docs/latest/develop/reference/eviction/"
+    },
+    {
+      "kind": "book",
+      "title": "Site Reliability Engineering: Load balancing in the datacenter",
+      "url": "https://sre.google/sre-book/load-balancing-datacenter/"
+    }
+  ],
+  "practice": null,
+  "exercise": {
+    "prompt": "Design a service that turns a long URL into a short one and redirects anyone who opens the short one. Links must keep working for years. Give the owner basic click counts.",
+    "constraints": [
+      {
+        "heading": "Functional",
+        "body": "Create a short link (optionally with a custom alias and an expiry), redirect, show click totals per link."
+      },
+      {
+        "heading": "Scale (assumption)",
+        "body": "100 million new links per year; 100 redirects per write, so about 10 billion redirects per year; peak redirect rate 10x the average. Every number here is an assumption chosen for the exercise; a candidate derives the per-second rates, the storage and the cache size from them."
+      },
+      {
+        "heading": "Targets and retention (assumption)",
+        "body": "Redirect p99 under 50 ms from the service's side; 99.95 percent availability for redirects; link creation may be slower and less available. Links live 5 years by default."
+      },
+      {
+        "heading": "Non-goals",
+        "body": "A full analytics product, link previews, fraud detection beyond a block list."
+      }
+    ],
+    "clarifying_questions": [
+      {
+        "question": "Can two users shorten the same long URL and get different short codes?",
+        "answer": "Yes; a short code identifies a link record, not a URL."
+      },
+      {
+        "question": "301 or 302?",
+        "answer": "302, or 307, so that clicks are counted and the target can change; a 301 lets browsers cache the redirect and the counts stop. RFC 9110 defines the status semantics and RFC 9111 the caching."
+      },
+      {
+        "question": "Custom aliases?",
+        "answer": "Yes, up to 32 characters, unique."
+      },
+      {
+        "question": "How exact must click counts be?",
+        "answer": "Approximate within a minute is fine."
+      },
+      {
+        "question": "Multi-region?",
+        "answer": "Readers everywhere; writers mostly one region."
+      },
+      {
+        "question": "Deletions?",
+        "answer": "Owner can disable; disabled links return 410."
+      }
+    ],
+    "reference_answer": [
+      {
+        "id": "requirements-and-estimates",
+        "title": "Requirements and estimates",
+        "body": [
+          {
+            "heading": "Derived numbers",
+            "body": "Writes: 100 million per year is about 3.2 per second average, 32 at peak. Reads: 10 billion per year is about 320 per second average, 3,200 at peak; a well-known-link spike could be 10x that for one key. All of this is arithmetic on the chosen scale."
+          },
+          {
+            "heading": "Storage",
+            "body": "A link record of about 500 bytes (short code, long URL up to 2 kB in rare cases, owner id, created, expires, flags) gives 50 GB per year, 250 GB over 5 years before indexes: one primary with replicas holds it; sharding is a choice, not a need, at this scale."
+          },
+          {
+            "heading": "Cache and bandwidth",
+            "body": "If 20 percent of links take 90 percent of reads (assumption), caching the hot 20 million records of one year at 600 bytes is 12 GB; a two-node cache holds it. Bandwidth is negligible (a redirect is a few hundred bytes)."
+          }
+        ]
+      },
+      {
+        "id": "high-level-design",
+        "title": "High-level design",
+        "body": [
+          {
+            "heading": "Container view",
+            "body": "The redirect path is read-only and stateless: an edge that does not cache the 302, a redirect service, a cache in front of read replicas, and an asynchronous click log. Link creation is a separate API that writes to the primary and invalidates the cache. The two paths share the database and nothing else, which is what lets redirects stay up when creation cannot."
+          }
+        ],
+        "diagram": {
+          "source": "flowchart LR\n  U[Browsers] -->|GET /code| E[Edge or CDN, no caching of 302]\n  E --> R[Redirect service, stateless]\n  R --> C[(Cache: code to long_url)]\n  R -->|miss| P[(Primary DB, replicas for reads)]\n  R -->|async| Q[[click events]]\n  Q --> A[Aggregator]\n  A --> S[(click counts by day)]\n  O[Owners] --> W[Link API]\n  W --> P\n  W -->|invalidate| C",
+          "legend": "Boxes are containers; cylinders are stores; double brackets are queues or logs."
+        }
+      },
+      {
+        "id": "data-model",
+        "title": "The data model",
+        "body": [
+          {
+            "heading": "Entities",
+            "body": "Link {code, long_url, owner_id, created_at, expires_at, state (active or disabled), custom (bool)}. ClickCount {code, day, count}."
+          },
+          {
+            "heading": "API",
+            "body": "POST /links {long_url, alias?, expires_at?} returns {code, short_url} (idempotency key supported); GET /{code} returns 302 to the long URL, or 404 or 410; GET /links/{code}/stats returns {total, by_day[]}; DELETE /links/{code} sets disabled."
+          },
+          {
+            "heading": "The short code",
+            "body": "7 characters of a 62-character alphabet gives 62^7, about 3.5 trillion codes; 100 million per year uses a vanishing fraction, so collisions are a non-issue if codes are random. Two sound options: (a) a random 7-character code, insert with a uniqueness constraint, retry on the rare collision; (b) a time-ordered 64-bit id (the Snowflake layout: timestamp, worker id, sequence) encoded in base 62, which yields 11 characters and is guessable in sequence. The answer takes (a): shorter, not enumerable, and the database does the uniqueness check it has to do anyway for custom aliases."
+          }
+        ]
+      },
+      {
+        "id": "core-flow",
+        "title": "The core flow, step by step",
+        "body": [
+          {
+            "body": "Redirect, create and disable, in the order a request sees them."
+          }
+        ],
+        "steps": [
+          "Redirect: look up the code in the cache; on a miss read a replica, fill the cache with a TTL plus jitter, and cache negative results for a short time so a storm of bad codes does not reach the database (the Builders' Library caching article covers negative caching and jitter).",
+          "Emit a click event asynchronously: fire and forget onto a log; losing a fraction of events is accepted by the approximate-count requirement.",
+          "Return 302 with Cache-Control: no-store so browsers and the CDN do not cache the hop.",
+          "Create: validate the URL (scheme, block list), insert with the idempotency key, return the code.",
+          "Disable: update state, delete the cache entry; replicas lag a little and the cache entry is gone, so the next read may serve a stale active link for the replica lag window; acceptable and stated."
+        ]
+      },
+      {
+        "id": "scaling-and-the-bottleneck",
+        "title": "Scaling and the bottleneck",
+        "body": [
+          {
+            "heading": "Keeping redirects fast and available when the database is not",
+            "body": "Redirects need the cache and the replicas, not the primary. Replicas in two zones, cache in two zones, the redirect service stateless behind a balancer (the SRE book's datacenter load balancing chapter). If the primary is down, creation fails and redirects continue: the availability target applies to redirects only, and the design makes that true by construction. The cache is not a source of truth: a cold cache after a restart means the replicas take the full read load for a while, so they are sized for it (3,200 reads per second at peak is well within one replica's reach on an indexed key lookup; the sizing is stated, not assumed)."
+          },
+          {
+            "heading": "Counting clicks without slowing redirects",
+            "body": "The redirect path never writes to the database. Events go to a log (a partitioned log or a queue, the queues and streams lesson); an aggregator sums per code per minute and upserts daily counts. Duplicates from at-least-once delivery are tolerated because counts are approximate; if exactness were required, the event would carry a unique id and the aggregator would dedupe within a window. The hot link case (one code at 30,000 reads per second) is a cache hit, costs nothing on the database, and produces a hot partition in the log only if the partition key is the code; partition by a hash of code plus a random suffix for the aggregator's benefit."
+          }
+        ]
+      },
+      {
+        "id": "failure-modes",
+        "title": "Failure modes and what degrades",
+        "body": [
+          {
+            "body": "Each row names the failure, what the user sees, and what the design does about it."
+          }
+        ],
+        "table": {
+          "columns": [
+            "Failure",
+            "Effect",
+            "Mitigation"
+          ],
+          "rows": [
+            [
+              "Cache node down",
+              "misses go to replicas",
+              "two cache nodes, replicas sized for cold cache"
+            ],
+            [
+              "Primary down",
+              "no creation, redirects fine",
+              "replicas serve reads; promote a replica; owners see a clear error"
+            ],
+            [
+              "Replica lag after disable",
+              "stale active for seconds",
+              "cache invalidation plus accepted lag; disabled links are rare"
+            ],
+            [
+              "Code collision",
+              "insert fails",
+              "retry with a new random code (probability negligible)"
+            ],
+            [
+              "Malicious targets",
+              "reputational",
+              "block list at creation, re-scan on report, 410 on disable"
+            ],
+            [
+              "Click log backlog",
+              "counts delayed",
+              "counts are approximate; alert on consumer lag"
+            ]
+          ]
+        }
+      },
+      {
+        "id": "trade-offs",
+        "title": "Trade-offs and the alternative not taken",
+        "body": [
+          {
+            "body": "The decisions a reviewer reads first, with the option the answer did not pick."
+          }
+        ],
+        "table": {
+          "columns": [
+            "Decision",
+            "Options",
+            "Chosen",
+            "Why"
+          ],
+          "rows": [
+            [
+              "Redirect status",
+              "301 (cacheable) versus 302/307 (counted, changeable)",
+              "302 with no-store",
+              "counts and ability to disable outweigh one saved round trip"
+            ],
+            [
+              "Code scheme",
+              "random base-62 versus time-ordered id",
+              "random 7-char",
+              "shorter, not enumerable, uniqueness check needed anyway"
+            ],
+            [
+              "Counting",
+              "synchronous increment versus async events",
+              "async events, approximate",
+              "keeps the redirect path read-only"
+            ],
+            [
+              "Storage",
+              "one relational primary versus sharded from day one",
+              "one primary, replicas",
+              "250 GB in 5 years does not justify shards; sharding plan is written down"
+            ]
+          ]
+        }
+      },
+      {
+        "id": "at-10x",
+        "title": "What changes at 10x",
+        "body": [
+          {
+            "body": "At a billion links per year the table grows 500 GB per year: partition by code hash across a few shards (the replication and partitioning lesson), keep the cache strategy, move old counts to cold storage. Multi-region readers get regional caches and read replicas; writes stay in one region because a link is created once and read everywhere (the geo distribution lesson). Custom domains add a host lookup before the code lookup."
+          }
+        ]
+      }
+    ],
+    "rubric": {
+      "L1": [
+        "A correct API with 302 semantics, and a code scheme with the collision argument.",
+        "A cache in front of a database, with click counting off the hot path.",
+        "The storage estimate (50 GB per year, 250 GB over 5 years) derived from the stated assumptions."
+      ],
+      "L2": [
+        "Redirects independent of the primary; negative caching and TTL jitter; replica lag after a disable stated, not hidden.",
+        "The hot-link case handled as a cache hit, with the log partition key chosen so one code does not make a hot partition.",
+        "The 10x sharding plan with a shard key, and custom alias uniqueness handled by the same constraint as random codes."
+      ],
+      "L3": [
+        "The question whether 301 is acceptable for some customers, and the product consequence of the answer.",
+        "Abuse and takedown as a design input (block list, re-scan, 410), and cost per billion redirects.",
+        "Multi-region read placement, and what the service must never do: log full URLs with tokens in query strings."
+      ]
+    },
+    "interview_frame": [
+      {
+        "time": "0:00 to 0:05",
+        "text": "Requirements: ask the six clarifying questions above, state the non-goals, and say the numbers aloud: 3,200 redirects per second at peak, 32 writes per second at peak, 250 GB in 5 years, a 12 GB hot cache."
+      },
+      {
+        "time": "0:05 to 0:10",
+        "text": "Entities and API: the Link and ClickCount records, the four endpoints, and the 302 with no-store decision stated as a product decision you are making on purpose."
+      },
+      {
+        "time": "0:10 to 0:20",
+        "text": "High-level design with the container diagram: the read-only redirect path (edge, service, cache, replicas, click log) separate from the creation path (API, primary, invalidation). Explain the random 7-character code and why it beats a time-ordered id here."
+      },
+      {
+        "time": "0:20 to 0:40",
+        "text": "Two deep dives: availability of redirects when the primary or the cache is down (replicas in two zones, cold-cache sizing, the primary off the read path), then click counting without slowing redirects (async events, approximate counts, the hot-link partition key)."
+      },
+      {
+        "time": "0:40 to 0:45",
+        "text": "Failure modes from the table, the 10x plan (code-hash sharding, regional caches, writes in one region), and the L3 sentence: the interesting decision is 302 versus 301, and it is a product decision."
+      }
+    ],
+    "design_doc_frame": [
+      {
+        "section": "Context and scope",
+        "text": "Who creates links, who follows them, the retention promise (5 years) and the exact click-count expectation."
+      },
+      {
+        "section": "Goals and non-goals",
+        "text": "Redirect latency and availability as the goals; creation availability explicitly lower; analytics, previews and fraud detection as non-goals."
+      },
+      {
+        "section": "Design",
+        "text": "This answer fills it: the container diagram, the data model, the code scheme, the redirect and creation flows."
+      },
+      {
+        "section": "Alternatives considered",
+        "text": "The code scheme (random versus time-ordered) and the counting method (synchronous versus asynchronous), with the trade-off table."
+      },
+      {
+        "section": "Cross-cutting concerns",
+        "text": "Abuse (block list, takedown), privacy (never log full URLs with query-string tokens), observability (cache hit ratio, replica lag, click-log consumer lag), cost per billion redirects."
+      },
+      {
+        "section": "Review questions the doc must answer",
+        "text": "What a user sees in the replica lag window after a disable, and how the replicas behave under a cold cache."
+      }
+    ],
+    "depth_notes": {
+      "L1": "A correct single-region design with an id scheme, a cache and redirect semantics.",
+      "L2": "Sharded storage, hot-key handling, analytics without slowing redirects, cost.",
+      "L3": "Abuse, custom domains, multi-region reads, migration of the id scheme."
+    }
+  },
+  "provenance": {
+    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center M4a",
+    "generated_on": "2026-10-12",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "converted by hand from the system design outline, section 6.2 (reference answer kept verbatim in substance; numbers and sources unchanged)"
+    }
+  ]
+}

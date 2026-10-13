@@ -1,0 +1,413 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "kind": "design-exercise",
+  "id": "sd-ex-rag-service",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Design exercise: RAG service (retrieval-augmented generation)",
+  "area": "software",
+  "primary_key": "system-design",
+  "secondary_keys": [
+    "apis",
+    "data-stores",
+    "scaling"
+  ],
+  "keys": [
+    "system-design",
+    "apis",
+    "data-stores",
+    "scaling"
+  ],
+  "summary": "An AI-era design exercise: an internal question-answering service over a company's documents with citations, strict permissions and per-team evaluation. The reference answer sizes chunks, vectors and daily tokens from stated assumptions, uses hybrid retrieval with contextual chunks and a reranker, filters by permission before the model sees text, and treats the vector index as a rebuildable derived view. Converted by hand from the module outline's reference answer; every number and source is kept.",
+  "detail": [],
+  "in_practice": "",
+  "subtopics": [],
+  "diagram": null,
+  "code": [],
+  "technologies": [],
+  "related": [
+    "sd-queues-streams",
+    "sd-storage-engines",
+    "sd-data-modelling",
+    "sd-caching",
+    "sd-rate-limiting-overload",
+    "sd-observability",
+    "sd-cost",
+    "sd-ex-llm-gateway",
+    "sd-ex-vector-search"
+  ],
+  "sources": [
+    {
+      "kind": "paper",
+      "title": "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks (Lewis et al.)",
+      "url": "https://arxiv.org/abs/2005.11401"
+    },
+    {
+      "kind": "doc",
+      "title": "Azure Architecture Center: RAG solution design and evaluation guide",
+      "url": "https://learn.microsoft.com/en-us/azure/architecture/ai-ml/guide/rag/rag-solution-design-and-evaluation-guide"
+    },
+    {
+      "kind": "doc",
+      "title": "Google Cloud Architecture Center: infrastructure for a RAG-capable generative AI application",
+      "url": "https://docs.cloud.google.com/architecture/rag-capable-gen-ai-app-using-vertex-ai"
+    },
+    {
+      "kind": "blog",
+      "title": "Anthropic: Introducing Contextual Retrieval",
+      "url": "https://www.anthropic.com/engineering/contextual-retrieval"
+    },
+    {
+      "kind": "repo",
+      "title": "FAISS wiki: index types and guidelines to choose an index",
+      "url": "https://github.com/facebookresearch/faiss/wiki"
+    },
+    {
+      "kind": "repo",
+      "title": "pgvector: vector similarity search for Postgres",
+      "url": "https://github.com/pgvector/pgvector"
+    },
+    {
+      "kind": "paper",
+      "title": "Efficient and robust approximate nearest neighbor search using Hierarchical Navigable Small World graphs (HNSW)",
+      "url": "https://arxiv.org/abs/1603.09320"
+    },
+    {
+      "kind": "doc",
+      "title": "Claude Platform docs: Prompt caching",
+      "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching"
+    },
+    {
+      "kind": "doc",
+      "title": "Claude Platform docs: Rate limits",
+      "url": "https://platform.claude.com/docs/en/api/rate-limits"
+    },
+    {
+      "kind": "doc",
+      "title": "AWS Well-Architected: Generative AI Lens",
+      "url": "https://docs.aws.amazon.com/wellarchitected/latest/generative-ai-lens/generative-ai-lens.html"
+    }
+  ],
+  "practice": null,
+  "exercise": {
+    "prompt": "Design an internal question-answering service over a company's documents (wikis, tickets, PDFs). A user asks a question and gets an answer with citations to the documents it came from. Several teams will put their own document sets on it.",
+    "constraints": [
+      {
+        "heading": "Functional",
+        "body": "Ingest documents from several sources with incremental updates; answer a question with citations; respect document permissions (a user only gets answers from documents they may read); teams can evaluate answer quality on their own question sets."
+      },
+      {
+        "heading": "Scale (assumption)",
+        "body": "2 million documents, average 20 kB of text, growing 2 percent per month; 20,000 questions per day, peak 2 per second; 50 teams. Chosen for the exercise; derive the chunk count, the vector volume and the daily token volume yourself."
+      },
+      {
+        "heading": "Targets (assumption)",
+        "body": "First token of the answer within 2 s at p50 and 5 s at p95; retrieval under 300 ms at p95; new or changed documents searchable within 15 minutes; model spend bounded per team."
+      },
+      {
+        "heading": "Non-goals",
+        "body": "Training or fine-tuning models, agents that take actions, chat memory beyond one conversation."
+      }
+    ],
+    "clarifying_questions": [
+      {
+        "question": "Which model provider, and can it change?",
+        "answer": "Hosted provider now, must be swappable; the service calls it through a gateway (see the LLM gateway exercise)."
+      },
+      {
+        "question": "How strict are permissions?",
+        "answer": "Strict: a retrieved chunk is filtered by the asker's access before it reaches the model; permission data comes from the source systems."
+      },
+      {
+        "question": "What counts as good?",
+        "answer": "Teams define question sets with expected sources; retrieval recall and answer faithfulness are measured."
+      },
+      {
+        "question": "Languages?",
+        "answer": "English first."
+      },
+      {
+        "question": "Can documents be deleted?",
+        "answer": "Yes; deletion must remove chunks and embeddings within the same 15 minutes."
+      },
+      {
+        "question": "Budget?",
+        "answer": "Stated per team per month in tokens."
+      }
+    ],
+    "reference_answer": [
+      {
+        "id": "requirements-and-estimates",
+        "title": "Requirements and estimates",
+        "body": [
+          {
+            "heading": "Derived numbers: documents, chunks, vectors",
+            "body": "Text: 2 million times 20 kB is 40 GB. Chunks: at about 500 tokens (roughly 2 kB) per chunk, 10 chunks per document, 20 million chunks. Embeddings: at 1,024 dimensions of 4-byte floats, 4 kB per vector, 80 GB of vectors before compression; an HNSW index adds graph memory on top, so a single machine serving the whole index in memory is large; sharding by team (most teams are small) and quantization (the FAISS wiki) bring it down."
+          },
+          {
+            "heading": "Derived numbers: the query path and tokens",
+            "body": "Embed the question (one model call of a few hundred tokens), retrieve top 50 by vector plus top 50 by keyword, rerank to 8, build a prompt of about 6,000 tokens, generate about 400 tokens. At 20,000 questions per day that is roughly 120 million input tokens and 8 million output tokens per day across the fleet (assumption), which is the dominant cost and the reason for per-team budgets and prompt caching of the fixed instructions (the Claude prompt caching documentation)."
+          },
+          {
+            "heading": "Derived numbers: ingestion",
+            "body": "2 percent per month of 2 million is 40,000 documents per month, about one per minute on average with bursts after bulk imports."
+          }
+        ]
+      },
+      {
+        "id": "high-level-design",
+        "title": "High-level design",
+        "body": [
+          {
+            "heading": "Container view",
+            "body": "Two pipelines share a document store. Ingestion turns document versions into contextualised chunks, vectors and keyword entries per collection. Query embeds the question, retrieves by vector and keyword in parallel, filters by permission before reranking, and streams a generation through the LLM gateway, logging everything an evaluation needs."
+          }
+        ],
+        "diagram": {
+          "source": "flowchart TB\n  subgraph Ingestion\n    SRC{{Wikis, tickets, PDFs}} --> CON[Connectors, incremental]\n    CON --> QI[[document change log]]\n    QI --> CH[Chunk + contextualise]\n    CH --> EMB[Embedding calls via gateway]\n    EMB --> VS[(Vector index per collection)]\n    CH --> KW[(Keyword index)]\n    CON --> META[(Documents, ACLs, versions)]\n  end\n  subgraph Query\n    U[User] --> API[Ask API]\n    API --> PERM[Permission filter]\n    API --> RET[Retriever: vector + keyword]\n    RET --> VS\n    RET --> KW\n    RET --> RR[Reranker]\n    RR --> GEN[Prompt builder + generation via gateway]\n    GEN --> GW{{LLM gateway}}\n    GEN --> LOG[(Question log + evals)]\n  end\n  PERM --> META",
+          "legend": "Boxes are containers; the two frames are the ingestion and query boundaries; hexagons are external systems; cylinders are stores; double brackets are logs."
+        }
+      },
+      {
+        "id": "data-model",
+        "title": "The data model",
+        "body": [
+          {
+            "heading": "Entities",
+            "body": "Collection {id, team, source connectors, permission model}; Document {id, collection, source_uri, version, acl, updated_at}; Chunk {id, document, position, text, context_prefix, embedding, keyword index}; Question {id, user, collection(s), text, retrieved chunk ids, answer, citations, latency, tokens}; EvalSet {team, questions with expected document ids}."
+          },
+          {
+            "heading": "API",
+            "body": "POST /ask {question, collections[]} returns a stream of tokens, then {citations[]}; POST /collections/{id}/sync (connector-driven, idempotent per document version); POST /evals/{set}/run returns {recall@k, faithfulness, cost}."
+          }
+        ]
+      },
+      {
+        "id": "core-flow",
+        "title": "The core flow, step by step",
+        "body": [
+          {
+            "heading": "Ingestion path",
+            "body": "Connectors emit document versions onto a change log (the queues and streams lesson; the outbox and CDC lesson when the source is a database). A worker chunks the text, prepends a short context sentence to each chunk (the contextual retrieval technique: the public write-up reports a 49 percent reduction in retrieval failures for contextual embeddings plus contextual BM25 and 67 percent with reranking added), embeds in batches, writes vectors to the collection's index and text to the keyword index, and records the document version. A new version replaces the old chunks atomically per document (write new, switch the version pointer, delete old); a deletion removes chunks and vectors and is verified by a periodic reconciliation between the metadata store and the indexes. Permissions are stored per document from the source system's ACL and refreshed by the connector."
+          },
+          {
+            "heading": "Query path",
+            "body": "The query path, in order:"
+          }
+        ],
+        "steps": [
+          "Embed the question.",
+          "Run the vector query and the keyword query in parallel against the collections the user named.",
+          "Drop any chunk whose document the user may not read (filter before reranking, so the model never sees forbidden text).",
+          "Rerank the union to 8 chunks.",
+          "Build the prompt with fixed instructions first (cacheable), then the chunks with ids, then the question.",
+          "Stream the generation; extract citations as the chunk ids the model referenced and map them to document URIs.",
+          "Log everything needed for evaluation (retrieved ids, answer, tokens, latency) with the question text retained under the team's policy."
+        ]
+      },
+      {
+        "id": "scaling-and-the-bottleneck",
+        "title": "Scaling and the bottleneck",
+        "body": [
+          {
+            "heading": "Retrieval quality as an engineering loop",
+            "body": "The Azure guide structures a RAG build as chunking, enrichment, embedding, retrieval evaluation and end-to-end evaluation. The service makes that a product feature: each team keeps an evaluation set (questions with the documents that should be cited); a run reports recall at k for retrieval and a faithfulness score for the answer; a change to chunking, embedding model or reranker is tested against every team's set before rollout, the way a schema migration is tested. The L3 insight is that the vector index is a derived view that can be rebuilt; the source of truth is the document store with versions, so re-embedding with a new model is a backfill (the migrations lesson), done per collection with the old and new index served side by side until the evals pass."
+          },
+          {
+            "heading": "Tenancy, permissions and cost",
+            "body": "One index per collection (team) keeps blast radius and cost attribution simple and makes deletion of a team's data a drop of an index; a few very large collections get sharded indexes with scatter-gather across shards. Permission filtering happens on chunk metadata before reranking; for sources with fine-grained ACLs the filter is a join against the document ACL table, which is why document ids and ACL versions are carried on every chunk. Cost: per-team token budgets enforced at the gateway, prompt caching for the instruction prefix, a smaller model for the reranker, and a per-team dashboard of cost per answered question. Latency: retrieval under 300 ms is the index plus the keyword query plus the rerank; the generation dominates and streams, so the first token target is met by starting generation as soon as the prompt is built."
+          }
+        ]
+      },
+      {
+        "id": "failure-modes",
+        "title": "Failure modes and what degrades",
+        "body": [
+          {
+            "body": "Each row names the failure, its effect on answers, and the mitigation."
+          }
+        ],
+        "table": {
+          "columns": [
+            "Failure",
+            "Effect",
+            "Mitigation"
+          ],
+          "rows": [
+            [
+              "Provider outage or 429",
+              "no answers",
+              "gateway fallback to a second provider or a self-hosted model; retrieval still works and can return citations only"
+            ],
+            [
+              "Stale permissions",
+              "a user sees a chunk they lost access to",
+              "ACL refresh on every sync, short refresh interval for sensitive sources, filter by ACL version"
+            ],
+            [
+              "Embedding model change",
+              "old and new vectors incomparable",
+              "one model per index version; rebuild per collection; never mix"
+            ],
+            [
+              "Ingestion backlog after bulk import",
+              "freshness target missed",
+              "separate bulk lane from incremental lane; backpressure; freshness metric per collection"
+            ],
+            [
+              "Hallucinated citations",
+              "wrong source shown",
+              "citations are chunk ids the service validates against the retrieved set; anything else is dropped"
+            ],
+            [
+              "Index host loss",
+              "one collection unavailable",
+              "indexes rebuildable from the document store; replicas for the large ones"
+            ]
+          ]
+        }
+      },
+      {
+        "id": "trade-offs",
+        "title": "Trade-offs and the alternative not taken",
+        "body": [
+          {
+            "body": "The decisions a reviewer reads first."
+          }
+        ],
+        "table": {
+          "columns": [
+            "Decision",
+            "Options",
+            "Chosen",
+            "Why"
+          ],
+          "rows": [
+            [
+              "Retrieval",
+              "vector only versus hybrid (vector plus keyword) plus rerank",
+              "hybrid plus rerank",
+              "the measured retrieval-failure reductions; keyword catches identifiers and exact names"
+            ],
+            [
+              "Index layout",
+              "one global index versus one per collection",
+              "per collection, sharded when large",
+              "permissions, deletion, cost attribution, blast radius"
+            ],
+            [
+              "Permission enforcement",
+              "at ingestion (separate indexes per ACL) versus at query (filter)",
+              "filter at query, before rerank",
+              "ACLs change more often than documents; one index per ACL does not scale"
+            ],
+            [
+              "Vector store",
+              "Postgres with pgvector versus a dedicated ANN engine",
+              "start with pgvector per collection, move the largest to a dedicated engine",
+              "most collections are small; pgvector gives HNSW with filtering inside the existing database"
+            ],
+            [
+              "Freshness",
+              "rebuild nightly versus incremental",
+              "incremental with reconciliation",
+              "the 15-minute target and deletions"
+            ]
+          ]
+        }
+      },
+      {
+        "id": "at-10x",
+        "title": "What changes at 10x",
+        "body": [
+          {
+            "body": "200 million chunks: quantized indexes, sharded by collection then by hash, index build separated from serving with immutable segments; retrieval becomes its own service (the vector search exercise). Multi-language: per-language embedding models and keyword analysers, selected per document. Conversation memory: a short per-conversation context stored by the ask API, not by the index."
+          }
+        ]
+      }
+    ],
+    "rubric": {
+      "L1": [
+        "The ingestion pipeline (chunk, embed, index) and the query pipeline (retrieve, prompt, generate) with citations.",
+        "A vector store, permission filtering somewhere, and a latency budget."
+      ],
+      "L2": [
+        "Hybrid retrieval and reranking with the reason; filtering before the model sees text; per-collection indexes.",
+        "Incremental updates and deletions with reconciliation; an evaluation set per team.",
+        "Token cost arithmetic and prompt caching; streaming for first-token latency; the embedding-model-change backfill."
+      ],
+      "L3": [
+        "The vector index as a rebuildable derived view; evaluation as a release gate across teams.",
+        "Provider abstraction and fallback; tenancy and cost attribution as the platform questions.",
+        "What the service must refuse (answers without citations, questions over collections the user cannot name), and when the right answer is not RAG at all (a small, static FAQ; or search without generation)."
+      ]
+    },
+    "interview_frame": [
+      {
+        "time": "0:00 to 0:05",
+        "text": "Requirements: the six clarifying questions, the non-goals, and the numbers aloud: 20 million chunks, 80 GB of vectors, 120 million input tokens per day (all assumptions), 2 questions per second at peak, 15-minute freshness."
+      },
+      {
+        "time": "0:05 to 0:10",
+        "text": "Entities and API: Collection, Document, Chunk, Question, EvalSet; the streaming ask endpoint, the idempotent sync endpoint, the evaluation run."
+      },
+      {
+        "time": "0:10 to 0:20",
+        "text": "High-level design with the diagram: the two pipelines, one index per collection, the permission filter before the reranker, the gateway in front of the model, the question log that feeds evaluation."
+      },
+      {
+        "time": "0:20 to 0:40",
+        "text": "Two deep dives: retrieval quality as an evaluation loop (contextual chunks, hybrid retrieval, rerank, per-team eval sets as a release gate, re-embedding as a backfill), then permissions and tenancy (filter by ACL version before rerank, per-collection indexes, deletion, per-team budgets and cost per answer)."
+      },
+      {
+        "time": "0:40 to 0:45",
+        "text": "Failure modes from the table, the 10x plan, and the L3 sentence: the index is a derived view; the design is really about the document store, the ACLs and the evaluation loop."
+      }
+    ],
+    "design_doc_frame": [
+      {
+        "section": "Context and scope",
+        "text": "The document sources, the teams, the permission systems of record, and the model provider in use today."
+      },
+      {
+        "section": "Goals and non-goals",
+        "text": "Cited answers, strict permissions, 15-minute freshness, bounded spend per team; no fine-tuning, no agents, no long-term memory."
+      },
+      {
+        "section": "Design",
+        "text": "This answer fills it: both pipelines, the data model, the diagram and the query path."
+      },
+      {
+        "section": "Alternatives considered",
+        "text": "Index layout, permission enforcement, vector store, with the trade-off table."
+      },
+      {
+        "section": "Cross-cutting concerns",
+        "text": "Privacy of question logs, cost per team, rollout per collection, observability of retrieval recall and freshness."
+      },
+      {
+        "section": "Review questions the doc must answer",
+        "text": "The permission filter's correctness under ACL change, and the re-embedding plan when the embedding model changes."
+      }
+    ],
+    "depth_notes": {
+      "L1": "An ingestion pipeline (chunk, embed, index) and a query path (retrieve, rerank, generate) with citations.",
+      "L2": "Hybrid retrieval, contextual chunking, freshness and re-indexing, per-tenant isolation of documents, evaluation harness, latency and token budgets.",
+      "L3": "A RAG platform for many teams (index ownership, access control at retrieval, evaluation gates in CI, cost per answer, provider abstraction)."
+    }
+  },
+  "provenance": {
+    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center M4a",
+    "generated_on": "2026-10-12",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "converted by hand from the system design outline, section 6.4 (reference answer; numbers and sources unchanged)"
+    }
+  ]
+}
