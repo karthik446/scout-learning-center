@@ -1,0 +1,383 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "kind": "design-exercise",
+  "id": "sd-ex-payments-ledger",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Design exercise: payments ledger",
+  "area": "software",
+  "primary_key": "system-design",
+  "secondary_keys": [
+    "distributed-systems",
+    "data-stores",
+    "apis"
+  ],
+  "keys": [
+    "system-design",
+    "distributed-systems",
+    "data-stores",
+    "apis"
+  ],
+  "summary": "A classic design exercise: the double-entry ledger behind a payments product, with an external provider in the loop. The reference answer keeps journal entries immutable and balanced, makes an entry atomic within one ledger shard and routes cross-ledger movement through clearing accounts, runs each payment as an orchestrated saga with idempotency at three layers, derives balances as a projection, reconciles daily against provider statements and seals history under a digest chain.",
+  "detail": [],
+  "in_practice": "",
+  "subtopics": [],
+  "diagram": null,
+  "code": [],
+  "technologies": [],
+  "related": [
+    "sd-consistency-consensus",
+    "sd-idempotency-retries",
+    "sd-sagas",
+    "sd-outbox-cdc",
+    "sd-data-modelling"
+  ],
+  "sources": [
+    {
+      "kind": "blog",
+      "title": "Stripe: Ledger, a system for tracking and validating money movement",
+      "url": "https://stripe.dev/blog/ledger-stripe-system-for-tracking-and-validating-money-movement"
+    },
+    {
+      "kind": "blog",
+      "title": "Square: Books, an immutable double-entry accounting database service",
+      "url": "https://developer.squareup.com/blog/books-an-immutable-double-entry-accounting-database-service/"
+    },
+    {
+      "kind": "blog",
+      "title": "Uber Engineering: How LedgerStore supports trillions of indexes",
+      "url": "https://www.uber.com/us/en/blog/how-ledgerstore-supports-trillions-of-indexes/"
+    },
+    {
+      "kind": "blog",
+      "title": "Uber Engineering: Money movement at scale with strong data consistency",
+      "url": "https://www.uber.com/us/en/blog/money-scale-strong-data/"
+    },
+    {
+      "kind": "blog",
+      "title": "Stripe: Designing robust and predictable APIs with idempotency",
+      "url": "https://stripe.com/blog/idempotency"
+    },
+    {
+      "kind": "blog",
+      "title": "Shopify Engineering: 10 tips for building resilient payment systems",
+      "url": "https://shopify.engineering/building-resilient-payment-systems"
+    }
+  ],
+  "practice": null,
+  "exercise": {
+    "prompt": "Design the ledger behind a payments product: every payment, refund, fee and payout must be recorded so that balances are always explainable, nothing is ever lost or double counted even when callers retry, and finance can prove to an auditor that the books match the money the provider actually moved.",
+    "constraints": [
+      {
+        "heading": "Functional",
+        "body": "Record money movements as double-entry journal entries; derive account balances; post a payment through an external provider (authorise, capture, refund) without duplicates; reconcile daily against provider statements; keep an immutable, verifiable history; serve balance and statement queries."
+      },
+      {
+        "heading": "Scale (assumption)",
+        "body": "10 million payments per day; each payment produces about 3 lines (customer, merchant, fees) across its life; 50 million accounts (customer wallets, merchant payables, provider clearing, fees, taxes); 7 years of retention (assumption shaped by typical regulation; the doc states the real requirement). Chosen for the exercise; derive the posting rate, the journal growth and the balance read load yourself."
+      },
+      {
+        "heading": "Targets (assumption)",
+        "body": "Posting an entry is atomic and durable before the caller is told; a balance read reflects every entry acknowledged before the read for the same account (read-your-writes per account); provider calls complete or compensate within 10 minutes; reconciliation finishes within 6 hours of the statement; the daily sum of all lines is zero."
+      },
+      {
+        "heading": "Non-goals",
+        "body": "Fraud scoring, card networks and PCI scope (the provider holds card data), tax calculation, general ledger accounting in the finance system (this ledger feeds it), multi-currency beyond storing a currency per account."
+      }
+    ],
+    "clarifying_questions": [
+      {
+        "question": "What exactly is immutable?",
+        "answer": "Journal entries and lines are append-only; a mistake is corrected by a new reversing entry, never by an update. Balances are derived and may be recomputed."
+      },
+      {
+        "question": "Where does strong consistency end?",
+        "answer": "At the ledger shard: an entry is atomic within one ledger (a set of accounts that move money among themselves). Movements between ledgers go through a clearing account as two entries linked by a saga."
+      },
+      {
+        "question": "Who owns idempotency?",
+        "answer": "Callers send an idempotency key per intent; the payment API stores the key with the outcome; retries return the stored outcome, as the Stripe write-up describes, and the provider call carries its own idempotency key."
+      },
+      {
+        "question": "What is a balance?",
+        "answer": "The sum of lines on an account, held as a derived number with the sequence of the last posting it includes; two balances per account: posted and available (posted minus holds)."
+      },
+      {
+        "question": "How fast must balances be?",
+        "answer": "A merchant dashboard tolerates seconds of lag; an available-balance check before a payout must be exact, so it reads the ledger shard, not the projection."
+      },
+      {
+        "question": "Multi-currency?",
+        "answer": "Each account has one currency; a conversion is two entries through a currency-pair clearing account with the rate recorded on the entry."
+      }
+    ],
+    "reference_answer": [
+      {
+        "id": "requirements-and-estimates",
+        "title": "Requirements and estimates",
+        "body": [
+          {
+            "heading": "Derived numbers",
+            "body": "10 million payments per day is about 116 per second average and 1,160 at peak (10x); at 3 lines each, 350 lines per second at peak, each inside one atomic entry write. The journal grows by 30 million lines per day; at about 200 bytes per line with indexes that is 6 GB per day, 2.2 TB per year, 15 TB over 7 years: a relational store sharded by ledger holds it, and old ranges move to cheaper storage after sealing. Balance reads: a merchant dashboard and the available-balance checks before payouts are of the order of 10 reads per payment (assumption), 11,600 per second at peak, served from the projection except the exact checks."
+          },
+          {
+            "heading": "The latency shape",
+            "body": "The provider round trip is the slow step: an authorisation to a card provider is a call to an external system of the order of a second (assumption), so the payment flow is asynchronous by nature and the orchestrator holds about 1,160 sagas in flight per second of provider latency (Little's law). Ledger writes are a datacenter round trip and a synchronous replica commit, a few milliseconds."
+          }
+        ]
+      },
+      {
+        "id": "high-level-design",
+        "title": "High-level design",
+        "body": [
+          {
+            "heading": "Container view",
+            "body": "Three systems that are often confused are kept apart. The payment orchestrator runs a saga per payment against the provider and the ledger. The ledger service accepts balanced journal entries and appends them atomically to a ledger shard. Balances and statements are projections built from the ledger's outbox events, so the hot write path never maintains them. Reconciliation compares provider statements with ledger lines on the clearing accounts, and a sealing job closes ranges of the journal under a verifiable digest. Stripe's public description of its ledger (double-entry, immutable events, clearing and validation), Square's Books (immutable double-entry accounts where every journal entry sums to zero) and Uber's LedgerStore (immutable, indexed, sealed for verifiable completeness) are the references for the shape."
+          }
+        ],
+        "diagram": {
+          "source": "flowchart LR\n  P[Product services: checkout, payouts] --> PA[Payment API: idempotency keys]\n  PA --> O[Payment orchestrator: saga per payment]\n  O --> AD[Provider adapter: timeouts, breaker]\n  AD --> PSP{{Card or bank provider}}\n  O --> LS[Ledger service: post entry]\n  LS --> LD[(Ledger DB: journal and lines, sharded by ledger)]\n  LD -->|outbox| EV[[ledger events]]\n  EV --> BP[Balance projector]\n  BP --> BAL[(Balances and statements)]\n  PSP -->|daily statements| RC[Reconciliation job]\n  RC --> LD\n  SL[Sealing and verification job] --> LD",
+          "legend": "Boxes are containers; cylinders are stores; double brackets are logs; the hexagon is the external provider."
+        }
+      },
+      {
+        "id": "data-model",
+        "title": "The data model",
+        "body": [
+          {
+            "heading": "Entities",
+            "body": "Ledger {ledger_id, shard} groups accounts that move money among themselves (one per merchant group or region, assumption). Account {account_id, ledger_id, type (asset, liability, revenue, clearing), currency, created_at}. JournalEntry {entry_id, ledger_id, idempotency_key, effective_at, recorded_at, kind (authorise, capture, refund, fee, payout, reversal, adjustment), reference (payment_id), sequence}. Line {entry_id, account_id, amount (signed, minor units), currency}; an entry's lines sum to zero in each currency, enforced on write. Hold {account_id, payment_id, amount, expires_at} for authorised-not-captured money. Balance {account_id, posted, available, as_of_sequence}: derived. Payment {payment_id, state, provider_ref, idempotency_key, saga_step}. SealedRange {ledger_id, from_sequence, to_sequence, digest, sealed_at}."
+          },
+          {
+            "heading": "API",
+            "body": "POST /payments {amount, currency, from, to, intent} with an Idempotency-Key returns {payment_id, state}; POST /ledger/entries {lines[], kind, reference} with an idempotency key returns {entry_id, sequence} or 422 if the lines do not balance; GET /accounts/{id}/balance?exact=true reads the shard, otherwise the projection; GET /accounts/{id}/statement?from&to. Amounts are integers in minor units; no floating point anywhere."
+          }
+        ]
+      },
+      {
+        "id": "core-flow",
+        "title": "The core flow, step by step",
+        "body": [
+          {
+            "body": "A card payment from a customer to a merchant, with the provider in the loop. The saga is orchestrated (one coordinator per payment) rather than choreographed, so the state of every payment is in one place."
+          }
+        ],
+        "steps": [
+          "The payment API checks the idempotency key; a known key returns the stored outcome. A new key creates the Payment in state created and starts the saga.",
+          "Authorise: the orchestrator calls the provider with a timeout (assumption: 5 s), a bounded retry with jitter, and the provider's own idempotency key equal to the payment id, so a retried call cannot authorise twice. The adapter sits behind a circuit breaker, as the Shopify write-up on resilient payment systems recommends.",
+          "On success the orchestrator posts an entry of kind authorise: a hold on the customer account and a matching posting on the provider clearing account; the ledger shard writes the entry and its lines in one transaction, assigns the sequence, and the outbox row goes with it.",
+          "Capture: the orchestrator captures at the provider, then posts the capture entry (customer debit, merchant credit, fee revenue credit, clearing adjustments), releasing the hold in the same entry. The payment reaches captured; the stored outcome is now returned for the idempotency key.",
+          "If a step fails after its predecessor succeeded (capture rejected after authorise), the orchestrator runs the compensation: a reversal entry for the authorise and a void at the provider. A compensation is itself idempotent and retried until it succeeds or is escalated to an operator after 10 minutes.",
+          "The outbox relay publishes the entry to the ledger events log; the balance projector updates posted and available balances with the as_of_sequence; statements are built from the same stream.",
+          "Daily, the reconciliation job loads the provider's statement, matches each provider transaction to the lines on the provider clearing account by provider_ref, and files every mismatch (in the ledger but not at the provider, or the reverse, or amount differences) as an adjustment case with an owner; the clearing account must net to the provider's reported balance.",
+          "Every night the sealing job closes the previous day's range per ledger: it computes a digest over the entries in sequence, stores it, and verifies the previous digest chain; sealed ranges are then eligible to move to cold storage."
+        ]
+      },
+      {
+        "id": "scaling-and-the-bottleneck",
+        "title": "Scaling and the bottleneck",
+        "body": [
+          {
+            "heading": "Atomicity per shard and the hot account",
+            "body": "The write path is a single transaction per entry on one shard, which is what makes atomicity cheap: all accounts of an entry live in the same ledger. The cost of that rule is cross-ledger movement, which becomes two entries through a clearing account (debit the source ledger's clearing account, credit the destination ledger's), linked by the saga and reconciled by the rule that clearing accounts net to zero across ledgers. Hot accounts are the remaining problem: a large merchant's payable account receives thousands of lines per second at peak, and a balance maintained synchronously on that row would serialise them. Balances are therefore not maintained on the write path at all; the entry append is the only write, the balance is a projection, and the exact available-balance check reads the shard's lines since the projection's sequence, which is a short range scan."
+          },
+          {
+            "heading": "Idempotency in layers, reconciliation as the backstop",
+            "body": "Idempotency has three layers and each needs its own key: the caller to the payment API (intent), the orchestrator to the provider (payment id), and the orchestrator to the ledger (saga step id), so a crash between any two steps is recoverable by replaying the saga from its stored step. Uber's write-up on money movement at scale describes the same insistence on idempotent, strongly consistent money operations. Reconciliation is the last line and the most important one: it catches what idempotency cannot (a provider that charged without telling us, a bug that posted the wrong amount), so it is a product feature with cases, owners and ageing, not a script."
+          }
+        ]
+      },
+      {
+        "id": "failure-modes",
+        "title": "Failure modes and what degrades",
+        "body": [
+          {
+            "body": "Each row names the failure, what happens to the money, and the mitigation."
+          }
+        ],
+        "table": {
+          "columns": [
+            "Failure",
+            "Effect",
+            "Mitigation"
+          ],
+          "rows": [
+            [
+              "Provider times out after authorising",
+              "we do not know if money is held",
+              "retry with the same provider idempotency key; if still unknown, query the provider by reference; reconciliation catches the rest"
+            ],
+            [
+              "Orchestrator crashes mid-saga",
+              "a payment is half done",
+              "saga state is persisted per step; a recovery worker resumes or compensates; every step idempotent"
+            ],
+            [
+              "Ledger shard primary down",
+              "no lines for that ledger; reads from the projection continue",
+              "synchronous replica promoted; orchestrators retry with the same step id"
+            ],
+            [
+              "Lines do not balance (bug)",
+              "the books would drift",
+              "rejected at write (422); the invariant is enforced in the ledger service, not in callers"
+            ],
+            [
+              "Projection lags or is corrupted",
+              "dashboards stale or wrong",
+              "rebuild from the journal; exact checks never use the projection"
+            ],
+            [
+              "Provider statement disagrees",
+              "money moved that we did not record, or the reverse",
+              "reconciliation cases with owners; adjustment entries, never edits; ageing alerts"
+            ]
+          ]
+        }
+      },
+      {
+        "id": "trade-offs",
+        "title": "Trade-offs and the alternative not taken",
+        "body": [
+          {
+            "body": "The decisions a reviewer reads first."
+          }
+        ],
+        "table": {
+          "columns": [
+            "Decision",
+            "Options",
+            "Chosen",
+            "Why"
+          ],
+          "rows": [
+            [
+              "Balance storage",
+              "balance column updated in the entry transaction versus derived projection plus exact range check",
+              "derived projection",
+              "hot accounts would serialise on the row; the journal is the truth and balances are rebuildable"
+            ],
+            [
+              "Saga style",
+              "choreography by events versus an orchestrator per payment",
+              "orchestrator",
+              "payment state in one place; compensations and operator escalation are explicit"
+            ],
+            [
+              "Atomicity boundary",
+              "global transactions across all accounts versus atomic per ledger with clearing accounts",
+              "per ledger plus clearing",
+              "one-shard transactions scale; clearing accounts make cross-ledger movement auditable"
+            ],
+            [
+              "Corrections",
+              "update in place versus reversing entries",
+              "reversing entries only",
+              "immutability is what the auditor and the digest chain rely on"
+            ],
+            [
+              "Verifiability",
+              "trust the database versus sealed ranges with a digest chain",
+              "sealed ranges",
+              "proves completeness of history and allows safe cold storage"
+            ]
+          ]
+        }
+      },
+      {
+        "id": "at-10x",
+        "title": "What changes at 10x",
+        "body": [
+          {
+            "body": "At 100 million payments per day the ledger is a platform for many products: ledgers per product line and region, a clearing network between them, multi-currency as first-class with rate sources recorded per entry, and regulatory retention per jurisdiction. Sealed ranges move to cold storage in time-range batches with indexes rebuilt on demand, which is the design Uber describes for trillions of indexes. A migration from a legacy ledger is the hard project: dual posting into old and new, a daily side-by-side reconciliation of balances, a cutover criterion of zero differences for a set period, and reversing entries to repair, never edits. Reconciliation itself becomes a service with per-provider adapters and a cases workflow, and the question the staff engineer asks is which products need a ledger at all and which only need a provider's statement."
+          }
+        ]
+      }
+    ],
+    "rubric": {
+      "L1": [
+        "Double-entry accounts with immutable, balanced journal entries and balances as derived data.",
+        "Idempotent posting with a caller key and a stored outcome, and the posting rate derived from the assumptions.",
+        "Corrections by reversing entries, never updates."
+      ],
+      "L2": [
+        "The payment as an orchestrated saga against the provider with timeouts, breakers, per-step idempotency and compensations.",
+        "Atomicity per ledger shard with clearing accounts for cross-ledger movement, and the hot-account argument for projected balances.",
+        "Daily reconciliation against provider statements as a cases workflow, and the exact available-balance read.",
+        "Partitioning the journal by ledger and the storage arithmetic over the retention period."
+      ],
+      "L3": [
+        "A ledger platform for many products: ledgers per product and region, clearing between them, multi-currency, retention per jurisdiction.",
+        "Sealing and digest chains for verifiable completeness, and cold storage of sealed ranges.",
+        "The migration from a legacy ledger with dual posting and side-by-side reconciliation, and when a product does not need a ledger."
+      ]
+    },
+    "interview_frame": [
+      {
+        "time": "0:00 to 0:05",
+        "text": "Requirements: what is immutable, where strong consistency ends, who owns idempotency, what a balance is, how fast balances must be, currencies. Say the numbers aloud: 1,160 payments per second at peak, 350 lines per second, 6 GB of journal per day and 15 TB over 7 years, about 1,160 sagas in flight per second of provider latency."
+      },
+      {
+        "time": "0:05 to 0:10",
+        "text": "Entities and API: Ledger, Account, JournalEntry, Line with the sum-to-zero rule, Hold, Balance as a projection, Payment with its saga step, SealedRange; amounts as integers in minor units."
+      },
+      {
+        "time": "0:10 to 0:20",
+        "text": "High-level design with the diagram: orchestrator, provider adapter, ledger service and shards, outbox to events, balance projector, reconciliation, sealing. Say which system is the source of truth and which are derived."
+      },
+      {
+        "time": "0:20 to 0:40",
+        "text": "Two deep dives: the saga with its three idempotency layers and compensations (what happens when the provider times out after authorising), then the ledger write path (atomic per shard, clearing accounts, hot accounts and projected balances, the exact balance check)."
+      },
+      {
+        "time": "0:40 to 0:45",
+        "text": "Failure modes from the table, the 10x platform (ledgers per product, sealing to cold storage, the legacy migration), and the L3 sentence: idempotency prevents most duplicates and reconciliation finds the rest; a ledger without reconciliation is a database with opinions."
+      }
+    ],
+    "design_doc_frame": [
+      {
+        "section": "Context and scope",
+        "text": "The products that move money today, the providers, the finance system that consumes the books, the audit or incident that motivates the ledger, and the retention regulation that applies."
+      },
+      {
+        "section": "Goals and non-goals",
+        "text": "Atomic, durable, idempotent posting; explainable balances; daily reconciliation; verifiable history; no fraud scoring, no card data, no general ledger accounting."
+      },
+      {
+        "section": "Design",
+        "text": "This answer fills it: the data model with the sum-to-zero rule, the saga, the shard atomicity rule, projections, reconciliation and sealing."
+      },
+      {
+        "section": "Alternatives considered",
+        "text": "Balance columns on the write path, choreographed sagas, global transactions, in-place corrections, trusting the database for completeness, with the trade-off table."
+      },
+      {
+        "section": "Cross-cutting concerns",
+        "text": "Security (who may post, who may adjust, four-eyes on adjustments, audit log of operator actions), privacy (no card data; account references only), observability (saga age, compensation rate, reconciliation open cases by age, projection lag), cost (storage over 7 years, provider fees are not this system's cost but its data), rollout with dual posting and a reconciliation period."
+      },
+      {
+        "section": "Review questions the doc must answer",
+        "text": "What the system does when the provider authorised but the response was lost, and how a wrong posting discovered a month later is corrected without touching history."
+      }
+    ],
+    "depth_notes": {
+      "L1": "Double-entry accounts, immutable entries, balances as derived data, idempotent posting.",
+      "L2": "The payment flow as a saga with a provider, reconciliation against provider statements, auditability, partitioning the ledger.",
+      "L3": "A ledger platform for many products (clearing, multi-currency, sealing and verification, regulatory retention, migration from a legacy ledger)."
+    }
+  },
+  "provenance": {
+    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center M4a",
+    "generated_on": "2026-10-12",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "written by hand for the system design module, Part C entry C8 of the outline"
+    }
+  ]
+}

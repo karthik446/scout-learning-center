@@ -1,0 +1,390 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "kind": "design-exercise",
+  "id": "sd-ex-vector-search",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Design exercise: vector search service",
+  "area": "software",
+  "primary_key": "system-design",
+  "secondary_keys": [
+    "data-stores",
+    "scaling",
+    "distributed-systems"
+  ],
+  "keys": [
+    "system-design",
+    "data-stores",
+    "scaling",
+    "distributed-systems"
+  ],
+  "summary": "An AI-era design exercise: a nearest-neighbour search service for a hundred million vectors with metadata filters, a measured recall target and rebuilds without downtime. The reference answer sizes memory with the cited bytes-per-vector formula, separates index building from serving with immutable segments and a recall gate, quantises large collections and re-ranks against raw vectors, filters by selectivity, hedges the scatter-gather tail, and says when a database with a vector index is enough.",
+  "detail": [],
+  "in_practice": "",
+  "subtopics": [],
+  "diagram": null,
+  "code": [],
+  "technologies": [],
+  "related": [
+    "sd-storage-engines",
+    "sd-replication-partitioning",
+    "sd-numbers",
+    "sd-capacity",
+    "sd-data-modelling",
+    "sd-ex-rag-service"
+  ],
+  "sources": [
+    {
+      "kind": "paper",
+      "title": "Efficient and robust approximate nearest neighbor search using Hierarchical Navigable Small World graphs (HNSW)",
+      "url": "https://arxiv.org/abs/1603.09320"
+    },
+    {
+      "kind": "repo",
+      "title": "FAISS wiki: index types and guidelines to choose an index",
+      "url": "https://github.com/facebookresearch/faiss/wiki"
+    },
+    {
+      "kind": "repo",
+      "title": "pgvector: vector similarity search for Postgres",
+      "url": "https://github.com/pgvector/pgvector"
+    },
+    {
+      "kind": "doc",
+      "title": "Google Cloud Architecture Center: infrastructure for a RAG-capable generative AI application",
+      "url": "https://docs.cloud.google.com/architecture/rag-capable-gen-ai-app-using-vertex-ai"
+    },
+    {
+      "kind": "paper",
+      "title": "The Tail at Scale (Dean and Barroso)",
+      "url": "https://research.google/pubs/the-tail-at-scale/"
+    },
+    {
+      "kind": "doc",
+      "title": "Latency numbers every programmer should know",
+      "url": "https://gist.github.com/jboner/2841832"
+    }
+  ],
+  "practice": null,
+  "exercise": {
+    "prompt": "Design a vector search service used by several internal products: callers insert vectors with metadata and query for the nearest neighbours of a query vector, filtered by metadata, with a recall they can rely on and a latency budget they can plan around. The service must keep working while indexes are rebuilt and must not let one product's collection crowd out another.",
+    "constraints": [
+      {
+        "heading": "Functional",
+        "body": "Upsert and delete vectors with a metadata payload; query the k nearest by cosine or dot product with metadata filters; collections per tenant with independent dimensions and distance; a stated recall target per collection; freshness of inserts within one minute; rebuild an index without downtime."
+      },
+      {
+        "heading": "Scale (assumption)",
+        "body": "100 million vectors across 50 collections, the largest holding 40 million; 768 dimensions (assumption); 2,000 queries per second at peak with k of 10 to 100; 1 million upserts and 100,000 deletes per day; filters on tenant, document id and a date range. Chosen for the exercise; derive the raw size, the index memory with the cited formula, and the shard count yourself."
+      },
+      {
+        "heading": "Targets (assumption)",
+        "body": "Recall at 10 of at least 0.95 against exact search on the collection's own sample set; p99 under 50 ms for unfiltered queries and under 100 ms for filtered ones; 99.9 percent availability for queries; a collection's rebuild never affects another collection's latency."
+      },
+      {
+        "heading": "Non-goals",
+        "body": "Computing embeddings (callers bring vectors), text search and hybrid ranking (the RAG exercise), the model that chooses dimensions, analytics over vectors."
+      }
+    ],
+    "clarifying_questions": [
+      {
+        "question": "Exact or approximate?",
+        "answer": "Approximate, with a measured recall against exact search; callers choose a recall tier per query (fast or thorough) that maps to the index's search-time parameter."
+      },
+      {
+        "question": "How selective are the filters?",
+        "answer": "Mostly broad (a tenant, a date range covering a large share), sometimes very selective (one document id). Both must work; the strategy differs."
+      },
+      {
+        "question": "Can vectors be updated in place?",
+        "answer": "An upsert is a delete plus an insert of a new version; graph indexes do not update a point in place, so the index holds tombstones until the next merge."
+      },
+      {
+        "question": "What happens during a rebuild?",
+        "answer": "The old segments keep serving; the new ones are built beside them and swapped in when their recall check passes."
+      },
+      {
+        "question": "Who defines the recall test set?",
+        "answer": "The collection owner provides a few hundred query vectors with exact-search answers (or the service computes them offline); every build and every parameter change is scored against it."
+      },
+      {
+        "question": "Is a general database enough?",
+        "answer": "For small collections, yes: Postgres with pgvector offers HNSW and IVFFlat indexes with SQL filtering for vectors up to 2,000 dimensions (4,000 as half precision). The service exists for the collections that outgrow one database node or need isolation."
+      }
+    ],
+    "reference_answer": [
+      {
+        "id": "requirements-and-estimates",
+        "title": "Requirements and estimates",
+        "body": [
+          {
+            "heading": "Derived numbers: size and memory",
+            "body": "Raw vectors: 100 million times 768 dimensions times 4 bytes is 3,072 bytes each, 307 GB in total. HNSW memory, using the FAISS wiki's guideline of (d times 4 plus M times 2 times 4) bytes per vector, with M of 16 links per node (the wiki's range is 4 to 64; higher is more accurate and uses more memory): 3,072 plus 128 is 3,200 bytes, 320 GB for the full set, and 128 GB for the largest collection alone. A serving node with 64 GB of memory for the index (assumption) holds 20 million vectors, so the 40-million collection needs at least 2 shards and the fleet about 5 data shards, replicated twice for availability: 10 serving nodes, before quantisation."
+          },
+          {
+            "heading": "Derived numbers: quantisation and re-ranking",
+            "body": "Quantisation changes the arithmetic by an order of magnitude: product quantisation stores a vector as M codes of 4 bits each, M over 2 bytes per vector by the same guideline; with 64 codes that is 32 bytes per vector, 3.2 GB for the whole set, small enough that the quantised index fits in memory on one node per shard with room to spare, at a cost in recall that the re-ranking step recovers: fetch the top 10 times k candidates from the quantised index, re-score them against raw vectors held on fast disk, return the top k. Reading 100 raw vectors of 3 kB each from SSD is about 300 kB, under a millisecond of sequential read at the reference 1 ms per MB, plus the random-read cost per vector, so re-ranking fits the budget."
+          },
+          {
+            "heading": "Derived numbers: query throughput and the tail",
+            "body": "2,000 queries per second across 5 shards is 2,000 per shard per second when every query is scattered to every shard; an HNSW query over 20 million vectors is a graph walk of a few hundred distance computations, tens of microseconds to a few milliseconds depending on the search-time parameter, so one node serves thousands per second with headroom. The tail is the problem: a scattered query is as slow as its slowest shard, the tail-at-scale argument, so the router hedges (sends a second copy to the other replica after a short delay, assumption 10 ms) and merges whichever returns first."
+          }
+        ]
+      },
+      {
+        "id": "high-level-design",
+        "title": "High-level design",
+        "body": [
+          {
+            "heading": "Container view",
+            "body": "The serving path is a query router that scatters a query to the shards of the target collection, gathers partial top-k lists and merges them; each shard serves immutable index segments loaded in memory plus a small mutable delta for recent inserts and a tombstone set for deletes. The write path is a validated ingest that writes to a change log partitioned by shard; shards consume it into their delta, and a segment builder consumes it offline to build, quantise and merge segments, which are stored in object storage and swapped in after a recall check. Raw vectors and metadata live in a plain store that is the source of truth for re-ranking and for rebuilding any index from scratch. The reference architecture for a RAG-capable application on a cloud platform draws the same split between an ingestion subsystem, a vector store and a serving subsystem."
+          }
+        ],
+        "diagram": {
+          "source": "flowchart LR\n  C[Callers: RAG, recommendations, dedupe] --> API[Query API: per-tenant auth, k, filters, recall tier]\n  API --> QR[Query router: scatter to shards, gather and merge]\n  QR --> S1[Shard 1: HNSW segments in memory + delta]\n  QR --> S2[Shard 2..N]\n  S1 --> SEG[(Immutable index segments in object storage)]\n  S1 --> RAW[(Raw vectors and metadata, for re-ranking and rebuilds)]\n  W[Writers: upsert, delete] --> ING[Ingest: validate, assign shard, write-ahead]\n  ING --> LOG[[vector change log, partitioned by shard]]\n  LOG --> S1\n  LOG --> BLD[Segment builder: build, quantise, merge offline]\n  BLD --> SEG\n  QR --> META[(Tenant and collection catalogue)]",
+          "legend": "Boxes are containers; cylinders are stores; double brackets are logs. Segments are immutable; the delta and tombstones are the only mutable state on a shard."
+        }
+      },
+      {
+        "id": "data-model",
+        "title": "The data model",
+        "body": [
+          {
+            "heading": "Entities",
+            "body": "Collection {collection_id, tenant, dimensions, distance (cosine, dot, l2), recall_target, shards[], index_params (M, ef_construction, quantisation), test_set_ref}. Vector {collection_id, vector_id, version, embedding (float32[d]), metadata {tenant, document_id, created_at, labels[]}, deleted_at}. Segment {collection_id, shard, segment_id, vector_count, built_at, index_file, quantised (bool), recall_measured}. Delta {shard, vectors since the last segment, in an in-memory flat index}. Tombstones {shard, vector ids deleted since the last merge}."
+          },
+          {
+            "heading": "API",
+            "body": "POST /collections/{id}/vectors {vectors[] of (id, embedding, metadata)} (upsert, idempotent by id and version); DELETE /collections/{id}/vectors/{vector_id}; POST /collections/{id}/query {vector, k, filter, recall_tier} returns {matches[] of (id, score, metadata), shards_answered, degraded}; POST /collections/{id}/rebuild {index_params} starts an offline build; GET /collections/{id}/recall returns the last measured recall per segment."
+          },
+          {
+            "heading": "Why HNSW, and what the tier means",
+            "body": "The HNSW paper's structure is a multi-layer graph: an upper layer of long links for coarse navigation and a dense bottom layer, searched greedily from an entry point with a candidate list whose size (ef) sets the recall and latency trade-off at query time. The service exposes ef as the recall tier and measures the result rather than promising a number."
+          }
+        ]
+      },
+      {
+        "id": "core-flow",
+        "title": "The core flow, step by step",
+        "body": [
+          {
+            "body": "One filtered query, and the life of an upsert."
+          }
+        ],
+        "steps": [
+          "Query: the API authenticates the tenant, validates dimensions against the collection, and estimates the filter's selectivity from metadata statistics kept per shard (a tenant covers most vectors; a document id covers a handful).",
+          "Broad filter: the router scatters to all shards of the collection; each shard walks its HNSW segments with the filter applied inside the walk (skip non-matching nodes but keep traversing them, so the graph stays connected), searches its delta flat index, drops tombstoned ids, and returns its top 10 times k with distances.",
+          "Selective filter: each shard first resolves the filter to a small id set from the metadata index and scores those vectors exactly, bypassing the graph; a filter that matches fewer than a threshold of vectors (assumption: 1,000) is always cheaper to brute-force than to walk.",
+          "Gather: the router merges the partial lists, re-ranks the merged candidates against raw vectors when the segment is quantised, truncates to k, and returns with the number of shards that answered; if a shard missed the deadline the response is marked degraded rather than silently incomplete.",
+          "Upsert: ingest validates the vector, assigns the shard by hash of vector id within the collection, writes the raw vector and metadata to the source-of-truth store, and appends the change to the shard's log partition; the shard applies it to its delta within seconds, which meets the one-minute freshness target.",
+          "Merge: when a shard's delta exceeds a size or age threshold (assumption: 1 million vectors or 6 hours), the segment builder builds a new segment from the delta, merges small segments, drops tombstoned vectors, runs the collection's recall test against the new segment set, and publishes; the shard loads the new segments and drops the old ones and the delta they covered."
+        ]
+      },
+      {
+        "id": "scaling-and-the-bottleneck",
+        "title": "Scaling and the bottleneck",
+        "body": [
+          {
+            "heading": "Build versus serve, and recall as a measurement",
+            "body": "Memory per vector is the capacity unit, and the index parameters set it: M and the quantisation decide bytes per vector, ef decides latency per query, and both decide recall. The service makes recall a measured property per segment, so a change to any parameter is a build followed by a score, not an opinion. Building is separated from serving because an HNSW build over tens of millions of vectors is hours of CPU that must not run on the nodes answering queries; builders are a pool that any collection can use, with per-tenant limits so one collection's rebuild does not delay another's merge. The source-of-truth store means every index is disposable: a bad build is rolled back by pointing at the previous segment set."
+          },
+          {
+            "heading": "Filtered search and isolation",
+            "body": "Filtering is where vector search differs from a key-value store. Applying a filter after the search (over-fetch, then drop non-matching results) is simple but fails for selective filters, where the top 100 candidates may contain no match at all; applying it before the search (restrict the graph to matching nodes) breaks the graph's connectivity when few nodes match. The answer uses both by selectivity: in-walk filtering for broad filters and exact scoring of the filtered id set for selective ones, with the threshold measured per collection. Tenant isolation follows the same logic: a tenant's data is a filter value for small tenants and its own collection with its own shards for large ones, so a large tenant's queries never scan another tenant's segments."
+          }
+        ]
+      },
+      {
+        "id": "failure-modes",
+        "title": "Failure modes and what degrades",
+        "body": [
+          {
+            "body": "Each row names the failure, what callers see, and the mitigation."
+          }
+        ],
+        "table": {
+          "columns": [
+            "Failure",
+            "Effect",
+            "Mitigation"
+          ],
+          "rows": [
+            [
+              "Serving node lost",
+              "its shard's queries go to the replica",
+              "two replicas per shard; a new node loads segments from object storage and replays the log for the delta"
+            ],
+            [
+              "One shard slow",
+              "p99 rises for the collection",
+              "hedged requests to the replica; a per-query deadline; degraded flag with the shard count"
+            ],
+            [
+              "Bad build (recall below target)",
+              "would return worse neighbours",
+              "recall test gates publication; the previous segment set stays live; rebuild with other parameters"
+            ],
+            [
+              "Delta grows (builder behind)",
+              "delta flat search slows queries",
+              "builder pool scales on delta age; a hard cap on delta size that pauses ingest for that shard with a clear error"
+            ],
+            [
+              "Deletes pile up as tombstones",
+              "wasted memory and skewed recall",
+              "merge when tombstones exceed a ratio (assumption: 10 percent of a segment)"
+            ],
+            [
+              "Dimension or distance mismatch from a caller",
+              "garbage results",
+              "validated at ingest and query against the collection; rejected, never coerced"
+            ]
+          ]
+        }
+      },
+      {
+        "id": "trade-offs",
+        "title": "Trade-offs and the alternative not taken",
+        "body": [
+          {
+            "body": "The decisions a reviewer reads first."
+          }
+        ],
+        "table": {
+          "columns": [
+            "Decision",
+            "Options",
+            "Chosen",
+            "Why"
+          ],
+          "rows": [
+            [
+              "Index type",
+              "flat exact, IVF, HNSW, HNSW plus product quantisation",
+              "HNSW; quantised with re-ranking for large collections",
+              "best speed-recall trade-off for in-memory serving; quantisation cuts memory 100x where it matters"
+            ],
+            [
+              "Mutability",
+              "in-place updates versus immutable segments plus delta and tombstones",
+              "immutable segments",
+              "graph indexes are built, not edited; rebuilds and rollbacks become file swaps"
+            ],
+            [
+              "Filtering",
+              "post-filter always, pre-filter always, by selectivity",
+              "by selectivity with a measured threshold",
+              "each alone fails on one end of the selectivity range"
+            ],
+            [
+              "Sharding",
+              "by tenant only versus by hash within a collection",
+              "collection per large tenant, hash within it",
+              "isolation for large tenants; even shards for the rest"
+            ],
+            [
+              "Where to start",
+              "a dedicated service for everything versus pgvector until it hurts",
+              "pgvector for small collections, the service for large ones",
+              "most collections are small; the service is justified by the few that are not"
+            ]
+          ]
+        }
+      },
+      {
+        "id": "at-10x",
+        "title": "What changes at 10x",
+        "body": [
+          {
+            "body": "At a billion vectors the memory arithmetic forces quantisation everywhere and disk-resident graphs for the long tail of cold collections, with only the entry layers and hot segments in memory. Shards multiply and the router's scatter-gather becomes the latency floor, so collections are partitioned by a metadata key that queries usually carry (tenant, time) to route to a subset of shards instead of all. Freshness and cost pull apart: a cost per million vectors per month, published per index configuration, lets product owners choose between a cheap nightly rebuild and an expensive continuous merge. Multi-tenant fairness becomes explicit with query quotas and build quotas per tenant. And the question the platform must keep answering is the last clarifying question: for which collections a general database with a vector index is still enough."
+          }
+        ]
+      }
+    ],
+    "rubric": {
+      "L1": [
+        "An approximate nearest neighbour index (HNSW) behind a query API with metadata filtering and a stated recall target.",
+        "The raw size and index memory derived from the assumptions with the cited bytes-per-vector formula.",
+        "Upserts as delete plus insert with tombstones, and freshness through a delta."
+      ],
+      "L2": [
+        "Sharding and replication of indexes with scatter-gather, hedged requests and a degraded flag for missed shards.",
+        "Build separated from serve with immutable segments, a recall test that gates publication, and rollback by segment set.",
+        "Quantisation with re-ranking against raw vectors, and the memory arithmetic that justifies it.",
+        "Filtered search by selectivity, with both failure modes of pre- and post-filtering explained."
+      ],
+      "L3": [
+        "A multi-tenant vector platform: collections per large tenant, build and query quotas, a cost per million vectors per month per configuration.",
+        "Routing by a metadata partition key to avoid full scatter at a billion vectors, and disk-resident graphs for cold data.",
+        "When Postgres with a vector index is enough, and the rule for moving a collection to the service."
+      ]
+    },
+    "interview_frame": [
+      {
+        "time": "0:00 to 0:05",
+        "text": "Requirements: approximate with measured recall, filter selectivity, upsert semantics, rebuilds without downtime, who owns the test set, whether a database is enough. Say the numbers aloud: 307 GB of raw vectors, 320 GB of HNSW memory at M equal to 16, 3.2 GB quantised at 32 bytes per vector, 5 shards replicated twice, 2,000 queries per second."
+      },
+      {
+        "time": "0:05 to 0:10",
+        "text": "Entities and API: Collection with index parameters and a test set, Vector with version and metadata, Segment, Delta, Tombstones; the upsert, delete, query and rebuild endpoints with the recall tier."
+      },
+      {
+        "time": "0:10 to 0:20",
+        "text": "High-level design with the diagram: query router, shards with immutable segments and a delta, the change log, the segment builder, object storage, the raw store. Say why segments are immutable."
+      },
+      {
+        "time": "0:20 to 0:40",
+        "text": "Two deep dives: memory and the build-versus-serve split (M, ef, quantisation, re-ranking, recall as a gate, rollback), then filtered search and isolation (in-walk versus exact scoring by selectivity, tenant as filter versus collection, hedging the tail)."
+      },
+      {
+        "time": "0:40 to 0:45",
+        "text": "Failure modes from the table, the 10x plan (quantise everything, disk-resident graphs, partition keys for routing, quotas and cost per million vectors), and the L3 sentence: an index is a derived, disposable view with a measured recall; the design is about who builds it, when, and at what memory cost."
+      }
+    ],
+    "design_doc_frame": [
+      {
+        "section": "Context and scope",
+        "text": "The products that need nearest-neighbour search, the collections and their sizes today, the database that holds the small ones, the latency or isolation problem that motivates a service."
+      },
+      {
+        "section": "Goals and non-goals",
+        "text": "Recall at 10 of 0.95 measured, p99 of 50 ms unfiltered and 100 ms filtered, freshness within a minute, rebuilds without downtime, tenant isolation; no embedding computation, no text search, no hybrid ranking."
+      },
+      {
+        "section": "Design",
+        "text": "This answer fills it: the serving and build paths, the segment model, the filtering strategy, the data model and API."
+      },
+      {
+        "section": "Alternatives considered",
+        "text": "IVF or flat indexes, in-place mutation, a single filtering strategy, tenant-only sharding, a dedicated service for every collection, with the trade-off table."
+      },
+      {
+        "section": "Cross-cutting concerns",
+        "text": "Security (per-tenant authentication and collection ownership), privacy (vectors can encode personal data; deletion must reach segments at the next merge with a stated bound), observability (recall per segment, p99 per shard, degraded ratio, delta age, tombstone ratio), cost (memory per vector per configuration, builder hours), rollout one collection at a time with the database path as fallback."
+      },
+      {
+        "section": "Review questions the doc must answer",
+        "text": "How long after a delete the vector can still be returned, and what a caller receives when one shard misses the deadline."
+      }
+    ],
+    "depth_notes": {
+      "L1": "An ANN index (HNSW) behind a query API with metadata filtering and a recall target.",
+      "L2": "Sharding and replication of indexes, index build versus serve separation, quantization trade-offs, filtered search strategies, p99 budget.",
+      "L3": "A vector platform (multi-tenant indexes, freshness, cost per million vectors, when Postgres is enough and when it is not)."
+    }
+  },
+  "provenance": {
+    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center M4a",
+    "generated_on": "2026-10-12",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "written by hand for the system design module, Part C entry C13 of the outline"
+    }
+  ]
+}

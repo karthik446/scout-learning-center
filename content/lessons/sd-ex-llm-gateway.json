@@ -1,0 +1,388 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "kind": "design-exercise",
+  "id": "sd-ex-llm-gateway",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Design exercise: LLM gateway",
+  "area": "software",
+  "primary_key": "system-design",
+  "secondary_keys": [
+    "apis",
+    "scaling",
+    "cost-efficiency"
+  ],
+  "keys": [
+    "system-design",
+    "apis",
+    "scaling",
+    "cost-efficiency"
+  ],
+  "summary": "An AI-era design exercise: one internal API in front of hosted model providers and a self-hosted fleet, with per-team keys, token-based limits, budgets, safe failover, streaming and redacted logging. The reference answer sizes tokens per minute against per-minute provider limits, uses prompt caching deliberately with its documented pricing, retries only before the first byte, bounds budget overshoot to one aggregation interval, and treats the gateway as a rate limiter, a cost allocator and a privacy boundary.",
+  "detail": [],
+  "in_practice": "",
+  "subtopics": [],
+  "diagram": null,
+  "code": [],
+  "technologies": [],
+  "related": [
+    "sd-api-design",
+    "sd-rate-limiting-overload",
+    "sd-idempotency-retries",
+    "sd-caching",
+    "sd-observability",
+    "sd-cost",
+    "sd-multi-tenancy",
+    "sd-ex-rate-limiter"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "LiteLLM documentation",
+      "url": "https://docs.litellm.ai/docs/"
+    },
+    {
+      "kind": "doc",
+      "title": "Claude Platform docs: Rate limits",
+      "url": "https://platform.claude.com/docs/en/api/rate-limits"
+    },
+    {
+      "kind": "doc",
+      "title": "Claude Platform docs: Prompt caching",
+      "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching"
+    },
+    {
+      "kind": "doc",
+      "title": "vLLM documentation",
+      "url": "https://docs.vllm.ai/en/latest/"
+    },
+    {
+      "kind": "blog",
+      "title": "Stripe: Scaling your API with rate limiters",
+      "url": "https://stripe.com/blog/rate-limiters"
+    },
+    {
+      "kind": "doc",
+      "title": "AWS Well-Architected: Generative AI Lens",
+      "url": "https://docs.aws.amazon.com/wellarchitected/latest/generative-ai-lens/generative-ai-lens.html"
+    }
+  ],
+  "practice": null,
+  "exercise": {
+    "prompt": "Design the company's gateway to large language models: every internal application calls one API that fronts several hosted providers and a self-hosted model fleet. Teams get keys, quotas and budgets; the gateway retries and fails over safely, streams tokens, keeps spend visible, and logs enough to debug without leaking what users typed.",
+    "constraints": [
+      {
+        "heading": "Functional",
+        "body": "One request format for chat completions and embeddings with streaming; per-team keys, token-based rate limits and monthly budgets; routing of a model alias to one or more deployments with fallback; retries that never duplicate a side effect; prompt caching where the provider supports it; request logging with redaction; spend attribution per team and per key."
+      },
+      {
+        "heading": "Scale (assumption)",
+        "body": "200 teams; 5 million requests per day, peak 3x the average; an average request of 3,000 input tokens and 400 output tokens; 20 percent of requests are embeddings; two hosted providers and one self-hosted fleet of open-weight models. Chosen for the exercise; derive the request rate, the token rate and the daily token volume yourself."
+      },
+      {
+        "heading": "Targets (assumption)",
+        "body": "Gateway overhead under 10 ms at p99 on top of the provider; first token streamed within 1 s at p50 for chat; 99.9 percent availability of the gateway itself (providers have their own); a team can never exceed its budget by more than one minute of traffic; no raw prompt is stored unless the team opted in."
+      },
+      {
+        "heading": "Non-goals",
+        "body": "Model quality evaluation itself, prompt authoring tools, fine-tuning, agent orchestration, the self-hosted model servers' internals (treated as deployments with a known capacity)."
+      }
+    ],
+    "clarifying_questions": [
+      {
+        "question": "Whose rate limits matter?",
+        "answer": "Both: the provider's limits per model class, expressed in requests per minute, input tokens per minute and output tokens per minute and signalled by a 429 with a retry-after header, and the gateway's own per-team limits, which must sum to less than the provider's."
+      },
+      {
+        "question": "What is a safe retry?",
+        "answer": "A retry of a request that produced no output; a chat completion that failed mid-stream is not retried transparently (the client would see duplicated text), it is surfaced as an error with a resumable marker."
+      },
+      {
+        "question": "What does the cache cache?",
+        "answer": "Two things: the provider's prompt cache for a shared prefix (system prompt, tools, documents), and an opt-in exact-match response cache at the gateway for deterministic, repeated requests (embeddings, classification with temperature zero)."
+      },
+      {
+        "question": "Can a request choose the provider?",
+        "answer": "It names a model alias; policy maps the alias to deployments in order. A team may pin a deployment for a test, never for production traffic."
+      },
+      {
+        "question": "What is logged?",
+        "answer": "Metadata always (team, key, model, route, tokens in and out, cached tokens, latency, status); prompt and completion text only for teams that opted in, after redaction of recognisable personal data, with a retention of 30 days (assumption)."
+      },
+      {
+        "question": "Budgets: hard or soft?",
+        "answer": "Hard at the monthly budget with a 90 percent warning; a team may request a raise, which is a policy change, not a code change."
+      }
+    ],
+    "reference_answer": [
+      {
+        "id": "requirements-and-estimates",
+        "title": "Requirements and estimates",
+        "body": [
+          {
+            "heading": "Derived numbers: requests and tokens",
+            "body": "5 million requests per day is 58 per second average and 174 at peak. Tokens: 5 million times 3,000 input tokens is 15 billion input tokens per day and 2 billion output tokens; at peak that is about 520,000 input tokens per second, or 31 million per minute, which is the number to compare against provider limits that are expressed per minute per model class. A provider's limit is a hard ceiling the gateway must stay under across all teams, so the sum of team limits is capped below it with headroom (assumption: 80 percent)."
+          },
+          {
+            "heading": "Derived numbers: what caching buys",
+            "body": "With a shared prefix of 2,000 of the 3,000 input tokens (system prompt, tool definitions, policy text, assumption), prompt caching changes the economics: the provider documentation prices a cache write at a small premium over the base input price (1.25x for the default five-minute cache) and a cache read at a fraction of it (10 percent of the base input price for most models), with a one-hour cache available at a higher write price; and for most models only uncached input tokens count toward the input-tokens-per-minute limit. So 10 billion of the 15 billion daily input tokens can become cache reads, cutting both the bill and the limit pressure by a large factor; the gateway's job is to keep the cacheable prefix first and byte-identical across requests so the cache hits."
+          },
+          {
+            "heading": "The latency shape",
+            "body": "The provider's time to first token is of the order of hundreds of milliseconds (assumption) and dominates; the gateway adds one authentication lookup, one limit check and one routing decision, all local or in-memory, so the 10 ms overhead target is met if nothing on the hot path crosses the network except the provider call itself."
+          }
+        ]
+      },
+      {
+        "id": "high-level-design",
+        "title": "High-level design",
+        "body": [
+          {
+            "heading": "Container view",
+            "body": "Stateless gateway nodes authenticate the key, check the team's token buckets and budget, pick a deployment through the router (alias to an ordered list of hosted or self-hosted deployments, with health and limit state per deployment), and proxy the request with streaming. Keys, policies and budgets live in a small store cached on every node; token counters live in a shared counter store with the same local-first correction loop as the rate limiter exercise. Every request writes a redacted log record; an aggregator turns the log into spend per team and per key, which feeds the budget check and a review of routing decisions. Self-hosted deployments are model servers with continuous batching behind an OpenAI-compatible API (the vLLM documentation describes that server shape); the open-source LiteLLM proxy documents the same feature set (virtual keys with budgets per key, team and user, spend tracking, fallbacks across deployments, guardrails) and is the reference for the shape."
+          }
+        ],
+        "diagram": {
+          "source": "flowchart LR\n  A[Internal apps and agents] -->|one API, streaming| GW[Gateway nodes: auth, limits, routing]\n  GW --> KEY[(Keys, teams, policies, budgets)]\n  GW --> CNT[(Token counters: per team per minute)]\n  GW --> RT[Router: model alias to deployments, fallback order]\n  RT --> P1{{Hosted provider A}}\n  RT --> P2{{Hosted provider B}}\n  RT --> SH[Self-hosted model servers: continuous batching]\n  GW --> CACHE[(Response cache: exact-match, opt-in)]\n  GW --> LOG[[request log: redacted prompts, tokens, latency, route]]\n  LOG --> SPEND[Spend and usage aggregator]\n  SPEND --> KEY\n  LOG --> EVAL[Evaluation and routing review]",
+          "legend": "Boxes are containers; cylinders are stores; double brackets are logs; hexagons are external providers."
+        }
+      },
+      {
+        "id": "data-model",
+        "title": "The data model",
+        "body": [
+          {
+            "heading": "Entities",
+            "body": "Team {team_id, monthly_budget, limits (requests per minute, input and output tokens per minute), allowed_aliases[], logging_policy}. Key {key_id, team_id, hash, scopes, created_at, revoked_at}. ModelAlias {alias, deployments[] of (provider, model, region, weight, max_tokens_per_minute), fallback_policy}. DeploymentState {deployment, healthy, open_breaker, observed_limit_remaining, p50_first_token}. RequestLog {request_id, team, key, alias, deployment_used, attempts[], tokens_in, tokens_cached, tokens_out, first_token_ms, total_ms, status, prompt_hash, prompt_text?, completion_text?}. Spend {team, day, deployment, tokens_in, tokens_cached, tokens_out, cost}."
+          },
+          {
+            "heading": "API",
+            "body": "POST /v1/chat/completions {model: alias, messages[], stream, cache_prefix_marker?, idempotency_key?} returns a token stream then a usage block; POST /v1/embeddings {model, input[]}; GET /v1/usage?team=&from=&to=; admin endpoints for keys, aliases and budgets. Errors carry the provider's class (rate limited, overloaded, invalid) and the deployment tried, so clients can distinguish a quota problem from an outage."
+          }
+        ]
+      },
+      {
+        "id": "core-flow",
+        "title": "The core flow, step by step",
+        "body": [
+          {
+            "body": "One streamed chat completion with a cacheable prefix."
+          }
+        ],
+        "steps": [
+          "Authenticate the key (hash lookup in the node's cache of the key store), load the team's policy and check the alias is allowed.",
+          "Admission: take tokens from the team's local request bucket and an estimate of input tokens from the input-token bucket (the gateway counts the prompt locally before sending); check the budget projection (spend so far plus this request's estimated cost) against the monthly budget. Reject with 429 and the team's own retry-after if over the limit, 402-style with a budget error if over budget.",
+          "Route: the router picks the first healthy deployment for the alias whose observed remaining limit can take the request; it orders the messages so the shared prefix is first and marks the cache breakpoint at the end of the prefix, as the provider's prompt caching documentation describes.",
+          "Proxy with streaming: open the provider stream, forward tokens as they arrive, and record the time to first token. If the provider answers 429 or a server error before any token was sent, back off per its retry-after and fail over to the next deployment (a retry is safe because nothing reached the client). If the stream breaks after tokens were sent, close the client stream with an error marker and do not retry.",
+          "Settle: read the usage block (input, cached, output tokens), correct the token buckets with the real counts, write the redacted log record, and increment the team's spend counter.",
+          "Asynchronously, the spend aggregator rolls the log into daily spend per team and deployment; the budget check reads the rolled total plus the live counter, so a team can overshoot by at most the traffic of the aggregation interval (one minute, assumption), which is the stated target."
+        ]
+      },
+      {
+        "id": "scaling-and-the-bottleneck",
+        "title": "Scaling and the bottleneck",
+        "body": [
+          {
+            "heading": "Fairness under a shared ceiling",
+            "body": "The provider's limits are the bottleneck, and they are shared by all teams: the gateway is the place where fairness is enforced so one team's burst does not get every other team a 429 from the provider. Per-team token buckets are the request rate limiter of Stripe's write-up applied to tokens; a concurrency limiter per deployment protects the self-hosted fleet, whose capacity is in-flight sequences rather than requests per minute; and a load shedder drops low-priority traffic (batch jobs, evaluations) first when a deployment's remaining limit runs low. The router tracks each deployment's remaining limit from response headers and 429s, and a breaker per deployment opens on error rate so failover is immediate rather than discovered request by request."
+          },
+          {
+            "heading": "Cost levers and the log",
+            "body": "Cost scales with tokens, not requests, so the levers are token levers: the shared prefix kept identical and first so the provider cache hits; an exact-match response cache for deterministic workloads (embeddings of the same text, classification at temperature zero) keyed by a hash of the full request; routing cheap aliases (small models, self-hosted) by policy for workloads that allow it; and output caps per alias. The log is what makes any of this visible: spend per team per deployment per day, cache hit ratio per alias, and the routing decisions a reviewer can question. Logging text is the privacy risk: redaction runs before the write, text is opt-in per team with retention, and the log store is access-controlled separately from metadata."
+          }
+        ]
+      },
+      {
+        "id": "failure-modes",
+        "title": "Failure modes and what degrades",
+        "body": [
+          {
+            "body": "Each row names the failure, what callers see, and the mitigation."
+          }
+        ],
+        "table": {
+          "columns": [
+            "Failure",
+            "Effect",
+            "Mitigation"
+          ],
+          "rows": [
+            [
+              "Provider A returns 429 or is overloaded",
+              "latency rises until failover",
+              "honour retry-after, breaker per deployment, fail over to B or self-hosted for aliases that allow it; alert on failover ratio"
+            ],
+            [
+              "Stream breaks mid-completion",
+              "a truncated answer",
+              "no transparent retry; error marker to the client; client decides to resend with its idempotency key"
+            ],
+            [
+              "Counter store down",
+              "limits drift",
+              "local buckets keep enforcing per node share; fail open for limits, fail closed for budgets at the day's rolled total (assumption, a policy choice)"
+            ],
+            [
+              "Key store unreachable",
+              "cannot authenticate new keys",
+              "nodes cache keys and policies with a long TTL; revocations propagate when the store returns; alert"
+            ],
+            [
+              "Prompt cache misses silently (prefix drifted)",
+              "cost and limit pressure rise",
+              "cache hit ratio per alias on the dashboard; a lint on prefix stability in the client SDK"
+            ],
+            [
+              "Self-hosted fleet saturated",
+              "queueing, slow first token",
+              "concurrency limit per deployment with early rejection; shed batch traffic; route overflow to a hosted deployment if policy allows"
+            ]
+          ]
+        }
+      },
+      {
+        "id": "trade-offs",
+        "title": "Trade-offs and the alternative not taken",
+        "body": [
+          {
+            "body": "The decisions a reviewer reads first."
+          }
+        ],
+        "table": {
+          "columns": [
+            "Decision",
+            "Options",
+            "Chosen",
+            "Why"
+          ],
+          "rows": [
+            [
+              "Shape",
+              "an SDK in every app versus a gateway service",
+              "gateway service with a thin SDK",
+              "limits, budgets, failover and logging need shared state and one place to change providers"
+            ],
+            [
+              "Limit unit",
+              "requests per minute versus tokens per minute",
+              "tokens, with requests as a secondary bucket",
+              "provider limits and cost are in tokens; a request is not a unit of work"
+            ],
+            [
+              "Retries",
+              "retry any failure versus retry only before first byte",
+              "only before first byte",
+              "a duplicated completion is a visible bug; the client owns resends with an idempotency key"
+            ],
+            [
+              "Budget enforcement",
+              "exact synchronous spend check versus rolled total plus live counter",
+              "rolled plus live, one-minute overshoot bound",
+              "exact spend needs the provider's usage block, which arrives after the response"
+            ],
+            [
+              "Logging text",
+              "always, never, opt-in with redaction",
+              "opt-in with redaction and retention",
+              "debuggability for teams that need it; privacy by default"
+            ]
+          ]
+        }
+      },
+      {
+        "id": "at-10x",
+        "title": "What changes at 10x",
+        "body": [
+          {
+            "body": "At 50 million requests per day and every team on it, the gateway is company infrastructure: tenancy becomes explicit (tiers of teams with isolation of counters and queues so a runaway agent cannot starve a customer-facing product), policy and guardrails run inside the gateway (input and output checks, allowed tools, data classification rules per alias), routing decisions are evaluated offline against quality and cost (a routing change is reviewed like a dependency upgrade, with the log as the evidence), cost allocation becomes showback and then chargeback, and capacity planning for the self-hosted fleet is driven by the gateway's observed token demand per alias. The well-architected guidance for generative AI workloads is the checklist for that review: model selection, retrieval, guardrails and cost as explicit design decisions."
+          }
+        ]
+      }
+    ],
+    "rubric": {
+      "L1": [
+        "One API in front of several providers with per-team keys, quotas, logging and retries, and the token arithmetic from the assumptions.",
+        "Streaming proxied end to end with the time to first token measured.",
+        "A retry rule that never duplicates output."
+      ],
+      "L2": [
+        "Routing and fallback across hosted and self-hosted deployments with per-deployment breakers and observed limit state.",
+        "Token-based rate limits per team summing below the provider ceiling, with the local-first counter design.",
+        "Prompt caching used deliberately (stable prefix first, breakpoint) with the pricing and limit consequences stated.",
+        "Budgets with a bounded overshoot, and personal data kept out of logs by default."
+      ],
+      "L3": [
+        "A company-wide gateway: tenancy tiers, policy and guardrails in the path, evaluation of routing decisions from the log.",
+        "Cost allocation (showback to chargeback) and capacity planning for self-hosted models from observed demand.",
+        "What the gateway refuses: unbounded output, unredacted text by default, production traffic pinned to one deployment."
+      ]
+    },
+    "interview_frame": [
+      {
+        "time": "0:00 to 0:05",
+        "text": "Requirements: whose limits matter, what a safe retry is, what the cache caches, who chooses the provider, what is logged, hard or soft budgets. Say the numbers aloud: 174 requests per second at peak, 15 billion input tokens per day, 31 million input tokens per minute at peak against per-minute provider limits, two thirds of input tokens cacheable."
+      },
+      {
+        "time": "0:05 to 0:10",
+        "text": "Entities and API: Team with limits and budget, Key, ModelAlias with ordered deployments, DeploymentState, RequestLog with cached tokens, Spend; the completions, embeddings and usage endpoints and the error classes."
+      },
+      {
+        "time": "0:10 to 0:20",
+        "text": "High-level design with the diagram: gateway nodes, key and policy store, token counters, router to providers and the self-hosted fleet, response cache, redacted log, spend aggregator. Say which state is local and which is shared."
+      },
+      {
+        "time": "0:20 to 0:40",
+        "text": "Two deep dives: limits and fairness under a shared provider ceiling (token buckets per team, concurrency per self-hosted deployment, shedding by priority, breakers and failover), then cost and privacy (prompt caching mechanics and prices, response cache, routing by policy, redaction and retention of logs, the budget overshoot bound)."
+      },
+      {
+        "time": "0:40 to 0:45",
+        "text": "Failure modes from the table, the 10x platform (tenancy tiers, guardrails, routing evaluation, chargeback, capacity planning), and the L3 sentence: the gateway is a rate limiter, a cost allocator and a privacy boundary that happens to proxy requests."
+      }
+    ],
+    "design_doc_frame": [
+      {
+        "section": "Context and scope",
+        "text": "The applications calling models today, the providers and contracts, the self-hosted fleet's capacity, the spend surprise or the 429 incident that motivates the gateway."
+      },
+      {
+        "section": "Goals and non-goals",
+        "text": "One API, team limits and budgets, safe failover, streaming, spend visibility, privacy by default; no evaluation product, no prompt tooling, no fine-tuning, no agent orchestration."
+      },
+      {
+        "section": "Design",
+        "text": "This answer fills it: admission, routing, streaming proxy, settlement, the counter and log design, caching."
+      },
+      {
+        "section": "Alternatives considered",
+        "text": "An SDK per app, request-based limits, retry-anything, synchronous exact budgets, always-on text logging, with the trade-off table."
+      },
+      {
+        "section": "Cross-cutting concerns",
+        "text": "Security (key hashing, scopes, revocation propagation, admin audit), privacy (redaction, opt-in text, retention, access control on the log store), observability (first-token latency per deployment, failover ratio, cache hit ratio, spend per team per day, rejected requests by reason), cost (tokens by class per team), rollout by moving one team's alias at a time with the direct provider path as fallback."
+      },
+      {
+        "section": "Review questions the doc must answer",
+        "text": "What a client receives when a stream breaks after the first token, and by how much a team can exceed its budget before the gate closes."
+      }
+    ],
+    "depth_notes": {
+      "L1": "One API in front of several providers with keys, per-team quotas, logging and retries.",
+      "L2": "Routing and fallback across providers and self-hosted models, streaming, token-based rate limits, prompt caching, budgets, PII handling in logs.",
+      "L3": "A company-wide gateway (tenancy, policy and guardrails, evaluation of routing decisions, cost allocation, capacity for self-hosted models)."
+    }
+  },
+  "provenance": {
+    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center M4a",
+    "generated_on": "2026-10-12",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "written by hand for the system design module, Part C entry C12 of the outline"
+    }
+  ]
+}

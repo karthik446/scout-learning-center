@@ -1,0 +1,387 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "kind": "design-exercise",
+  "id": "sd-ex-ride-matching",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Design exercise: ride matching and location",
+  "area": "software",
+  "primary_key": "system-design",
+  "secondary_keys": [
+    "distributed-systems",
+    "data-stores",
+    "scaling"
+  ],
+  "keys": [
+    "system-design",
+    "distributed-systems",
+    "data-stores",
+    "scaling"
+  ],
+  "summary": "A classic design exercise: matching riders to nearby drivers from a stream of locations, with one hard invariant (one driver, one trip) and a dependency that fails (ETA). The reference answer orders locations per driver on a log, indexes last positions by hierarchical grid cell per city, ranks candidates by ETA behind a deadline with a distance fallback, and decides the invariant in a lease store with fencing tokens that rejects late accepts.",
+  "detail": [],
+  "in_practice": "",
+  "subtopics": [],
+  "diagram": null,
+  "code": [],
+  "technologies": [],
+  "related": [
+    "sd-data-modelling",
+    "sd-queues-streams",
+    "sd-consistency-consensus",
+    "sd-capacity",
+    "sd-numbers"
+  ],
+  "sources": [
+    {
+      "kind": "blog",
+      "title": "Uber Engineering: H3, a hexagonal hierarchical geospatial indexing system",
+      "url": "https://www.uber.com/us/en/blog/h3/"
+    },
+    {
+      "kind": "repo",
+      "title": "H3 repository",
+      "url": "https://github.com/uber/h3"
+    },
+    {
+      "kind": "doc",
+      "title": "S2 Geometry",
+      "url": "https://s2geometry.io/"
+    },
+    {
+      "kind": "blog",
+      "title": "Uber Engineering: the routing engine behind ETAs",
+      "url": "https://www.uber.com/us/en/blog/engineering-routing-engine/"
+    },
+    {
+      "kind": "doc",
+      "title": "Amazon Builders' Library: Leader election in distributed systems",
+      "url": "https://builder.aws.com/content/3Ev0vH0hfkcUizISUWYTvHibtcp/leader-election-in-distributed-systems"
+    },
+    {
+      "kind": "blog",
+      "title": "Martin Kleppmann: How to do distributed locking",
+      "url": "https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html"
+    }
+  ],
+  "practice": null,
+  "exercise": {
+    "prompt": "Design the matching system of a ride-hailing product: drivers stream their location, a rider requests a trip, and the system finds a nearby driver, offers them the trip, and confirms the match. A driver must never be given two trips at once, and a rider must get an answer within seconds even when the map or traffic service is having a bad day.",
+    "constraints": [
+      {
+        "heading": "Functional",
+        "body": "Ingest driver locations; find candidate drivers near a pickup point; rank by estimated arrival time; offer the trip to one driver at a time with a timeout; confirm the match atomically so one driver has at most one active trip; expose supply and demand per area to a pricing service; keep location history for analysis."
+      },
+      {
+        "heading": "Scale (assumption)",
+        "body": "100 cities; 1 million drivers online at peak sending a location every 4 s; 5 million ride requests per day, peak 10x the average; a candidate search radius that yields about 50 drivers in a dense area (assumption). Chosen for the exercise; derive the location update rate, the index memory and the match rate yourself."
+      },
+      {
+        "heading": "Targets (assumption)",
+        "body": "A match offered within 3 s at p95 and confirmed within 20 s at p95 (one offer round of 15 s); location freshness under 10 s; 99.95 percent availability for matching; the one-driver-one-trip invariant holds under every failure; degraded matching (coarser ranking) is acceptable when the ETA service is down, no matching is not."
+      },
+      {
+        "heading": "Non-goals",
+        "body": "Pricing and surge computation itself, payments, routing and navigation inside the trip, fraud, pooled rides."
+      }
+    ],
+    "clarifying_questions": [
+      {
+        "question": "What is near?",
+        "answer": "A fixed set of grid cells around the pickup; the grid is a hierarchical hexagonal index (H3: sixteen resolutions, each finer one seventh the area of the coarser), and the search expands ring by ring until enough candidates are found or a radius limit is hit."
+      },
+      {
+        "question": "Who is the single source of truth for a driver's state?",
+        "answer": "The driver lock store: a driver is free, offered or on a trip, and only the holder of the current lease may change it."
+      },
+      {
+        "question": "What if the driver does not answer the offer?",
+        "answer": "The offer times out after 15 s (assumption), the lock is released, and the next-ranked driver is offered. After three rounds the rider is told no driver was found."
+      },
+      {
+        "question": "How is ETA computed?",
+        "answer": "By a routing service (a contraction-hierarchy routing engine over map data, as Uber describes) with a 100 ms deadline (assumption); straight-line distance is the fallback."
+      },
+      {
+        "question": "Is matching per city?",
+        "answer": "Yes: cities are the partition unit for the index and the matching service; a trip never crosses the partition at request time."
+      },
+      {
+        "question": "How long is location history kept?",
+        "answer": "30 days raw in cold storage, aggregates longer (assumption)."
+      }
+    ],
+    "reference_answer": [
+      {
+        "id": "requirements-and-estimates",
+        "title": "Requirements and estimates",
+        "body": [
+          {
+            "heading": "Derived numbers",
+            "body": "Locations: 1 million drivers every 4 s is 250,000 updates per second at peak, each about 50 bytes (driver id, latitude, longitude, heading, timestamp): 12.5 MB per second, 1 TB per day of raw history. The live index holds only the last position per driver: 1 million entries of about 100 bytes with the cell membership is 100 MB, which fits in one process per city many times over; the work is the update rate, not the size. Ride requests: 5 million per day is 58 per second average, 580 at peak; each match reads one cell neighbourhood (tens of drivers), calls ETA for about 50 candidates, and performs a few lock operations: a few thousand ETA calls per second at peak, which is the dominant dependency load."
+          },
+          {
+            "heading": "The latency shape",
+            "body": "A match is a chain of datacenter round trips (500 us each from the latency reference numbers) plus one ETA batch call of up to 100 ms and the human: the driver's 15 s decision dominates everything, which is why the 20 s confirmation target is really a one-offer-round target and why the system must get the first offer right."
+          }
+        ]
+      },
+      {
+        "id": "high-level-design",
+        "title": "High-level design",
+        "body": [
+          {
+            "heading": "Container view",
+            "body": "Driver locations flow through a gateway onto a log partitioned by driver id, so updates for one driver stay ordered; a per-city geo index consumes the log and keeps each driver's last position under its grid cell with a TTL, and the same stream feeds cold storage and a supply-and-demand aggregator per cell for the pricing service. The matching service for a city takes a request, queries the index for candidates in the rings around the pickup cell, asks the ETA service for arrival times, ranks, takes a lease on the best driver, sends the offer, and on acceptance moves the ride and the driver into the trip state. The driver lock store is the only place the one-trip invariant is decided."
+          }
+        ],
+        "diagram": {
+          "source": "flowchart LR\n  D[Driver apps: location every 4 s] --> LG[Location gateway]\n  LG --> LL[[location log, partitioned by driver id]]\n  LL --> GI[(Geo index per city: cell to drivers, last position, TTL)]\n  LL --> HIST[(Location history: cold storage)]\n  R[Rider apps] --> RQ[Ride request API]\n  RQ --> MS[Matching service per city: candidates, rank, offer]\n  MS --> GI\n  MS --> ETA[ETA service: routing engine]\n  MS --> LK[(Driver locks: lease with fencing token)]\n  MS --> RS[(Rides: state machine)]\n  MS -->|offer, 15 s timeout| D\n  GI --> SD[Supply and demand per cell]\n  SD --> SG[Pricing and surge service]",
+          "legend": "Boxes are containers; cylinders are stores; double brackets are logs. The lock store is the single arbiter of a driver's state."
+        }
+      },
+      {
+        "id": "data-model",
+        "title": "The data model",
+        "body": [
+          {
+            "heading": "Entities",
+            "body": "DriverLocation {driver_id, city, cell (grid cell id at the chosen resolution), lat, lng, heading, updated_at}; the index is cell -> set of driver ids with their last position, plus driver_id -> cell for moves. DriverState {driver_id, state (offline, free, offered, on_trip), lease_token, lease_expires_at, ride_id}. Ride {ride_id, rider_id, pickup, dropoff, state (requested, offering, matched, in_progress, completed, cancelled), driver_id, offers[] of (driver_id, sent_at, outcome)}. Offer {ride_id, driver_id, expires_at, lease_token}. CellStats {city, cell, window, free_drivers, open_requests}."
+          },
+          {
+            "heading": "Choosing the cell size",
+            "body": "The grid resolution is a choice: a coarse cell makes the candidate set large and the ETA call expensive; a fine cell makes ring expansion deep for sparse areas. The answer picks a resolution whose cells are a few hundred metres across in dense cities (assumption; the H3 library's resolution table is the reference) and expands rings until 50 candidates or 5 rings. S2 cells are the alternative with the same hierarchical property."
+          },
+          {
+            "heading": "API",
+            "body": "POST /locations {driver_id, lat, lng, heading, ts} (batched by the app); POST /rides {rider_id, pickup, dropoff} returns {ride_id, state}; GET /rides/{id} streams state changes; driver app: receives offer {ride_id, pickup, eta, expires_at}, answers POST /offers/{ride_id}/accept or decline with the lease token it was given; GET /cells/{city}/{cell}/stats for pricing."
+          }
+        ]
+      },
+      {
+        "id": "core-flow",
+        "title": "The core flow, step by step",
+        "body": [
+          {
+            "body": "One ride request in a dense area."
+          }
+        ],
+        "steps": [
+          "The request API validates the pickup, assigns the ride to the city partition, writes the Ride in state requested, and hands it to that city's matching service.",
+          "Candidates: the matching service computes the pickup cell and reads the index for ring 0, then ring 1 and 2, collecting free drivers until it has 50 or has hit 5 rings; drivers whose last update is older than 10 s are skipped.",
+          "Ranking: one batched ETA call for the candidates with a 100 ms deadline; on timeout or error, rank by straight-line distance and flag the match as degraded. Rank by ETA, then by a fairness term (time since the driver's last trip, assumption).",
+          "Lease: the service tries to move the best driver from free to offered in the lock store with a compare-and-set that returns a new lease token and an expiry of 15 s; if the driver was taken by a concurrent match, try the next candidate. This is the one-driver-one-trip decision, made in one place.",
+          "Offer: send the offer with the lease token to the driver's app; write the Offer and the Ride state offering.",
+          "Accept: the app answers with the token; the lock store accepts the transition offered to on_trip only if the token matches the current lease (a fencing token in Kleppmann's sense: a stale accept from an expired offer is rejected even if it arrives late). The Ride becomes matched and the rider is notified.",
+          "Timeout or decline: the lease expires or is released, the driver returns to free, and the service offers the next candidate; after three rounds the ride is cancelled with a clear reason.",
+          "Throughout, the index keeps moving the driver between cells as updates arrive; a driver on a trip is excluded from candidate sets by state, not by removing their location."
+        ]
+      },
+      {
+        "id": "scaling-and-the-bottleneck",
+        "title": "Scaling and the bottleneck",
+        "body": [
+          {
+            "heading": "Partition by city, decide in one place",
+            "body": "Per-city partitioning keeps every hot structure small: the index for the largest city is a few hundred thousand drivers, one process with a replica, consuming its share of the location log. The update rate is absorbed by the log and by batching in the app (several positions per request). The matching service is also per city and is where contention lives: two requests in the same block at the same second want the same best driver, and the compare-and-set on the lock store resolves it without a global lock. The lock store itself is a small, strongly consistent store (a consensus-backed key-value store with leases) keyed by driver id and partitioned by city; the Builders' Library article on leader election is the reference for why a lease needs an expiry, why the holder must assume it can lose the lease at any moment, and why the token matters."
+          },
+          {
+            "heading": "The ETA dependency and degraded modes",
+            "body": "The ETA service is the bottleneck a bad day exposes: thousands of batched calls per second at peak against a routing engine, with a hard deadline. The design degrades on purpose: straight-line ranking within the same candidate set, a flag on the match for later analysis, and an alert when the degraded ratio rises. Supply and demand per cell is computed from the same index snapshot every few seconds and published to the pricing service; matching does not call pricing, pricing reads matching's aggregates, so a pricing outage never blocks a match."
+          }
+        ]
+      },
+      {
+        "id": "failure-modes",
+        "title": "Failure modes and what degrades",
+        "body": [
+          {
+            "body": "Each row names the failure, what riders and drivers see, and the mitigation."
+          }
+        ],
+        "table": {
+          "columns": [
+            "Failure",
+            "Effect",
+            "Mitigation"
+          ],
+          "rows": [
+            [
+              "ETA service slow or down",
+              "ranking by distance; slightly worse matches",
+              "100 ms deadline, straight-line fallback, degraded flag and alert"
+            ],
+            [
+              "Location log backlog",
+              "stale positions",
+              "freshness check skips drivers older than 10 s; consumers scale on lag; apps batch"
+            ],
+            [
+              "Geo index process lost",
+              "a city cannot match for seconds",
+              "replica consumes the same partitions; rebuild from the log's last minutes (positions older than that are stale anyway)"
+            ],
+            [
+              "Two matches pick the same driver",
+              "would double-book",
+              "compare-and-set in the lock store; the loser moves to its next candidate"
+            ],
+            [
+              "Driver accepts after the offer expired",
+              "would create a trip the rider abandoned",
+              "fencing token mismatch rejects the accept; the app shows offer expired"
+            ],
+            [
+              "Lock store unavailable",
+              "no new matches in that city",
+              "the invariant beats availability here: fail closed, page, and keep the store small and replicated across zones so this is rare"
+            ]
+          ]
+        }
+      },
+      {
+        "id": "trade-offs",
+        "title": "Trade-offs and the alternative not taken",
+        "body": [
+          {
+            "body": "The decisions a reviewer reads first."
+          }
+        ],
+        "table": {
+          "columns": [
+            "Decision",
+            "Options",
+            "Chosen",
+            "Why"
+          ],
+          "rows": [
+            [
+              "Geo index",
+              "geohash or R-tree in a database versus a hierarchical cell index in memory per city",
+              "hierarchical cells in memory",
+              "ring queries are set lookups; the live set is small; the database would see 250,000 writes per second"
+            ],
+            [
+              "One-trip invariant",
+              "database transaction on the ride versus a lease with fencing token in a lock store",
+              "lease with fencing token",
+              "the offer involves a human and a timeout; a late accept must be rejectable"
+            ],
+            [
+              "ETA in matching",
+              "always exact versus deadline with distance fallback",
+              "deadline with fallback",
+              "a match now beats a better match in 5 seconds"
+            ],
+            [
+              "Offer strategy",
+              "broadcast to several drivers versus one offer at a time",
+              "one at a time",
+              "no race between accepting drivers; fairness is controllable"
+            ],
+            [
+              "Lock store failure",
+              "fail open (match without the lock) versus fail closed",
+              "fail closed",
+              "a double booking is worse than a delayed match; the store is sized to make this rare"
+            ]
+          ]
+        }
+      },
+      {
+        "id": "at-10x",
+        "title": "What changes at 10x",
+        "body": [
+          {
+            "body": "At 10 million drivers and 50 million requests per day the design changes from greedy to batched matching: requests in a city are collected for a short window (a second or two) and assigned together as an assignment problem over candidates and ETAs, which improves marketplace outcomes (fewer long pickups, fairer distribution) at the cost of latency and complexity; the lease protocol is unchanged, only the chooser is. Cities become cells of cells for the largest metros, with cross-boundary matching along the edges. Degraded modes become a tested ladder (exact ETA, cached ETA per cell pair, straight line) with a game day for each. Location history at 10 TB per day moves to a columnar store with per-city partitions for analysis, and privacy retention (how long a driver's track is kept at full precision) becomes a stated policy, not a default."
+          }
+        ]
+      }
+    ],
+    "rubric": {
+      "L1": [
+        "Location ingestion onto a log ordered per driver, a geo index by cell, a nearest-driver query by rings.",
+        "A matching service that leases a driver, offers with a timeout, and confirms atomically; the update rate derived from the assumptions.",
+        "The one-driver-one-trip invariant decided in one place."
+      ],
+      "L2": [
+        "Supply and demand per cell computed from the index and published to pricing, which never sits on the match path.",
+        "ETA as an input with a deadline and a straight-line fallback, flagged and measured.",
+        "Idempotent, fenced offers: the lease token, the compare-and-set, the rejected late accept.",
+        "Per-city partitioning of index, matching and locks, with the memory and dependency-load arithmetic."
+      ],
+      "L3": [
+        "Batched assignment windows as the marketplace evolves, and the fairness term as a product decision.",
+        "Multi-cell metros with edge matching, and the tested degradation ladder when map or ETA services fail.",
+        "The fail-closed choice for the lock store, argued against availability, and the privacy retention of location history."
+      ]
+    },
+    "interview_frame": [
+      {
+        "time": "0:00 to 0:05",
+        "text": "Requirements: what near means, the source of truth for driver state, offer timeouts, ETA, per-city partitioning, history retention. Say the numbers aloud: 250,000 location updates per second, 580 requests per second at peak, 50 candidates and one ETA batch per match, a 15 s offer round inside a 20 s confirmation target."
+      },
+      {
+        "time": "0:05 to 0:10",
+        "text": "Entities and API: DriverLocation and the cell index, DriverState with a lease token, Ride and Offer, CellStats; the location, ride and offer endpoints."
+      },
+      {
+        "time": "0:10 to 0:20",
+        "text": "High-level design with the diagram: location gateway and log, geo index per city, matching service, ETA service, lock store, rides, supply and demand to pricing. Say where the invariant is decided."
+      },
+      {
+        "time": "0:20 to 0:40",
+        "text": "Two deep dives: the offer protocol (compare-and-set lease, fencing token, timeouts, next candidate, three rounds), then the dependencies (ETA deadline and fallback, index freshness, pricing decoupled, the fail-closed lock store)."
+      },
+      {
+        "time": "0:40 to 0:45",
+        "text": "Failure modes from the table, the 10x plan (batched assignment, cells of cells, degradation ladder, history and privacy), and the L3 sentence: the hard invariant is one driver, one trip, and everything else in the design is allowed to degrade before that does."
+      }
+    ],
+    "design_doc_frame": [
+      {
+        "section": "Context and scope",
+        "text": "The cities and their driver counts, the existing location and routing services, the double-booking or slow-match incidents that motivate the design."
+      },
+      {
+        "section": "Goals and non-goals",
+        "text": "Offer within 3 s, confirm within 20 s, freshness under 10 s, the invariant under every failure, degraded matching allowed; pricing computation, payments, in-trip navigation and pooling out of scope."
+      },
+      {
+        "section": "Design",
+        "text": "This answer fills it: the location path, the cell index, the matching flow with leases and fencing tokens, the degraded modes."
+      },
+      {
+        "section": "Alternatives considered",
+        "text": "A database geo index, a ride transaction instead of leases, exact ETA always, broadcast offers, fail-open locks, with the trade-off table."
+      },
+      {
+        "section": "Cross-cutting concerns",
+        "text": "Privacy (location precision and retention, who may query history), security (driver app authentication of offers by token), observability (match latency by step, degraded ratio, offer acceptance rate, index freshness per city, lock-store latency), cost (ETA calls per match as the unit cost), rollout city by city with the old matcher in shadow."
+      },
+      {
+        "section": "Review questions the doc must answer",
+        "text": "What happens when a driver's accept arrives after the lease expired, and what the rider sees during a 30-second ETA service outage."
+      }
+    ],
+    "depth_notes": {
+      "L1": "Location ingestion, a geo index by cell, nearest-driver query, a matching service with a lock per driver.",
+      "L2": "Supply and demand per cell, ETA as an input to matching, surge as a separate service, idempotent offers with timeouts.",
+      "L3": "Marketplace fairness and batching of matches, multi-city cells, degraded modes when the map or ETA service fails."
+    }
+  },
+  "provenance": {
+    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center M4a",
+    "generated_on": "2026-10-12",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "written by hand for the system design module, Part C entry C10 of the outline"
+    }
+  ]
+}

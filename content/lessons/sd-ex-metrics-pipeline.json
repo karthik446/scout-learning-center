@@ -1,0 +1,381 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "kind": "design-exercise",
+  "id": "sd-ex-metrics-pipeline",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Design exercise: metrics and time series pipeline",
+  "area": "software",
+  "primary_key": "system-design",
+  "secondary_keys": [
+    "observability",
+    "data-stores",
+    "scaling"
+  ],
+  "keys": [
+    "system-design",
+    "observability",
+    "data-stores",
+    "scaling"
+  ],
+  "summary": "A classic design exercise: a metrics system for tens of millions of series with dashboards, alerts and tiered retention. The reference answer sizes the sample stream from stated assumptions and the Gorilla compression figure, decouples ingestion from storage with a samples log, keeps a compressed 26-hour window in memory, compacts into immutable blocks with downsampled tiers, narrows queries through an inverted index, and treats cardinality as the unit of capacity with hard per-tenant limits.",
+  "detail": [],
+  "in_practice": "",
+  "subtopics": [],
+  "diagram": null,
+  "code": [],
+  "technologies": [],
+  "related": [
+    "sd-queues-streams",
+    "sd-storage-engines",
+    "sd-data-modelling",
+    "sd-capacity",
+    "sd-observability"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Prometheus documentation: Overview",
+      "url": "https://prometheus.io/docs/introduction/overview/"
+    },
+    {
+      "kind": "paper",
+      "title": "Gorilla: a fast, scalable, in-memory time series database (VLDB 2015)",
+      "url": "https://www.vldb.org/pvldb/vol8/p1816-teller.pdf"
+    },
+    {
+      "kind": "paper",
+      "title": "Monarch: Google's planet-scale in-memory time series database (VLDB 2020)",
+      "url": "https://www.vldb.org/pvldb/vol13/p3181-adams.pdf"
+    },
+    {
+      "kind": "blog",
+      "title": "Uber Engineering: M3, a metrics platform for Prometheus",
+      "url": "https://www.uber.com/us/en/blog/m3/"
+    },
+    {
+      "kind": "doc",
+      "title": "Prometheus documentation: Instrumentation practices",
+      "url": "https://prometheus.io/docs/practices/instrumentation/"
+    },
+    {
+      "kind": "book",
+      "title": "Site Reliability Engineering: Monitoring distributed systems",
+      "url": "https://sre.google/sre-book/monitoring-distributed-systems/"
+    }
+  ],
+  "practice": null,
+  "exercise": {
+    "prompt": "Design the metrics system for a company's services: thousands of instances emit counters, gauges and histograms every few seconds, engineers query the last few hours on dashboards and alerts, and a few people need a year of history at coarser resolution. The system must not fall over when one team adds a label that explodes into millions of series.",
+    "constraints": [
+      {
+        "heading": "Functional",
+        "body": "Ingest metrics by scrape and by push; store them with labels; answer range and instant queries over labels with aggregation functions; evaluate alerting rules; retain raw data for 15 days, 1-minute data for 90 days and 1-hour data for 15 months (assumption); enforce per-tenant series limits."
+      },
+      {
+        "heading": "Scale (assumption)",
+        "body": "20,000 service instances, each exposing 2,000 series, so 40 million active series; a 15 s scrape interval; 50 tenants (teams); 500 dashboard and rule queries per second at peak, most over the last hour. Chosen for the exercise; derive the sample rate, the raw and compressed volumes and the hot-window memory yourself."
+      },
+      {
+        "heading": "Targets (assumption)",
+        "body": "A sample is queryable within 30 s of being scraped; a last-hour query answers in under 1 s at p99 and a 30-day query in under 10 s; 99.9 percent availability for ingestion and for alert evaluation; no single tenant can degrade another's ingestion."
+      },
+      {
+        "heading": "Non-goals",
+        "body": "Logs and traces (separate systems that share label conventions), anomaly detection, billing, the dashboard product itself."
+      }
+    ],
+    "clarifying_questions": [
+      {
+        "question": "What is a series?",
+        "answer": "A metric name plus a unique set of label key-value pairs; every distinct combination is a separate stream of (timestamp, value) samples, which is the Prometheus data model."
+      },
+      {
+        "question": "Pull or push?",
+        "answer": "Pull by default (the scraper controls the rate and knows when a target is down); push for batch jobs and for edge locations that cannot be scraped, through a gateway that applies the same limits."
+      },
+      {
+        "question": "What is the cardinality rule?",
+        "answer": "A label must never carry an unbounded value (user ids, request ids, full URLs); the Prometheus instrumentation guidance says so, and the ingest layer enforces a per-tenant series limit with rejection and an alert when it is hit."
+      },
+      {
+        "question": "How exact must old data be?",
+        "answer": "Downsampled: for data older than 15 days, 1-minute aggregates (min, max, sum, count) are enough; older than 90 days, 1-hour."
+      },
+      {
+        "question": "Are histograms first class?",
+        "answer": "Yes, as bucket series; a histogram with 20 buckets is 22 series, and the sizing counts them."
+      },
+      {
+        "question": "Can a query span all tenants?",
+        "answer": "No; queries are tenant-scoped, with a platform tenant that may read everything for fleet-level views."
+      }
+    ],
+    "reference_answer": [
+      {
+        "id": "requirements-and-estimates",
+        "title": "Requirements and estimates",
+        "body": [
+          {
+            "heading": "Derived numbers: samples and the hot window",
+            "body": "40 million series scraped every 15 s is 2.7 million samples per second. A raw sample is 16 bytes (an 8-byte timestamp and an 8-byte float, the figure the Gorilla paper starts from), so raw ingest is 43 MB per second and 3.7 TB per day. The Gorilla paper reports delta-of-delta timestamp and XOR value compression averaging 1.37 bytes per sample, a 12x reduction; at that rate the hot window costs 3.7 MB per second and 320 GB per day. Gorilla kept 26 hours in memory because most queries were for recent data; with the same window, the hot tier holds about 350 GB of compressed samples plus per-series overhead (a series header of about 100 bytes, assumption, is 4 GB), replicated twice, so about 700 GB of memory across the hot nodes: a few dozen large nodes, or more small ones."
+          },
+          {
+            "heading": "Derived numbers: retention and queries",
+            "body": "Long-term storage: raw for 15 days is about 4.8 TB compressed; 1-minute aggregates for 90 days are 4 values every 60 s instead of 1 value every 15 s, so about the same bytes per series per day as raw, 29 TB for 90 days (assumption, no further compression counted); 1-hour aggregates for 15 months are negligible. Object storage holds all of it cheaply. Queries: 500 per second at peak, most touching a few hundred series each over one hour (240 samples per series), so about 100,000 series-hours per second against the hot tier, which is a memory-bound scan, not a disk one."
+          }
+        ]
+      },
+      {
+        "id": "high-level-design",
+        "title": "High-level design",
+        "body": [
+          {
+            "heading": "Container view",
+            "body": "Scrapers pull targets on a schedule (the Prometheus model) and a push gateway accepts what cannot be scraped; both go through an ingest layer that validates labels and enforces per-tenant series limits before anything is stored. Samples land on a partitioned log keyed by series hash, which decouples ingestion from storage and lets the hot store be rebuilt. The hot store keeps the last 26 hours in memory, compressed, replicated twice; a compactor writes 2-hour blocks to object storage and downsamples into tiers. A query frontend splits a query by time range, caches results, and fans out to hot shards and long-term blocks, which is the shape Monarch describes (regional storage with query pushdown to where the data is) and M3 describes for Prometheus (a coordinator that handles downsampling, retention and rollup rules in front of the storage nodes)."
+          }
+        ],
+        "diagram": {
+          "source": "flowchart LR\n  T[Service instances: /metrics endpoints] -->|scrape every 15 s| SC[Scrapers, sharded by target]\n  PG[Push gateway: batch jobs and edge] --> IN[Ingest and validation: cardinality limits per tenant]\n  SC --> IN\n  IN --> LOG[[samples log, partitioned by series hash]]\n  LOG --> HOT[(Hot store: in-memory, compressed, 26 h window, 2 replicas)]\n  HOT -->|every 2 h blocks| CP[Compactor and downsampler]\n  CP --> LT[(Long-term blocks in object storage: raw, 1 min, 1 h tiers)]\n  IN --> IX[(Series index: labels to series id)]\n  Q[Dashboards, alerting rules] --> QF[Query frontend: split, cache, fan-out]\n  QF --> HOT\n  QF --> LT\n  QF --> IX",
+          "legend": "Boxes are containers; cylinders are stores; double brackets are logs. Ingestion and storage are decoupled by the samples log."
+        }
+      },
+      {
+        "id": "data-model",
+        "title": "The data model",
+        "body": [
+          {
+            "heading": "Entities",
+            "body": "Series {series_id (hash of name and sorted labels), tenant, name, labels{}, first_seen, last_seen}. Sample {series_id, timestamp_ms, value} stored as compressed chunks of about 120 samples (assumption) per series in the hot tier. Block {tenant, from, to, resolution (raw, 1m, 1h), series index, chunk files} immutable in object storage. Index: an inverted index from each label pair to the series ids that carry it, per block, so a query by labels intersects posting lists before touching chunks. Tenant {tenant_id, max_series, max_samples_per_second, retention overrides}. Rule {tenant, expression, interval, for, labels}."
+          },
+          {
+            "heading": "API",
+            "body": "GET /api/v1/query?query=&time= (instant), GET /api/v1/query_range?query=&start=&end=&step=, GET /api/v1/series?match[]=, GET /api/v1/labels; the push gateway's POST /write accepts batches of samples with labels; rules are declared in files per tenant. The query language is a label-selector-and-function language in the PromQL shape; the exercise does not design it."
+          }
+        ]
+      },
+      {
+        "id": "core-flow",
+        "title": "The core flow, step by step",
+        "body": [
+          {
+            "body": "One scrape cycle and one dashboard query."
+          }
+        ],
+        "steps": [
+          "A scraper shard owns a subset of targets (by consistent hashing of the target address) and scrapes each every 15 s with a per-target timeout; a failed scrape produces an up=0 sample so absence is visible.",
+          "The ingest layer parses the exposition, attaches the tenant label, rejects samples whose label set is malformed or whose series would exceed the tenant's limit (returning a counted error, not silently dropping), and writes the batch to the samples log partition for each series hash.",
+          "Hot store nodes consume their partitions, look up or create the series, append the sample to the series' current chunk with delta-of-delta and XOR encoding, and acknowledge the log offset; the series index is updated for new series.",
+          "Every 2 hours the compactor flushes closed chunks into an immutable block with its own inverted index, uploads it to object storage, and writes the 1-minute and 1-hour aggregates for the tiers; the hot store drops data older than 26 hours only after the block is durable.",
+          "A dashboard query for the last hour arrives at the frontend, is split by time if it spans tiers, is checked against a results cache keyed by (tenant, query, step, time bucket), and is fanned out to the hot shards that hold matching series (the index narrows the shards); each shard evaluates as much of the expression as it can locally and returns partial results that the frontend merges.",
+          "Alert rules run on the same path on a schedule in a rule evaluator that is replicated and deduplicates notifications, so an evaluator failure does not silence alerts."
+        ]
+      },
+      {
+        "id": "scaling-and-the-bottleneck",
+        "title": "Scaling and the bottleneck",
+        "body": [
+          {
+            "heading": "Cardinality is the capacity unit",
+            "body": "The bottleneck is cardinality, not bytes. One service that adds a user id label turns 2,000 series into millions overnight; memory per series, not per sample, is what fills the hot tier, and a query that touches millions of series is what times out. The ingest limit per tenant is the control: a hard cap on active series with rejection, a soft cap that alerts, and per-metric cardinality reports so the owning team can see which label did it. The Prometheus instrumentation guidance is the rule the limit enforces: label values must be bounded sets. Series churn (short-lived pods creating new series on every deploy) is the second-order problem; it is bounded by the same limit and by expiring series that have not received a sample for a window."
+          },
+          {
+            "heading": "Query fan-out and downsampling",
+            "body": "Reads scale by narrowing before scanning: the inverted index turns a label selector into a small set of series and the shards that hold them, the frontend splits long ranges into cached sub-ranges, and downsampled tiers make a 30-day query read 1-minute data (43,000 points per series) instead of raw (172,800). Pushing aggregation down to the shards keeps the data where it is, which is Monarch's main argument. Fleet-level queries that touch every tenant are run by the platform tenant against pre-aggregated recording rules, never ad hoc at full resolution."
+          }
+        ]
+      },
+      {
+        "id": "failure-modes",
+        "title": "Failure modes and what degrades",
+        "body": [
+          {
+            "body": "Each row names the failure, what engineers see, and the mitigation."
+          }
+        ],
+        "table": {
+          "columns": [
+            "Failure",
+            "Effect",
+            "Mitigation"
+          ],
+          "rows": [
+            [
+              "Hot store node lost",
+              "its series are unavailable for recent queries until the replica serves them",
+              "two replicas per partition; the samples log allows a rebuild from the last block boundary"
+            ],
+            [
+              "Samples log backlog",
+              "data visible late (freshness SLI breached)",
+              "consumers scale on lag; ingestion keeps accepting; alert on lag over 30 s"
+            ],
+            [
+              "Tenant exceeds series limit",
+              "that tenant's new series are rejected",
+              "per-tenant enforcement at ingest; other tenants unaffected; counted errors and a cardinality report"
+            ],
+            [
+              "Compactor behind",
+              "hot tier cannot drop old data; memory grows",
+              "hot tier refuses to drop until blocks are durable; alert on oldest unflushed chunk; emergency: raise the window or shed the largest tenant's raw retention"
+            ],
+            [
+              "Object storage unavailable",
+              "long-range queries fail; recent queries fine",
+              "query frontend returns partial results with a flag; compactor retries; the 26-hour window covers the common case"
+            ],
+            [
+              "Scraper shard down",
+              "its targets show up=0 and gaps",
+              "targets rehashed to other shards within a minute; gaps are visible, not invented"
+            ]
+          ]
+        }
+      },
+      {
+        "id": "trade-offs",
+        "title": "Trade-offs and the alternative not taken",
+        "body": [
+          {
+            "body": "The decisions a reviewer reads first."
+          }
+        ],
+        "table": {
+          "columns": [
+            "Decision",
+            "Options",
+            "Chosen",
+            "Why"
+          ],
+          "rows": [
+            [
+              "Ingestion",
+              "push everything versus pull by default with a push gateway",
+              "pull by default",
+              "the scraper knows when a target is down and controls the rate; push for what cannot be scraped"
+            ],
+            [
+              "Hot tier",
+              "disk-based store for everything versus an in-memory compressed window",
+              "in-memory 26-hour window plus blocks",
+              "most queries are recent; compression makes memory affordable (1.37 bytes per sample)"
+            ],
+            [
+              "Ingestion to storage",
+              "scrapers write straight to the store versus a samples log in between",
+              "samples log",
+              "backpressure, rebuilds and replays; storage nodes can restart without losing scrapes"
+            ],
+            [
+              "Retention",
+              "raw forever versus tiered downsampling",
+              "tiered",
+              "a year of raw data is about 120 TB compressed (320 GB per day) for nothing most queries need"
+            ],
+            [
+              "Cardinality",
+              "best effort versus hard per-tenant limits",
+              "hard limits with reports",
+              "one tenant must not take the system down; the limit is the capacity unit"
+            ]
+          ]
+        }
+      },
+      {
+        "id": "at-10x",
+        "title": "What changes at 10x",
+        "body": [
+          {
+            "body": "At 400 million series the system is a multi-tenant platform with zones: regional ingestion and hot tiers with a global query layer that federates across them (Monarch's regional zones), per-tenant isolation of hot-store partitions so a noisy tenant is confined to its shards, quotas and showback per tenant measured in active series and in query cost, and a cost per million series per month that the platform publishes. Recording rules move from a convenience to a necessity for every dashboard that aggregates across the fleet. Exemplars that link a histogram bucket to a trace id, and native histograms that collapse 22 series into one, are the next two design changes a team would plan."
+          }
+        ]
+      }
+    ],
+    "rubric": {
+      "L1": [
+        "Scrape and push ingestion, a time series store with labels, a query API and tiered retention.",
+        "The sample rate (2.7 million per second) and raw volume derived from the stated assumptions, with the compressed figure cited.",
+        "A per-tenant series limit enforced at ingest, with the cardinality rule stated."
+      ],
+      "L2": [
+        "The in-memory hot window with compression, a samples log between ingestion and storage, and 2-hour immutable blocks with an inverted index.",
+        "Downsampling tiers and query splitting with a results cache; fan-out to the shards narrowed by the index with pushdown of aggregation.",
+        "Replicated rule evaluation and the up=0 convention so absence is visible.",
+        "Series churn and the memory-per-series argument as the capacity model."
+      ],
+      "L3": [
+        "A multi-tenant metrics platform: regional zones with federation, tenant isolation of partitions, quotas and showback per series and per query.",
+        "Cost per million series per month as the number the platform is held to, and recording rules as a necessity at fleet scale.",
+        "What the system refuses: unbounded labels, cross-tenant ad hoc queries, dropping hot data before blocks are durable."
+      ]
+    },
+    "interview_frame": [
+      {
+        "time": "0:00 to 0:05",
+        "text": "Requirements: what a series is, pull versus push, the cardinality rule, downsampling, histograms, tenant scoping. Say the numbers aloud: 40 million series, 2.7 million samples per second, 43 MB per second raw and about 3.7 MB per second compressed, a 26-hour hot window of about 700 GB with two replicas."
+      },
+      {
+        "time": "0:05 to 0:10",
+        "text": "Entities and API: Series, Sample in compressed chunks, Block with an inverted index, Tenant limits, Rule; the query and series endpoints and the push write endpoint."
+      },
+      {
+        "time": "0:10 to 0:20",
+        "text": "High-level design with the diagram: scrapers and push gateway, ingest with limits, the samples log, the hot store, compactor and tiers in object storage, the query frontend. Say what the log buys."
+      },
+      {
+        "time": "0:20 to 0:40",
+        "text": "Two deep dives: cardinality as the capacity unit (limits, reports, churn, memory per series), then the query path (index narrowing, splitting and caching, downsampled tiers, pushdown, replicated rules)."
+      },
+      {
+        "time": "0:40 to 0:45",
+        "text": "Failure modes from the table, the 10x platform (zones and federation, isolation, showback), and the L3 sentence: the unit of capacity is a series, not a byte, and the design is about who may create one."
+      }
+    ],
+    "design_doc_frame": [
+      {
+        "section": "Context and scope",
+        "text": "The services and their instrumentation today, the dashboards and alerts that depend on it, the outage or cost that motivates a new system, and the label conventions shared with logs and traces."
+      },
+      {
+        "section": "Goals and non-goals",
+        "text": "Freshness within 30 s, last-hour queries under 1 s, tiered retention, tenant isolation; logs, traces, anomaly detection and the dashboard product out of scope."
+      },
+      {
+        "section": "Design",
+        "text": "This answer fills it: ingestion with limits, the samples log, the hot tier, compaction and tiers, the query frontend and rules."
+      },
+      {
+        "section": "Alternatives considered",
+        "text": "Push everywhere, a disk-based store for everything, direct writes without a log, raw retention forever, best-effort cardinality, with the trade-off table."
+      },
+      {
+        "section": "Cross-cutting concerns",
+        "text": "Security (tenant scoping on every query, who may change limits), observability of the observability system (ingest lag, rejected samples per tenant, compaction backlog, query p99 by tier, rule evaluation lag), cost per million series per month, rollout by scraping both systems for a tenant and comparing."
+      },
+      {
+        "section": "Review questions the doc must answer",
+        "text": "What happens on the day a tenant doubles its series in an hour, and what a dashboard shows while object storage is unavailable."
+      }
+    ],
+    "depth_notes": {
+      "L1": "Scrape or push ingestion, a time series store, a query API and retention.",
+      "L2": "Aggregation and downsampling tiers, cardinality limits, hot window in memory with compression, query fan-out across shards.",
+      "L3": "A multi-tenant metrics platform (quotas, isolation, cost per series, regional federation)."
+    }
+  },
+  "provenance": {
+    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center M4a",
+    "generated_on": "2026-10-12",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "written by hand for the system design module, Part C entry C9 of the outline"
+    }
+  ]
+}
