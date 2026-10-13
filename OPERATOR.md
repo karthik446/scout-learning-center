@@ -7,7 +7,7 @@ logged in (`gh auth status`; confirm `karthik446` is the GitHub login), a Cloudf
 
 ```sh
 cd /Users/kar/orca/workspaces/gigai/scout.edgelab.one
-gh repo create karthik446/scout.edgelab.one --public --source . --push --description "Scout site and learning center: public lessons and practice paths, static, no tracking"
+gh repo create karthik446/scout-learning-center --public --source . --push --description "Scout site and learning center: public lessons and practice paths, static, no tracking"
 ```
 
 ## 2. Create the Cloudflare Pages project and the API token
@@ -30,7 +30,7 @@ npx -y wrangler pages project create scout-edgelab --production-branch main
 cd /Users/kar/orca/workspaces/gigai/scout.edgelab.one
 gh secret set CLOUDFLARE_API_TOKEN     # paste the token
 gh secret set CLOUDFLARE_ACCOUNT_ID    # paste the account id
-gh api -X PUT repos/karthik446/scout.edgelab.one/environments/production    # the deploy job uses environment "production"
+gh api -X PUT repos/karthik446/scout-learning-center/environments/production    # the deploy job uses environment "production"
 ```
 
 ## 4. First deploy
@@ -65,7 +65,7 @@ curl -sI https://scout.edgelab.one/ | grep -i -E 'HTTP/|content-security-policy|
 curl -s -o /dev/null -w '%{http_code}\n' https://scout.edgelab.one/no-such-page/   # 404
 curl -s https://scout.edgelab.one/robots.txt; curl -s https://scout.edgelab.one/sitemap.xml | head -5
 lychee --no-progress https://scout.edgelab.one/
-curl -sI https://scout.edgelab.one/_assets/site.css | grep -i cache-control        # see "Known issues" below
+curl -sI https://scout.edgelab.one/_assets/site.css | grep -i cache-control        # expect: public, max-age=86400 (see "Fixed before the first deploy")
 ```
 
 The request-log proof of one host: `python3 tools/chrome_check.py --base https://scout.edgelab.one --out /tmp/verify` and read
@@ -79,9 +79,6 @@ The request-log proof of one host: `python3 tools/chrome_check.py --base https:/
   domain from the Pages project too.
 - Everything: delete the Pages project (Settings > Delete project), revoke the API token, keep the repository.
 
-## Known issues to decide on before the first deploy
+## Fixed before the first deploy
 
-- `static/_headers` is deploy.md section 5 verbatim. Cloudflare joins a header named in two matching blocks with a comma, so `/_assets/*`
-  and `/learn/pagefind/*` would answer `Cache-Control: public, max-age=600, public, max-age=31536000, immutable` (the same join is what
-  `tools/serve_check.py` mimics). Cloudflare documents `! Cache-Control` (detach) under the more specific path to avoid it; untested here.
-- The shared assets are not content-hashed, so `immutable` for a year on `/_assets/*` would keep an old `site.css` or `course.js` in browsers after a change.
+- `static/_headers` detaches `Cache-Control` under `/_assets/*` and `/learn/pagefind/*` (`! Cache-Control`, then one day), so Cloudflare does not join the `/*` value with the path value, and the unhashed assets are no longer marked `immutable` for a year (commit aa0029e). After the first deploy, `curl -sI https://scout.edgelab.one/_assets/site.css | grep -i cache-control` should show exactly `public, max-age=86400`.
