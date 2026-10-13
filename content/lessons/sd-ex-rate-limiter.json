@@ -137,7 +137,7 @@
           },
           {
             "heading": "Algorithms",
-            "body": "Fixed window: a counter per key per second; cheap, but allows up to twice the limit across a window boundary. Sliding log: exact, but stores every timestamp; too costly at this rate. Sliding window counter: weights the previous window's count by the overlap; the public Cloudflare write-up reports a small error (a few percent) at a fraction of the cost. Token bucket: a rate and a burst in two numbers, natural for '100 per second, burst 200', and the model Stripe describes for its request rate limiter. The answer uses token buckets locally and sliding window counters in the shared store for the global view."
+            "body": "Fixed window: a counter per key per second; cheap, but allows up to twice the limit across a window boundary. Sliding log: exact, but stores every timestamp; too costly at this rate. Sliding window counter: weights the previous window's count by the overlap; the public Cloudflare write-up reports an average difference of 6 percent between the approximated and the real rate, with 0.003 percent of requests wrongly allowed or limited, at a fraction of the cost. Token bucket: a rate and a burst in two numbers, natural for '100 per second, burst 200', and the model Stripe describes for its request rate limiter. The answer uses token buckets locally and sliding window counters in the shared store for the global view."
           }
         ]
       },
@@ -165,7 +165,7 @@
           },
           {
             "heading": "Response contract",
-            "body": "Headers on every response: RateLimit-Limit, RateLimit-Remaining, RateLimit-Reset (the IETF draft header names) and on 429 also Retry-After (RFC 6585 defines 429)."
+            "body": "Headers on every response: a RateLimit field carrying the limit, the remaining quota and the time to reset, and a RateLimit-Policy field describing the policy (the two header fields of the current IETF draft; its first versions defined RateLimit-Limit, RateLimit-Remaining and RateLimit-Reset instead, and the X-RateLimit-Limit, X-RateLimit-Remaining and X-RateLimit-Reset variants that the draft's appendix catalogues are what many APIs still send), and on 429 also Retry-After (RFC 6585 defines 429)."
           }
         ]
       },
@@ -331,7 +331,7 @@
       },
       {
         "time": "0:20 to 0:40",
-        "text": "Two deep dives. (1) Exactness versus cost: a fixed window per node allows up to N times the limit at window edges; a sliding window approximated from two fixed windows (the Cloudflare method) brings the error to a few percent at the cost of two counters per key; an exact distributed token bucket needs an atomic read-modify-write on the shared store per request, which is the 1 ms you do not have at 50k per second across 20 nodes. Choose: local token buckets with a global budget split per node, re-split every 100 ms from the shared counts. (2) Failure modes: shared store down (fail open with local limits, alert; say why fail closed is wrong for a public API and right for a payment endpoint); hot key (one tenant at 40 percent of traffic: a dedicated shard or a local-only limit for that key); node restart (buckets start full; acceptable overshoot of one burst); clock skew (windows keyed on monotonic local time, store time only for TTL)."
+        "text": "Two deep dives. (1) Exactness versus cost: a fixed window per node allows up to N times the limit at window edges; a sliding window approximated from two fixed windows (the Cloudflare method) brings the average rate error to about 6 percent at the cost of two counters per key; an exact distributed token bucket needs an atomic read-modify-write on the shared store per request, which is the 1 ms you do not have at 50k per second across 20 nodes. Choose: local token buckets with a global budget split per node, re-split every 100 ms from the shared counts. (2) Failure modes: shared store down (fail open with local limits, alert; say why fail closed is wrong for a public API and right for a payment endpoint); hot key (one tenant at 40 percent of traffic: a dedicated shard or a local-only limit for that key); node restart (buckets start full; acceptable overshoot of one burst); clock skew (windows keyed on monotonic local time, store time only for TTL)."
       },
       {
         "time": "0:40 to 0:45",
@@ -373,8 +373,8 @@
   "provenance": {
     "generated_by": "Claude (Fable 5.1) by hand, Scout learning center M4a",
     "generated_on": "2026-10-12",
-    "reviewed_by": null,
-    "reviewed_on": null
+    "reviewed_by": "a second reader (Claude Fable 5.1), Scout learning center M4b",
+    "reviewed_on": "2026-10-12"
   },
   "changelog": [
     {

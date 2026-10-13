@@ -119,7 +119,7 @@
         "body": [
           {
             "heading": "Derived numbers",
-            "body": "Locations: 1 million drivers every 4 s is 250,000 updates per second at peak, each about 50 bytes (driver id, latitude, longitude, heading, timestamp): 12.5 MB per second, 1 TB per day of raw history. The live index holds only the last position per driver: 1 million entries of about 100 bytes with the cell membership is 100 MB, which fits in one process per city many times over; the work is the update rate, not the size. Ride requests: 5 million per day is 58 per second average, 580 at peak; each match reads one cell neighbourhood (tens of drivers), calls ETA for about 50 candidates, and performs a few lock operations: a few thousand ETA calls per second at peak, which is the dominant dependency load."
+            "body": "Locations: 1 million drivers every 4 s is 250,000 updates per second at peak, each about 50 bytes (driver id, latitude, longitude, heading, timestamp): 12.5 MB per second, 1 TB per day of raw history. The live index holds only the last position per driver: 1 million entries of about 100 bytes with the cell membership is 100 MB, which fits in one process per city many times over; the work is the update rate, not the size. Ride requests: 5 million per day is 58 per second average, 580 at peak; each match reads one cell neighbourhood (tens of drivers), calls ETA for about 50 candidates, and performs a few lock operations: about 600 batched ETA calls per second at peak (about 30,000 candidate ETAs), up to three times that when offers are declined, which is the dominant dependency load."
           },
           {
             "heading": "The latency shape",
@@ -184,11 +184,11 @@
         "body": [
           {
             "heading": "Partition by city, decide in one place",
-            "body": "Per-city partitioning keeps every hot structure small: the index for the largest city is a few hundred thousand drivers, one process with a replica, consuming its share of the location log. The update rate is absorbed by the log and by batching in the app (several positions per request). The matching service is also per city and is where contention lives: two requests in the same block at the same second want the same best driver, and the compare-and-set on the lock store resolves it without a global lock. The lock store itself is a small, strongly consistent store (a consensus-backed key-value store with leases) keyed by driver id and partitioned by city; the Builders' Library article on leader election is the reference for why a lease needs an expiry, why the holder must assume it can lose the lease at any moment, and why the token matters."
+            "body": "Per-city partitioning keeps every hot structure small: the index for the largest city is a few hundred thousand drivers, one process with a replica, consuming its share of the location log. The update rate is absorbed by the log and by batching in the app (several positions per request). The matching service is also per city and is where contention lives: two requests in the same block at the same second want the same best driver, and the compare-and-set on the lock store resolves it without a global lock. The lock store itself is a small, strongly consistent store (a consensus-backed key-value store with leases) keyed by driver id and partitioned by city; the Builders' Library article on leader election is the reference for why a lease needs an expiry and a heartbeat and why the holder must assume it can lose the lease at any moment; Kleppmann's post on distributed locking is the reference for why the token matters."
           },
           {
             "heading": "The ETA dependency and degraded modes",
-            "body": "The ETA service is the bottleneck a bad day exposes: thousands of batched calls per second at peak against a routing engine, with a hard deadline. The design degrades on purpose: straight-line ranking within the same candidate set, a flag on the match for later analysis, and an alert when the degraded ratio rises. Supply and demand per cell is computed from the same index snapshot every few seconds and published to the pricing service; matching does not call pricing, pricing reads matching's aggregates, so a pricing outage never blocks a match."
+            "body": "The ETA service is the bottleneck a bad day exposes: hundreds to a couple of thousand batched calls per second at peak against a routing engine (one per offer round), with a hard deadline. The design degrades on purpose: straight-line ranking within the same candidate set, a flag on the match for later analysis, and an alert when the degraded ratio rises. Supply and demand per cell is computed from the same index snapshot every few seconds and published to the pricing service; matching does not call pricing, pricing reads matching's aggregates, so a pricing outage never blocks a match."
           }
         ]
       },
@@ -374,8 +374,8 @@
   "provenance": {
     "generated_by": "Claude (Fable 5.1) by hand, Scout learning center M4a",
     "generated_on": "2026-10-12",
-    "reviewed_by": null,
-    "reviewed_on": null
+    "reviewed_by": "a second reader (Claude Fable 5.1), Scout learning center M4b",
+    "reviewed_on": "2026-10-12"
   },
   "changelog": [
     {
