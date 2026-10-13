@@ -87,6 +87,7 @@ class Library:
         self.keys = {k["key"]: k for k in docs["keys/concept-keys.json"]["keys"]}
         self.areas = docs["keys/concept-keys.json"]["areas"]
         self.lessons = {d["id"]: d for r, d in docs.items() if r.startswith("lessons/")}
+        self.scenarios = {d["id"]: d for r, d in docs.items() if r.startswith("scenarios/")}
         self.practice = {d["lesson"]: d for r, d in docs.items() if r.startswith("practice/")}
         self.pathways = {d["id"]: d for r, d in docs.items() if r.startswith("pathways/")}
         self.module = docs["modules/system-design.json"]
@@ -134,7 +135,11 @@ def ext(url: str, text: str) -> str:
     return f'<a href="{esc(url)}" target="_blank" rel="noopener noreferrer">{text}</a>'
 
 
-def head(title: str, description: str, *, code: bool = False) -> str:
+SIM_CSS = '<link rel="stylesheet" href="/_assets/sim/sim.css">\n'
+SIM_JS = "/_assets/sim/sim.js"
+
+
+def head(title: str, description: str, *, code: bool = False, sim: bool = False) -> str:
     hl = (
         '<link rel="stylesheet" href="/_assets/hljs/styles/github.min.css" data-hljs-theme="light">\n'
         '<link rel="stylesheet" href="/_assets/hljs/styles/github-dark.min.css" data-hljs-theme="dark" disabled>\n'
@@ -147,7 +152,7 @@ def head(title: str, description: str, *, code: bool = False) -> str:
         f'<meta name="description" content="{esc(description)}">\n'
         '<link rel="icon" href="/_assets/favicon.svg" type="image/svg+xml">\n'
         '<script src="/_assets/theme-init.js"></script>\n'
-        f'{hl}<link rel="stylesheet" href="/_assets/site.css">\n</head>\n'
+        f'{hl}<link rel="stylesheet" href="/_assets/site.css">\n{SIM_CSS if sim else ""}</head>\n'
     )
 
 
@@ -168,7 +173,7 @@ def footer() -> str:
     )
 
 
-def tail_scripts(*, mermaid: bool = False, code: bool = False, extra: tuple[str, ...] = ()) -> str:
+def tail_scripts(*, mermaid: bool = False, code: bool = False, extra: tuple[str, ...] = (), sim: bool = False) -> str:
     s = []
     if mermaid:
         s.append('<script src="/_assets/mermaid/mermaid.min.js"></script>')
@@ -176,6 +181,8 @@ def tail_scripts(*, mermaid: bool = False, code: bool = False, extra: tuple[str,
         s.append('<script src="/_assets/hljs/highlight.min.js"></script>')
         s += [f'<script src="/_assets/hljs/languages/{n}.min.js"></script>' for n in ("python", "go", "bash")]
     s += [f'<script src="{src}"></script>' for src in extra]
+    if sim:  # the one ES module of the simulator block (same origin, no inline code)
+        s.append(f'<script type="module" src="{SIM_JS}"></script>')
     s.append('<script src="/_assets/course.js" defer></script>')
     return "\n".join(s) + "\n</body>\n</html>\n"
 
@@ -250,10 +257,10 @@ def sidebar(lib: Library, pid: str | None, current: str) -> str:
 
 
 def lesson_shell(lib: Library, title: str, body: str, *, pid: str | None, current: str, crumbs: list[tuple[str, str]],
-                 description: str, mermaid: bool = False, code: bool = False) -> str:
+                 description: str, mermaid: bool = False, code: bool = False, sim: bool = False) -> str:
     parts = [a(h, esc(t)) for h, t in crumbs[:-1]] + [esc(crumbs[-1][1])]
     return (
-        head(title, description, code=code)
+        head(title, description, code=code, sim=sim)
         + '<body>\n<div class="shell">\n'
         + sidebar(lib, pid, current)
         + '\n<div class="page">\n<div class="page-top">\n'
@@ -261,7 +268,7 @@ def lesson_shell(lib: Library, title: str, body: str, *, pid: str | None, curren
         + f"<main data-pagefind-body>\n{body}\n</main>\n"
         + footer()
         + "</div>\n</div>\n"
-        + tail_scripts(mermaid=mermaid, code=code)
+        + tail_scripts(mermaid=mermaid, code=code, sim=sim)
     )
 
 
@@ -305,6 +312,22 @@ def code_block(b: dict) -> str:
             f'<pre><code class="language-{cls}" data-lang="{esc(cls)}">{esc(b["code"])}</code></pre>')
 
 
+SIM_FALLBACK = ("The simulation needs JavaScript; the steps above describe what it shows. "
+                "Simulation engine: Breakscale (MIT, the Breakscale contributors), commit d2c876e0, vendored without its interface, analytics or link store. "
+                "Nothing leaves this page.")
+
+
+def render_sim(lib: Library, l: dict, level: int = 2) -> str:
+    """The `sim` field of a lesson: heading, caption, the steps, and the block host the module fills in (never indexed by Pagefind)."""
+    sim = l["sim"]
+    sc = lib.scenarios[sim["scenario"]]
+    h = f"h{level}"
+    steps = "".join(f"<li>{esc(st)}</li>" for st in sim["steps"])
+    note = f'<p class="muted">Scaled model: {esc(sc["scale_note"])}</p>\n' if sc.get("scale_note") else ""
+    return (f'<{h} id="simulate">{esc(sim.get("heading", "Simulate it"))}</{h}>\n<p>{esc(sim["caption"])}</p>\n<ol class="sim-steps">{steps}</ol>\n'
+            f'<div class="sim" data-scenario="/learn/scenarios/{esc(sc["id"])}.json" data-pagefind-ignore>{note}<p>{esc(SIM_FALLBACK)}</p></div>')
+
+
 def render_lesson(lib: Library, l: dict) -> tuple[str, str]:
     lid = l["id"]
     pid, step = lib.home_of.get(lid, (None, None))
@@ -333,6 +356,8 @@ def render_lesson(lib: Library, l: dict) -> tuple[str, str]:
     if l["in_practice"]:
         body.append("<h2>How it is done in practice</h2>")
         body.append(f"<p>{esc(l['in_practice'])}</p>")
+    if "sim" in l:
+        body.append(render_sim(lib, l))
     if l["technologies"]:
         tags = "".join(f"<span>{esc(t)}</span>" for t in l["technologies"])
         body.append(f'<h2>Technologies</h2>\n<div class="tech-tags">{tags}</div>')
@@ -369,7 +394,7 @@ def render_lesson(lib: Library, l: dict) -> tuple[str, str]:
     crumbs.append((here, l["title"]))
     code = bool(l["code"])
     page = lesson_shell(lib, f"{l['title']} - Learning center", "\n".join(body), pid=pid, current=here, crumbs=crumbs,
-                        description=l["summary"][:200], mermaid=has_diagram, code=code)
+                        description=l["summary"][:200], mermaid=has_diagram, code=code, sim="sim" in l)
     return here, page
 
 
@@ -406,6 +431,8 @@ def render_exercise(lib: Library, l: dict) -> tuple[str, str]:
            ("reference-answer", "Reference answer")] + [(sec["id"], sec["title"]) for sec in ex["reference_answer"]] + [
            ("rubric", "Self-check rubric"), ("interview-frame", "The 45-minute interview frame"), ("design-doc-frame", "The design-doc frame"),
            ("depth", "Depth notes"), ("sources", "Sources"), ("related", "Related lessons")]
+    if "sim" in l:
+        otp.insert(otp.index(("rubric", "Self-check rubric")), ("simulate", l["sim"].get("heading", "Simulate it")))
     body.append('<div class="on-this-page"><p class="otp-title">On this page</p><ul>' + "".join(f'<li>{a("#" + i, esc(t))}</li>' for i, t in otp) + "</ul></div>")
     body.append(f"<p>{esc(l['summary'])}</p>")
     body.append('<p class="muted">Attempt the design from the prompt, the constraints and the questions before reading the reference answer.</p>')
@@ -428,6 +455,8 @@ def render_exercise(lib: Library, l: dict) -> tuple[str, str]:
                 body.append(f'<p class="muted">{esc(sec["diagram"]["legend"])}</p>')
         if sec.get("table"):
             body.append(render_table(sec["table"]))
+        if sec["id"] == "scaling-and-the-bottleneck" and "sim" in l:
+            body.append(render_sim(lib, l, level=3))
     body.append('<h2 id="rubric">Self-check rubric</h2>\n<p class="muted">Read, not scored: find the level your answer reached.</p>')
     for lvl, name in (("L1", "L1, mid-level: applies"), ("L2", "L2, senior: chooses with numbers and defends"), ("L3", "L3, staff: sets the constraint and judges")):
         body.append(f"<h3>{esc(name)}</h3><ul>" + "".join(f"<li>{esc(x)}</li>" for x in ex["rubric"][lvl]) + "</ul>")
@@ -448,7 +477,7 @@ def render_exercise(lib: Library, l: dict) -> tuple[str, str]:
         body.append(f'<h2 id="related">Related lessons</h2>\n<ul class="related-list">{"".join(items)}</ul>')
     crumbs = [("/learn/", "Learning center"), (mod_here, "System design"), (here, l["title"])]
     page = lesson_shell(lib, f"{l['title']} - Learning center", "\n".join(body), pid=None, current=here, crumbs=crumbs,
-                        description=l["summary"][:200], mermaid=has_diagram, code=False)
+                        description=l["summary"][:200], mermaid=has_diagram, code=False, sim="sim" in l)
     return here, page
 
 
@@ -813,12 +842,15 @@ class Collector(HTMLParser):
         self.inline_scripts = 0
         self.on_attrs: list[str] = []
         self.stylesheets = 0
+        self.scenarios: list[str] = []
 
     def handle_starttag(self, tag, attrs):
         am = {k: (v or "") for k, v in attrs}
         for n in am:
             if n.lower().startswith("on"):
                 self.on_attrs.append(n.lower())
+        if am.get("data-scenario"):
+            self.scenarios.append(am["data-scenario"])
         if am.get("id"):
             if am["id"] in self.ids:
                 self.dup_ids.add(am["id"])
@@ -839,8 +871,8 @@ class Collector(HTMLParser):
                 self.refs.append((tag, am["src"], None))
         elif tag == "link" and am.get("href"):
             # the site's own sheet is the one stylesheet; the shipped highlighter's theme sheets (code pages) and
-            # Pagefind's UI sheet (search page) are third-party files of the same origin and not counted
-            if am.get("rel") == "stylesheet" and not am["href"].startswith(("/_assets/hljs/", "/learn/pagefind/")):
+            # Pagefind's UI sheet (search page) and the simulator block's sheet are third-party files of the same origin and not counted
+            if am.get("rel") == "stylesheet" and not am["href"].startswith(("/_assets/hljs/", "/_assets/sim/", "/learn/pagefind/")):
                 self.stylesheets += 1
             self.refs.append((tag, am["href"], None))
         elif tag == "form" and am.get("action"):
@@ -896,6 +928,11 @@ def audit(site: Path) -> list[str]:
                 problems.append(f"{url}: external link {href} without target=_blank rel=noopener")
             if not href.startswith("https://"):
                 problems.append(f"{url}: external link {href} is not https")
+        for sc in c.scenarios:
+            if not (site / sc.lstrip("/")).is_file():
+                problems.append(f"{url}: data-scenario {sc} does not exist in the built site")
+        if c.scenarios and not any(ref == SIM_JS for _, ref, _ in c.refs):
+            problems.append(f"{url}: a simulator block without the module script {SIM_JS}")
         if c.stylesheets != 1:
             problems.append(f"{url}: {c.stylesheets} site stylesheets (expected one)")
         for tag, ref, frag in c.refs:
@@ -984,6 +1021,14 @@ def build(content: Path, out: Path) -> dict:
         shutil.copy2(ROOT / "assets" / name, assets / name)
     for d in ("mermaid", "hljs"):
         shutil.copytree(ROOT / "assets" / d, assets / d)
+    # the simulator: the block, its sheet and the licence travel together; engine.js (for the headless runner only) stays in the repo
+    (assets / "sim").mkdir()
+    for name in ("sim.js", "sim.css", "LICENSE.txt", "UPSTREAM.txt"):
+        shutil.copy2(ROOT / "assets" / "sim" / name, assets / "sim" / name)
+    if lib.scenarios:
+        (out / "learn" / "scenarios").mkdir(parents=True, exist_ok=True)
+        for sid in lib.scenarios:
+            shutil.copy2(content / "scenarios" / f"{sid}.json", out / "learn" / "scenarios" / f"{sid}.json")
     for f in (ROOT / "static").iterdir():
         shutil.copy2(f, out / f.name)
     urls = [u for u in written if u != "404.html"]

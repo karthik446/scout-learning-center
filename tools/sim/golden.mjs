@@ -24,7 +24,8 @@ const vendorHash = () => {
   return m[m.length - 1].split('  ')[0];
 };
 
-function golden(sc) {
+function golden(sc, raw) {
+  const sha256 = (t) => createHash('sha256').update(t).digest('hex');
   const rows = [];
   const defaults = Object.fromEntries(sc.knobs.map((k) => [k.id, k.default]));
   const { metrics } = runWindow(sc, defaults, [], 0, sc.window_s, keysOf(sc));
@@ -35,14 +36,15 @@ function golden(sc) {
   }
   return {
     schema_version: 'learning-center-sim-golden:1', id: sc.id, seed: sc.seed, commit: 'd2c876e0', engine_ts_sha256: vendorHash(),
-    scenario_sha256: createHash('sha256').update(JSON.stringify(sc)).digest('hex'), rows,
+    scenario_sha256: sha256(raw), rows,
   };
 }
 
 let bad = 0;
 for (const id of ids) {
-  const sc = JSON.parse(readFileSync(join(SCEN, id + '.json'), 'utf8'));
-  const g = golden(sc);
+  const raw = readFileSync(join(SCEN, id + '.json'));
+  const sc = JSON.parse(raw.toString('utf8'));
+  const g = golden(sc, raw);
   console.log(`\n${id}  seed ${sc.seed}  warm-up ${sc.warmup_s} s  window ${sc.window_s} s`);
   for (const r of g.rows) {
     const shown = sc.readouts.concat(r.metric && !sc.readouts.includes(r.metric) ? [r.metric] : []).map((k) => `${k}=${r.metrics[k]}`).join('  ');

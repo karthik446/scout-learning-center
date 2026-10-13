@@ -13,6 +13,7 @@ pattern, https-only addresses (no localhost). The full shingle scan stays on the
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -228,6 +229,236 @@ def practice_kind(doc) -> str:
     return doc.get("kind", "tool") if isinstance(doc, dict) else "tool"
 
 
+# --- the simulator: scenario files (content/scenarios/<id>.json) and the `sim` field of a lesson (plan 7.2, 7.3) ------------
+# A scenario is complete on its own: every node carries all nine base config fields (their file reader insists on them, so a
+# scenario also opens in their app), no defaults are inherited. Node kinds are copied from vendor/breakscale/types.ts, never imported.
+SIM_NODE_KINDS = frozenset(
+    "client lb service cache db queue worker autoscaler region cdn ratelimiter breaker replica shard objectstore searchindex "
+    "timeseriesdb graphdb coldstorage vectordb streambroker pubsub websocket apigateway sidecar lambda cron bulkhead retryqueue "
+    "transcoder edgecompute writebehind loadshedder".split())
+SIM_BASE_FIELDS = ("capacity", "serviceMs", "serviceCv", "queueLimit", "hitRate", "errorRate", "timeoutMs", "retries", "rps")
+SIM_METRICS = frozenset("p50 p95 p99 goodput offered errors".split())
+SIM_NODE_METRICS = frozenset("util queue arrival shed timeout hit throttled rejected breaker stale lag".split())
+SIM_OPS = ("<", "<=", ">", ">=", "between")
+SIM_NODE = {"id": str, "kind": str, "label": str, "x": int, "y": int, "config": None}
+SIM_KNOB = {"id": str, "label": str, "node": str, "field": str, "min": (int, float), "max": (int, float), "step": (int, float),
+            "default": (int, float), "unit": str}
+SIM_FAULT = {"id": str, "label": str, "node": str, "kind": str}
+SIM_ASSERTION = {"id": str, "knobs": None, "faults?": [str], "settle_s?": (int, float), "window_s?": (int, float), "metric": str, "op": str,
+                 "value": None}
+SCENARIO = {
+    "schema_version": str, "id": str, "title": str, "seed": int, "warmup_s": (int, float), "window_s": (int, float),
+    "scale_note": (str, N), "nodes": [SIM_NODE], "edges": [{"id": str, "from": str, "to": str, "weight": (int, float)}],
+    "knobs": [SIM_KNOB], "faults?": [SIM_FAULT], "readouts": [str], "assertions": [SIM_ASSERTION],
+}
+SIM = {"scenario": str, "heading?": str, "caption": str, "steps": [str], "sim_claims": [{"text": str, "assertion": str}]}
+GOLDEN = ROOT / "tools" / "sim" / "golden"
+SCENARIO_HASHES: dict[str, str] = {}  # sha256 of each scenario file as load_all read it, to compare with its golden file
+# quantity words in caption and steps that are claims like a digit is: the fraction they stand for (None: presence of a claim only)
+SIM_WORDS = {"quarter": 0.25, "half": 0.5, "double": None, "doubles": None, "doubled": None, "triple": None, "ten times": None, "twice": None}
+SIM_NUMBER = re.compile(r"(?<![\w.])\d[\d,]*(?:\.\d+)?%?")
+SIM_WORD = re.compile(r"(?i)\b(" + "|".join(sorted(SIM_WORDS, key=len, reverse=True)) + r")\b")
+
+
+def _num(token: str) -> float:
+    return float(token.rstrip("%").replace(",", ""))
+
+
+def scenario_checks(name: str, sc: dict) -> list[str]:
+    """Shape rules of one scenario file beyond the schema (the schema has already passed)."""
+    out: list[str] = []
+    if sc["schema_version"] != "learning-center-sim:1":
+        out.append(f"{name}: schema_version must be 'learning-center-sim:1'")
+    if sc["id"] != Path(name).stem or not KEBAB.match(sc["id"]):
+        out.append(f"{name}: id must be kebab-case and equal the file name")
+    nodes = {n["id"]: n for n in sc["nodes"]}
+    if len(nodes) != len(sc["nodes"]):
+        out.append(f"{name}: duplicate node id")
+    for n in sc["nodes"]:
+        w = f"{name}: node {n['id']}"
+        if n["kind"] not in SIM_NODE_KINDS:
+            out.append(f"{w}: unknown kind {n['kind']!r}")
+        cfg = n["config"]
+        if not isinstance(cfg, dict):
+            out.append(f"{w}: config must be an object")
+            continue
+        for f in SIM_BASE_FIELDS:
+            if not isinstance(cfg.get(f), (int, float)) or isinstance(cfg.get(f), bool):
+                out.append(f"{w}: config.{f} is missing or not a number (all nine base fields are required)")
+        if n["x"] < 0 or n["y"] < 0:
+            out.append(f"{w}: x and y are grid positions, not negative")
+    seen = set()
+    for e in sc["edges"]:
+        if e["id"] in seen:
+            out.append(f"{name}: duplicate edge id {e['id']}")
+        seen.add(e["id"])
+        if e["from"] not in nodes or e["to"] not in nodes:
+            out.append(f"{name}: edge {e['id']} names an unknown node")
+    knobs = {k["id"]: k for k in sc["knobs"]}
+    if not 1 <= len(sc["knobs"]) <= 3 or len(knobs) != len(sc["knobs"]):
+        out.append(f"{name}: 1 to 3 knobs with distinct ids needed, got {len(sc['knobs'])}")
+    for k in sc["knobs"]:
+        w = f"{name}: knob {k['id']}"
+        cfg = nodes.get(k["node"], {}).get("config", {})
+        if k["node"] not in nodes:
+            out.append(f"{w}: unknown node {k['node']}")
+        elif not isinstance(cfg.get(k["field"]), (int, float)):
+            out.append(f"{w}: node {k['node']} has no numeric config.{k['field']}")
+        elif cfg[k["field"]] != k["default"]:
+            out.append(f"{w}: default {k['default']} differs from the node's config.{k['field']} {cfg[k['field']]}")
+        if not k["min"] <= k["default"] <= k["max"] or k["step"] <= 0:
+            out.append(f"{w}: needs min <= default <= max and a positive step")
+    faults = {f["id"]: f for f in sc.get("faults", [])}
+    if len(faults) != len(sc.get("faults", [])):
+        out.append(f"{name}: duplicate fault id")
+    for f in faults.values():
+        if f["node"] not in nodes or f["kind"] != "crash" or f["id"] in knobs:
+            out.append(f"{name}: fault {f['id']}: must crash a known node and not reuse a knob id (kind 'crash' is the one v1 fault)")
+    if not sc["readouts"]:
+        out.append(f"{name}: no readouts")
+
+    def metric_problem(m: str) -> str | None:
+        base, _, node = m.partition(":")
+        if node:
+            return None if base in SIM_NODE_METRICS and node in nodes else f"unknown metric {m!r}"
+        return None if base in SIM_METRICS else f"unknown metric {m!r}"
+
+    for r in sc["readouts"]:
+        if metric_problem(r):
+            out.append(f"{name}: readout: {metric_problem(r)}")
+    ids = [a["id"] for a in sc["assertions"]]
+    if len(set(ids)) != len(ids) or "defaults" in ids or not all(KEBAB.match(i) for i in ids) or not ids:
+        out.append(f"{name}: assertion ids must be unique kebab-case, at least one, and not 'defaults'")
+    for a in sc["assertions"]:
+        w = f"{name}: assertion {a['id']}"
+        if metric_problem(a["metric"]):
+            out.append(f"{w}: {metric_problem(a['metric'])}")
+        if a["op"] not in SIM_OPS:
+            out.append(f"{w}: op must be one of {SIM_OPS}")
+        v = a["value"]
+        if a["op"] == "between":
+            if not (isinstance(v, list) and len(v) == 2 and all(isinstance(x, (int, float)) for x in v) and v[0] <= v[1]):
+                out.append(f"{w}: 'between' needs [low, high]")
+        elif not isinstance(v, (int, float)) or isinstance(v, bool):
+            out.append(f"{w}: value must be a number")
+        if not isinstance(a["knobs"], dict):
+            out.append(f"{w}: knobs must be an object")
+            continue
+        for kid, val in a["knobs"].items():
+            k = knobs.get(kid)
+            if not k:
+                out.append(f"{w}: unknown knob {kid}")
+            elif not isinstance(val, (int, float)) or not k["min"] <= val <= k["max"]:
+                out.append(f"{w}: knob {kid} value {val!r} is outside {k['min']}..{k['max']}")
+        for fid in a.get("faults", []):
+            if fid not in faults:
+                out.append(f"{w}: unknown fault {fid}")
+    return out
+
+
+def golden_for(sid: str):
+    """The committed golden run of a scenario (tools/sim/golden/<id>.json) or None."""
+    path = GOLDEN / f"{sid}.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+
+
+def _golden_numbers(row: dict) -> set[float]:
+    """Every number the golden row shows, in the forms a sentence may quote: as is, rounded, and as a percentage."""
+    vals: set[float] = set()
+
+    def add(x) -> None:
+        if isinstance(x, bool) or not isinstance(x, (int, float)):
+            return
+        for v in (x, x * 100):
+            for nd in (0, 1, 2):
+                vals.add(round(v, nd))
+            vals.add(float(int(v)))
+
+    for v in row["metrics"].values():
+        add(v)
+    for v in row.get("knobs", {}).values():
+        add(v)
+    v = row.get("value")
+    for x in (v if isinstance(v, list) else [v]):
+        add(x)
+    return vals
+
+
+def _word_fits(word: str, row: dict) -> bool:
+    frac = SIM_WORDS[word.lower()]
+    if frac is None:
+        return True
+    return any(isinstance(v, (int, float)) and abs(v - frac) <= 0.08 for v in row["metrics"].values())
+
+
+def sim_text_checks(w: str, sim: dict, sc: dict, gold: dict) -> list[str]:
+    """The digit rule (plan 7.3 item 3). A sentence of caption or steps that holds a digit or a quantity word may quote only
+    what the committed golden run shows: a number that is a knob setting of the scenario is an instruction and needs no claim;
+    every other number or quantity word must sit inside the `text` of a sim_claims entry whose assertion passes in the golden file,
+    and the number must be one that golden row shows (a metric, a knob value or a bound of that row, rounded or as a percentage)."""
+    out: list[str] = []
+    rows = {r["assertion"]: r for r in gold["rows"]}
+    knob_values: set[float] = set()
+    for k in sc["knobs"]:
+        for x in (k["min"], k["max"], k["default"]):
+            knob_values |= {float(x), float(x) * 100}
+    for r in gold["rows"]:
+        for x in r.get("knobs", {}).values():
+            knob_values |= {float(x), float(x) * 100}
+    claims = sim["sim_claims"]
+    for c in claims:
+        row = rows.get(c["assertion"])
+        if c["assertion"] == "defaults" or row is None:
+            out.append(f"{w}: sim_claims names assertion {c['assertion']!r}, which is not an assertion of {sc['id']}")
+        elif not row["pass"]:
+            out.append(f"{w}: claim {c['text']!r}: assertion {c['assertion']} FAILS in the golden run")
+    texts = [sim["caption"], *sim["steps"]] + ([sim["heading"]] if "heading" in sim else [])
+    for text in texts:
+        for sent in sentences(text):
+            mine = [c for c in claims if c["text"] and c["text"] in sent]
+            rest = sent
+            for c in mine:
+                rest = rest.replace(c["text"], " ")
+            for m in SIM_NUMBER.finditer(rest):
+                if _num(m.group(0)) not in knob_values:
+                    out.append(f"{w}: {m.group(0)!r} in {sent[:70]!r} is not covered by a sim_claims entry and is not a knob setting")
+            for m in SIM_WORD.finditer(rest):
+                out.append(f"{w}: {m.group(0)!r} in {sent[:70]!r} is not covered by a sim_claims entry")
+            for c in mine:
+                row = rows.get(c["assertion"])
+                if row is None:
+                    continue
+                shown = _golden_numbers(row)
+                for m in SIM_NUMBER.finditer(c["text"]):
+                    n = _num(m.group(0))
+                    if n not in shown and n not in knob_values:
+                        out.append(f"{w}: claim {c['text']!r}: the number {m.group(0)} is not in the golden row of {c['assertion']} "
+                                   f"({', '.join(f'{k}={v}' for k, v in row['metrics'].items())})")
+                for m in SIM_WORD.finditer(c["text"]):
+                    if not _word_fits(m.group(0), row):
+                        out.append(f"{w}: claim {c['text']!r}: no metric of the golden row {c['assertion']} is near {m.group(0)!r}")
+    return out
+
+
+def sim_checks(lid: str, l: dict, docs: dict) -> list[str]:
+    sim = l["sim"]
+    w = f"lessons/{lid}: sim"
+    sid = sim["scenario"]
+    sc = docs.get(f"scenarios/{sid}.json")
+    if sc is None:
+        return [f"{w}: scenario {sid!r} has no file content/scenarios/{sid}.json"]
+    gold = golden_for(sid)
+    if gold is None:
+        return [f"{w}: no golden run tools/sim/golden/{sid}.json (run node tools/sim/golden.mjs --write {sid})"]
+    out: list[str] = []
+    if gold.get("scenario_sha256") != SCENARIO_HASHES.get(sid, gold.get("scenario_sha256")):
+        out.append(f"{w}: the golden run of {sid} is stale (the scenario file changed); re-run tools/sim/golden.mjs --write")
+    if not sim["caption"].strip() or not sim["steps"]:
+        out.append(f"{w}: caption and at least one step are required")
+    out.extend(sim_text_checks(w, sim, sc, gold))
+    return out
+
+
 SCHEMAS = {
     "lesson": {
         "schema_version": str, "id": str, "version": int, "status": str, "superseded_by": (str, N), "title": str, "area": str,
@@ -236,8 +467,9 @@ SCHEMAS = {
         "subtopics": [{"id": str, "title": str, "body": [{"heading?": str, "body": str}]}],
         "diagram": ({"source": str}, N), "code": [{"lang": str, "code": str}], "technologies": [str], "related": [str],
         "sources": [SOURCE], "practice": (str, N), "provenance": PROVENANCE, "changelog": CHANGELOG,
-        "kind?": str, "exercise?": EXERCISE,
+        "kind?": str, "exercise?": EXERCISE, "sim?": SIM,
     },
+    "scenario": SCENARIO,
     "practice": {
         "schema_version": str, "id": str, "version": int, "lesson": str, "tool": str, "tool_key": (str, N),
         "why_this_tool": str, "alternatives": str, "setup": [STEP], "steps": [STEP], "sources": [SOURCE],
@@ -303,6 +535,8 @@ def load_all(content: Path) -> tuple[dict, list[str]]:
         rel = p.relative_to(content).as_posix()
         try:
             docs[rel] = json.loads(p.read_text(encoding="utf-8"))
+            if rel.startswith("scenarios/"):
+                SCENARIO_HASHES[p.stem] = hashlib.sha256(p.read_bytes()).hexdigest()
         except Exception as e:  # noqa: BLE001 - report any parse failure as a problem
             problems.append(f"{rel}: does not parse: {e}")
     return docs, problems
@@ -311,6 +545,8 @@ def load_all(content: Path) -> tuple[dict, list[str]]:
 def kind_of(rel: str) -> str | None:
     if rel.startswith("lessons/"):
         return "lesson"
+    if rel.startswith("scenarios/"):
+        return "scenario"
     if rel.startswith("practice/"):
         return "practice"
     if rel.startswith("pathways/"):
@@ -344,6 +580,8 @@ def validate(docs: dict) -> list[str]:
         out.extend(public_checks(rel, doc))
         if kind in ("practice-case", "practice-artifact") and not errs:
             out.extend(written_checks(rel, doc))
+        if kind == "scenario" and not errs:
+            out.extend(scenario_checks(rel, doc))
     if out:
         return out  # reference checks need well-formed documents
 
@@ -402,6 +640,8 @@ def validate(docs: dict) -> list[str]:
             out.append(f"{w}: no subtopics")
         if ex:
             out.extend(f"{w}: {e}" for e in exercise_checks(l))
+        if "sim" in l:
+            out.extend(sim_checks(lid, l, docs))
         for r in l["related"]:
             if r not in lessons and not (ex and r in sd_ids):
                 out.append(f"{w}: related names unknown lesson {r}")

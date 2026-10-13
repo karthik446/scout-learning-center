@@ -47,6 +47,17 @@ PAGES = [
 ]
 
 
+# Pages that carry a simulator block (the lessons whose `sim` field is set), checked like the others plus the block itself:
+# readouts with digits after load, dots moving (or none under reduced motion), a knob and the crash button answering, and
+# a screenshot clipped to the block (verify/shots/sim-<lesson>-<width>[-reduced].png). `--sim` runs only these.
+SIM_PAGES = [
+    ("sim-sd-caching", "/learn/lessons/sd-caching/"),
+    ("sim-sd-idempotency-retries", "/learn/lessons/sd-idempotency-retries/"),
+    ("sim-sd-rate-limiting-overload", "/learn/lessons/sd-rate-limiting-overload/"),
+    ("sim-sd-ex-rate-limiter", "/learn/lessons/sd-ex-rate-limiter/"),
+]
+
+
 class Chrome:
     def __init__(self, netlog: Path | None, stderr_path: Path) -> None:
         self.profile = tempfile.mkdtemp(prefix="scout-chrome-")
@@ -129,13 +140,33 @@ def host_of(url: str) -> str | None:
     return m.group(1) if m else None
 
 
-def check_page(ch: Chrome, base: str, name: str, path: str, width: int, shots: Path) -> dict:
+SIM_FACTS = r"""(() => {
+  const h = document.querySelector('[data-scenario]');
+  if (!h) return null;
+  const dd = [...h.querySelectorAll('.sim-readouts dd')].map((d) => d.textContent);
+  const c = h.querySelector('canvas.sim-chart');
+  let painted = 0;
+  if (c) { const px = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; const bg = [px[0], px[1], px[2]]; for (let i = 0; i < px.length; i += 4) if (px[i] !== bg[0] || px[i + 1] !== bg[1] || px[i + 2] !== bg[2]) painted += 1; }
+  return { scenario: h.dataset.scenario, ready: h.classList.contains('sim-ready'), readouts: dd, digits: dd.length > 0 && dd.every((t) => /\d/.test(t)),
+    status: (h.querySelector('.sim-status') || {}).textContent, dots: h.querySelectorAll('.sim-dot').length, nodes: h.querySelectorAll('.sim-node').length,
+    badges: [...h.querySelectorAll('.sim-badge')].map((b) => b.textContent).filter(Boolean), chart_painted_px: painted,
+    knobs: [...h.querySelectorAll('input[type=range]')].map((i) => ({ id: i.id, label: (document.querySelector('label[for="' + i.id + '"]') || {}).textContent, value: i.value })),
+    buttons: [...h.querySelectorAll('button')].map((b) => b.textContent), scroll_w: h.scrollWidth, client_w: h.clientWidth,
+    attribution: (h.querySelector('.sim-attrib') || {}).textContent };
+})()"""
+SIM_RECT = r"""(() => { const h = document.querySelector('[data-scenario]'); const t = document.getElementById('simulate') || h; const a = t.getBoundingClientRect(), b = h.getBoundingClientRect();
+  return { x: 0, y: a.top + scrollY - 8, w: document.documentElement.clientWidth, h: b.bottom - a.top + 16 }; })()"""
+
+
+def check_page(ch: Chrome, base: str, name: str, path: str, width: int, shots: Path, reduced: bool = False) -> dict:
     target = ch.send("Target.createTarget", {"url": "about:blank"})["targetId"]
     session = ch.send("Target.attachToTarget", {"targetId": target, "flatten": True})["sessionId"]
     s = lambda m, p=None, **kw: ch.send(m, p, session, **kw)  # noqa: E731
     for d in ("Page", "Runtime", "Log", "Network", "Audits"):
         s(f"{d}.enable")
     s("Emulation.setDeviceMetricsOverride", {"width": width, "height": 900, "deviceScaleFactor": 1, "mobile": False})
+    if reduced:
+        s("Emulation.setEmulatedMedia", {"features": [{"name": "prefers-reduced-motion", "value": "reduce"}]})
     ch.events.clear()
     nav = s("Page.navigate", {"url": base + path})
     t0 = time.time()
@@ -167,13 +198,34 @@ def check_page(ch: Chrome, base: str, name: str, path: str, width: int, shots: P
         facts["ui_message"] = ev("(document.querySelector('.pagefind-ui__message')||{}).textContent")
         facts["ui_result_links"] = ev("document.querySelectorAll('.pagefind-ui__result-link').length")
         facts["first_result"] = ev("(document.querySelector('.pagefind-ui__result-link')||{}).href")
+    if name.startswith("sim-"):
+        facts["sim"] = ev(SIM_FACTS)
+        sim = facts["sim"] or {}
+        ch.pump(2.2)  # a second look: the readouts and the dots must have moved on (reduced motion: no dots at all)
+        again = ev(SIM_FACTS) or {}
+        sim["readouts_later"] = again.get("readouts")
+        sim["dots_later"] = again.get("dots")
+        # drive the controls the way a reader would: nudge the first knob, press the crash button when there is one
+        sim["knob_status"] = ev("(() => { const i = document.querySelector('[data-scenario] input[type=range]'); i.value = i.max; i.dispatchEvent(new Event('input', {bubbles: true})); return document.querySelector('.sim-status').textContent; })()")
+        crash = ev("(() => { const b = document.querySelector('[data-scenario] .sim-fault'); if (!b) return null; b.click(); return [b.textContent, b.getAttribute('aria-pressed'), document.querySelector('.sim-status').textContent]; })()")
+        sim["crash"] = crash
+        ch.pump(3.0)
+        sim["badges_after"] = ev("[...document.querySelectorAll('[data-scenario] .sim-badge')].map((b) => b.textContent).filter(Boolean)")
+        ev("(() => { const b = document.querySelector('[data-scenario] .sim-fault'); if (b) b.click(); const i = document.querySelector('[data-scenario] input[type=range]'); i.value = i.defaultValue; i.dispatchEvent(new Event('input', {bubbles: true})); })()")
+        ch.pump(6.0)  # back at the defaults, steady, for the picture
     height = min(max(int(ev("document.documentElement.scrollHeight") or 900), 600), 5000)
     s("Emulation.setDeviceMetricsOverride", {"width": width, "height": height, "deviceScaleFactor": 1, "mobile": False})
     ch.pump(0.5)
-    shot = s("Page.captureScreenshot", {"format": "png"})["data"]
     import base64
     shots.mkdir(parents=True, exist_ok=True)
-    (shots / f"{name}-{width}.png").write_bytes(base64.b64decode(shot))
+    if name.startswith("sim-"):  # the block with its heading, clipped out of the full page
+        r = ev(SIM_RECT)
+        shot = s("Page.captureScreenshot", {"format": "png", "captureBeyondViewport": True,
+                                            "clip": {"x": 0, "y": max(r["y"], 0), "width": r["w"], "height": r["h"], "scale": 1}})["data"]
+        (shots / f"{name}-{width}{'-reduced' if reduced else ''}.png").write_bytes(base64.b64decode(shot))
+    else:
+        shot = s("Page.captureScreenshot", {"format": "png"})["data"]
+        (shots / f"{name}-{width}.png").write_bytes(base64.b64decode(shot))
     errors, warnings, csp, failed, hosts = [], [], [], [], set()
     for e in ch.events:
         if e.get("sessionId") != session:
@@ -205,7 +257,7 @@ def check_page(ch: Chrome, base: str, name: str, path: str, width: int, shots: P
         elif m == "Network.loadingFailed":
             failed.append(f"{p.get('errorText')} {p.get('blockedReason', '')}")
     ch.send("Target.closeTarget", {"targetId": target})
-    return {"name": name, "path": path, "width": width, "nav_frame": nav.get("frameId", ""), "facts": facts, "console_errors": errors,
+    return {"name": name, "path": path, "width": width, "reduced_motion": reduced, "nav_frame": nav.get("frameId", ""), "facts": facts, "console_errors": errors,
             "console_warnings": warnings, "csp_violations": csp, "failed_requests": failed, "hosts": sorted(hosts)}
 
 
@@ -214,6 +266,8 @@ def main() -> int:
     ap.add_argument("--base", default="http://127.0.0.1:18765")
     ap.add_argument("--out", type=Path, default=ROOT / "verify")
     ap.add_argument("--widths", default="1280,390")
+    ap.add_argument("--sim", action="store_true", help="only the simulator pages (SIM_PAGES), each also with prefers-reduced-motion")
+    ap.add_argument("--no-sim", action="store_true", help="leave the simulator pages out of the run")
     args = ap.parse_args()
     out: Path = args.out
     out.mkdir(parents=True, exist_ok=True)
@@ -221,12 +275,18 @@ def main() -> int:
     ch = Chrome(netlog, out / "chrome-stderr.log")
     results = []
     try:
-        for w in [int(x) for x in args.widths.split(",")]:
-            for name, path in PAGES:
-                r = check_page(ch, args.base, name, path, w, out / "shots")
+        runs = [(n, p, w, False) for w in [int(x) for x in args.widths.split(",")] for n, p in ([] if args.sim else PAGES) + ([] if args.no_sim else SIM_PAGES)]
+        if args.sim:  # the reduced-motion pass, at the wide size
+            runs += [(n, p, 1280, True) for n, p in SIM_PAGES]
+        if True:
+            for name, path, w, reduced in runs:
+                r = check_page(ch, args.base, name, path, w, out / "shots", reduced)
                 results.append(r)
                 bad = len(r["console_errors"]) + len(r["csp_violations"])
-                print(f"{w:>5} {name:<10} {path:<52} errors {len(r['console_errors'])} csp {len(r['csp_violations'])} warnings {len(r['console_warnings'])} hosts {r['hosts']}"
+                simf = r["facts"].get("sim")
+                if simf is not None and not (simf["ready"] and simf["digits"] and simf["chart_painted_px"] > 0):
+                    r["console_errors"].append(f"simulator block not live: {json.dumps(simf)[:300]}")
+                print(f"{w:>5}{'r' if reduced else ' '}{name:<10} {path:<52} errors {len(r['console_errors'])} csp {len(r['csp_violations'])} warnings {len(r['console_warnings'])} hosts {r['hosts']}"
                       + (f" count={r['facts'].get('result_count')}" if name == "search" else "") + ("  <-- CHECK" if bad else ""), flush=True)
     finally:
         ch.close()
