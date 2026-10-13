@@ -1,0 +1,234 @@
+{
+ "schema_version": "learning-center-sim:1",
+ "id": "sd-rate-limiting-overload",
+ "title": "A token-bucket limiter in front of an API and its database",
+ "seed": 7,
+ "warmup_s": 5,
+ "window_s": 60,
+ "scale_note": null,
+ "nodes": [
+  {
+   "id": "client",
+   "kind": "client",
+   "label": "Clients",
+   "x": 0,
+   "y": 0,
+   "config": {
+    "capacity": 1,
+    "serviceMs": 0,
+    "serviceCv": 0,
+    "queueLimit": 0,
+    "hitRate": 0,
+    "errorRate": 0,
+    "timeoutMs": 2000,
+    "retries": 0,
+    "rps": 150
+   }
+  },
+  {
+   "id": "limiter",
+   "kind": "ratelimiter",
+   "label": "Rate limiter",
+   "x": 1,
+   "y": 0,
+   "config": {
+    "capacity": 1,
+    "serviceMs": 0,
+    "serviceCv": 0,
+    "queueLimit": 0,
+    "hitRate": 0,
+    "errorRate": 0,
+    "timeoutMs": 0,
+    "retries": 0,
+    "rps": 0,
+    "rateLimitRps": 200,
+    "burst": 50
+   }
+  },
+  {
+   "id": "api",
+   "kind": "service",
+   "label": "API",
+   "x": 2,
+   "y": 0,
+   "config": {
+    "capacity": 6,
+    "serviceMs": 25,
+    "serviceCv": 0.5,
+    "queueLimit": 48,
+    "hitRate": 0,
+    "errorRate": 0,
+    "timeoutMs": 0,
+    "retries": 0,
+    "rps": 0,
+    "instances": 1
+   }
+  },
+  {
+   "id": "db",
+   "kind": "db",
+   "label": "Database",
+   "x": 3,
+   "y": 0,
+   "config": {
+    "capacity": 12,
+    "serviceMs": 12,
+    "serviceCv": 0.6,
+    "queueLimit": 96,
+    "hitRate": 0,
+    "errorRate": 0,
+    "timeoutMs": 0,
+    "retries": 0,
+    "rps": 0,
+    "instances": 1
+   }
+  }
+ ],
+ "edges": [
+  {
+   "id": "e1",
+   "from": "client",
+   "to": "limiter",
+   "weight": 1
+  },
+  {
+   "id": "e2",
+   "from": "limiter",
+   "to": "api",
+   "weight": 1
+  },
+  {
+   "id": "e3",
+   "from": "api",
+   "to": "db",
+   "weight": 1
+  }
+ ],
+ "knobs": [
+  {
+   "id": "rps",
+   "label": "Offered load (requests per second)",
+   "node": "client",
+   "field": "rps",
+   "min": 50,
+   "max": 900,
+   "step": 10,
+   "default": 150,
+   "unit": "/s"
+  },
+  {
+   "id": "limit",
+   "label": "Limit (requests per second)",
+   "node": "limiter",
+   "field": "rateLimitRps",
+   "min": 50,
+   "max": 600,
+   "step": 10,
+   "default": 200,
+   "unit": "/s"
+  },
+  {
+   "id": "burst",
+   "label": "Burst (tokens in the bucket)",
+   "node": "limiter",
+   "field": "burst",
+   "min": 2,
+   "max": 400,
+   "step": 2,
+   "default": 50,
+   "unit": ""
+  }
+ ],
+ "readouts": [
+  "offered",
+  "goodput",
+  "errors",
+  "p99",
+  "throttled:limiter",
+  "util:api",
+  "queue:api",
+  "shed:api"
+ ],
+ "assertions": [
+  {
+   "id": "under-limit-passes",
+   "knobs": {
+    "rps": 150,
+    "limit": 200,
+    "burst": 50
+   },
+   "metric": "errors",
+   "op": "<",
+   "value": 0.02
+  },
+  {
+   "id": "limit-caps-goodput",
+   "knobs": {
+    "rps": 600,
+    "limit": 200,
+    "burst": 50
+   },
+   "metric": "goodput",
+   "op": "between",
+   "value": [
+    180,
+    220
+   ]
+  },
+  {
+   "id": "limit-holds-latency",
+   "knobs": {
+    "rps": 600,
+    "limit": 200,
+    "burst": 50
+   },
+   "metric": "p99",
+   "op": "<",
+   "value": 150
+  },
+  {
+   "id": "limit-protects-api",
+   "knobs": {
+    "rps": 600,
+    "limit": 200,
+    "burst": 50
+   },
+   "metric": "util:api",
+   "op": "<",
+   "value": 0.9
+  },
+  {
+   "id": "limit-above-capacity-saturates",
+   "knobs": {
+    "rps": 600,
+    "limit": 400,
+    "burst": 50
+   },
+   "metric": "util:api",
+   "op": ">=",
+   "value": 0.95
+  },
+  {
+   "id": "tiny-burst-throttles-legit-traffic",
+   "knobs": {
+    "rps": 190,
+    "limit": 200,
+    "burst": 6
+   },
+   "metric": "errors",
+   "op": ">",
+   "value": 0.03
+  },
+  {
+   "id": "small-burst-is-enough",
+   "knobs": {
+    "rps": 190,
+    "limit": 200,
+    "burst": 50
+   },
+   "metric": "errors",
+   "op": "<",
+   "value": 0.01
+  }
+ ]
+}

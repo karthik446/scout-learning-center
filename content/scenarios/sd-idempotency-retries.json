@@ -1,0 +1,265 @@
+{
+ "schema_version": "learning-center-sim:1",
+ "id": "sd-idempotency-retries",
+ "title": "Retries against a database that is nearly full",
+ "seed": 7,
+ "warmup_s": 5,
+ "window_s": 60,
+ "scale_note": null,
+ "nodes": [
+  {
+   "id": "client",
+   "kind": "client",
+   "label": "Clients",
+   "x": 0,
+   "y": 0,
+   "config": {
+    "capacity": 1,
+    "serviceMs": 0,
+    "serviceCv": 0,
+    "queueLimit": 0,
+    "hitRate": 0,
+    "errorRate": 0,
+    "timeoutMs": 3000,
+    "retries": 0,
+    "rps": 60
+   }
+  },
+  {
+   "id": "api",
+   "kind": "service",
+   "label": "API",
+   "x": 1,
+   "y": 0,
+   "config": {
+    "capacity": 32,
+    "serviceMs": 5,
+    "serviceCv": 0.5,
+    "queueLimit": 64,
+    "hitRate": 0,
+    "errorRate": 0,
+    "timeoutMs": 150,
+    "retries": 3,
+    "rps": 0,
+    "instances": 1
+   }
+  },
+  {
+   "id": "breaker",
+   "kind": "breaker",
+   "label": "Breaker",
+   "x": 2,
+   "y": 0,
+   "config": {
+    "capacity": 1,
+    "serviceMs": 0,
+    "serviceCv": 0,
+    "queueLimit": 0,
+    "hitRate": 0,
+    "errorRate": 0,
+    "timeoutMs": 0,
+    "retries": 0,
+    "rps": 0,
+    "errorThreshold": 1,
+    "windowMs": 5000,
+    "openMs": 5000,
+    "halfOpenProbes": 3
+   }
+  },
+  {
+   "id": "db",
+   "kind": "db",
+   "label": "Database",
+   "x": 3,
+   "y": 0,
+   "config": {
+    "capacity": 4,
+    "serviceMs": 40,
+    "serviceCv": 0.7,
+    "queueLimit": 40,
+    "hitRate": 0,
+    "errorRate": 0,
+    "timeoutMs": 0,
+    "retries": 0,
+    "rps": 0,
+    "instances": 1
+   }
+  }
+ ],
+ "edges": [
+  {
+   "id": "e1",
+   "from": "client",
+   "to": "api",
+   "weight": 1
+  },
+  {
+   "id": "e2",
+   "from": "api",
+   "to": "breaker",
+   "weight": 1
+  },
+  {
+   "id": "e3",
+   "from": "breaker",
+   "to": "db",
+   "weight": 1
+  }
+ ],
+ "knobs": [
+  {
+   "id": "rps",
+   "label": "Offered load (requests per second)",
+   "node": "client",
+   "field": "rps",
+   "min": 40,
+   "max": 120,
+   "step": 5,
+   "default": 60,
+   "unit": "/s"
+  },
+  {
+   "id": "retries",
+   "label": "Retries per failed call (the API's calls to the database)",
+   "node": "api",
+   "field": "retries",
+   "min": 0,
+   "max": 5,
+   "step": 1,
+   "default": 3,
+   "unit": ""
+  },
+  {
+   "id": "trip",
+   "label": "Circuit breaker trips above this share of failing calls (1 = never trips)",
+   "node": "breaker",
+   "field": "errorThreshold",
+   "min": 0.1,
+   "max": 1,
+   "step": 0.05,
+   "default": 1,
+   "unit": ""
+  }
+ ],
+ "faults": [
+  {
+   "id": "crash-db",
+   "label": "Crash the database",
+   "node": "db",
+   "kind": "crash"
+  }
+ ],
+ "readouts": [
+  "offered",
+  "goodput",
+  "errors",
+  "p99",
+  "arrival:db",
+  "util:db",
+  "breaker:breaker",
+  "rejected:breaker"
+ ],
+ "assertions": [
+  {
+   "id": "healthy-with-retries",
+   "knobs": {
+    "rps": 60,
+    "retries": 3,
+    "trip": 1
+   },
+   "metric": "errors",
+   "op": "<",
+   "value": 0.02
+  },
+  {
+   "id": "db-load-matches-offered",
+   "knobs": {
+    "rps": 60,
+    "retries": 3,
+    "trip": 1
+   },
+   "metric": "arrival:db",
+   "op": "between",
+   "value": [
+    55,
+    70
+   ]
+  },
+  {
+   "id": "storm-collapses-goodput",
+   "knobs": {
+    "rps": 80,
+    "retries": 3,
+    "trip": 1
+   },
+   "metric": "goodput",
+   "op": "<",
+   "value": 5
+  },
+  {
+   "id": "storm-multiplies-db-load",
+   "knobs": {
+    "rps": 80,
+    "retries": 3,
+    "trip": 1
+   },
+   "metric": "arrival:db",
+   "op": ">",
+   "value": 250
+  },
+  {
+   "id": "no-retries-survives",
+   "knobs": {
+    "rps": 80,
+    "retries": 0,
+    "trip": 1
+   },
+   "metric": "goodput",
+   "op": ">",
+   "value": 70
+  },
+  {
+   "id": "breaker-shields-db",
+   "knobs": {
+    "rps": 80,
+    "retries": 3,
+    "trip": 0.5
+   },
+   "metric": "arrival:db",
+   "op": "<",
+   "value": 100
+  },
+  {
+   "id": "crash-multiplies-attempts",
+   "knobs": {
+    "rps": 60,
+    "retries": 3,
+    "trip": 1
+   },
+   "faults": [
+    "crash-db"
+   ],
+   "settle_s": 5,
+   "window_s": 30,
+   "metric": "arrival:db",
+   "op": ">",
+   "value": 200
+  },
+  {
+   "id": "crash-with-breaker",
+   "knobs": {
+    "rps": 60,
+    "retries": 3,
+    "trip": 0.5
+   },
+   "faults": [
+    "crash-db"
+   ],
+   "settle_s": 5,
+   "window_s": 30,
+   "metric": "arrival:db",
+   "op": "<",
+   "value": 20
+  }
+ ]
+}

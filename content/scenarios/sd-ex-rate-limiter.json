@@ -1,0 +1,212 @@
+{
+ "schema_version": "learning-center-sim:1",
+ "id": "sd-ex-rate-limiter",
+ "title": "One hot key against a token-bucket limiter (scaled model)",
+ "seed": 7,
+ "warmup_s": 5,
+ "window_s": 60,
+ "scale_note": "One limiter, one API and one database stand for the whole fleet of 20 gateway nodes, with every rate and capacity divided by 100: the exercise's hot key at 20,000 requests a second is offered here as 200 a second. The limit and burst knobs are the exercise's typical key policy, 100 a second with a burst of 200, which is not divided. The ratios carry the lesson; the absolute numbers do not.",
+ "nodes": [
+  {
+   "id": "client",
+   "kind": "client",
+   "label": "Clients",
+   "x": 0,
+   "y": 0,
+   "config": {
+    "capacity": 1,
+    "serviceMs": 0,
+    "serviceCv": 0,
+    "queueLimit": 0,
+    "hitRate": 0,
+    "errorRate": 0,
+    "timeoutMs": 2000,
+    "retries": 0,
+    "rps": 200
+   }
+  },
+  {
+   "id": "limiter",
+   "kind": "ratelimiter",
+   "label": "Rate limiter",
+   "x": 1,
+   "y": 0,
+   "config": {
+    "capacity": 1,
+    "serviceMs": 0,
+    "serviceCv": 0,
+    "queueLimit": 0,
+    "hitRate": 0,
+    "errorRate": 0,
+    "timeoutMs": 0,
+    "retries": 0,
+    "rps": 0,
+    "rateLimitRps": 100,
+    "burst": 200
+   }
+  },
+  {
+   "id": "api",
+   "kind": "service",
+   "label": "API",
+   "x": 2,
+   "y": 0,
+   "config": {
+    "capacity": 6,
+    "serviceMs": 25,
+    "serviceCv": 0.5,
+    "queueLimit": 48,
+    "hitRate": 0,
+    "errorRate": 0,
+    "timeoutMs": 0,
+    "retries": 0,
+    "rps": 0,
+    "instances": 1
+   }
+  },
+  {
+   "id": "db",
+   "kind": "db",
+   "label": "Database",
+   "x": 3,
+   "y": 0,
+   "config": {
+    "capacity": 12,
+    "serviceMs": 12,
+    "serviceCv": 0.6,
+    "queueLimit": 96,
+    "hitRate": 0,
+    "errorRate": 0,
+    "timeoutMs": 0,
+    "retries": 0,
+    "rps": 0,
+    "instances": 1
+   }
+  }
+ ],
+ "edges": [
+  {
+   "id": "e1",
+   "from": "client",
+   "to": "limiter",
+   "weight": 1
+  },
+  {
+   "id": "e2",
+   "from": "limiter",
+   "to": "api",
+   "weight": 1
+  },
+  {
+   "id": "e3",
+   "from": "api",
+   "to": "db",
+   "weight": 1
+  }
+ ],
+ "knobs": [
+  {
+   "id": "rps",
+   "label": "Offered load (requests per second)",
+   "node": "client",
+   "field": "rps",
+   "min": 50,
+   "max": 900,
+   "step": 10,
+   "default": 200,
+   "unit": "/s"
+  },
+  {
+   "id": "limit",
+   "label": "Limit (requests per second)",
+   "node": "limiter",
+   "field": "rateLimitRps",
+   "min": 50,
+   "max": 600,
+   "step": 10,
+   "default": 100,
+   "unit": "/s"
+  },
+  {
+   "id": "burst",
+   "label": "Burst (tokens in the bucket)",
+   "node": "limiter",
+   "field": "burst",
+   "min": 2,
+   "max": 400,
+   "step": 2,
+   "default": 200,
+   "unit": ""
+  }
+ ],
+ "readouts": [
+  "offered",
+  "goodput",
+  "errors",
+  "p99",
+  "throttled:limiter",
+  "util:api",
+  "queue:api",
+  "shed:api"
+ ],
+ "assertions": [
+  {
+   "id": "limit-holds-latency",
+   "knobs": {
+    "rps": 600,
+    "limit": 100,
+    "burst": 200
+   },
+   "metric": "p99",
+   "op": "<",
+   "value": 100
+  },
+  {
+   "id": "limit-caps-goodput",
+   "knobs": {
+    "rps": 600,
+    "limit": 100,
+    "burst": 200
+   },
+   "metric": "goodput",
+   "op": "between",
+   "value": [
+    90,
+    110
+   ]
+  },
+  {
+   "id": "limit-keeps-api-calm",
+   "knobs": {
+    "rps": 600,
+    "limit": 100,
+    "burst": 200
+   },
+   "metric": "util:api",
+   "op": "<",
+   "value": 0.6
+  },
+  {
+   "id": "no-limit-queues",
+   "knobs": {
+    "rps": 600,
+    "limit": 600,
+    "burst": 400
+   },
+   "metric": "p99",
+   "op": ">",
+   "value": 150
+  },
+  {
+   "id": "no-limit-fails",
+   "knobs": {
+    "rps": 600,
+    "limit": 600,
+    "burst": 400
+   },
+   "metric": "errors",
+   "op": ">",
+   "value": 0.4
+  }
+ ]
+}
