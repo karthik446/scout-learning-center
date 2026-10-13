@@ -154,7 +154,79 @@ EXERCISE = {
 }
 EXERCISE_SECTION_IDS = ["requirements-and-estimates", "high-level-design", "data-model", "core-flow", "scaling-and-the-bottleneck",
                         "failure-modes", "trade-offs", "at-10x"]
+TITLED_BODY = {"title": str, "body": str}
 DIAGRAM_START = re.compile(r"^\s*(flowchart|graph)\s")
+
+# --- the written practice pages (kind "case" and "artifact"): the generator's shapes and text checks ----------------------
+# Bounds as gigai.scout.learning_case (copied, never imported): (min, max) counts.
+PRACTICE_KINDS = ("tool", "case", "artifact")
+SCENARIO_SENTENCES = (3, 6)
+CONSTRAINTS = (3, 8)
+ANSWER_SECTIONS = (5, 9)
+RUBRIC = (6, 12)
+MISTAKES = (3, 6)
+TEMPLATE_SECTIONS = (6, 12)
+CHECKLIST = (6, 12)
+SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(])")
+# A written page cites nothing: no address in any form, no backtick, and no name that reads as a real company
+# (a legal-form suffix after a capitalised word; every product and company on such a page is invented).
+ANY_URL = re.compile(r"(?i)\b(?:https?|ftp)://|\bwww\.|\b[a-z0-9-]+\.(?:com|org|net|io|dev|ai|app|co|edu|gov|cloud|info)\b(?:/|\b)")
+COMPANY_SHAPE = re.compile(r"\b[A-Z][\w&'-]+(?:\s+[A-Z][\w&'-]+)*,?\s+(?:Inc|LLC|Ltd|Corp|Corporation|GmbH|PLC|Plc|AG|S\.A|Co)\b\.?")
+
+
+def sentences(text: str) -> list[str]:
+    return [part for part in SENTENCE_END.split(text.strip()) if part.strip()]
+
+
+def written_text_problems(text: str) -> list[str]:
+    """Why a string may not stand on a case or artifact page (reasons only); the checks import_course.py reuses."""
+    out = []
+    if ANY_URL.search(text):
+        out.append("holds an address")
+    if "`" in text:
+        out.append("holds a backtick")
+    m = COMPANY_SHAPE.search(text)
+    if m:
+        out.append(f"holds a company-looking name {m.group(0)!r}")
+    return out
+
+
+def written_checks(name: str, doc: dict) -> list[str]:
+    """Shape bounds and text checks of one case or artifact practice file (the schema has already passed)."""
+    out: list[str] = []
+
+    def bounded(label, items, bounds):
+        if not bounds[0] <= len(items) <= bounds[1]:
+            out.append(f"{name}: {label} holds {len(items)} items; {bounds[0]} to {bounds[1]} needed")
+
+    for path, key, value in walk(doc):
+        if key in URL_KEYS:
+            out.append(f"{name}: {path}: a written practice page holds no address field")
+        if isinstance(value, str) and key not in ("schema_version", "id", "lesson", "kind", "written_by", "generated_by", "generated_on", "reviewed_by", "reviewed_on", "date", "version"):
+            out.extend(f"{name}: {path}: {why}" for why in written_text_problems(value))
+    if doc["kind"] == "case":
+        n = len(sentences(doc["scenario"]))
+        if not SCENARIO_SENTENCES[0] <= n <= SCENARIO_SENTENCES[1]:
+            out.append(f"{name}: scenario holds {n} sentences; {SCENARIO_SENTENCES[0]} to {SCENARIO_SENTENCES[1]} needed")
+        bounded("constraints", doc["constraints"], CONSTRAINTS)
+        bounded("reference_answer", doc["reference_answer"], ANSWER_SECTIONS)
+        bounded("rubric", doc["rubric"], RUBRIC)
+        bounded("common_mistakes", doc["common_mistakes"], MISTAKES)
+    else:
+        bounded("template", doc["template"], TEMPLATE_SECTIONS)
+        bounded("review_checklist", doc["review_checklist"], CHECKLIST)
+        ex = doc["reference_example"]
+        if ex["written_by"] != "model":
+            out.append(f"{name}: reference_example.written_by must be 'model'")
+        if len(ex["sections"]) != len(doc["template"]):
+            out.append(f"{name}: reference_example holds {len(ex['sections'])} sections; the template has {len(doc['template'])}")
+    return out
+
+
+def practice_kind(doc) -> str:
+    """The kind of a practice document; a file with no kind is a tool path."""
+    return doc.get("kind", "tool") if isinstance(doc, dict) else "tool"
+
 
 SCHEMAS = {
     "lesson": {
@@ -169,7 +241,18 @@ SCHEMAS = {
     "practice": {
         "schema_version": str, "id": str, "version": int, "lesson": str, "tool": str, "tool_key": (str, N),
         "why_this_tool": str, "alternatives": str, "setup": [STEP], "steps": [STEP], "sources": [SOURCE],
-        "verified": {"checked": str, "by": str}, "provenance": PROVENANCE, "changelog": CHANGELOG,
+        "verified": {"checked": str, "by": str}, "provenance": PROVENANCE, "changelog": CHANGELOG, "kind?": str,
+    },
+    "practice-case": {
+        "schema_version": str, "id": str, "version": int, "lesson": str, "kind": str, "scenario": str, "constraints": [str],
+        "deliverable": str, "reference_answer": [TITLED_BODY], "rubric": [str], "common_mistakes": [str],
+        "provenance": PROVENANCE, "changelog": CHANGELOG,
+    },
+    "practice-artifact": {
+        "schema_version": str, "id": str, "version": int, "lesson": str, "kind": str, "artifact_name": str,
+        "template": [{"title": str, "prompt": str}],
+        "reference_example": {"situation": str, "sections": [TITLED_BODY], "written_by": str}, "review_checklist": [str],
+        "provenance": PROVENANCE, "changelog": CHANGELOG,
     },
     "pathway": {
         "schema_version": str, "id": str, "version": int, "title": str, "family": str, "role_key": str,
@@ -250,9 +333,17 @@ def validate(docs: dict) -> list[str]:
             out.append(f"{rel}: not a known content file")
             continue
         errs: list[str] = []
+        if kind == "practice":
+            pk = practice_kind(doc)
+            if pk not in PRACTICE_KINDS:
+                out.append(f"{rel}: unknown practice kind {pk!r}")
+                continue
+            kind = "practice" if pk == "tool" else f"practice-{pk}"
         _t(SCHEMAS[kind], doc, "$", errs)
         out.extend(f"{rel}: {e}" for e in errs)
         out.extend(public_checks(rel, doc))
+        if kind in ("practice-case", "practice-artifact") and not errs:
+            out.extend(written_checks(rel, doc))
     if out:
         return out  # reference checks need well-formed documents
 
@@ -322,12 +413,14 @@ def validate(docs: dict) -> list[str]:
         w = f"practice/{lid}"
         if lid not in lessons:
             out.append(f"{w}: lesson does not exist")
+        if not pr["provenance"]["generated_by"].strip():
+            out.append(f"{w}: provenance.generated_by is empty")
+        if practice_kind(pr) != "tool":
+            continue
         if len(pr["steps"]) < 6:
             out.append(f"{w}: fewer than 6 steps")
         if pr["tool_key"] and pr["tool_key"] not in keys:
             out.append(f"{w}: unknown tool_key")
-        if not pr["provenance"]["generated_by"].strip():
-            out.append(f"{w}: provenance.generated_by is empty")
         for s in pr["setup"] + pr["steps"]:
             if not s["source"].get("verified", {}).get("checked"):
                 out.append(f"{w}: step {s['n']} has no verified.checked date")
