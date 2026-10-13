@@ -1,0 +1,376 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "kind": "design-exercise",
+  "id": "sd-ex-notifications",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Design exercise: notifications",
+  "area": "software",
+  "primary_key": "system-design",
+  "secondary_keys": [
+    "apis",
+    "distributed-systems",
+    "reliability"
+  ],
+  "keys": [
+    "system-design",
+    "apis",
+    "distributed-systems",
+    "reliability"
+  ],
+  "summary": "A classic design exercise: a shared notification service for push, email and SMS with preferences, quiet hours, provider failover and no duplicates. The reference answer uses an idempotency key per (event, user, channel), one durable queue per channel and priority class, adapters behind circuit breakers with a secondary provider, collapse identifiers at the provider, and a delivery status store; the design-doc frame follows the outline's worked example.",
+  "detail": [],
+  "in_practice": "",
+  "subtopics": [],
+  "diagram": null,
+  "code": [],
+  "technologies": [],
+  "related": [
+    "sd-queues-streams",
+    "sd-idempotency-retries",
+    "sd-rate-limiting-overload",
+    "sd-fan-out",
+    "sd-data-modelling"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Firebase Cloud Messaging: architectural overview",
+      "url": "https://firebase.google.com/docs/cloud-messaging/fcm-architecture"
+    },
+    {
+      "kind": "doc",
+      "title": "Apple Developer: Sending notification requests to APNs",
+      "url": "https://developer.apple.com/documentation/usernotifications/sending-notification-requests-to-apns"
+    },
+    {
+      "kind": "doc",
+      "title": "Amazon SNS Developer Guide: What is Amazon SNS?",
+      "url": "https://docs.aws.amazon.com/sns/latest/dg/welcome.html"
+    },
+    {
+      "kind": "doc",
+      "title": "Amazon Builders' Library: Avoiding insurmountable queue backlogs",
+      "url": "https://builder.aws.com/content/3EuRcgkTP1MI0c7zM8W6HL3WIqA/avoiding-insurmountable-queue-backlogs"
+    },
+    {
+      "kind": "blog",
+      "title": "Stripe: Designing robust and predictable APIs with idempotency",
+      "url": "https://stripe.com/blog/idempotency"
+    },
+    {
+      "kind": "doc",
+      "title": "Azure Architecture Center: Competing Consumers pattern",
+      "url": "https://learn.microsoft.com/en-us/azure/architecture/patterns/competing-consumers"
+    }
+  ],
+  "practice": null,
+  "exercise": {
+    "prompt": "Design a notification service that several product teams use to send push, email and SMS to users. A user must see each event once, on the channels they allow and not during their quiet hours; a provider outage must not stop delivery; the sending team must be able to ask what happened to a notification.",
+    "constraints": [
+      {
+        "heading": "Functional",
+        "body": "An API for internal teams to send a notification for an event to a user on one or more channels; per-user preferences and quiet hours; templates per team; delivery status by notification id; provider failover; retries without duplicates."
+      },
+      {
+        "heading": "Scale (assumption)",
+        "body": "20 million users; 50 million notifications per day, 70 percent push, 25 percent email, 5 percent SMS; peak 10x the daily average; five sending teams today, more later. Chosen for the exercise; derive the per-second rates per channel and the queue sizes yourself."
+      },
+      {
+        "heading": "Targets (assumption)",
+        "body": "Push handed to the provider within 5 s at p95; email within 60 s; SMS within 30 s; provider failover within 60 s of detection; at-least-once delivery to the provider with deduplication so a user sees one message per event; 99.9 percent availability of the send API."
+      },
+      {
+        "heading": "Non-goals",
+        "body": "Marketing campaigns and audience selection, an in-app inbox, analytics beyond delivery status, exactly-once delivery across providers (not possible end to end)."
+      }
+    ],
+    "clarifying_questions": [
+      {
+        "question": "Who decides the channel?",
+        "answer": "The sending team proposes channels per event type; the user's preferences and quiet hours filter them; the service never adds a channel the team did not ask for."
+      },
+      {
+        "question": "What is the duplicate we must prevent?",
+        "answer": "The same event sent twice by a retrying caller, and the same queued notification processed twice by a retrying consumer. The same event sent with two different event ids by the caller is not caught, and the API contract says so."
+      },
+      {
+        "question": "What happens during quiet hours?",
+        "answer": "Push and SMS are held until the window ends (or dropped if the event expires); email is sent, since it does not wake anyone (assumption; a product decision the doc must state)."
+      },
+      {
+        "question": "Priority classes?",
+        "answer": "Two: transactional (security codes, receipts) which ignores quiet hours and rate limits, and informational which honours both."
+      },
+      {
+        "question": "How long is delivery status kept?",
+        "answer": "90 days (assumption), queryable by notification id and by user."
+      },
+      {
+        "question": "Where does personal data live?",
+        "answer": "Phone numbers and device tokens only inside the adapter boundary and the status store, encrypted at rest; teams send user ids, never addresses."
+      }
+    ],
+    "reference_answer": [
+      {
+        "id": "requirements-and-estimates",
+        "title": "Requirements and estimates",
+        "body": [
+          {
+            "heading": "Derived numbers",
+            "body": "50 million per day is about 580 per second average, 5,800 at peak. Per channel at peak: push 4,060 per second, email 1,450, SMS 290. Each notification record is about 1 kB (ids, channel, template id, rendered payload reference, status history), so 50 GB per day and 4.5 TB for 90 days of status, a partitioned table keyed by notification id with an index by user. Queue depth at peak if a provider stalls for 60 s: 4,060 times 60 is about 244,000 push messages, trivial for a durable queue but the number that sets the failover deadline."
+          },
+          {
+            "heading": "The latency budget",
+            "body": "Provider latency dominates: a push provider call is a network round trip to an external service of the order of 100 ms (assumption), so 4,060 per second needs about 400 concurrent in-flight requests by Little's law (rate times residence time), spread across the adapter workers. The internal hops (API to queue to adapter) are datacenter round trips of 500 us each, negligible against the 5 s target."
+          }
+        ]
+      },
+      {
+        "id": "high-level-design",
+        "title": "High-level design",
+        "body": [
+          {
+            "heading": "Container view",
+            "body": "One API in front of a preference lookup, one durable queue per channel with competing consumers, provider adapters behind circuit breakers with a secondary provider each, a delivery status store written from provider callbacks, and a dead-letter queue with an operator view. The channel queues are separate because the channels have different latency targets and different providers; a shared queue would let an SMS backlog delay push. Fan-out of one event to several channels happens at the API, the way a publish-subscribe topic fans one message out to several queues."
+          }
+        ],
+        "diagram": {
+          "source": "flowchart TB\n  subgraph Notification system\n    API[Notification API: idempotency key, validation] --> P[Preference lookup: channels, quiet hours, per-user limits]\n    API --> QP[[push queue]]\n    API --> QE[[email queue]]\n    API --> QS[[sms queue]]\n    QP --> AP[Push adapter + breaker]\n    QE --> AE[Email adapter + breaker]\n    QS --> AS[SMS adapter + breaker]\n    AP --> ST[(delivery status)]\n    AE --> ST\n    AS --> ST\n    QP -.-> DL[[dead letter]]\n  end\n  T[Product teams] --> API\n  AP --> FCM{{Push providers}}\n  AE --> SES{{Email provider}}\n  AS --> SMS{{SMS provider}}",
+          "legend": "Boxes are containers, the outer frame is the system boundary, hexagons are external systems, double brackets are queues."
+        }
+      },
+      {
+        "id": "data-model",
+        "title": "The data model",
+        "body": [
+          {
+            "heading": "Entities",
+            "body": "Notification {notification_id, idempotency_key = (event_id, user_id, channel), team_id, event_type, priority, template_id, payload, created_at, expires_at}. Preference {user_id, channel, enabled, quiet_hours (start, end, timezone), per_channel_limits}. DeviceToken {user_id, platform, token, updated_at} and Address {user_id, email, phone} inside the adapter boundary only. DeliveryStatus {notification_id, channel, attempts[] of (provider, time, result), state (queued, held, sent, delivered, failed, dead)}. Template {team_id, template_id, channel, body, version}."
+          },
+          {
+            "heading": "API",
+            "body": "POST /notifications {event_id, user_id, event_type, channels[], priority, template_id, variables, expires_at} with an Idempotency-Key header (the Stripe write-up and the IETF draft describe the semantics: the same key returns the same result for 24 hours) returns {notification_ids[]}; GET /notifications/{id} returns the status history; PUT /users/{id}/preferences; POST /templates. Teams authenticate with per-team credentials and are rate limited per team."
+          }
+        ]
+      },
+      {
+        "id": "core-flow",
+        "title": "The core flow, step by step",
+        "body": [
+          {
+            "body": "One informational event for a user who allows push and email, sent during the day."
+          }
+        ],
+        "steps": [
+          "The API validates the request, checks the idempotency key in a 24-hour key store, and returns the stored result if the key is known.",
+          "The API reads the user's preferences: push and email enabled, no quiet hours now, under the per-user limit of 10 informational pushes per hour (assumption). SMS was not requested. It renders the templates and writes one Notification per channel in state queued.",
+          "The API enqueues one message per channel on that channel's queue and returns the notification ids. Writing the record and enqueueing are made safe by writing the record first and treating a duplicate enqueue as harmless (the consumer deduplicates by notification id).",
+          "A push adapter worker takes the message (visibility timeout 30 s), loads the device tokens, and calls the primary push provider with a collapse identifier equal to the event id so that a redelivered or updated notification replaces rather than duplicates on the device (APNs exposes a collapse identifier on its HTTP/2 provider API; the adapter uses each provider's equivalent), and an expiry equal to expires_at.",
+          "On success the worker records the attempt and state sent, and deletes the queue message. On a transient failure it retries up to 3 times with exponential backoff and jitter; on a hard failure (invalid token) it marks failed and removes the token.",
+          "Provider callbacks (delivered, bounced, unsubscribed) arrive on a webhook, are matched by provider message id, and update the status store; the email adapter maps a bounce to a suppressed address.",
+          "A message that exhausts retries on both providers goes to the dead-letter queue with its last error; the operator view lets a team replay or discard it."
+        ]
+      },
+      {
+        "id": "scaling-and-the-bottleneck",
+        "title": "Scaling and the bottleneck",
+        "body": [
+          {
+            "heading": "Providers, breakers and backlogs",
+            "body": "The bottleneck is the provider, not the service: each provider has its own rate limits and its own bad days. The adapter keeps a circuit breaker per provider; when the primary's error rate crosses a threshold the breaker opens and traffic shifts to the secondary within the 60 s failover target, with the breaker probing the primary in a half-open state. Adapter workers scale on queue age (oldest message age), not on queue length, because age is the SLI the targets are written in. The Builders' Library article on queue backlogs is the reference for what follows: a backlog of a slow channel must not starve a fast one (separate queues), one abusive sender must not fill everyone's queue (per-team quotas at the API, and a sidelined queue for a team whose messages keep failing), and an old backlog must drain by age so fresh transactional messages are not stuck behind stale informational ones (the transactional class has its own queue per channel)."
+          },
+          {
+            "heading": "Preferences, quiet hours and collapsing",
+            "body": "Preferences are read on every send: 5,800 reads per second at peak against a 20-million-row table is a cache job (cache-aside with a short TTL, invalidated on preference change). Quiet hours mean held messages: a held notification is stored with a release time and re-enqueued by a scheduler when the window ends, with the expiry still enforced; the held set per user is capped and the newest wins when the cap is exceeded (collapsing), so a user does not wake up to 40 pings. Per-user rate limits are token buckets keyed by user and channel in the same cache."
+          }
+        ]
+      },
+      {
+        "id": "failure-modes",
+        "title": "Failure modes and what degrades",
+        "body": [
+          {
+            "body": "Each row names the failure, what the user and the team see, and the mitigation."
+          }
+        ],
+        "table": {
+          "columns": [
+            "Failure",
+            "Effect",
+            "Mitigation"
+          ],
+          "rows": [
+            [
+              "Primary push provider down",
+              "push latency rises until failover",
+              "breaker opens on error rate; secondary provider takes traffic within 60 s; alert on breaker state"
+            ],
+            [
+              "Preference service down",
+              "cannot decide channels",
+              "default: send push, hold SMS and email (product decision, stated); serve stale preferences from cache first"
+            ],
+            [
+              "Caller retries with the same event",
+              "would duplicate",
+              "idempotency key for 24 hours returns the first result"
+            ],
+            [
+              "Consumer crashes after the provider call, before the ack",
+              "the message is redelivered",
+              "collapse identifier at the provider; status store shows the attempt; the second attempt sees state sent and skips"
+            ],
+            [
+              "SMS backlog from a provider incident",
+              "SMS late",
+              "its own queue; push and email unaffected; age-based alert; operator can pause the channel"
+            ],
+            [
+              "Template bug renders bad text",
+              "wrong message to users",
+              "template versions with a canary send to an internal audience; a kill switch per template"
+            ]
+          ]
+        }
+      },
+      {
+        "id": "trade-offs",
+        "title": "Trade-offs and the alternative not taken",
+        "body": [
+          {
+            "body": "The decisions a reviewer reads first, including the library-versus-service question the design-doc frame of the outline raises."
+          }
+        ],
+        "table": {
+          "columns": [
+            "Decision",
+            "Options",
+            "Chosen",
+            "Why"
+          ],
+          "rows": [
+            [
+              "Shape",
+              "a library in each team's service, a shared service, a managed notification product",
+              "a shared service; the managed product is one provider behind the adapter",
+              "shared dedupe and preferences need shared state; provider changes deploy once"
+            ],
+            [
+              "Queues",
+              "one queue with a channel field versus one queue per channel and priority",
+              "one per channel and priority class",
+              "channel latency targets differ; a backlog must not cross channels"
+            ],
+            [
+              "Duplicates",
+              "exactly-once attempts versus at-least-once plus collapse and dedupe",
+              "at-least-once with idempotency key, status check and collapse id",
+              "exactly-once across a provider boundary is not available; collapse makes a rare duplicate harmless on the device"
+            ],
+            [
+              "Preference outage",
+              "fail closed (send nothing) versus per-channel default",
+              "send push, hold SMS",
+              "silence is also a failure for transactional events; SMS costs money and wakes people"
+            ]
+          ]
+        }
+      },
+      {
+        "id": "at-10x",
+        "title": "What changes at 10x",
+        "body": [
+          {
+            "body": "At 500 million notifications per day and fifty sending teams the service becomes a platform: per-team quotas and budgets (SMS unit cost is the driver), priority classes enforced during incidents by shedding informational traffic first, template governance with review, regional deployments so that a user's data stays in region, and a compliance layer (consent records, unsubscribe handling per channel, retention). The status store becomes partitioned by notification id with time-based tiers. The dead-letter view becomes per team with replay quotas, because at that scale a team's bad deploy can produce millions of failed sends in minutes."
+          }
+        ]
+      }
+    ],
+    "rubric": {
+      "L1": [
+        "A queue per channel with competing consumers, provider adapters, bounded retries with jitter, and an idempotency key for callers.",
+        "A delivery status store written from attempts and provider callbacks, and the per-channel rates derived from the assumptions.",
+        "The duplicate story stated honestly: what is caught (caller retries, consumer redelivery) and what is not (two event ids for one event)."
+      ],
+      "L2": [
+        "Preferences and quiet hours with held messages, a release scheduler, collapsing and per-user limits.",
+        "Circuit breakers per provider with a secondary provider and a 60 s failover argument, and workers scaled on queue age.",
+        "Backlog handling: separate queues per channel and priority, per-team quotas, sidelining of a failing sender, age-based draining.",
+        "The preference-service outage default chosen and justified."
+      ],
+      "L3": [
+        "The platform questions: quotas and cost per channel per team, priority classes during incidents, template governance, consent and retention.",
+        "Why a library per team or a managed product alone does not solve the problem, with the managed product kept as a provider.",
+        "The deprecation plan for the teams' existing direct-to-provider code paths, with shadow mode before cutover."
+      ]
+    },
+    "interview_frame": [
+      {
+        "time": "0:00 to 0:05",
+        "text": "Requirements: who chooses channels, what duplicate means, quiet hours, priority classes, status retention, where personal data lives. Say the numbers aloud: 5,800 notifications per second at peak (4,060 push), a 244,000-message push backlog after a 60 s provider stall, about 400 concurrent provider calls in flight."
+      },
+      {
+        "time": "0:05 to 0:10",
+        "text": "Entities and API: Notification with its idempotency key of (event, user, channel), Preference, DeviceToken and Address inside the adapter boundary, DeliveryStatus, Template; the send and status endpoints."
+      },
+      {
+        "time": "0:10 to 0:20",
+        "text": "High-level design with the diagram: API, preference lookup, three queues, adapters with breakers and secondary providers, status store, dead letter. Say why the queues are separate."
+      },
+      {
+        "time": "0:20 to 0:40",
+        "text": "Two deep dives: duplicates and retries (idempotency key, consumer redelivery, collapse identifiers, bounded retries then failover then dead letter), then backlogs and failover (breakers, scaling on age, per-team quotas and sidelining, quiet-hour holds and collapsing)."
+      },
+      {
+        "time": "0:40 to 0:45",
+        "text": "Failure modes from the table, the 10x platform (quotas, priority shedding, compliance, regions), and the L3 sentence: the product decision hiding in this design is what to do when the preference service is down, and it should be written down before the review."
+      }
+    ],
+    "design_doc_frame": [
+      {
+        "section": "Context and scope",
+        "text": "Three product teams send push, email and SMS from their own code paths with three providers and no shared dedupe; the incidents of the last quarters (duplicate sends after retries, a provider outage with no failover, no quiet hours). Scope: one internal service for all teams; marketing campaigns and an in-app inbox out of scope."
+      },
+      {
+        "section": "Goals and non-goals",
+        "text": "At-least-once delivery with dedupe so the user sees one message per event; failover within 60 s; preferences and quiet hours; status queryable by the sending team. Non-goals: exactly-once across providers, real-time analytics."
+      },
+      {
+        "section": "Design",
+        "text": "This answer fills it: the API with idempotency keys, the preference lookup, one queue per channel and priority, adapters behind breakers, the status store, the dead-letter view."
+      },
+      {
+        "section": "Alternatives considered",
+        "text": "A library per team (no shared dedupe, three deployments of every provider change); one queue for all channels (SMS backlog delays push); a managed product alone (preferences still need our data), kept as a provider."
+      },
+      {
+        "section": "Cross-cutting concerns",
+        "text": "Security: internal API, per-team credentials, personal data only inside the adapter boundary and the status store, encrypted at rest. Observability: queue age per channel, send success by provider, dedupe hit ratio, breaker state; alert on queue age over the channel target. Cost: per-channel unit cost with SMS the driver, budget with the sending team via a quota. Rollout: shadow mode, then one team's push, then all channels; rollback is a config flag per team."
+      },
+      {
+        "section": "Review questions the doc must answer",
+        "text": "What happens to a notification when the preference service is down (send push, hold SMS); how retries are bounded per provider (3 attempts with jitter, then failover, then dead letter); the dedupe key's lifetime (24 h) and the duplicate it does not catch."
+      }
+    ],
+    "depth_notes": {
+      "L1": "A queue per channel (push, email, SMS), provider adapters, retries and dedupe.",
+      "L2": "User preferences and quiet hours, per-user rate limits, collapsing, delivery tracking, provider failover.",
+      "L3": "A notification platform for many internal teams (templates, priorities, quotas, cost per channel, compliance)."
+    }
+  },
+  "provenance": {
+    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center M4a",
+    "generated_on": "2026-10-12",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "written by hand for the system design module, Part C entry C4 of the outline, with the design-doc frame of section 4.2 and the diagram of section 5"
+    }
+  ]
+}

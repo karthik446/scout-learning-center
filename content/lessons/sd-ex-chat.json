@@ -1,0 +1,385 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "kind": "design-exercise",
+  "id": "sd-ex-chat",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Design exercise: chat and presence",
+  "area": "software",
+  "primary_key": "system-design",
+  "secondary_keys": [
+    "networking",
+    "distributed-systems",
+    "data-stores"
+  ],
+  "keys": [
+    "system-design",
+    "networking",
+    "distributed-systems",
+    "data-stores"
+  ],
+  "summary": "A classic design exercise: real-time messaging with groups, history, receipts and presence at millions of concurrent connections. The reference answer separates connection gateways from conversation ownership, orders each conversation through a single owner chosen by consistent hashing, partitions history by conversation and time bucket, batches fan-out per gateway, and keeps presence best effort and off the message path.",
+  "detail": [],
+  "in_practice": "",
+  "subtopics": [],
+  "diagram": null,
+  "code": [],
+  "technologies": [],
+  "related": [
+    "sd-networking",
+    "sd-fan-out",
+    "sd-data-modelling",
+    "sd-consistency-consensus",
+    "sd-replication-partitioning"
+  ],
+  "sources": [
+    {
+      "kind": "spec",
+      "title": "RFC 6455: The WebSocket Protocol",
+      "url": "https://www.rfc-editor.org/rfc/rfc6455.html"
+    },
+    {
+      "kind": "blog",
+      "title": "Slack Engineering: Real-time messaging",
+      "url": "https://slack.engineering/real-time-messaging/"
+    },
+    {
+      "kind": "blog",
+      "title": "Discord: How Discord stores trillions of messages",
+      "url": "https://discord.com/blog/how-discord-stores-trillions-of-messages"
+    },
+    {
+      "kind": "blog",
+      "title": "Discord: How Discord stores billions of messages",
+      "url": "https://discord.com/blog/how-discord-stores-billions-of-messages"
+    },
+    {
+      "kind": "blog",
+      "title": "Discord: How Discord scaled Elixir to 5,000,000 concurrent users",
+      "url": "https://discord.com/blog/how-discord-scaled-elixir-to-5-000-000-concurrent-users"
+    },
+    {
+      "kind": "doc",
+      "title": "Latency numbers every programmer should know",
+      "url": "https://gist.github.com/jboner/2841832"
+    }
+  ],
+  "practice": null,
+  "exercise": {
+    "prompt": "Design a messaging service: one-to-one and group conversations, delivered in real time to connected devices, with history that users can scroll back through, delivery and read receipts, and a presence indicator that shows who is online.",
+    "constraints": [
+      {
+        "heading": "Functional",
+        "body": "Send a message to a conversation (up to 1,000 members, assumption); deliver it to every connected member in order; store history forever; page through history; delivered and read receipts; online, away and offline presence."
+      },
+      {
+        "heading": "Scale (assumption)",
+        "body": "50 million daily active users; 5 million concurrent connections at peak; 1 billion messages per day; an average message of 200 bytes of text, about 500 bytes stored with metadata; a user reads about 20 messages for every one sent. All chosen for the exercise; derive the per-second rates, the connection count per gateway and the storage growth yourself."
+      },
+      {
+        "heading": "Targets (assumption)",
+        "body": "Delivery to a connected member within 500 ms at p99 inside one region; history page under 100 ms at p99; 99.95 percent availability for sending and delivery; messages are never lost once the sender sees the acknowledgement."
+      },
+      {
+        "heading": "Non-goals",
+        "body": "End-to-end encryption, voice and video, media storage (a media reference is a URL to an object store), spam and abuse detection, search ranking."
+      }
+    ],
+    "clarifying_questions": [
+      {
+        "question": "What ordering is required?",
+        "answer": "A total order per conversation: every member sees the same sequence. No ordering across conversations."
+      },
+      {
+        "question": "Delivery guarantee?",
+        "answer": "At least once to the device, deduplicated by message id on the client; the server acknowledges to the sender only after the message is durable."
+      },
+      {
+        "question": "How large do groups get?",
+        "answer": "Up to 1,000 members. Larger broadcast channels are a different product and out of scope."
+      },
+      {
+        "question": "Multi-device?",
+        "answer": "Yes: a user may have several sessions; each gets every message, and read receipts are per user, not per device."
+      },
+      {
+        "question": "How fresh must presence be?",
+        "answer": "Online within a few seconds of connecting; offline within 60 s of the last heartbeat (assumption). Presence is best effort and never blocks a message."
+      },
+      {
+        "question": "Multi-region?",
+        "answer": "One region per user's home; cross-region conversations route through the conversation's home region. The reference answer is single-region."
+      }
+    ],
+    "reference_answer": [
+      {
+        "id": "requirements-and-estimates",
+        "title": "Requirements and estimates",
+        "body": [
+          {
+            "heading": "Derived numbers: messages, delivery, storage",
+            "body": "Messages: 1 billion per day is about 11,600 per second average; with a 3x daily peak (assumption) 35,000 per second. Each message in a group of average 5 members (assumption) fans out to 5 devices, so delivery is about 175,000 pushes per second at peak. Storage: 1 billion times 500 bytes is 500 GB per day, about 180 TB per year, which rules out one database node and makes partitioning the first decision. Reads: 20 reads per send means 700,000 message reads per second at peak, mostly of the newest messages of a conversation, which is what the partition layout must serve cheaply."
+          },
+          {
+            "heading": "Derived numbers: connections and latency",
+            "body": "5 million concurrent WebSocket connections at 50,000 per gateway node (assumption; a connection costs tens of kilobytes of memory and a heartbeat every 30 s) is 100 gateway nodes, plus headroom for a zone loss: 150 nodes in three zones. Heartbeats alone are 5 million per 30 s, about 170,000 small frames per second. A delivery inside one region is a handful of datacenter round trips at 500 us each (the latency reference numbers), so the 500 ms p99 target is generous for the happy path and exists to absorb queueing under load."
+          }
+        ]
+      },
+      {
+        "id": "high-level-design",
+        "title": "High-level design",
+        "body": [
+          {
+            "heading": "Container view",
+            "body": "Clients hold one WebSocket (RFC 6455: upgrade handshake, framing, ping and pong, close) to a stateless-enough gateway that knows only which sessions it holds. Conversations are owned by conversation servers chosen by consistent hashing of the conversation id, so one server orders all writes of a conversation; Slack describes the same split into gateway servers holding connections and channel servers mapped by consistent hashing, with presence servers beside them. The conversation server persists the message, assigns its position, and fans it out to the gateways that hold the members' sessions. Offline members get a push notification from an event consumer; a search indexer consumes the same events."
+          }
+        ],
+        "diagram": {
+          "source": "flowchart LR\n  C[Clients, WebSocket] --> LB[L4 balancer]\n  LB --> GW[Gateway nodes: one connection per session]\n  GW -->|publish| CS[Conversation servers, consistent hashing by conversation id]\n  CS --> MS[(Message store: partitioned by conversation and time bucket)]\n  CS -->|fan-out to members' gateways| GW\n  GW --> PR[(Presence: user to status, TTL)]\n  GW --> SS[(Session registry: user to gateway)]\n  CS --> Q[[message events]]\n  Q --> PN[Push notification service, offline members]\n  Q --> IX[Search indexer]",
+          "legend": "Boxes are containers; cylinders are stores; double brackets are logs. Gateways hold connections, conversation servers hold order."
+        }
+      },
+      {
+        "id": "data-model",
+        "title": "The data model",
+        "body": [
+          {
+            "heading": "Entities",
+            "body": "Conversation {conversation_id, type (direct or group), member_ids, created_at}. Message {conversation_id, bucket, message_id (time-ordered 64-bit), sender_id, body, media_ref, sent_at}. Receipt {conversation_id, user_id, last_delivered_id, last_read_id}: one row per member, not one per message, so receipts cost nothing per message. Session {user_id, device_id, gateway_id, connected_at}. Presence {user_id, status, last_seen, ttl}."
+          },
+          {
+            "heading": "Partition layout",
+            "body": "The message partition key is (conversation_id, bucket) with a time-ordered message id as the clustering key, where a bucket is a window of about 10 days: Discord's public write-up chose that window so that even the busiest conversations keep a partition under about 100 MB, and a page of recent history is a range scan inside one partition. Without the bucket, a years-old conversation becomes one unbounded hot partition."
+          },
+          {
+            "heading": "API",
+            "body": "Over WebSocket: send {client_msg_id, conversation_id, body} answered by ack {client_msg_id, message_id}; server frames message, receipt, presence. Over HTTP: GET /conversations/{id}/messages?before={message_id}&limit=50 for history; POST /conversations; PUT /conversations/{id}/read {last_read_id}."
+          }
+        ]
+      },
+      {
+        "id": "core-flow",
+        "title": "The core flow, step by step",
+        "body": [
+          {
+            "body": "Sending one message to a group, from the sender's frame to the members' screens."
+          }
+        ],
+        "steps": [
+          "The sender's gateway receives the send frame, checks membership (cached), and forwards it to the conversation server that owns the conversation (consistent hash lookup).",
+          "The conversation server assigns the next time-ordered message id (it is the single writer for this conversation, so ids are monotonic within it), writes the message to the store with quorum durability, and only then acknowledges to the sender's gateway. The client's client_msg_id makes a retried send idempotent.",
+          "The conversation server looks up the members' sessions in the session registry, groups them by gateway, and sends one batched delivery per gateway (Discord's Elixir write-up describes grouping recipients by node so a publish costs one send per node, not one per recipient).",
+          "Each gateway writes the message frame to its local sessions; a client acknowledges delivery, and the gateway updates last_delivered_id for that user asynchronously.",
+          "Members without a session are handed to the push notification consumer through the message event log; the message is already durable, so a slow push never blocks delivery.",
+          "A reconnecting client sends its last seen message id per conversation; the gateway serves the gap from the store (a range scan in the current bucket) before resuming live delivery, which is how at-least-once delivery survives a dropped connection."
+        ]
+      },
+      {
+        "id": "scaling-and-the-bottleneck",
+        "title": "Scaling and the bottleneck",
+        "body": [
+          {
+            "heading": "Group fan-out and the hot partition",
+            "body": "The bottleneck is fan-out in large groups and the hot partition behind a busy conversation. For a 1,000-member group one message is up to 1,000 deliveries; batching by gateway turns that into at most 150 sends. The store sees one write per message regardless of members, but the reads of a popular conversation all land on one partition; Discord's trillions-of-messages write-up reports that hot partitions were their main source of latency, and that a data service layer with request coalescing (one database read for many identical concurrent requests, routed by conversation id with consistent hashing) was the fix, alongside the database move that took their historical-message p99 from 40 to 125 ms down to 15 ms. The answer adopts coalescing in the conversation server: it already owns the conversation, so it serves recent history from an in-memory tail of the last few hundred messages and hits the store only on a miss."
+          },
+          {
+            "heading": "Presence at scale",
+            "body": "Presence is the other volume problem: a user with 500 contacts coming online would notify 500 sessions, and heartbeats arrive at 170,000 per second. The design keeps presence best effort: status lives in a TTL store written by the gateway on connect, disconnect and every heartbeat; changes are fanned out only to contacts who are currently viewing that user (subscriptions held by the gateway), and status transitions are debounced so a flapping connection does not storm. A missed heartbeat window of 60 s marks the user away; nothing on the message path waits for presence."
+          }
+        ]
+      },
+      {
+        "id": "failure-modes",
+        "title": "Failure modes and what degrades",
+        "body": [
+          {
+            "body": "Each row names the failure, what members see, and the mitigation."
+          }
+        ],
+        "table": {
+          "columns": [
+            "Failure",
+            "Effect",
+            "Mitigation"
+          ],
+          "rows": [
+            [
+              "Gateway node dies",
+              "its 50,000 sessions drop",
+              "clients reconnect with backoff and jitter to another gateway and resync from their last message id; session registry entries expire by TTL"
+            ],
+            [
+              "Conversation server dies",
+              "its conversations pause for seconds",
+              "the hash ring reassigns them; a new owner rebuilds its tail from the store; in-flight sends are retried by clients with the same client_msg_id"
+            ],
+            [
+              "Message store partition slow (hot conversation)",
+              "history pages slow for that conversation",
+              "in-memory tail and request coalescing on the owner; bucketed partitions keep scans bounded"
+            ],
+            [
+              "Store write fails after the id is assigned",
+              "the sender gets no ack",
+              "the client retries; the owner deduplicates by client_msg_id; ids may have gaps, which the client ignores"
+            ],
+            [
+              "Push provider slow",
+              "offline members notified late",
+              "push is consumed from the event log off the delivery path; backlog is visible as consumer lag"
+            ],
+            [
+              "Presence store down",
+              "everyone looks offline",
+              "presence is best effort; UI shows unknown; messages flow unchanged"
+            ]
+          ]
+        }
+      },
+      {
+        "id": "trade-offs",
+        "title": "Trade-offs and the alternative not taken",
+        "body": [
+          {
+            "body": "The decisions a reviewer reads first."
+          }
+        ],
+        "table": {
+          "columns": [
+            "Decision",
+            "Options",
+            "Chosen",
+            "Why"
+          ],
+          "rows": [
+            [
+              "Where order is decided",
+              "the store's clock, a per-conversation owner, a consensus log per conversation",
+              "a single owner per conversation by consistent hashing",
+              "monotonic ids with one write, no cross-node coordination per message; failover costs seconds, which the target allows"
+            ],
+            [
+              "Connection handling",
+              "long polling, server-sent events, WebSocket",
+              "WebSocket",
+              "bidirectional, one connection per device, ping and pong for liveness"
+            ],
+            [
+              "History partitioning",
+              "by conversation only versus by conversation and time bucket",
+              "conversation plus 10-day bucket",
+              "bounded partitions for years-old busy conversations"
+            ],
+            [
+              "Receipts",
+              "one row per message per member versus one cursor per member",
+              "cursor per member",
+              "1,000-member groups would otherwise write 1,000 rows per message"
+            ],
+            [
+              "Presence delivery",
+              "broadcast every change to all contacts versus subscriptions",
+              "subscriptions with debounce",
+              "bounded fan-out; presence is not worth a message's cost"
+            ]
+          ]
+        }
+      },
+      {
+        "id": "at-10x",
+        "title": "What changes at 10x",
+        "body": [
+          {
+            "body": "At 50 million concurrent connections and 10 billion messages per day, the single region becomes several, with a conversation's home region owning its order and remote members served through their local gateways (the geo distribution lesson); cross-region delivery adds one inter-region round trip of the order of 100 ms, which the 500 ms target still absorbs. Storage grows by 1.8 PB per year: old buckets move to cheaper storage tiers and the message store is split into cells by conversation id so a cell outage affects a bounded share of conversations. End-to-end encryption, if adopted, moves search to the client and leaves the server with opaque bodies, which is the point at which the search indexer in the diagram disappears. Backpressure to slow clients becomes explicit: a gateway drops a session whose outbound buffer exceeds a bound rather than letting one slow phone hold memory for everyone."
+          }
+        ]
+      }
+    ],
+    "rubric": {
+      "L1": [
+        "Connection gateways separate from conversation ownership, with a message store partitioned by conversation.",
+        "Durable write before the acknowledgement, idempotent sends by client message id, and delivery receipts as a cursor per member.",
+        "The storage estimate (500 GB per day) and the gateway count derived from the stated assumptions."
+      ],
+      "L2": [
+        "Group fan-out batched by gateway, and the hot-partition problem handled with time buckets and request coalescing.",
+        "Ordering per conversation by a single owner, with the failover behaviour stated.",
+        "History paging by range scan inside a bucket, and the reconnect resync from the last seen message id.",
+        "Presence as best effort with TTL, subscriptions and debounce, never on the message path."
+      ],
+      "L3": [
+        "Multi-region sessions with a home region per conversation and the latency that costs.",
+        "The consequences of end-to-end encryption for search and server-side features.",
+        "Explicit backpressure to slow clients, and the cell layout that bounds a store outage."
+      ]
+    },
+    "interview_frame": [
+      {
+        "time": "0:00 to 0:05",
+        "text": "Requirements: ordering, delivery guarantee, group size, multi-device, presence freshness, regions. Say the numbers aloud: 35,000 messages per second at peak, 175,000 deliveries per second, 5 million connections on about 100 gateways, 500 GB of history per day."
+      },
+      {
+        "time": "0:05 to 0:10",
+        "text": "Entities and API: Conversation, Message with the (conversation, bucket) partition key, Receipt as a cursor, Session, Presence; the send and ack frames; the history endpoint."
+      },
+      {
+        "time": "0:10 to 0:20",
+        "text": "High-level design with the diagram: gateways hold connections, conversation servers hold order by consistent hashing, the store is partitioned by conversation and time bucket, push and search consume an event log."
+      },
+      {
+        "time": "0:20 to 0:40",
+        "text": "Two deep dives: the send path (durable write before ack, single-owner ordering, batched fan-out per gateway, resync on reconnect), then hot conversations and presence (bucketed partitions, in-memory tail with coalescing, best-effort presence with subscriptions)."
+      },
+      {
+        "time": "0:40 to 0:45",
+        "text": "Failure modes from the table, the 10x plan (regions, cells, storage tiers, backpressure), and the L3 sentence: the hard part is not sending a message, it is deciding who owns the order and what happens to that owner when it dies."
+      }
+    ],
+    "design_doc_frame": [
+      {
+        "section": "Context and scope",
+        "text": "The current client platforms, the existing push and identity services, the ordering and loss incidents that motivate the design."
+      },
+      {
+        "section": "Goals and non-goals",
+        "text": "Total order per conversation, no loss after ack, 500 ms delivery p99, 100 ms history p99; encryption, media, voice and abuse detection out of scope."
+      },
+      {
+        "section": "Design",
+        "text": "This answer fills it: the gateway and conversation server split, the partition layout, the send path, presence."
+      },
+      {
+        "section": "Alternatives considered",
+        "text": "Order by store clock or by a consensus log per conversation, long polling instead of WebSocket, receipts per message, with the trade-off table."
+      },
+      {
+        "section": "Cross-cutting concerns",
+        "text": "Observability (delivery latency per hop, fan-out batch size, hot-partition read latency, reconnect rate), privacy of message bodies and retention, cost per connection and per stored message, rollout by conversation cohort."
+      },
+      {
+        "section": "Review questions the doc must answer",
+        "text": "What a member sees in the seconds after a conversation server dies, and how a client proves it has not missed a message after a reconnect."
+      }
+    ],
+    "depth_notes": {
+      "L1": "Connection gateways, a message store partitioned by conversation, delivery receipts.",
+      "L2": "Group fan-out, presence at scale, ordering per conversation, history pagination with hot partitions handled.",
+      "L3": "Multi-region sessions, end-to-end encryption consequences for search, backpressure to slow clients."
+    }
+  },
+  "provenance": {
+    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center M4a",
+    "generated_on": "2026-10-12",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-12",
+      "change": "written by hand for the system design module, Part C entry C3 of the outline"
+    }
+  ]
+}
