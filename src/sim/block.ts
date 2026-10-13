@@ -307,7 +307,9 @@ class Block {
   chart(): void {
     const c = this.canvas, ctx = c.getContext('2d');
     if (!ctx) return;
-    const W = c.width, H = c.height, L = 48, R = 52, T = 10, B = 22;
+    const cw = Math.max(300, Math.round(c.clientWidth || 640));
+    if (c.width !== cw) { c.width = cw; c.height = Math.max(150, Math.round(cw * 0.28)); } // draw at the displayed size so the text stays readable on a phone
+    const W = c.width, H = c.height, L = 58, R = 56, T = 10, B = 22;
     const css = getComputedStyle(this.root);
     const tok = (name: string, fb: string): string => css.getPropertyValue(name).trim() || fb;
     ctx.clearRect(0, 0, W, H);
@@ -315,20 +317,20 @@ class Block {
     ctx.fillRect(0, 0, W, H);
     const h = this.hist;
     if (h.length < 2) return;
-    const t1 = h[h.length - 1].t, t0 = t1 - CHART_S;
+    const t1 = h[h.length - 1].t, span = Math.min(CHART_S, Math.max(10, t1 - h[0].t)), t0 = t1 - span;
     const maxP = Math.max(100, ...h.map((p) => p.p99)) * 1.1;
     const maxG = Math.max(10, ...h.map((p) => Math.max(p.good, p.offered))) * 1.1;
-    const x = (t: number): number => L + ((t - t0) / CHART_S) * (W - L - R);
+    const x = (t: number): number => L + ((t - t0) / span) * (W - L - R);
     const yP = (v: number): number => T + (1 - v / maxP) * (H - T - B);
     const yG = (v: number): number => T + (1 - v / maxG) * (H - T - B);
     ctx.strokeStyle = tok('--sim-grid', '#bbb');
     ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(L, T); ctx.lineTo(L, H - B); ctx.lineTo(W - R, H - B); ctx.moveTo(W - R, T); ctx.lineTo(W - R, H - B); ctx.stroke();
     ctx.fillStyle = tok('--sim-fg', '#222');
-    ctx.font = '13px system-ui, sans-serif';
+    ctx.font = '12px system-ui, sans-serif';
     ctx.textAlign = 'right'; ctx.fillText(Math.round(maxP / 1.1) + ' ms', L - 5, T + 10);
     ctx.textAlign = 'left'; ctx.fillText(Math.round(maxG / 1.1) + ' /s', W - R + 5, T + 10);
-    ctx.textAlign = 'center'; ctx.fillText('last ' + CHART_S + ' s', (L + W - R) / 2, H - 5);
+    ctx.textAlign = 'center'; ctx.fillText('last ' + Math.round(span) + ' s', (L + W - R) / 2, H - 5);
     const line = (colour: string, dash: number[], width: number, f: (p: Pt) => number, y: (v: number) => number): void => {
       ctx.strokeStyle = colour; ctx.lineWidth = width; ctx.setLineDash(dash);
       ctx.beginPath(); h.forEach((p, i) => (i ? ctx.lineTo(x(p.t), y(f(p))) : ctx.moveTo(x(p.t), y(f(p))))); ctx.stroke();

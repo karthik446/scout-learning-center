@@ -7,9 +7,12 @@ framework, no tracking, hosted on Cloudflare Pages. The design is in the orchest
 ## Layout
 
 ```
-content/      the library, the only input: keys/, lessons/, practice/, pathways/, modules/, families/,
-              redirects.json, changelog.json, site.json, merge-candidates.json
-assets/       the shipped course assets (course.css, course.js, theme-init.js, mermaid/, hljs/), site-extra.css, search.js, favicon.svg
+content/      the library, the only input: keys/, lessons/, practice/, pathways/, modules/, families/, scenarios/ (simulator),
+              sim-staging/ (sim fields of lessons not in this tree yet), redirects.json, changelog.json, site.json, merge-candidates.json
+assets/       the shipped course assets (course.css, course.js, theme-init.js, mermaid/, hljs/), site-extra.css, search.js, favicon.svg,
+              sim/ (the built simulator: sim.js, engine.js, sim.css, LICENSE.txt, UPSTREAM.txt; committed)
+src/sim/      the simulator block in vanilla TypeScript (core.ts shared with the headless runner, block.ts the page block)
+vendor/breakscale/   the pinned, MIT-licensed engine subset (12 files, LICENSE, UPSTREAM.txt hashes, PATCHES.md)
 static/       robots.txt and _headers, copied verbatim into site/
 tools/        import_course.py  one-off import of a shipped gigai course into content/ (reads package data, never imports gigai)
               seed_content.py   the hand-kept content files (system design module outline, families, changelog, site.json)
@@ -18,6 +21,8 @@ tools/        import_course.py  one-off import of a shipped gigai course into co
               serve_check.py    serves site/ on 127.0.0.1 with the exact headers of _headers
               chrome_check.py   headless Chrome over the DevTools pipe: console errors, CSP violations, hosts, screenshots, Pagefind proof
               chrome_cli.sh     the plain command-line Chrome runs (--screenshot, --dump-dom, 390 px iframe wrapper)
+              sim/              check.sh, build.sh, check_vendor.py, golden.mjs, the node tests and golden/ (see "The simulator")
+              test_sim_pages.py the simulator's scan rules (negative tests for the digit rule) and page rendering
 verify/       screenshots, logs and summaries of the last browser verification
 site/         build output, git-ignored
 ```
@@ -60,5 +65,35 @@ touches and add a changelog line.
 
 A practice file has a `kind`: `tool` (the default, steps cited into a tool's documentation), `case` or `artifact` (written pages with no source;
 `tools/test_practice_kinds.py` imports two synthetic fixtures from `tools/fixtures/` into a temp copy of `content/` and builds them).
+
+## The simulator
+
+A lesson or design exercise may carry a `sim` field (scenario id, heading, caption, steps, `sim_claims`). `tools/build.py` renders it as a
+heading, the caption, the steps and `<div class="sim" data-scenario="/learn/scenarios/<id>.json" data-pagefind-ignore>`, links
+`/_assets/sim/sim.css` and loads the one module `/_assets/sim/sim.js` (same origin, no inline script). The block fetches the scenario
+JSON (the only request it makes), runs the engine in the page and draws it: an SVG picture with moving request dots, queue bars and
+"saturated" / "busy" / "crashed" badges, a canvas chart, text readouts, labelled range knobs, a crash button where the scenario has a fault,
+Pause and Reset. Under `prefers-reduced-motion` there is no animation loop: the model steps once a second and the dots are hidden.
+
+- **Scenario files**: `content/scenarios/<id>.json`, format `learning-center-sim:1` (nodes with all nine base config fields, edges, 1 to 3
+  knobs, optional `faults`, `readouts`, `assertions`). `scan.py` validates them. The build copies them to `site/learn/scenarios/`.
+- **Golden runs**: `node tools/sim/golden.mjs --write [id]` runs every scenario headless on the built `assets/sim/engine.js` (warm-up, then one
+  sample a second over the window) and writes `tools/sim/golden/<id>.json`: a `defaults` row and one row per assertion with all metrics
+  and the verdict. Commit it with the scenario; `--check` fails on any difference.
+- **The digit rule**: every number or quantity word ("quarter", "half", "double", "ten times") in a sim caption or step must sit inside a
+  `sim_claims[].text` whose assertion passes in the golden file and whose numbers that golden row shows (rounded, or as a percentage); a knob
+  setting is an instruction and needs no claim. `scan.py` refuses anything else (`tools/test_sim_pages.py` proves it). A stale golden file
+  (scenario changed since) is refused too.
+- **Goodput and offered** are 5-second means over the same window, and the goodput shown is capped at offered, so a reader cannot see goodput above the load offered.
+- **Build**: `sh tools/sim/build.sh` (pinned `npx -y esbuild@0.28.2`, banner with the MIT notice) writes `assets/sim/sim.js` and `engine.js`;
+  both are committed so the site builds without node. `engine.js` is for the headless runner only and is not copied into the site.
+- **Checks** (also the first step of the CI check job): `sh tools/sim/check.sh` = vendor hashes (`check_vendor.py`), committed build equals a
+  fresh build, `node --test` (closed forms M/M/1, M/M/4, Kingman, Little; conservation and bounds on every scenario) and the golden runs
+  against the committed files. No type check runs (it needs a package fetch); esbuild strips types.
+- **Third-party code**: the engine is Breakscale (https://github.com/xevrion/breakscale, MIT, commit d2c876e0): 12 files copied byte for byte
+  into `vendor/breakscale/` with their licence, plus one recorded one-line patch (`PATCHES.md`: the percentile sample cap 512 to 4096). Its
+  interface, analytics and link store are not included. A re-pin is a copy, a re-applied patch, new hashes and a golden re-run.
+- **Browser proof**: `python3 tools/chrome_check.py --sim --out DIR` (against `serve_check.py`) checks the simulator pages at 1280 and 390 px and
+  with reduced motion; screenshots land in `DIR/shots/sim-*.png` (copied to `verify/shots/`).
 
 Deploying: see `OPERATOR.md`.

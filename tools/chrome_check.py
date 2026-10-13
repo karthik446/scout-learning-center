@@ -211,8 +211,8 @@ def check_page(ch: Chrome, base: str, name: str, path: str, width: int, shots: P
         sim["crash"] = crash
         ch.pump(3.0)
         sim["badges_after"] = ev("[...document.querySelectorAll('[data-scenario] .sim-badge')].map((b) => b.textContent).filter(Boolean)")
-        ev("(() => { const b = document.querySelector('[data-scenario] .sim-fault'); if (b) b.click(); const i = document.querySelector('[data-scenario] input[type=range]'); i.value = i.defaultValue; i.dispatchEvent(new Event('input', {bubbles: true})); })()")
-        ch.pump(6.0)  # back at the defaults, steady, for the picture
+        ev("(() => { const r = [...document.querySelectorAll('[data-scenario] button')].find((b) => b.textContent === 'Reset'); r.click(); })()")
+        ch.pump(8.0)  # Reset puts the defaults back at steady state; let the chart fill for the picture
     height = min(max(int(ev("document.documentElement.scrollHeight") or 900), 600), 5000)
     s("Emulation.setDeviceMetricsOverride", {"width": width, "height": height, "deviceScaleFactor": 1, "mobile": False})
     ch.pump(0.5)
