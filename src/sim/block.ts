@@ -104,7 +104,7 @@ class Block {
     c.width = 640; c.height = 180;
     c.setAttribute('role', 'img');
     c.setAttribute('aria-label', 'Last ' + CHART_S + ' seconds: p99 latency, goodput and offered load. The readouts give the current values as text.');
-    chartWrap.append(c, el('p', 'sim-legend', 'Chart, last ' + CHART_S + ' s: solid line = p99 latency (left axis, ms). Dashed line = goodput, dotted line = offered load (right axis, requests per second).'));
+    chartWrap.append(c, el('p', 'sim-legend', 'Chart, up to the last ' + CHART_S + ' s: solid line = p99 latency (left axis, ms). Dashed line = goodput, dotted line = offered load (right axis, requests per second).'));
     this.canvas = c;
     root.append(chartWrap);
 

@@ -146,8 +146,8 @@ SIM_FACTS = r"""(() => {
   const dd = [...h.querySelectorAll('.sim-readouts dd')].map((d) => d.textContent);
   const c = h.querySelector('canvas.sim-chart');
   let painted = 0;
-  if (c) { const px = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; const bg = [px[0], px[1], px[2]]; for (let i = 0; i < px.length; i += 4) if (px[i] !== bg[0] || px[i + 1] !== bg[1] || px[i + 2] !== bg[2]) painted += 1; }
-  return { scenario: h.dataset.scenario, ready: h.classList.contains('sim-ready'), readouts: dd, digits: dd.length > 0 && dd.every((t) => /\d/.test(t)),
+  if (c) { const blank = document.createElement('canvas'); blank.width = c.width; blank.height = c.height; const b = blank.getContext('2d'); b.fillStyle = getComputedStyle(h).getPropertyValue('--sim-bg').trim() || '#fff'; b.fillRect(0, 0, c.width, c.height); painted = c.toDataURL() === blank.toDataURL() ? 0 : 1; }
+  return { scenario: h.dataset.scenario, ready: h.classList.contains('sim-ready'), readouts: dd, digits: dd.length > 0 && dd.every((t) => /\d/.test(t) || /^(closed|open|half-open)$/.test(t)),
     status: (h.querySelector('.sim-status') || {}).textContent, dots: h.querySelectorAll('.sim-dot').length, nodes: h.querySelectorAll('.sim-node').length,
     badges: [...h.querySelectorAll('.sim-badge')].map((b) => b.textContent).filter(Boolean), chart_painted_px: painted,
     knobs: [...h.querySelectorAll('input[type=range]')].map((i) => ({ id: i.id, label: (document.querySelector('label[for="' + i.id + '"]') || {}).textContent, value: i.value })),
@@ -199,6 +199,8 @@ def check_page(ch: Chrome, base: str, name: str, path: str, width: int, shots: P
         facts["ui_result_links"] = ev("document.querySelectorAll('.pagefind-ui__result-link').length")
         facts["first_result"] = ev("(document.querySelector('.pagefind-ui__result-link')||{}).href")
     if name.startswith("sim-"):
+        ev("document.querySelector('[data-scenario]').scrollIntoView({block: 'center'})")  # the block steps only while it is on screen
+        ch.pump(2.5)
         facts["sim"] = ev(SIM_FACTS)
         sim = facts["sim"] or {}
         ch.pump(2.2)  # a second look: the readouts and the dots must have moved on (reduced motion: no dots at all)
