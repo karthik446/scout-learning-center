@@ -12,24 +12,26 @@ gh repo create karthik446/scout-learning-center --public --source . --push --des
 
 ## 2. Create the Cloudflare Pages project and the API token
 
-Dashboard: **Workers & Pages** > **Create** > **Pages** > **Upload assets** (Direct Upload) > project name `scout-edgelab` > create
-(the first upload can be a folder with one `index.html`; the workflow replaces it). Then **My Profile** > **API Tokens** >
-**Create Token** > custom token with the single permission **Account > Cloudflare Pages > Edit**. The account ID is on the
-Workers & Pages overview page, right column. Leave **Web Analytics** off in the project's Metrics tab (turning it on injects a beacon).
-
-Or from the laptop:
+Create the project with wrangler only (done on 2026-10-13: the dashboard's **Create > Upload assets** path now creates a
+Worker on workers.dev, not a Pages project, so the dashboard route is out):
 
 ```sh
 npx -y wrangler login
 npx -y wrangler pages project create scout-edgelab --production-branch main
 ```
 
+The token: an **account-owned** token (dashboard > the account > **Manage Account** > **Account API Tokens**, or My Profile >
+API Tokens with the account scoped) with the single permission **Account > Cloudflare Pages > Edit**; verify it with
+`curl -s -H "Authorization: Bearer $TOKEN" https://api.cloudflare.com/client/v4/accounts/<account id>/tokens/verify`
+before storing it. The account ID is on the Workers & Pages overview page, right column. Leave **Web Analytics** off in the
+project's Metrics tab (turning it on injects a beacon).
+
 ## 3. The two repository secrets
 
 ```sh
 cd /Users/kar/orca/workspaces/gigai/scout.edgelab.one
-gh secret set CLOUDFLARE_API_TOKEN     # paste the token
-gh secret set CLOUDFLARE_ACCOUNT_ID    # paste the account id
+printf %s "$TOKEN" | gh secret set CLOUDFLARE_API_TOKEN          # printf %s: no trailing newline or stray character (a pasted value once failed with code 6111)
+printf %s "$ACCOUNT_ID" | gh secret set CLOUDFLARE_ACCOUNT_ID
 gh api -X PUT repos/karthik446/scout-learning-center/environments/production    # the deploy job uses environment "production"
 ```
 
@@ -51,6 +53,8 @@ curl -sI https://scout-edgelab.pages.dev/ | grep -i -E 'content-security-policy|
    | Host | Type | Destination |
    |---|---|---|
    | `scout` | `CNAME` | `scout-edgelab.pages.dev` |
+
+   No trailing dot on the destination: netcup rejects `scout-edgelab.pages.dev.`.
 
    Expect about 10 minutes. The zone also has a wildcard A record (`*.edgelab.one` -> 152.53.54.202); the explicit CNAME takes precedence. If the
    panel refuses a CNAME beside the wildcard, delete the wildcard and add explicit records for the names the cluster serves.
