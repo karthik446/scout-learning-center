@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:1",
   "kind": "design-exercise",
   "id": "sd-ex-autocomplete",
-  "version": 1,
+  "version": 2,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: search autocomplete",
@@ -137,8 +137,8 @@
           }
         ],
         "diagram": {
-          "source": "flowchart TB\n  subgraph Serving\n    U[Clients, debounced keystrokes] --> E[Edge cache: prefix to top-10, 60 s TTL]\n    E --> AS[Autocomplete service]\n    AS --> SH[(Prefix index shards, in memory, by first letters)]\n    AS --> PR[Personalisation re-rank]\n    PR --> UH[(Recent queries per user)]\n  end\n  subgraph Build\n    QL[[query log]] --> AG[Aggregator: counts with decay, every hour]\n    AG --> FL[Filter: block list, min count, dedupe]\n    FL --> BU[Index builder: top-10 per prefix, versioned]\n    BU --> SH\n  end",
-          "legend": "Boxes are containers; the two frames are the serving and build halves; cylinders are stores; double brackets are logs."
+          "source": "flowchart TB\n  subgraph Serving\n    U[Clients, debounced keystrokes] --> E[Edge cache: prefix to top-10, 60 s TTL]\n    E --> AS[Autocomplete service]\n    AS --> SH[(Prefix index shards, in memory, by first letters)]\n    AS --> PR[Personalisation re-rank]\n    PR --> UH[(Recent queries per user)]\n    AS -.->|no entry for the prefix| FB[Fallback suggester: term or phrase, 10 ms deadline]\n  end\n  subgraph Build\n    QL[[query log]] --> AG[Aggregator: counts with decay, every hour]\n    AG --> FL[Filter: block list, min count, dedupe]\n    FL --> BU[Index builder: top-10 per prefix, versioned]\n    BU --> OS[(Index versions: object storage)]\n    OS -->|load and switch| SH\n  end",
+          "legend": "Boxes are containers; the two frames are the serving and build halves; cylinders are stores; double brackets are logs; the dotted edge is the fallback path taken only when the prefix has no entry."
         }
       },
       {
@@ -379,6 +379,11 @@
       "version": 1,
       "date": "2026-10-12",
       "change": "written by hand for the system design module, Part C entry C6 of the outline"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-12",
+      "change": "writer follow-up on the second reader's items (M4c)"
     }
   ]
 }

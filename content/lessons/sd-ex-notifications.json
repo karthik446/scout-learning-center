@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:1",
   "kind": "design-exercise",
   "id": "sd-ex-notifications",
-  "version": 1,
+  "version": 2,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: notifications",
@@ -143,12 +143,12 @@
         "body": [
           {
             "heading": "Container view",
-            "body": "One API in front of a preference lookup, one durable queue per channel with competing consumers, provider adapters behind circuit breakers with a secondary provider each, a delivery status store written from provider callbacks, and a dead-letter queue with an operator view. The channel queues are separate because the channels have different latency targets and different providers; a shared queue would let an SMS backlog delay push. Fan-out of one event to several channels happens at the API, the way a publish-subscribe topic fans one message out to several queues."
+            "body": "One API in front of a preference lookup, one durable queue per channel and priority class (six queues) with competing consumers, provider adapters behind circuit breakers with a secondary provider each, a delivery status store written from provider callbacks, and a dead-letter queue with an operator view. The channel queues are separate because the channels have different latency targets and different providers; a shared queue would let an SMS backlog delay push. Fan-out of one event to several channels happens at the API, the way a publish-subscribe topic fans one message out to several queues."
           }
         ],
         "diagram": {
-          "source": "flowchart TB\n  subgraph Notification system\n    API[Notification API: idempotency key, validation] --> P[Preference lookup: channels, quiet hours, per-user limits]\n    API --> QP[[push queue]]\n    API --> QE[[email queue]]\n    API --> QS[[sms queue]]\n    QP --> AP[Push adapter + breaker]\n    QE --> AE[Email adapter + breaker]\n    QS --> AS[SMS adapter + breaker]\n    AP --> ST[(delivery status)]\n    AE --> ST\n    AS --> ST\n    QP -.-> DL[[dead letter]]\n  end\n  T[Product teams] --> API\n  AP --> FCM{{Push providers}}\n  AE --> SES{{Email provider}}\n  AS --> SMS{{SMS provider}}",
-          "legend": "Boxes are containers, the outer frame is the system boundary, hexagons are external systems, double brackets are queues."
+          "source": "flowchart TB\n  subgraph Notification system\n    API[Notification API: idempotency key, validation] --> P[Preference lookup: channels, quiet hours, per-user limits]\n    API --> QP[[push queues: transactional, informational]]\n    API --> QE[[email queues: transactional, informational]]\n    API --> QS[[sms queues: transactional, informational]]\n    QP --> AP[Push adapter + breaker]\n    QE --> AE[Email adapter + breaker]\n    QS --> AS[SMS adapter + breaker]\n    AP --> ST[(delivery status)]\n    AE --> ST\n    AS --> ST\n    AP -.->|retries exhausted on both providers| DL[[dead letter]]\n    AE -.-> DL\n    AS -.-> DL\n  end\n  T[Product teams] --> API\n  AP --> FCM{{Push providers}}\n  AE --> SES{{Email provider}}\n  AS --> SMS{{SMS provider}}",
+          "legend": "Boxes are containers, the outer frame is the system boundary, hexagons are external systems, double brackets are queues; each queue node stands for two queues, one per priority class, and the dotted edges carry messages whose retries are exhausted."
         }
       },
       {
@@ -220,7 +220,7 @@
             [
               "Preference service down",
               "cannot decide channels",
-              "default: send push, hold SMS and email (product decision, stated); serve stale preferences from cache first"
+              "serve stale preferences from the cache first; with no cached entry the default is send push, hold SMS and email until preferences return (product decision, stated: an unknown preference may be an unsubscribe, and email's 60 s target tolerates a short hold)"
             ],
             [
               "Caller retries with the same event",
@@ -282,8 +282,8 @@
             [
               "Preference outage",
               "fail closed (send nothing) versus per-channel default",
-              "send push, hold SMS",
-              "silence is also a failure for transactional events; SMS costs money and wakes people"
+              "send push, hold SMS and email",
+              "silence is also a failure for transactional events; SMS costs money and wakes people; an unknown email preference may be an unsubscribe, and a held email still meets its 60 s target if the outage is short"
             ]
           ]
         }
@@ -327,7 +327,7 @@
       },
       {
         "time": "0:10 to 0:20",
-        "text": "High-level design with the diagram: API, preference lookup, three queues, adapters with breakers and secondary providers, status store, dead letter. Say why the queues are separate."
+        "text": "High-level design with the diagram: API, preference lookup, a queue per channel and priority class, adapters with breakers and secondary providers, status store, dead letter. Say why the queues are separate."
       },
       {
         "time": "0:20 to 0:40",
@@ -361,7 +361,7 @@
       },
       {
         "section": "Review questions the doc must answer",
-        "text": "What happens to a notification when the preference service is down (send push, hold SMS); how retries are bounded per provider (3 attempts with jitter, then failover, then dead letter); the dedupe key's lifetime (24 h) and the duplicate it does not catch."
+        "text": "What happens to a notification when the preference service is down (stale cache first, then send push, hold SMS and email); how retries are bounded per provider (3 attempts with jitter, then failover, then dead letter); the dedupe key's lifetime (24 h) and the duplicate it does not catch."
       }
     ],
     "depth_notes": {
@@ -381,6 +381,11 @@
       "version": 1,
       "date": "2026-10-12",
       "change": "written by hand for the system design module, Part C entry C4 of the outline, with the design-doc frame of section 4.2 and the diagram of section 5"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-12",
+      "change": "writer follow-up on the second reader's items (M4c)"
     }
   ]
 }

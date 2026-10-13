@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:1",
   "kind": "design-exercise",
   "id": "sd-ex-rag-service",
-  "version": 1,
+  "version": 2,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: RAG service (retrieval-augmented generation)",
@@ -217,6 +217,10 @@
           {
             "heading": "Tenancy, permissions and cost",
             "body": "One index per collection (team) keeps blast radius and cost attribution simple and makes deletion of a team's data a drop of an index; a few very large collections get sharded indexes with scatter-gather across shards. Permission filtering happens on chunk metadata before reranking; for sources with fine-grained ACLs the filter is a join against the document ACL table, which is why document ids and ACL versions are carried on every chunk. Cost: per-team token budgets enforced at the gateway, prompt caching for the instruction prefix, a smaller model for the reranker, and a per-team dashboard of cost per answered question. Latency: retrieval under 300 ms is the index plus the keyword query plus the rerank; the generation dominates and streams, so the first token target is met by starting generation as soon as the prompt is built."
+          },
+          {
+            "heading": "When RAG is not the answer",
+            "body": "The staff-level question is whether the service is needed at all, and the answer is no in four common cases. When the need is style, format or a fixed vocabulary rather than facts that change, fine-tuning a model once is cheaper than retrieving on every question. When users want the documents themselves, a plain search index with good ranking serves them faster than a generated summary and never misquotes. When the question set is closed and small (a product FAQ, a policy with twenty answers), a lookup table or a static page answers exactly and costs nothing per question. When the knowledge is public and stable (a standard, a language, well-known history), the model already has it and retrieval adds latency and a citation that proves nothing. The test this service applies before a team onboards a collection: the answers must depend on documents that are private, permissioned or fresh; if none of those holds, the team is pointed at the cheaper thing."
           }
         ]
       },
@@ -408,6 +412,11 @@
       "version": 1,
       "date": "2026-10-12",
       "change": "converted by hand from the system design outline, section 6.4 (reference answer; numbers and sources unchanged)"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-12",
+      "change": "writer follow-up on the second reader's items (M4c)"
     }
   ]
 }

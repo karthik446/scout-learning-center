@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:1",
   "kind": "design-exercise",
   "id": "sd-ex-url-shortener",
-  "version": 1,
+  "version": 2,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: URL shortener and key-value service",
@@ -99,7 +99,7 @@
       },
       {
         "question": "301 or 302?",
-        "answer": "302, or 307, so that clicks are counted and the target can change; a 301 lets browsers cache the redirect and the counts stop. RFC 9110 defines the status semantics and RFC 9111 the caching."
+        "answer": "302, so that clicks are counted and the target can change; a 301 lets browsers cache the redirect and the counts stop. RFC 9110 defines the status semantics and RFC 9111 the caching."
       },
       {
         "question": "Custom aliases?",
@@ -196,6 +196,10 @@
           {
             "heading": "Counting clicks without slowing redirects",
             "body": "The redirect path never writes to the database. Events go to a log (a partitioned log or a queue, the queues and streams lesson); an aggregator sums per code per minute and upserts daily counts. Duplicates from at-least-once delivery are tolerated because counts are approximate; if exactness were required, the event would carry a unique id and the aggregator would dedupe within a window. The hot link case (one code at 30,000 reads per second) is a cache hit, costs nothing on the database, and produces a hot partition in the log only if the partition key is the code; partition by a hash of code plus a random suffix for the aggregator's benefit."
+          },
+          {
+            "heading": "Cost per billion redirects",
+            "body": "A billion redirects is about five weeks of traffic at the stated scale (10 billion per year). The variable cost per redirect is small: one cache read, a response of a few hundred bytes and a click event of about 100 bytes (assumption), so a billion redirects move about 300 GB out and write about 100 GB of events. The cost is dominated by the fixed fleet, which is sized for the 3,200 per second peak whether or not the traffic arrives: at an assumed 2,000 dollars per month for the redirect nodes, the two cache nodes and the replicas (assumption, chosen to make the arithmetic concrete), the fixed cost is about 2,400 dollars per billion redirects, against tens of dollars of egress and event storage at an assumed 0.05 dollars per GB (assumption). The lever is therefore the peak-to-average ratio the fleet is sized for, not per-request efficiency, and the number falls as volume grows."
           }
         ]
       },
@@ -265,7 +269,7 @@
           "rows": [
             [
               "Redirect status",
-              "301 (cacheable) versus 302/307 (counted, changeable)",
+              "301 (cacheable) versus 302 (counted, changeable)",
               "302 with no-store",
               "counts and ability to disable outweigh one saved round trip"
             ],
@@ -295,7 +299,12 @@
         "title": "What changes at 10x",
         "body": [
           {
+            "heading": "At a billion links per year",
             "body": "At a billion links per year the table grows 500 GB per year: partition by code hash across a few shards (the replication and partitioning lesson), keep the cache strategy, move old counts to cold storage. Multi-region readers get regional caches and read replicas; writes stay in one region because a link is created once and read everywhere (the geo distribution lesson). Custom domains add a host lookup before the code lookup."
+          },
+          {
+            "heading": "Migrating the id scheme",
+            "body": "The id scheme changes when the random 7-character space gets crowded by a billion links per year (62^7 is 3.5 trillion, so collisions are still rare, but the retry rate becomes measurable) or when a product need appears, such as codes that sort by creation time for the aggregator or a longer code for a separate namespace. Existing codes must keep resolving for their 5-year life, so the migration is additive, never a rewrite: the new scheme is distinguishable from the old by length or by a reserved first character, the redirect service resolves both (the lookup table does not change, since the code is the key either way), new links are issued in the new scheme behind a flag, and old codes are never touched. The risk is in clients and the CDN that assume a fixed code length, so the format rule is published and exercised with synthetic codes before the flag flips, and the flag flips back if the error rate moves. A time-ordered scheme (the Snowflake layout) brings the enumerability problem the answer avoided, so a migration to it also needs a per-link random component or an access check on the stats endpoint."
           }
         ]
       }
@@ -382,6 +391,11 @@
       "version": 1,
       "date": "2026-10-12",
       "change": "converted by hand from the system design outline, section 6.2 (reference answer kept verbatim in substance; numbers and sources unchanged)"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-12",
+      "change": "writer follow-up on the second reader's items (M4c)"
     }
   ]
 }

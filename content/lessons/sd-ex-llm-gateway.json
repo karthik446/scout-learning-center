@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:1",
   "kind": "design-exercise",
   "id": "sd-ex-llm-gateway",
-  "version": 1,
+  "version": 2,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: LLM gateway",
@@ -78,7 +78,7 @@
       },
       {
         "heading": "Scale (assumption)",
-        "body": "200 teams; 5 million requests per day, peak 3x the average; an average request of 3,000 input tokens and 400 output tokens; 20 percent of requests are embeddings; two hosted providers and one self-hosted fleet of open-weight models. Chosen for the exercise; derive the request rate, the token rate and the daily token volume yourself."
+        "body": "200 teams; 5 million requests per day, peak 3x the average; an average request of 3,000 input tokens; 20 percent of requests are embeddings, which return a vector and no output tokens; a chat request averages 400 output tokens; two hosted providers and one self-hosted fleet of open-weight models. Chosen for the exercise; derive the request rate, the token rate and the daily token volume yourself."
       },
       {
         "heading": "Targets (assumption)",
@@ -122,11 +122,11 @@
         "body": [
           {
             "heading": "Derived numbers: requests and tokens",
-            "body": "5 million requests per day is 58 per second average and 174 at peak. Tokens: 5 million times 3,000 input tokens is 15 billion input tokens per day and 2 billion output tokens; at peak that is about 520,000 input tokens per second, or 31 million per minute, which is the number to compare against provider limits that are expressed per minute per model class. A provider's limit is a hard ceiling the gateway must stay under across all teams, so the sum of team limits is capped below it with headroom (assumption: 80 percent)."
+            "body": "5 million requests per day is 58 per second average and 174 at peak. Tokens: 5 million times 3,000 input tokens is 15 billion input tokens per day; the 4 million chat requests (80 percent) times 400 output tokens is 1.6 billion output tokens per day, since the 1 million embedding requests produce none; at peak that is about 520,000 input tokens per second, or 31 million per minute, which is the number to compare against provider limits that are expressed per minute per model class. A provider's limit is a hard ceiling the gateway must stay under across all teams, so the sum of team limits is capped below it with headroom (assumption: 80 percent)."
           },
           {
             "heading": "Derived numbers: what caching buys",
-            "body": "With a shared prefix of 2,000 of the 3,000 input tokens (system prompt, tool definitions, policy text, assumption), prompt caching changes the economics: the provider documentation prices a cache write at a small premium over the base input price (1.25x for the default five-minute cache) and a cache read at a fraction of it (10 percent of the base input price for most models), with a one-hour cache available at a higher write price; and for most models only uncached input tokens count toward the input-tokens-per-minute limit. So 10 billion of the 15 billion daily input tokens can become cache reads, cutting both the bill and the limit pressure by a large factor; the gateway's job is to keep the cacheable prefix first and byte-identical across requests so the cache hits."
+            "body": "With a shared prefix of 2,000 of the 3,000 input tokens (system prompt, tool definitions, policy text, assumption), prompt caching changes the economics: the provider documentation prices a cache write at a small premium over the base input price (1.25x for the default five-minute cache) and a cache read at a fraction of it (10 percent of the base input price for most models), with a one-hour cache available at a higher write price; and for most models only uncached input tokens count toward the input-tokens-per-minute limit. The prefix applies to chat requests only (an embedding request carries the text to embed and no system prompt), so 8 billion of the 15 billion daily input tokens (2,000 of each chat request's 3,000; the 3 billion embedding tokens are not cacheable) can become cache reads, cutting both the bill and the limit pressure by a large factor; the gateway's job is to keep the cacheable prefix first and byte-identical across requests so the cache hits."
           },
           {
             "heading": "The latency shape",
@@ -321,7 +321,7 @@
     "interview_frame": [
       {
         "time": "0:00 to 0:05",
-        "text": "Requirements: whose limits matter, what a safe retry is, what the cache caches, who chooses the provider, what is logged, hard or soft budgets. Say the numbers aloud: 174 requests per second at peak, 15 billion input tokens per day, 31 million input tokens per minute at peak against per-minute provider limits, two thirds of input tokens cacheable."
+        "text": "Requirements: whose limits matter, what a safe retry is, what the cache caches, who chooses the provider, what is logged, hard or soft budgets. Say the numbers aloud: 174 requests per second at peak, 15 billion input tokens and 1.6 billion output tokens per day, 31 million input tokens per minute at peak against per-minute provider limits, about half of input tokens cacheable."
       },
       {
         "time": "0:05 to 0:10",
@@ -383,6 +383,11 @@
       "version": 1,
       "date": "2026-10-12",
       "change": "written by hand for the system design module, Part C entry C12 of the outline"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-12",
+      "change": "writer follow-up on the second reader's items (M4c)"
     }
   ]
 }

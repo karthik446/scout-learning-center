@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:1",
   "kind": "design-exercise",
   "id": "sd-ex-chat",
-  "version": 1,
+  "version": 2,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: chat and presence",
@@ -105,7 +105,7 @@
       },
       {
         "question": "How fresh must presence be?",
-        "answer": "Online within a few seconds of connecting; offline within 60 s of the last heartbeat (assumption). Presence is best effort and never blocks a message."
+        "answer": "Online within a few seconds of connecting; offline within 60 s of the last heartbeat (assumption); away is reported by the client when the user is idle, not inferred from heartbeats. Presence is best effort and never blocks a message."
       },
       {
         "question": "Multi-region?",
@@ -186,7 +186,7 @@
           },
           {
             "heading": "Presence at scale",
-            "body": "Presence is the other volume problem: a user with 500 contacts coming online would notify 500 sessions, and heartbeats arrive at 170,000 per second. The design keeps presence best effort: status lives in a TTL store written by the gateway on connect, disconnect and every heartbeat; changes are fanned out only to contacts who are currently viewing that user (subscriptions held by the gateway), and status transitions are debounced so a flapping connection does not storm. A missed heartbeat window of 60 s marks the user away; nothing on the message path waits for presence."
+            "body": "Presence is the other volume problem: a user with 500 contacts coming online would notify 500 sessions, and heartbeats arrive at 170,000 per second. The design keeps presence best effort: status lives in a TTL store written by the gateway on connect, disconnect and every heartbeat; changes are fanned out only to contacts who are currently viewing that user (subscriptions held by the gateway), and status transitions are debounced so a flapping connection does not storm. A clean disconnect marks the user offline at once; 60 s without a heartbeat (two missed intervals) marks the user offline too, because the connection is presumed dead; away is a client-reported idle state and never a heartbeat verdict. Nothing on the message path waits for presence."
           }
         ]
       },
@@ -380,6 +380,11 @@
       "version": 1,
       "date": "2026-10-12",
       "change": "written by hand for the system design module, Part C entry C3 of the outline"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-12",
+      "change": "writer follow-up on the second reader's items (M4c)"
     }
   ]
 }

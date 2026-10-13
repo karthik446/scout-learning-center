@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:1",
   "kind": "design-exercise",
   "id": "sd-ex-news-feed",
-  "version": 1,
+  "version": 2,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: news feed",
@@ -37,7 +37,7 @@
   "sources": [
     {
       "kind": "talk",
-      "title": "InfoQ: Timelines at Scale (Raffi Krikorian)",
+      "title": "InfoQ: Timelines at Scale (Raffi Krikorian; video, further viewing)",
       "url": "https://www.infoq.com/presentations/Twitter-Timeline-Scalability/"
     },
     {
@@ -120,7 +120,7 @@
         "body": [
           {
             "heading": "Derived numbers: writes and reads",
-            "body": "Posts: 2 million per day is about 23 per second average, 230 at peak. Feed reads: 10 million users times 10 opens is 100 million per day, about 1,160 per second average and 11,600 at peak. Fan-out on write: 2 million posts times 200 followers is 400 million timeline inserts per day, 4,600 per second average and 46,000 at peak, each an append of a 16-byte entry (post id plus timestamp) to a list. The write amplification of 200 is the price of a cheap read."
+            "body": "Posts: 2 million per day is about 23 per second average, 230 at peak. Feed reads: 10 million users times 10 opens is 100 million per day, about 1,160 per second average and 11,600 at peak. Fan-out on write: each user follows 200 accounts, and in a closed graph every follow edge has one follower and one followee, so the average follower count equals the average followee count, 200; 2 million posts times 200 followers is 400 million timeline inserts per day, 4,600 per second average and 46,000 at peak, each an append of a 16-byte entry (post id plus timestamp) to a list. The write amplification of 200 is the price of a cheap read."
           },
           {
             "heading": "Derived numbers: storage and cache",
@@ -129,6 +129,10 @@
           {
             "heading": "The latency argument",
             "body": "Reading a feed from the cache is one memory lookup of a few hundred ids (main memory reference 100 ns, one datacenter round trip 500 us, both from the latency reference numbers) plus a batched fetch of post content: well inside 200 ms. Assembling a feed at read time from 200 followed accounts instead means 200 lookups whose slowest one sets the latency; the tail-at-scale argument says the p99 of a fan-out is dominated by its worst member, which is why the answer precomputes."
+          },
+          {
+            "heading": "Cost per daily active user (assumptions)",
+            "body": "Per active user per day the design spends 25.6 kB of memory (the 12.8 kB timeline and one replica), 40 timeline appends (400 million appends divided by 10 million active users) and 10 feed reads with their content fetches. At an assumed 10 dollars per GB-month for replicated memory and 1 dollar per million appends including the fan-out workers' compute (both assumptions, chosen to make the arithmetic concrete), memory is about 0.0003 dollars per user per month and fan-out about 0.0012, so fan-out compute, not the cache, is the larger line and the celebrity threshold is the lever on it. That sum per daily active user per month is the number the team is held to, and it should be set before the design, not read off the bill afterwards."
           }
         ]
       },
@@ -138,7 +142,7 @@
         "body": [
           {
             "heading": "Container view",
-            "body": "A post is stored once and its id is pushed, asynchronously, into the timeline cache of every follower (fan-out on write). The feed service reads the user's cached ids, merges in recent posts from the few celebrity accounts the user follows (fan-out on read for those only), asks the ranking service to order the candidates, and renders content from a post cache. The public Twitter talk describes this hybrid: fan-out on write to in-memory timelines with an exception for accounts with very many followers; LinkedIn's FollowFeed describes the opposite default, fan-out on read over a timeline index, which this answer uses only for celebrities."
+            "body": "A post is stored once and its id is pushed, asynchronously, into the timeline cache of every follower (fan-out on write). The feed service reads the user's cached ids, merges in recent posts from the few celebrity accounts the user follows (fan-out on read for those only), asks the ranking service to order the candidates, and renders content from a post cache. The primer's Twitter worked solution describes this shape in text: a fan-out service that stores each tweet in the home timeline of every follower in a memory cache, several hundred entries kept per timeline, a timeline rebuilt for a user inactive for 30 days, and the advice to avoid fanning out tweets from highly followed users and merge them at serve time instead; the public Twitter talk is the first-hand account of the same hybrid (further viewing); LinkedIn's FollowFeed describes the opposite default, fan-out on read over a timeline index, which this answer uses only for celebrities."
           }
         ],
         "diagram": {
@@ -375,6 +379,11 @@
       "version": 1,
       "date": "2026-10-12",
       "change": "written by hand for the system design module, Part C entry C2 of the outline"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-12",
+      "change": "writer follow-up on the second reader's items (M4c)"
     }
   ]
 }

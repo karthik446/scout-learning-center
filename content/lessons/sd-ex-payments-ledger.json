@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:1",
   "kind": "design-exercise",
   "id": "sd-ex-payments-ledger",
-  "version": 1,
+  "version": 2,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: payments ledger",
@@ -75,7 +75,7 @@
       },
       {
         "heading": "Scale (assumption)",
-        "body": "10 million payments per day; each payment produces about 3 lines (customer, merchant, fees) across its life; 50 million accounts (customer wallets, merchant payables, provider clearing, fees, taxes); 7 years of retention (assumption shaped by typical regulation; the doc states the real requirement). Chosen for the exercise; derive the posting rate, the journal growth and the balance read load yourself."
+        "body": "10 million payments per day; each payment produces about 6 lines across its life: two in the authorise entry (customer hold, provider clearing) and four in the capture entry (customer, merchant, fee, clearing); refunds and payouts add lines to a minority of payments and are absorbed in the rounding; 50 million accounts (customer wallets, merchant payables, provider clearing, fees, taxes); 7 years of retention (assumption shaped by typical regulation; the doc states the real requirement). Chosen for the exercise; derive the posting rate, the journal growth and the balance read load yourself."
       },
       {
         "heading": "Targets (assumption)",
@@ -119,7 +119,7 @@
         "body": [
           {
             "heading": "Derived numbers",
-            "body": "10 million payments per day is about 116 per second average and 1,160 at peak (10x); at 3 lines each, about 350 lines per second average and 3,500 at peak, each inside one atomic entry write. The journal grows by 30 million lines per day; at about 200 bytes per line with indexes that is 6 GB per day, 2.2 TB per year, 15 TB over 7 years: a relational store sharded by ledger holds it, and old ranges move to cheaper storage after sealing. Balance reads: a merchant dashboard and the available-balance checks before payouts are of the order of 10 reads per payment (assumption), 11,600 per second at peak, served from the projection except the exact checks."
+            "body": "10 million payments per day is about 116 per second average and 1,160 at peak (10x); at 6 lines each, about 700 lines per second average and 7,000 at peak, each inside one atomic entry write. The journal grows by 60 million lines per day; at about 200 bytes per line with indexes that is 12 GB per day, 4.4 TB per year, 30 TB over 7 years: a relational store sharded by ledger holds it, and old ranges move to cheaper storage after sealing. Balance reads: a merchant dashboard and the available-balance checks before payouts are of the order of 10 reads per payment (assumption), 11,600 per second at peak, served from the projection except the exact checks."
           },
           {
             "heading": "The latency shape",
@@ -166,8 +166,8 @@
         "steps": [
           "The payment API checks the idempotency key; a known key returns the stored outcome. A new key creates the Payment in state created and starts the saga.",
           "Authorise: the orchestrator calls the provider with a timeout (assumption: 5 s), a bounded retry with jitter, and the provider's own idempotency key equal to the payment id, so a retried call cannot authorise twice. The adapter sits behind a circuit breaker, as the Shopify write-up on resilient payment systems recommends.",
-          "On success the orchestrator posts an entry of kind authorise: a hold on the customer account and a matching posting on the provider clearing account; the ledger shard writes the entry and its lines in one transaction, assigns the sequence, and the outbox row goes with it.",
-          "Capture: the orchestrator captures at the provider, then posts the capture entry (customer debit, merchant credit, fee revenue credit, clearing adjustments), releasing the hold in the same entry. The payment reaches captured; the stored outcome is now returned for the idempotency key.",
+          "On success the orchestrator posts an entry of kind authorise with two lines: a hold on the customer account and a matching line on the provider clearing account; the ledger shard writes the entry and its lines in one transaction, assigns the sequence, and the outbox row goes with it.",
+          "Capture: the orchestrator captures at the provider, then posts the capture entry with four lines (customer debit, merchant credit, fee revenue credit, and the clearing line that nets the authorise), releasing the hold in the same entry; these two entries are the six lines of the sizing assumption. The payment reaches captured; the stored outcome is now returned for the idempotency key.",
           "If a step fails after its predecessor succeeded (capture rejected after authorise), the orchestrator runs the compensation: a reversal entry for the authorise and a void at the provider. A compensation is itself idempotent and retried until it succeeds or is escalated to an operator after 10 minutes.",
           "The outbox relay publishes the entry to the ledger events log; the balance projector updates posted and available balances with the as_of_sequence; statements are built from the same stream.",
           "Daily, the reconciliation job loads the provider's statement, matches each provider transaction to the lines on the provider clearing account by provider_ref, and files every mismatch (in the ledger but not at the provider, or the reverse, or amount differences) as an adjustment case with an owner; the clearing account must net to the provider's reported balance.",
@@ -180,7 +180,7 @@
         "body": [
           {
             "heading": "Atomicity per shard and the hot account",
-            "body": "The write path is a single transaction per entry on one shard, which is what makes atomicity cheap: all accounts of an entry live in the same ledger. The cost of that rule is cross-ledger movement, which becomes two entries through a clearing account (debit the source ledger's clearing account, credit the destination ledger's), linked by the saga and reconciled by the rule that clearing accounts net to zero across ledgers. Hot accounts are the remaining problem: a large merchant's payable account receives thousands of lines per second at peak, and a balance maintained synchronously on that row would serialise them. Balances are therefore not maintained on the write path at all; the entry append is the only write, the balance is a projection, and the exact available-balance check reads the shard's lines since the projection's sequence, which is a short range scan."
+            "body": "The write path is a single transaction per entry on one shard, which is what makes atomicity cheap: all accounts of an entry live in the same ledger. The cost of that rule is cross-ledger movement, which becomes two entries through a clearing account (debit the source ledger's clearing account, credit the destination ledger's), linked by the saga and reconciled by the rule that clearing accounts net to zero across ledgers. Hot accounts are the remaining problem: a large merchant's payable account receives one line per captured payment, hundreds per second at peak for the biggest merchants (assumption: a tenth of the 1,160 payments per second), and a balance maintained synchronously on that row would serialise them. Balances are therefore not maintained on the write path at all; the entry append is the only write, the balance is a projection, and the exact available-balance check reads the shard's lines since the projection's sequence, which is a short range scan."
           },
           {
             "heading": "Idempotency in layers, reconciliation as the backstop",
@@ -290,7 +290,7 @@
         "title": "What changes at 10x",
         "body": [
           {
-            "body": "At 100 million payments per day the ledger is a platform for many products: ledgers per product line and region, a clearing network between them, multi-currency as first-class with rate sources recorded per entry, and regulatory retention per jurisdiction. Sealed ranges move to cold storage in time-range batches with indexes rebuilt on demand, which is the design Uber describes for trillions of indexes. A migration from a legacy ledger is the hard project: dual posting into old and new, a daily side-by-side reconciliation of balances, a cutover criterion of zero differences for a set period, and reversing entries to repair, never edits. Reconciliation itself becomes a service with per-provider adapters and a cases workflow, and the question the staff engineer asks is which products need a ledger at all and which only need a provider's statement."
+            "body": "At 100 million payments per day (600 million lines, 120 GB of journal per day, about 300 TB over 7 years) the ledger is a platform for many products: ledgers per product line and region, a clearing network between them, multi-currency as first-class with rate sources recorded per entry, and regulatory retention per jurisdiction. Sealed ranges move to cold storage in time-range batches with indexes rebuilt on demand, which is the design Uber describes for trillions of indexes. A migration from a legacy ledger is the hard project: dual posting into old and new, a daily side-by-side reconciliation of balances, a cutover criterion of zero differences for a set period, and reversing entries to repair, never edits. Reconciliation itself becomes a service with per-provider adapters and a cases workflow, and the question the staff engineer asks is which products need a ledger at all and which only need a provider's statement."
           }
         ]
       }
@@ -316,7 +316,7 @@
     "interview_frame": [
       {
         "time": "0:00 to 0:05",
-        "text": "Requirements: what is immutable, where strong consistency ends, who owns idempotency, what a balance is, how fast balances must be, currencies. Say the numbers aloud: 1,160 payments per second at peak, 3,500 lines per second at peak, 6 GB of journal per day and 15 TB over 7 years, about 1,160 sagas in flight per second of provider latency."
+        "text": "Requirements: what is immutable, where strong consistency ends, who owns idempotency, what a balance is, how fast balances must be, currencies. Say the numbers aloud: 1,160 payments per second at peak, 7,000 lines per second at peak, 12 GB of journal per day and 30 TB over 7 years, about 1,160 sagas in flight per second of provider latency."
       },
       {
         "time": "0:05 to 0:10",
@@ -378,6 +378,11 @@
       "version": 1,
       "date": "2026-10-12",
       "change": "written by hand for the system design module, Part C entry C8 of the outline"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-12",
+      "change": "writer follow-up on the second reader's items (M4c)"
     }
   ]
 }
