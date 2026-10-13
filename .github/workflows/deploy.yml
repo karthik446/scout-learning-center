@@ -1,0 +1,41 @@
+name: build, check, deploy
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: public-material scan and schema check (no posting text, no company tied to a posting, nothing personal)
+        run: python3 tools/scan.py
+      - name: build
+        run: python3 tools/build.py
+      - name: search index
+        run: npx -y pagefind@1.5.2 --site site --glob "learn/**/*.html" --output-path site/learn/pagefind
+      - name: no foreign resources in the built HTML
+        run: python3 tools/scan.py --built site
+      - name: internal links and anchors
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: --offline --include-fragments --index-files index.html --root-dir "${{ github.workspace }}/site" --no-progress 'site/**/*.html'
+          fail: true
+      - uses: actions/upload-artifact@v4
+        with: { name: site, path: site, retention-days: 30 }
+  deploy:
+    needs: check
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: site, path: site }
+      - uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy site --project-name=scout-edgelab --branch=main
