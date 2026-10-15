@@ -21,7 +21,7 @@ tools/        import_course.py  --module ID --export DIR: import a pipeline cour
               build.py          content/ -> site/ (standard library only), with the link audit, glyph check and size caps
               serve_check.py    serves site/ on 127.0.0.1 with the exact headers of _headers
               chrome_check.py   headless Chrome over the DevTools pipe: console errors, CSP violations, hosts, screenshots, Pagefind proof
-              chrome_cli.sh     the plain command-line Chrome runs (--screenshot, --dump-dom, 390 px iframe wrapper)
+              chrome_cli.sh     the plain command-line Chrome runs (--screenshot, --dump-dom, the narrow iframe wrapper)
               sim/              check.sh, build.sh, check_vendor.py, golden.mjs, the node tests and golden/ (see "The simulator")
               test_practice_kinds.py  case and artifact pages, the one-module rule and the catalog export, on a temp copy of content/
               test_sim_pages.py the simulator's scan rules (negative tests for the digit rule) and page rendering
@@ -111,7 +111,7 @@ A lesson file with `schema_version: "learning-center-lesson:2"` holds typed bloc
 - **The scan refuses**: an `in_practice` block with no cite; a `p` with more than 4 numbers (integers or decimals, unit or percent allowed; the numbers go in a table or steps); a cite that is not a source id; a concept lesson with no table or decision block, no worked example (a title and a steps block), or other than 8 to 12 sources each verified with HTTP 200 and a date; a lesson about a choice (`sd-storage-engines`, `sd-queues-streams`, `sd-caching`, `sd-consistency-consensus`, `sd-replication-partitioning`, `sd-load-balancing`, or primary key `storage-engines`, `message-queues`, `caching`, `consistency`, `replication`, `load-balancing`) with no decision block; a non-null top-level `diagram`, or non-empty `detail` / `code`. Exercises: the eight section ids in order; a requirements-and-estimates table with the columns quantity / per day / average per second / peak per second / note; a data-model table (entity / fields / key or partition / notes) or code block; a core-flow steps block; exactly one diagram block, in high-level-design; any API table (first column `method`) with the columns method / path / request / response / notes. The simulator digit rule is unchanged.
 - **Page order** of a lesson: title and attribution, summary, on this page (subtopic titles, Worked example, In practice); the subtopics; the worked example; in practice; the simulator if any; technologies, sources, related lessons, the practice link. No "Read more" box. An exercise keeps its fixed order (prompt, constraints, questions, the eight sections, rubric, frames, depth notes, in practice if any, sources, related), each section through the block renderer.
 - **Tables** scroll inside their own box (`.table-scroll`), never the page; the CSS is the end of `assets/site-extra.css`.
-- `python3 tools/test_format_v2.py` holds a negative test per rule and renders the fixtures; `python3 tools/chrome_check.py --page format-v2-x=/path` checks a page at 1280 and 390 px.
+- `python3 tools/test_format_v2.py` holds a negative test per rule and renders the fixtures; `python3 tools/chrome_check.py --page format-v2-x=/path` checks a page at 1280 and 820 px (desktop and iPad; nothing below 820 is a target).
 
 ## The simulator
 
@@ -140,7 +140,7 @@ Pause and Reset. Under `prefers-reduced-motion` there is no animation loop: the 
 - **Third-party code**: the engine is Breakscale (https://github.com/xevrion/breakscale, MIT, commit d2c876e0): 12 files copied byte for byte
   into `vendor/breakscale/` with their licence, plus one recorded one-line patch (`PATCHES.md`: the percentile sample cap 512 to 4096). Its
   interface, analytics and link store are not included. A re-pin is a copy, a re-applied patch, new hashes and a golden re-run.
-- **Browser proof**: `python3 tools/chrome_check.py --sim --out DIR` (against `serve_check.py`) checks the simulator pages at 1280 and 390 px and
+- **Browser proof**: `python3 tools/chrome_check.py --sim --out DIR` (against `serve_check.py`) checks the simulator pages at 1280 and 820 px and
   with reduced motion; screenshots land in `DIR/shots/sim-*.png` (copied to `verify/shots/`).
 
 Deploying: see `OPERATOR.md`.
