@@ -1,7 +1,7 @@
 {
-  "schema_version": "learning-center-lesson:1",
+  "schema_version": "learning-center-lesson:2",
   "id": "sd-load-balancing",
-  "version": 1,
+  "version": 2,
   "status": "published",
   "superseded_by": null,
   "title": "Load balancing and service discovery",
@@ -18,90 +18,708 @@
     "microservices",
     "scaling"
   ],
-  "summary": "Load balancing spreads requests over a set of backends so that no single one is overloaded and failed ones are skipped. Service discovery is the companion problem: knowing which backends exist right now. Together with health checking they form the data path that every request crosses, so their failure modes shape the availability of the whole system.",
+  "summary": "Load balancing spreads requests over a set of backends so that no one of them is overloaded and failed ones are skipped, and service discovery is the companion problem of knowing which backends exist. This lesson separates the layers and placements a balancer can take, explains network balancing at a virtual IP with consistent hashing and encapsulation, measures the algorithms against what each gets wrong, sets out what a health check may test and the correlated failure that empties a fleet, treats discovery as eventually consistent data, covers subsetting, zones and clean draining, and turns it into a decision per service, with a worked sidecar configuration for a three-zone fleet.",
   "detail": [],
-  "in_practice": "A typical team runs a managed L4 or L7 balancer at the edge and an L7 proxy such as Envoy or NGINX for internal traffic, often as a sidecar mesh fed by the orchestrator's endpoint data. They start with least request or power of two choices, add consistent hashing only for services that need affinity, enable both active health checks and outlier detection with a capped ejection percentage, and turn on zone-aware routing. Deploys are tested for clean draining by watching error rates during a rolling restart, and dashboards show per-host request rate and latency so that skew is visible. Retries are budgeted so that balancer-level retries cannot amplify an overload.",
+  "in_practice": {
+    "blocks": [
+      {
+        "type": "p",
+        "text": "Google's frontends route every external HTTP request through the GFE reverse proxies, which apply the datacenter chapter's algorithms, and its RPC clients use deterministic subsetting, lame-duck signalling on shutdown, and weighted round robin fed by the backends' own utilisation reports; the book records that the CPU spread between most and least loaded tasks decreased drastically when weighted round robin replaced least-loaded.",
+        "cites": [
+          "s2"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Google's Maglev has balanced the company's traffic since 2008 on commodity Linux servers: routers spread packets across Maglev machines with equal-cost multipath, each machine saturates a 10 Gbps link with small packets, and consistent hashing with connection tracking keeps connections on their backends through machine failures and pool changes. The same system provides network load balancing for Google Cloud.",
+        "cites": [
+          "s9"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Cloudflare's Unimog runs on the same general-purpose servers that serve its products, in an anycast network of more than 200 cities: the router may send any packet to any server, an XDP program on that server forwards it, encapsulated, to the server owning the connection, and the forwarding tables are adjusted from measured server load so that a mix of hardware generations is balanced by capacity rather than by connection count. Connections stay established for days, and draining uses Beamer's daisy chaining so a forwarding-table change does not break them.",
+        "cites": [
+          "s11"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "Amazon's documented behaviour of its own balancers and health checks.",
+        "columns": [
+          "item",
+          "behaviour"
+        ],
+        "rows": [
+          [
+            "Application Load Balancer routing",
+            "listener rules in priority order, then round robin within the target group by default"
+          ],
+          [
+            "Network Load Balancer routing",
+            "a flow hash over protocol, addresses, ports and sequence number; one connection stays on one target"
+          ],
+          [
+            "cross-zone balancing",
+            "always on at the ALB level; off by default for NLB and Gateway balancers"
+          ],
+          [
+            "DNS",
+            "the balancer's name resolves to its nodes with a 60-second TTL"
+          ],
+          [
+            "fail open",
+            "NLB, ALB and Route 53 send traffic to all targets when none report healthy"
+          ]
+        ],
+        "cites": [
+          "s8",
+          "s10"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Amazon's service teams restrict fast-acting balancer checks to liveness and local health, send dependency checks and anomaly detection to central systems with thresholds, reserve worker threads so an overloaded server still answers its check, and in some fleets run a Lambda function every minute that checks every server and records state so that it cannot mark too many unhealthy at once; the Builders' Library recounts the rendering fleet bug in which fast-failing servers drew extra traffic from a balancer that favoured speed.",
+        "cites": [
+          "s10"
+        ]
+      }
+    ]
+  },
   "subtopics": [
     {
-      "body": [
+      "id": "layers-and-placement",
+      "title": "Layers and placement: what a balancer can see, and where it runs",
+      "blocks": [
         {
-          "body": "A layer 4 balancer forwards TCP or UDP connections without reading the payload. It is cheap and fast, but it balances connections, not requests, so one long-lived HTTP/2 or gRPC connection can pin all its traffic to a single backend. A layer 7 balancer terminates the connection, parses each request, and picks a backend per request. That enables routing by path or header, retries, timeouts and per-request metrics, at the cost of more CPU and a more complex component on the path.",
-          "heading": "L4 versus L7"
+          "type": "p",
+          "text": "Load balancing spreads requests over a set of backends so that no one of them is overloaded and failed ones are skipped. Two questions decide the design. The first is which layer the balancer works at. A layer 4 balancer forwards connections by address and port without reading the payload; it is cheap, fast and protocol-agnostic, but it balances connections, not requests, so one long-lived HTTP/2 or gRPC connection pins all its traffic to one backend. A layer 7 balancer terminates the connection and parses each request, so it can route by path or header, keep a session on one backend, retry, and spread the streams of one client over many backends.",
+          "cites": [
+            "s12",
+            "s1"
+          ]
         },
         {
-          "body": "Three placements are common. An edge proxy sits in front of the whole site and handles TLS and coarse routing. A middle proxy tier balances between internal services. Client-side balancing puts the logic in a library or a sidecar next to the caller, which removes a network hop and a shared bottleneck but means every client must have fresh endpoint and health data. Large systems usually combine them: L4 at the very edge for raw scale, L7 behind it, and client-side or sidecar balancing between services.",
-          "heading": "Where it runs"
+          "type": "diagram",
+          "mermaid": "flowchart LR\n  C[Client] --> E[Edge L7 proxy]\n  E --> S[Sidecar or client-side balancer]\n  S --> A[Backend A]\n  S --> B[Backend B]\n  S --> X[Backend C ejected]\n  D[Discovery service] -. endpoint list .-> S\n  S -. active health checks .-> A\n  S -. active health checks .-> B",
+          "legend": "Two placements in one path: an edge proxy in front of the site, and a sidecar or client-side balancer between services. Discovery supplies the endpoint list; health checks decide who gets traffic; an ejected backend stays listed but receives nothing."
+        },
+        {
+          "type": "p",
+          "text": "The second question is where the balancer runs. Google's frontend chapter describes a layered answer: DNS first, then a virtual IP served by a network balancer, then the application-level balancing inside the datacenter. The gRPC project draws the other axis: a proxy in the data path, which keeps clients simple and untrusted but adds a hop and a throughput ceiling; a thick client that chooses backends itself from load reports, which removes the hop but must be re-implemented per language and trusted; and a lookaside balancer that tells clients where to send, consolidating the logic without sitting in the path.",
+          "cites": [
+            "s1",
+            "s12"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The placements and what each one can know.",
+          "columns": [
+            "placement",
+            "sees",
+            "strengths",
+            "costs"
+          ],
+          "rows": [
+            [
+              "DNS",
+              "the resolver's address, not the user's",
+              "balances before a connection exists; steers between datacenters",
+              "coarse: random records, resolver caching, TTLs, a 512-byte reply"
+            ],
+            [
+              "network (L4) balancer at a VIP",
+              "packets, flows",
+              "line rate; survives backend changes with consistent hashing",
+              "cannot see requests; one connection, one backend"
+            ],
+            [
+              "L7 proxy (edge or middle tier)",
+              "every request",
+              "routing, retries, per-request metrics, affinity by header",
+              "CPU and a component on the path"
+            ],
+            [
+              "client-side or sidecar",
+              "its own requests and the backends' load reports",
+              "no extra hop; the richest signal",
+              "every client needs fresh endpoint and health data; per-language cost"
+            ],
+            [
+              "lookaside",
+              "the whole fleet's state",
+              "one place for the algorithm, no hop",
+              "another service to keep highly available"
+            ]
+          ],
+          "cites": [
+            "s1",
+            "s12",
+            "s2"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Large systems use all of them: DNS to pick a site, a layer 4 tier for raw scale, a layer 7 tier for routing, and client-side or sidecar balancing between services. Choose the layer by what the decision needs to see, and the placement by who may be trusted with it.",
+          "cites": [
+            "s1",
+            "s12"
+          ]
         }
-      ],
-      "id": "l4-l7-and-placement",
-      "title": "Layers and placement of the balancer"
+      ]
     },
     {
-      "body": [
+      "id": "network-balancing-at-the-vip",
+      "title": "Network load balancing: virtual IPs, hashing and encapsulation",
+      "blocks": [
         {
-          "body": "Round robin sends requests to each host in turn and, with weights, respects different capacities. It ignores how busy a host actually is, so slow requests pile up unevenly. Least request tracks active requests per host and prefers the least loaded. A cheap and robust variant is the power of two choices: pick two hosts at random and send to the one with fewer active requests. It avoids the herd effect where every client rushes to the same apparently idle host, and it needs no global state.",
-          "heading": "Stateless and load-aware policies"
+          "type": "p",
+          "text": "A virtual IP is an address shared by many machines. The network load balancer behind it forwards each packet to one backend, and the first design question is how to keep one connection's packets on the same backend. Tracking every connection in a table works but is state that must survive the balancer's own failure; hashing the packet to an id modulo the backend count needs no state, but when a backend leaves, N becomes N minus one and almost every connection maps somewhere else and resets. Consistent hashing is the answer the SRE book gives: a mapping that stays mostly stable when backends come and go, used as the fallback when the connection table is under pressure, for instance during a denial-of-service attack.",
+          "cites": [
+            "s1"
+          ]
         },
         {
-          "body": "When requests for the same key should land on the same host, for example for a local cache or session state, the balancer hashes a request attribute onto the host set. Ring hash places hosts on a hash ring with many virtual points per host, so adding or removing one host only moves a small fraction of keys. Maglev builds a fixed-size lookup table that gives faster lookups and more even spread, with somewhat more disruption when hosts change. Hashing trades even load for affinity, so watch for hot keys.",
-          "heading": "Consistent hashing"
+          "type": "p",
+          "text": "The second question is how the balancer hands the packet on. NAT needs a per-connection entry. Rewriting the destination MAC address leaves the IP headers intact and lets the backend answer the client directly, direct server response, which saves most of the traffic when replies are large but requires one layer 2 domain. Google outgrew that and encapsulates the packet in GRE with the backend as the outer destination, so balancer and backend can be anywhere a route exists, at the price of 24 bytes per packet.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Three published software network balancers.",
+          "columns": [
+            "system",
+            "how packets reach it",
+            "how it picks and forwards",
+            "what it reports"
+          ],
+          "rows": [
+            [
+              "Google Maglev (2016)",
+              "routers spread packets over Maglev machines with equal-cost multipath",
+              "a consistent-hashing lookup table of 65,537 entries plus connection tracking; GRE encapsulation to the backend",
+              "one commodity machine saturates a 10 Gbps link; in service since 2008"
+            ],
+            [
+              "Cloudflare Unimog (2020)",
+              "anycast brings the connection to the nearest of over 200 cities; the router sends any packet to any server",
+              "every server is a balancer: an XDP program forwards the packet, encapsulated, to the server that owns the connection",
+              "balances by measured server load across mixed hardware; connections stay open for days"
+            ],
+            [
+              "the SRE book's generic VIP balancer",
+              "DNS returns the VIP; the balancer receives all packets",
+              "connection tracking with consistent hashing as the fallback; direct server response or encapsulation",
+              "the design most managed cloud balancers follow"
+            ]
+          ],
+          "cites": [
+            "s9",
+            "s11",
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Both published systems make the same move: take the balancer off special hardware and make the packet-to-backend mapping stable under change. Maglev's table gives every backend an almost equal share and moves few connections when the pool changes, so two Maglevs with slightly different views still agree on most connections. Unimog's forwarding table changes in a way that lets the old owner finish its connections, the daisy-chaining idea from the Beamer paper.",
+          "cites": [
+            "s9",
+            "s11"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "Hashing modulo the server count, which is what a router's equal-cost multipath does, breaks every connection when a server joins or leaves; Cloudflare ran on that before Unimog and names it as the reason to build a balancer that owns the mapping.",
+          "cites": [
+            "s11",
+            "s1"
+          ]
         }
-      ],
-      "id": "balancing-algorithms",
-      "title": "Balancing algorithms and when each fits"
+      ]
     },
     {
-      "body": [
+      "id": "algorithms",
+      "title": "Balancing algorithms and what each one gets wrong",
+      "blocks": [
         {
-          "body": "The balancer periodically probes each backend, typically with an HTTP request to a health path, a gRPC health call, or a plain TCP connect. Thresholds control how many consecutive failures mark a host unhealthy and how many successes bring it back, which prevents flapping. A health endpoint should reflect whether the process can serve, not the state of every dependency: if all hosts fail their check because a shared database is slow, the balancer removes the whole fleet and turns a degradation into an outage.",
-          "heading": "Active checking"
+          "type": "p",
+          "text": "Inside the datacenter the balancer, proxy or client library, chooses a backend per request from its subset. Google's datacenter chapter measures the simplest policy: round robin can leave the most loaded task using twice the CPU of the least loaded, because clients send at different rates, requests vary in cost by a thousandfold, machines differ, and a restarted task is slow for minutes. Least-loaded round robin, preferring the backend with the fewest requests in flight from this client, does about as badly at scale: in-flight count is a poor proxy for capacity and each client sees only its own requests.",
+          "cites": [
+            "s2"
+          ]
         },
         {
-          "body": "Outlier detection watches real traffic instead of probes. A host that returns several consecutive 5xx responses, or whose success rate is far below the rest of the cluster, is ejected for a period that grows with repeated ejections. It catches failures that a simple health path misses. A maximum ejection percentage caps how much of the cluster can be removed, and a panic threshold makes the balancer ignore health status altogether when too few hosts look healthy, on the reasoning that spreading load over everything beats overloading the few survivors.",
-          "heading": "Passive detection"
+          "type": "p",
+          "text": "Least-loaded has a worse failure than inefficiency. A backend that fails fast looks like the least loaded of all and attracts the fleet's traffic; Google calls it sinkholing, Amazon a black hole, and both count recent errors as active requests or slow failed responses to the latency of successful ones. Google's eventual answer was weighted round robin driven by the backends: each response carries request rate, error rate and utilisation, clients keep a capability score per backend, and the spread fell drastically when it was switched on.",
+          "cites": [
+            "s2",
+            "s10"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The algorithms a proxy offers, from Envoy's documentation and the SRE book's measurements.",
+          "columns": [
+            "algorithm",
+            "picks",
+            "needs",
+            "weakness"
+          ],
+          "rows": [
+            [
+              "round robin, weighted",
+              "the next backend in turn, more often for higher weights",
+              "nothing",
+              "costs or machines differ: up to a 2x CPU spread"
+            ],
+            [
+              "least request, two choices",
+              "two backends at random, the one with fewer active requests",
+              "per-client in-flight counts",
+              "a fast-failing backend looks idle: count errors as load"
+            ],
+            [
+              "weighted least request",
+              "weight divided by active requests plus one",
+              "weights",
+              "adapts more slowly; a host never fully drains"
+            ],
+            [
+              "weighted round robin from load reports",
+              "weights from each backend's reported rate, errors and utilisation",
+              "backends that report load",
+              "stale reports: the host gets the median weight"
+            ],
+            [
+              "ring hash",
+              "the nearest backend clockwise from the key's hash on a ring of virtual points",
+              "a key; a ring sized for the hosts",
+              "a hot key; weights need many points per host"
+            ],
+            [
+              "Maglev",
+              "a lookup table of 65,537 slots filled in proportion to weight",
+              "a key; builds and looks up far faster than a large ring",
+              "about twice the keys move when a host leaves"
+            ]
+          ],
+          "cites": [
+            "s3",
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Power of two choices earns its popularity: two backends at random, the less loaded wins, no global state, and, as Envoy's documentation notes citing Mitzenmacher, nearly as good as a full scan while resisting the herd that rushes to the backend that looked idle a moment ago. Consistent hashing is the one algorithm chosen for a reason other than spreading load: it keeps a key on one backend so a local cache or session stays warm, and trades even load for that.",
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Start with least request over two random choices, counting errors as load. Add backend-reported weights when the fleet is uneven. Use consistent hashing only where cache locality or session state pays for uneven load.",
+          "cites": [
+            "s2",
+            "s3"
+          ]
         }
-      ],
-      "id": "health-checking-outlier-detection",
-      "title": "Active health checks and passive outlier detection"
+      ]
     },
     {
-      "body": [
+      "id": "health-checks",
+      "title": "Health checks: what to test, and the failure that takes the fleet down",
+      "blocks": [
         {
-          "body": "The simplest form is a static list of addresses. DNS-based discovery resolves a name periodically and uses the returned addresses, which works anywhere but is bounded by TTLs and resolver caching. A dedicated discovery API pushes endpoint lists to the balancers, along with metadata such as zone, weight and canary status; in Envoy this is the endpoint discovery service, and in Kubernetes the control plane derives endpoints from pod readiness. A registry such as Consul or ZooKeeper can also be the source, with instances registering themselves or being registered by the platform.",
-          "heading": "Mechanisms"
+          "type": "p",
+          "text": "A health check asks a backend whether it can do work, and the answer decides whether the balancer sends it any. Envoy's active checker speaks HTTP, gRPC or a plain byte exchange on an interval, with thresholds for how many consecutive failures mark a host unhealthy and how many successes bring it back, so a flapping host does not flap the fleet. The question the check asks is the design decision, and Amazon's Builders' Library sorts the questions by how far they reach.",
+          "cites": [
+            "s4",
+            "s10"
+          ]
         },
         {
-          "body": "Discovery data is always slightly out of date, so treat it as a hint rather than the truth. The data plane decides with health checks: a host that discovery still lists but that fails checks gets no traffic, and a host removed from discovery but still passing checks can keep serving for a while. This makes the system tolerant of a slow or unavailable control plane. Balancers should keep serving with the last known endpoint set if the discovery service disappears.",
-          "heading": "Designing for staleness"
+          "type": "table",
+          "caption": "Amazon's four kinds of health check, and the safe reaction to each.",
+          "columns": [
+            "kind",
+            "tests",
+            "fails on many hosts at once?",
+            "who should act on it"
+          ],
+          "rows": [
+            [
+              "liveness",
+              "the port accepts connections; a basic request returns 200",
+              "rarely",
+              "the load balancer, immediately"
+            ],
+            [
+              "local",
+              "the disk is writable, critical and support processes run, the application answers correctly",
+              "rarely: these resources are not shared",
+              "the load balancer, immediately"
+            ],
+            [
+              "dependency",
+              "the host can reach its database, peers and configuration",
+              "yes, whenever the dependency itself is unwell",
+              "a central system with thresholds, or a balancer that fails open"
+            ],
+            [
+              "anomaly",
+              "this host behaves unlike its peers: errors, latency, clock skew, old code",
+              "no, by construction",
+              "a central monitor that removes outliers"
+            ]
+          ],
+          "cites": [
+            "s10"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The failure to design against is the correlated false positive. A check that tests a shared database fails on every host when the database slows, and automation that removes every host turns a degradation into an outage. Amazon's answer is to let the balancer act only on liveness and local checks, send dependency checks to a central system that rate-limits its reactions, and where a balancer must see deep checks, use one that fails open, as the AWS balancers and Route 53 do when no target reports healthy. Under overload a second trap appears: a server too busy to answer its check is removed, the survivors get more load, and the fleet shrinks in a spiral, so servers reserve capacity to answer the check first.",
+          "cites": [
+            "s10"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Passive detection watches real traffic instead of probes. Envoy's outlier detection ejects a host after a run of consecutive 5xx or gateway errors, or when its success rate falls well below the cluster's, for a base time multiplied by how often it has been ejected in a row, up to a cap; a maximum ejection percentage bounds how much of the cluster can be removed; and a successful active check brings the host back. Behind both sits the panic threshold: when fewer than half the hosts look healthy, by default, Envoy stops believing the health data and balances across all of them, on the reasoning that spreading load over everything beats overloading the few survivors.",
+          "cites": [
+            "s5",
+            "s7"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "A balancer's health check tests whether this process can serve, never whether a dependency is up. Put dependency checks behind a central actor with thresholds, cap how many hosts automation may remove, and reserve capacity so an overloaded server still answers its check.",
+          "cites": [
+            "s10",
+            "s5",
+            "s7"
+          ]
         }
-      ],
+      ]
+    },
+    {
       "id": "service-discovery",
-      "title": "Service discovery as eventually consistent data"
-    },
-    {
-      "body": [
+      "title": "Service discovery as eventually consistent data",
+      "blocks": [
         {
-          "body": "If every client connects to every backend, connection count grows as the product of the two fleets, wasting memory and health-check traffic. Subsetting gives each client a limited set of backends. A random subset spreads load poorly; deterministic subsetting assigns subsets so that every backend receives the same number of clients. Zone-aware routing keeps traffic in the caller's zone when the local zone has enough healthy capacity, which cuts latency and cross-zone cost, and spills over to other zones when it does not.",
-          "heading": "Limiting the connection mesh"
+          "type": "p",
+          "text": "Discovery answers which backends exist right now. Envoy's documentation lists the mechanisms in order of sophistication: a static list; strict DNS, where every address the name resolves to is a host and a host that disappears from the answer is drained; logical DNS, which uses only the first address per new connection and never drains, the right mode for large web services behind round-robin DNS; and an endpoint discovery service over gRPC that pushes the host list with weights, zones and canary status, which is what a mesh control plane or an orchestrator's endpoint data provides.",
+          "cites": [
+            "s6"
+          ]
         },
         {
-          "body": "During a deploy, a backend should first stop accepting new work while finishing requests in flight. This lame duck state is signalled by failing the health check or by an explicit drain signal, so clients stop choosing the host before the process exits. Combined with connection draining timeouts and client retries on a different host, it makes rolling restarts invisible to callers. New hosts benefit from slow start, where their weight ramps up while caches and connection pools warm.",
-          "heading": "Removing a host cleanly"
+          "type": "p",
+          "text": "Envoy's design position is that discovery need not be consistent. Many RPC systems treat it as fully consistent and back it with ZooKeeper, etcd or Consul; the project's experience was that operating those stores at scale is painful, so it assumes hosts come and go eventually consistently and lets active health checks make the decision. The table below is the documentation's own: health data is assumed more accurate than discovery data, a host still passing checks is routed to even after discovery has forgotten it, and the only state in which a host is deleted is absent and failing. The consequence is that the control plane can disappear without the data plane stopping.",
+          "cites": [
+            "s6"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Envoy's routing decision from discovery and health together.",
+          "columns": [
+            "discovery says",
+            "health check passes",
+            "health check fails"
+          ],
+          "rows": [
+            [
+              "present",
+              "route",
+              "do not route"
+            ],
+            [
+              "absent",
+              "route: the discovery service may simply be down",
+              "do not route, and delete the host"
+            ]
+          ],
+          "cites": [
+            "s6"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The lookaside design makes the same split at a different place: clients ask a balancer service which backends to use and then send directly, so the fleet-wide knowledge lives in one highly available service and the data path stays short. Google's RPC system adds one more channel: a backend entering lame duck state tells its active clients directly, and inactive clients learn through periodic health probes, so the information reaches every client within a round trip or two regardless of discovery.",
+          "cites": [
+            "s12",
+            "s2"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Treat the endpoint list as a hint and the health check as the truth. A balancer should keep serving from its last known endpoint set when discovery is unreachable, and remove a host only when discovery and health both say it is gone.",
+          "cites": [
+            "s6"
+          ]
         }
-      ],
-      "id": "subsetting-zones-draining",
-      "title": "Subsetting, zone awareness and graceful draining"
-    }
-  ],
-  "diagram": {
-    "source": "flowchart LR\n  C[Client] --> E[Edge L7 proxy]\n  E --> S[Sidecar or client-side balancer]\n  S --> A[Backend A]\n  S --> B[Backend B]\n  S --> X[Backend C ejected]\n  D[Discovery service] -. endpoint list .-> S\n  S -. active health checks .-> A\n  S -. active health checks .-> B"
-  },
-  "code": [
+      ]
+    },
     {
-      "code": "clusters:\n- name: orders\n  type: EDS\n  lb_policy: LEAST_REQUEST\n  health_checks:\n  - timeout: 1s\n    interval: 5s\n    unhealthy_threshold: 3\n    healthy_threshold: 2\n    http_health_check:\n      path: /healthz\n  outlier_detection:\n    consecutive_5xx: 5\n    base_ejection_time: 30s\n    max_ejection_percent: 30",
-      "lang": "yaml"
+      "id": "subsetting-zones-and-draining",
+      "title": "Subsetting, zones and removing a host cleanly",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "If every client connects to every backend, connections grow as the product of the two fleet sizes, and each costs memory and health-check traffic at both ends. Subsetting gives each client a limited set of backends, and the SRE book shows that how the subset is chosen matters more than its size. Random subsetting spreads load badly: with equal fleets of clients and backends and each client connected to a tenth of the backends, the least loaded backend had half the average connections and the most loaded had one and a half times it. Deterministic subsetting, where clients are grouped into rounds that each shuffle the backend list with a shared seed and take consecutive slices, gave every backend exactly the same number of clients.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The SRE book's random subsetting result, with 300 clients and 300 backends.",
+          "columns": [
+            "subset size",
+            "least loaded backend",
+            "most loaded backend"
+          ],
+          "rows": [
+            [
+              "30 percent (90 backends per client)",
+              "63 percent of average",
+              "121 percent of average"
+            ],
+            [
+              "10 percent (30 backends per client)",
+              "50 percent of average",
+              "150 percent of average"
+            ],
+            [
+              "deterministic, 10 percent",
+              "exactly average",
+              "exactly average"
+            ]
+          ],
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Zones add a second constraint: traffic that stays in the caller's zone is cheaper and faster, but a zone with little capacity must not be overloaded by its local callers. The AWS balancer documentation makes the arithmetic plain. With two zones holding two and eight targets and a node per zone taking half the traffic, cross-zone balancing gives every target a tenth; with it off, each target in the small zone takes a quarter and each in the large zone a sixteenth. A zonal shift then becomes a one-step evacuation of an impaired zone, with existing connections finishing over a few minutes.",
+          "cites": [
+            "s8"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Removing a host should never surface an error. Google's lame duck protocol is the model: on SIGTERM the task tells its clients to send new requests elsewhere, finishes the requests in flight, and exits after a configured interval long enough for typical requests, a rule of thumb of ten to a hundred and fifty seconds depending on the clients. Envoy expresses the same intent with an immediate-fail response to the active checker and a draining state in its health-check filter. The arrival side is the mirror image: a new or recovered host gets a slow-start window in which its weight ramps up, because a restarted task needs more resources for minutes while caches and runtime optimisations warm.",
+          "cites": [
+            "s2",
+            "s4",
+            "s3"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Size the subset so every backend gets the same number of clients and choose it deterministically. Keep traffic in zone only while the local zone has the capacity, and make draining a protocol, lame duck then exit, that clients hear about before the process goes.",
+          "cites": [
+            "s2",
+            "s8"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "choosing-the-algorithm",
+      "title": "Choosing the algorithm and the placement",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The choice is per service, from what the balancer can see and what the requests need. The decision below covers the algorithm; the placement follows the trust and latency axis of the first subtopic, with a proxy for untrusted or many-language clients and client-side or sidecar balancing for high-traffic internal calls.",
+          "cites": [
+            "s12",
+            "s3"
+          ]
+        },
+        {
+          "type": "decision",
+          "caption": "Picking the balancing algorithm for one service.",
+          "rows": [
+            {
+              "option": "Round robin, weighted by capacity",
+              "pick_when": "requests cost about the same, the fleet is uniform or its weights are known, and there is no load signal",
+              "avoid_when": "requests vary in cost by orders of magnitude or hosts differ: expect a 2x spread",
+              "example": "a stateless fleet of identical rendering servers behind an edge proxy"
+            },
+            {
+              "option": "Least request over two random choices",
+              "pick_when": "requests vary in cost and each client sees enough traffic for in-flight counts to mean something",
+              "avoid_when": "backends can fail fast: pair it with error counting or outlier ejection",
+              "example": "the default for service-to-service calls through a sidecar"
+            },
+            {
+              "option": "Weighted round robin from backend load reports",
+              "pick_when": "backends report utilisation and the fleet is uneven: mixed hardware, noisy neighbours, restarts",
+              "avoid_when": "backends do not report, or reports are stale",
+              "example": "a large fleet where a 2x spread wastes a third of the capacity"
+            },
+            {
+              "option": "Consistent hashing, ring hash",
+              "pick_when": "a key must land on the same backend for a local cache or session, and hosts change rarely",
+              "avoid_when": "a hot key dominates; load is uneven by design",
+              "example": "a cache tier keyed by user id"
+            },
+            {
+              "option": "Consistent hashing, Maglev table",
+              "pick_when": "the same affinity need with many hosts or frequent host changes, where build and lookup speed matter",
+              "avoid_when": "minimal disruption matters more than speed: about twice the keys move on a host change",
+              "example": "a sharded Redis fleet behind a proxy"
+            },
+            {
+              "option": "Random",
+              "pick_when": "there is no health checking and round robin's bias after a failed host is the bigger risk",
+              "avoid_when": "any load signal is available",
+              "example": "a quick static cluster"
+            }
+          ],
+          "cites": [
+            "s2",
+            "s3",
+            "s9"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Whatever the algorithm, three things sit next to it: a health check that tests only local health, outlier ejection capped at a share of the cluster, and a retry policy with a budget, because a balancer that retries every failure on another host multiplies an overload by the retry count. The exercises point back here for the balancer rows of their AWS sections: the application balancer is a layer 7 proxy with round robin as its default, and the network balancer is a layer 4 flow hash that keeps a connection on one target for its life.",
+          "cites": [
+            "s10",
+            "s5",
+            "s8"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Name the algorithm and the reason in the design: 'least request over two choices with error counting, because request cost varies tenfold' is a decision; 'load balanced' is not.",
+          "cites": [
+            "s2",
+            "s3"
+          ]
+        }
+      ]
     }
   ],
+  "worked_example": {
+    "title": "Worked example: balancing 60,000 requests per second across three zones with sidecars",
+    "blocks": [
+      {
+        "type": "p",
+        "text": "An internal API serves 60,000 requests per second at peak from 300 backend tasks spread over three zones, called by 200 client tasks through sidecar proxies. The team must choose the algorithm, the subset size, the health-check and ejection settings and the draining protocol, and know what happens when a zone is lost. Every input is an assumption chosen to make the arithmetic concrete; the rules are the SRE book's and the mechanisms are Envoy's.",
+        "cites": [
+          "s2",
+          "s3"
+        ]
+      },
+      {
+        "type": "steps",
+        "title": "From the request rate to a balancer configuration",
+        "items": [
+          "Load per backend at an even spread: 60,000 requests per second over 300 backends is 200 per backend.",
+          "Round robin's spread: the SRE book's measured 2x means the most loaded backend could carry 400 per second, so the fleet would need capacity for 400 everywhere.",
+          "Algorithm: least request over two random choices with errors counted as load, so the spread narrows and a fast-failing host cannot sinkhole traffic.",
+          "Full mesh: 200 clients times 300 backends is 60,000 connections, each health-checked; a subset of 30 backends per client cuts it to 6,000.",
+          "Deterministic subsetting: 300 backends divided by 30 is 10 subsets per round, so 200 clients form 20 rounds and every backend gets exactly 20 clients.",
+          "Zone loss: losing one zone leaves 200 backends carrying 60,000 requests per second, 300 each, so each backend is sized for 300 and the fleet runs at two thirds of that normally.",
+          "Active checks: every 5 seconds, 3 consecutive failures mark a host unhealthy (15 seconds to removal), 2 successes bring it back; the check tests only the local process.",
+          "Outlier ejection: 5 consecutive 5xx eject a host for 30 seconds, doubling on repeat, with at most 30 percent of the cluster ejected at once.",
+          "Panic threshold: at the default, if fewer than 50 percent of hosts look healthy the sidecars ignore health and spread over everyone, so a correlated check failure does not empty the pool.",
+          "Draining: a backend enters lame duck on SIGTERM and exits after 30 seconds (assumption: requests complete in under a second), so a rolling restart of 300 tasks surfaces no errors.",
+          "Slow start: a returning backend ramps its weight over 60 seconds, so a cold cache does not meet 300 requests per second in its first second.",
+          "The decider: the health check's question. If it tested the shared database, a slow database would eject every backend together; testing only local health, with ejection capped and the panic threshold on, keeps the fleet serving through a dependency brownout."
+        ],
+        "cites": [
+          "s2",
+          "s3",
+          "s4",
+          "s5",
+          "s7",
+          "s10"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "The design as a reviewer should receive it: one row per decision, with its rule.",
+        "columns": [
+          "decision",
+          "value",
+          "derived from"
+        ],
+        "rows": [
+          [
+            "algorithm",
+            "least request, two choices, errors as load",
+            "variable request cost; no sinkhole"
+          ],
+          [
+            "subset size",
+            "30 backends per client",
+            "6,000 connections instead of 60,000"
+          ],
+          [
+            "clients per backend",
+            "20, deterministic",
+            "300 divided by 30 subsets; 200 clients in 20 rounds"
+          ],
+          [
+            "per-backend capacity",
+            "300 requests per second",
+            "one zone lost: 60,000 over 200"
+          ],
+          [
+            "active check",
+            "5 s interval, 3 failures out, 2 successes in",
+            "15 seconds to removal without flapping"
+          ],
+          [
+            "ejection",
+            "5 consecutive 5xx, 30 s base, 30 percent cap",
+            "bounded reaction to a bad host"
+          ],
+          [
+            "panic threshold",
+            "50 percent",
+            "Envoy's default"
+          ],
+          [
+            "drain and slow start",
+            "30 s lame duck, 60 s ramp",
+            "assumptions from request duration and cache warm-up"
+          ]
+        ],
+        "cites": [
+          "s2",
+          "s3",
+          "s5",
+          "s7"
+        ]
+      },
+      {
+        "type": "code",
+        "lang": "yaml",
+        "code": "clusters:\n- name: orders\n  type: EDS                      # endpoint discovery pushes hosts with zone and weight\n  lb_policy: LEAST_REQUEST       # two random choices by default\n  health_checks:\n  - timeout: 1s\n    interval: 5s\n    unhealthy_threshold: 3       # 15 s to removal\n    healthy_threshold: 2\n    http_health_check:\n      path: /healthz             # local health only: never a dependency probe\n  outlier_detection:\n    consecutive_5xx: 5\n    base_ejection_time: 30s\n    max_ejection_percent: 30\n  common_lb_config:\n    healthy_panic_threshold:\n      value: 50.0",
+        "caption": "The worked example as an Envoy cluster: discovery by EDS, least request, local health checks with thresholds, capped outlier ejection and the panic threshold."
+      }
+    ]
+  },
+  "diagram": null,
+  "code": [],
   "technologies": [
     "Envoy",
     "NGINX",
@@ -123,35 +741,142 @@
   ],
   "sources": [
     {
-      "kind": "doc",
-      "title": "Envoy load balancing",
-      "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/load_balancing/load_balancing"
-    },
-    {
-      "kind": "doc",
-      "title": "Envoy health checking",
-      "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/health_checking"
-    },
-    {
-      "kind": "doc",
-      "title": "Envoy outlier detection",
-      "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/outlier"
-    },
-    {
-      "kind": "doc",
-      "title": "Envoy service discovery",
-      "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/service_discovery"
-    },
-    {
+      "id": "s1",
+      "title": "Site Reliability Engineering, chapter 19, Load Balancing at the Frontend (Google, 2016, free online): DNS balancing and its limits, virtual IPs, id mod N against consistent hashing, direct server response, GRE encapsulation",
+      "url": "https://sre.google/sre-book/load-balancing-frontend/",
       "kind": "book",
-      "title": "Load balancing in the datacenter (SRE book)",
-      "url": "https://sre.google/sre-book/load-balancing-datacenter/"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "consistent hashing"
+      }
+    },
+    {
+      "id": "s2",
+      "title": "Site Reliability Engineering, chapter 20, Load Balancing in the Datacenter (Google, 2016, free online): lame ducks, random against deterministic subsetting, round robin, least-loaded and weighted round robin, the sinkhole",
+      "url": "https://sre.google/sre-book/load-balancing-datacenter/",
+      "kind": "book",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Round Robin can result in a spread of up to 2x in CPU consumption"
+      }
+    },
+    {
+      "id": "s3",
+      "title": "Envoy documentation, Supported load balancers (1.41): weighted round robin, client-side weighted round robin from load reports, weighted least request and power of two choices, ring hash, Maglev, random",
+      "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/load_balancing/load_balancers",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "power of two choices"
+      }
+    },
+    {
+      "id": "s4",
+      "title": "Envoy documentation, Health checking: HTTP, gRPC and L3/L4 checks, thresholds, the health-check filter and its caching mode, immediate fail, health-check identity",
+      "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/health_checking",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Pass through with caching"
+      }
+    },
+    {
+      "id": "s5",
+      "title": "Envoy documentation, Outlier detection: consecutive 5xx, gateway failure, success rate and failure percentage detection, the ejection algorithm and the maximum ejection percentage",
+      "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/outlier",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "multiplied by the number of times the host has been ejected in a row"
+      }
+    },
+    {
+      "id": "s6",
+      "title": "Envoy documentation, Service discovery: static, strict DNS, logical DNS and EDS, and the case for eventually consistent discovery with the discovery-against-health matrix",
+      "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/service_discovery",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Health check data is assumed to be more accurate than discovery data"
+      }
+    },
+    {
+      "id": "s7",
+      "title": "Envoy documentation, Panic threshold: balancing across all hosts, or none, when too few look healthy",
+      "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/load_balancing/panic_threshold",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "The default panic threshold is 50%"
+      }
+    },
+    {
+      "id": "s8",
+      "title": "Elastic Load Balancing User Guide, How Elastic Load Balancing works: load balancer nodes per Availability Zone, cross-zone balancing with its worked percentages, zonal shift, request routing by load balancer type, the 60-second DNS TTL",
+      "url": "https://docs.aws.amazon.com/elasticloadbalancing/latest/userguide/how-elastic-load-balancing-works.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "each of the 10 targets receives 10% of the traffic"
+      }
+    },
+    {
+      "id": "s9",
+      "title": "Danielle E. Eisenbud et al., Maglev: A Fast and Reliable Software Network Load Balancer, NSDI 2016 (PDF): ECMP to commodity servers, a 10 Gbps link per machine, consistent hashing with a lookup table, connection tracking",
+      "url": "https://static.googleusercontent.com/media/research.google.com/en//pubs/archive/44824.pdf",
+      "kind": "paper",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "A single Maglev machine is able to saturate a 10Gbps link with small packets"
+      }
+    },
+    {
+      "id": "s10",
+      "title": "Amazon Builders' Library, Implementing health checks (David Yanacek, 2019-12-05): the black hole, liveness, local, dependency and anomaly checks, fail open, prioritising health checks under overload, what has gone wrong",
+      "url": "https://builder.aws.com/content/3Ev53O39izHCtWLzp4XU6t8PC1O/implementing-health-checks",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "creating a “black hole” in the service fleet"
+      }
+    },
+    {
+      "id": "s11",
+      "title": "Cloudflare blog, Unimog: Cloudflare's edge load balancer (2020): anycast, every server a layer 4 balancer, XDP, encapsulation, dynamic balancing from measured load, draining with Beamer-style daisy chaining",
+      "url": "https://blog.cloudflare.com/unimog-cloudflares-edge-load-balancer/",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Unimog makes every server into a load balancer"
+      }
+    },
+    {
+      "id": "s12",
+      "title": "gRPC blog, gRPC Load Balancing (2017-06-15): proxy against client-side balancing, L3/L4 against L7 proxies, thick client and lookaside balancing, recommendations by setup",
+      "url": "https://grpc.io/blog/grpc-load-balancing/",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Lookaside Load Balancing"
+      }
     }
   ],
   "practice": "practice/sd-load-balancing",
   "provenance": {
-    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
-    "generated_on": "2026-10-13",
+    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center, format v2",
+    "generated_on": "2026-10-15",
     "reviewed_by": null,
     "reviewed_on": null
   },
@@ -160,6 +885,11 @@
       "version": 1,
       "date": "2026-10-13",
       "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-15",
+      "change": "rewritten by hand from primary sources at format v2 (learning-center-lesson:2): 7 subtopics with the placement table and the balancer diagram in its subtopic, the three published network balancers as a table, the algorithm table with the SRE book's measurements, Amazon's four kinds of health check, Envoy's discovery-against-health matrix, the random-subsetting figures, a decision block over the algorithms, a worked three-zone sidecar design with the Envoy cluster as code after the teaching, cited in-practice blocks (Google GFE and Maglev, Cloudflare Unimog, Amazon), 12 verified sources with ids"
     }
   ]
 }
