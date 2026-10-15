@@ -1,7 +1,7 @@
 {
-  "schema_version": "learning-center-lesson:1",
+  "schema_version": "learning-center-lesson:2",
   "id": "sd-security-basics",
-  "version": 1,
+  "version": 2,
   "status": "published",
   "superseded_by": null,
   "title": "Security basics in designs",
@@ -18,70 +18,768 @@
     "identity-and-access",
     "security-governance"
   ],
-  "summary": "Security in a design means identifying what an attacker could do at each trust boundary and placing controls there on purpose. The baseline covers who the caller is, what the caller may do, how data and secrets are protected, and how misuse is detected. Getting these into the first design is far cheaper than retrofitting them.",
+  "summary": "Security in a design means naming what an attacker could do at each trust boundary and placing a control there on purpose. This lesson gives threat modelling in one page with the STRIDE table, the OWASP lists of the risks that recur, OAuth 2.0 roles and OpenID Connect with the token validation rules, what the security best-current-practice RFCs require of tokens, authorization and least privilege with the zero trust tenets, tenant isolation in silo and pool models, data, secrets and the audit log, and a worked threat model for one multi-tenant API.",
   "detail": [],
-  "in_practice": "Design documents carry a security section with the data flow diagram, trust boundaries and the top threats with their mitigations, reviewed by a security engineer for anything exposed or sensitive. Identity is centralised in one provider; services validate tokens through a shared middleware and check object-level permissions in the handler or a policy layer. Secrets come from a manager, TLS is terminated and re-established by the platform, and the pipeline runs dependency and image scans. Audit logs flow into the same observability stack with separate retention and access.",
+  "in_practice": {
+    "blocks": [
+      {
+        "type": "table",
+        "caption": "Google's BeyondCorp, as described by its engineers in 2014: enterprise access without a privileged network.",
+        "columns": [
+          "element",
+          "what Google did"
+        ],
+        "rows": [
+          [
+            "Premise",
+            "assume the internal network is as fraught with danger as the public internet"
+          ],
+          [
+            "Access decision",
+            "depends solely on device and user credentials, regardless of network location: office, home, hotel or cafe"
+          ],
+          [
+            "Every access",
+            "fully authenticated, fully authorized and fully encrypted, based on device state and user credentials"
+          ],
+          [
+            "Devices",
+            "only managed devices, tracked in a device inventory database and uniquely identified, may reach corporate applications"
+          ],
+          [
+            "Result",
+            "employees work from any network without a traditional VPN"
+          ]
+        ],
+        "cites": [
+          "s12"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "What the OWASP Top 10 project's 2025 data says about tested applications.",
+        "columns": [
+          "category",
+          "share of applications with at least one weakness in it"
+        ],
+        "rows": [
+          [
+            "Broken access control (40 CWEs)",
+            "3.73 percent"
+          ],
+          [
+            "Cryptographic failures (32 CWEs)",
+            "3.80 percent"
+          ],
+          [
+            "Security misconfiguration (16 CWEs)",
+            "3.00 percent"
+          ],
+          [
+            "Software supply chain failures (5 CWEs)",
+            "few occurrences, the highest average exploit and impact scores"
+          ]
+        ],
+        "cites": [
+          "s1"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "The IETF OAuth working group's 2025 best current practice records decisions that practitioners had reached over a decade: public clients must use PKCE, the implicit grant should not be used, the resource owner password credentials grant must not be used, and refresh tokens for public clients must be sender-constrained or rotated. A design that still relies on any of the retired patterns is out of step with the standard its identity provider implements.",
+        "cites": [
+          "s5"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "The OWASP API Security project puts broken object level authorization first in both its 2019 and 2023 editions, on the reasoning that APIs expose endpoints handling object identifiers and so create a wide attack surface of object level access control issues, and it instructs that the check be considered in every function that accesses a data source with an id from the user.",
+        "cites": [
+          "s2"
+        ]
+      }
+    ]
+  },
   "subtopics": [
     {
-      "body": [
+      "id": "threat-model-in-one-page",
+      "title": "Threat modelling a design in one page",
+      "blocks": [
         {
-          "body": "Draw the data flow diagram: external actors, processes, data stores and the flows between them, then mark trust boundaries where data crosses between zones of different privilege, such as internet to edge, edge to service, service to database, and tenant to tenant. For each element crossing a boundary, walk through STRIDE: spoofing of identity, tampering with data, repudiation of actions, information disclosure, denial of service and elevation of privilege. Each category maps to a control family: authentication, integrity checks, audit logging, encryption and access control, rate limiting and quotas, and authorization.",
-          "heading": "Method"
+          "type": "p",
+          "text": "The OWASP threat modelling process starts from a picture of what is being built: a data flow diagram showing external actors, processes, data stores and the flows between them, with the privilege or trust boundaries marked. Entry points are the interfaces through which an attacker can interact with the system or supply it with data, and entry and exit points define a trust boundary. Assets are what you want to protect or what attackers want, with the caveat on the page that assets are often hard to name in advance and can distract. Threats are then enumerated per element with a categorisation, and STRIDE is the one most often used for design-time work.",
+          "cites": [
+            "s10"
+          ]
         },
         {
-          "body": "The result is a ranked list of threats with a decision for each: mitigate, accept, transfer or remove the feature. Rank by likelihood and impact rather than trying to fix everything. Revisit the model when a new boundary appears, such as a new third-party integration or a new public endpoint. Catalogues such as the OWASP Top Ten are a useful checklist of the weaknesses most often found in real web applications, and attacker-behaviour frameworks help when planning detection.",
-          "heading": "Output"
+          "type": "table",
+          "caption": "The STRIDE threat list and the control each category maps to, from the OWASP process page.",
+          "columns": [
+            "threat",
+            "what the attacker does",
+            "control"
+          ],
+          "rows": [
+            [
+              "Spoofing",
+              "uses another user's credentials, such as a username and password",
+              "authentication"
+            ],
+            [
+              "Tampering",
+              "changes persistent data, or data in transit over an open network",
+              "integrity"
+            ],
+            [
+              "Repudiation",
+              "performs a prohibited operation in a system that cannot trace it",
+              "non-repudiation"
+            ],
+            [
+              "Information disclosure",
+              "reads a file or data in transit without being granted access",
+              "confidentiality"
+            ],
+            [
+              "Denial of service",
+              "makes the service unavailable or unusable to valid users",
+              "availability"
+            ],
+            [
+              "Elevation of privilege",
+              "gains privileged access to information or to compromise the system",
+              "authorization"
+            ]
+          ],
+          "cites": [
+            "s10"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The page's mitigation table says what each category is answered with: appropriate authentication and never storing secrets for spoofing; authorization, hashes, message authentication codes and signatures for tampering; signatures, timestamps and audit trails for repudiation; authorization, encryption and protected secrets for disclosure; authentication, authorization, filtering, throttling and quality of service for denial of service; and running with least privilege for elevation. Threats are then classified as unmitigated, partially mitigated or fully mitigated, which is the ranked list a design review reads.",
+          "cites": [
+            "s10"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The page also places the exercise in time: threat modelling is not code review, but done early it means the application is built with the mitigations from the start, and it tells reviewers where the entry points are so that review goes depth-first into the risky components rather than breadth-first over everything.",
+          "cites": [
+            "s10"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "One page: the diagram with its trust boundaries, the entry points, the STRIDE threats per boundary, and a decision per threat to mitigate, accept, transfer or remove the feature. Revisit it when a boundary is added, such as a new public endpoint or a third-party integration.",
+          "cites": [
+            "s10"
+          ]
         }
-      ],
-      "id": "threat-modelling",
-      "title": "Threat modelling a design"
+      ]
     },
     {
-      "body": [
+      "id": "the-risks-that-recur",
+      "title": "The risks that recur: the OWASP lists",
+      "blocks": [
         {
-          "body": "Applications should not store passwords or build login flows themselves. They delegate to an identity provider using OpenID Connect, an identity layer on top of OAuth 2.0. In the authorization code flow the browser is redirected to the provider, the user authenticates there, and the application receives a short-lived code that it exchanges on a back channel for tokens. Public clients such as single-page and mobile apps add PKCE so an intercepted code is useless. The ID token says who the user is, the access token is presented to APIs, and the refresh token obtains new access tokens.",
-          "heading": "Delegating identity"
+          "type": "p",
+          "text": "Two OWASP lists tell a designer which weaknesses are found most often in real applications, and the 2025 edition's introduction gives the shares of tested applications affected. Broken access control stays first, with server-side request forgery folded into it; security misconfiguration rose to second as more behaviour moves into configuration; software supply chain failures is new as a broad category and had the highest average exploit and impact scores despite few occurrences in the data; and a new tenth category covers mishandling of exceptional conditions, including failing open.",
+          "cites": [
+            "s1"
+          ]
         },
         {
-          "body": "An API validates each access token: signature against the provider's published keys, issuer, audience, expiry and required scopes or roles. Keep access tokens short-lived, since a signed token cannot easily be revoked before it expires. Service-to-service calls use the client credentials grant or mutual TLS with workload identities instead of shared static keys. In Keycloak, a realm holds users, roles and clients; each application is registered as a client with its redirect URIs and allowed flows, and the server handles login, federation, multi-factor authentication and sessions.",
-          "heading": "Validating tokens and service identity"
+          "type": "table",
+          "caption": "The OWASP Top 10 for 2025, with the introduction's note on each.",
+          "columns": [
+            "rank",
+            "category",
+            "note from the introduction"
+          ],
+          "rows": [
+            [
+              "A01",
+              "Broken access control",
+              "first again; SSRF rolled in; found in 3.73 percent of applications tested"
+            ],
+            [
+              "A02",
+              "Security misconfiguration",
+              "up from fifth; 3.00 percent of applications"
+            ],
+            [
+              "A03",
+              "Software supply chain failures",
+              "expanded from vulnerable components to dependencies, build systems and distribution; voted a top concern"
+            ],
+            [
+              "A04",
+              "Cryptographic failures",
+              "down from second; 3.80 percent of applications"
+            ],
+            [
+              "A05",
+              "Injection",
+              "the most tested category; cross-site scripting through SQL injection"
+            ],
+            [
+              "A06",
+              "Insecure design",
+              "down from fourth; the intro credits wider threat modelling"
+            ],
+            [
+              "A07",
+              "Authentication failures",
+              "unchanged; standard frameworks appear to be helping"
+            ],
+            [
+              "A08",
+              "Software or data integrity failures",
+              "trust boundaries and integrity of code and data"
+            ],
+            [
+              "A09",
+              "Security logging and alerting failures",
+              "renamed to stress alerting; logging with no alerting is of little value"
+            ],
+            [
+              "A10",
+              "Mishandling of exceptional conditions",
+              "new: error handling, logical errors, failing open"
+            ]
+          ],
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "For services the API Security list is the sharper tool, and its first entry is the one that scales with the product. Broken object level authorization arises because APIs expose endpoints that handle object identifiers, so the list's instruction is that object level authorization checks should be considered in every function that accesses a data source using an id from the user. The list also names unrestricted resource consumption, where requests cost bandwidth, CPU, memory, storage or paid third-party calls, and broken function level authorization, where an ordinary user reaches an administrative function.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "list",
+          "items": [
+            "API1 broken object level authorization; API2 broken authentication; API3 broken object property level authorization.",
+            "API4 unrestricted resource consumption; API5 broken function level authorization; API6 unrestricted access to sensitive business flows.",
+            "API7 server side request forgery; API8 security misconfiguration; API9 improper inventory management; API10 unsafe consumption of APIs."
+          ],
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "The top risk is not an exotic exploit but a handler that trusts an id in the request. Every function that takes an object id checks that the caller may act on that object; a role check alone is not enough.",
+          "cites": [
+            "s2",
+            "s1"
+          ]
         }
-      ],
-      "id": "authentication-oidc",
-      "title": "Authentication with OpenID Connect"
+      ]
     },
     {
-      "body": [
+      "id": "authentication-oauth-and-openid-connect",
+      "title": "Authentication: OAuth 2.0 roles and OpenID Connect",
+      "blocks": [
         {
-          "body": "Broken access control sits at the top of the OWASP Top Ten: authenticated users reaching data or actions that are not theirs, often by changing an identifier in a request. Enforce authorization on the server for every request and check ownership of the specific object, not only the role. Deny by default. Role-based access control assigns permissions to roles, and attribute-based rules add conditions such as tenant, resource owner or environment. In multi-tenant systems, carry the tenant id from the verified token, never from a client-supplied field, and apply it in every query.",
-          "heading": "Enforcing access on every request"
+          "type": "p",
+          "text": "OAuth 2.0 defines four roles, and most confusion about tokens comes from not naming them. The resource owner grants access, and is called the end-user when a person. The resource server hosts the protected resources and accepts requests bearing access tokens. The client makes requests on the resource owner's behalf, wherever it runs. The authorization server issues access tokens after authenticating the resource owner and obtaining authorization, and one authorization server may issue tokens accepted by many resource servers. In the authorization code grant the client receives a code via the user's browser and exchanges it for tokens on a back channel; the client credentials grant lets a client obtain a token with only its own credentials, which is the basis of service-to-service identity.",
+          "cites": [
+            "s3"
+          ]
         },
         {
-          "body": "Give each service its own identity with only the permissions it needs: a read-only database role for a read service, a narrow cloud role per workload, and network policy that allows only the declared call paths. Separate administrative paths from user paths and require stronger authentication for them. Small blast radius is the goal: when one component is compromised, the design should limit what the attacker can reach next.",
-          "heading": "Least privilege for machines"
+          "type": "table",
+          "caption": "The four OAuth 2.0 roles, and who plays them in a typical web application.",
+          "columns": [
+            "role",
+            "defined as",
+            "in a web application"
+          ],
+          "rows": [
+            [
+              "Resource owner",
+              "an entity able to grant access to a protected resource",
+              "the user"
+            ],
+            [
+              "Client",
+              "an application making protected resource requests on the owner's behalf",
+              "the web or mobile app, or a calling service"
+            ],
+            [
+              "Authorization server",
+              "issues access tokens after authenticating the owner and obtaining authorization",
+              "the identity provider"
+            ],
+            [
+              "Resource server",
+              "hosts protected resources; accepts and responds to requests with access tokens",
+              "the API"
+            ]
+          ],
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "OpenID Connect is the identity layer on top of OAuth 2.0: it adds an ID token, a JSON Web Token carrying claims about the authentication of the end-user by the authorization server, with an issuer, a subject, an audience and an expiry. The authorization code flow returns the code to the client and the tokens from the token endpoint, so the tokens never pass through the browser.",
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "diagram",
+          "mermaid": "sequenceDiagram\n  participant U as User browser\n  participant A as Application\n  participant I as Identity provider\n  participant S as API service\n  U->>A: Open protected page\n  A->>U: Redirect to login with code challenge\n  U->>I: Authenticate\n  I->>U: Redirect back with authorization code\n  U->>A: Deliver code\n  A->>I: Exchange code and verifier for tokens\n  I->>A: ID token, access token, refresh token\n  A->>S: Call API with access token\n  S->>S: Verify signature, issuer, audience, expiry, scope\n  S->>A: Response",
+          "legend": "The authorization code flow with PKCE: the code travels through the browser, the tokens do not; the API validates the access token on every call (s3, s4, s5)."
+        },
+        {
+          "type": "list",
+          "items": [
+            "The issuer identifier obtained during discovery must exactly match the iss claim.",
+            "The aud claim must contain the client's own client_id; a token that does not list the client, or lists untrusted audiences, is rejected.",
+            "The signature is validated with the keys the issuer publishes, and the current time must be before the exp claim, allowing small clock skew.",
+            "A nonce sent in the request must come back in the token and be checked against replay."
+          ],
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Delegate login to an identity provider with the authorization code flow, and validate every token on every call: issuer, audience, signature, expiry. An application that stores passwords or parses tokens without validating them has already failed the first STRIDE row.",
+          "cites": [
+            "s4",
+            "s3"
+          ]
         }
-      ],
-      "id": "authorization-least-privilege",
-      "title": "Authorization and least privilege"
+      ]
     },
     {
-      "body": [
+      "id": "tokens-what-the-bcps-require",
+      "title": "Tokens: what the best current practices require",
+      "blocks": [
         {
-          "body": "Encrypt in transit with TLS on every hop, including internal ones, and encrypt at rest with keys held in a key management service so that key access is itself controlled and audited. Classify data and keep sensitive fields out of logs, traces and caches. Secrets such as database passwords and API keys belong in a secret manager, injected at runtime, rotated regularly and never committed to source control or baked into images. Prefer short-lived, automatically issued credentials over long-lived static ones.",
-          "heading": "Encryption and secrets"
+          "type": "p",
+          "text": "The IETF's security best current practice for OAuth 2.0, published in 2025, retires the shortcuts. Public clients must use PKCE, which binds the code exchange to a secret the client generated, to prevent authorization code injection; for confidential clients it is recommended. Clients should not use the implicit grant or any response type that delivers an access token in the authorization response. The resource owner password credentials grant must not be used, because it exposes the user's credentials to the client and trains users to type them in the wrong place. Refresh tokens for public clients must be sender-constrained or rotated, and servers should sender-constrain access tokens with mutual TLS or DPoP so that a stolen token cannot be replayed from elsewhere.",
+          "cites": [
+            "s5"
+          ]
         },
         {
-          "body": "Treat all input as untrusted: use parameterised queries to prevent injection, validate against a schema at the edge, and encode output. Many breaches come from misconfiguration and outdated components, so harden defaults, close unused ports, and scan dependencies and images in the build pipeline. Log security-relevant events such as logins, permission changes and access denials with enough context to investigate, send them to a store the application cannot alter, and alert on them. Rate limits and quotas at the edge address the denial of service category.",
-          "heading": "Inputs, configuration and detection"
+          "type": "table",
+          "caption": "The token rules of RFC 9700.",
+          "columns": [
+            "rule",
+            "level",
+            "why"
+          ],
+          "rows": [
+            [
+              "Public clients use PKCE",
+              "must",
+              "prevents injection and misuse of authorization codes"
+            ],
+            [
+              "Confidential clients use PKCE",
+              "recommended",
+              "the same protection, and CSRF prevention as a side effect"
+            ],
+            [
+              "No implicit grant",
+              "should not",
+              "tokens in the authorization response leak and can be injected"
+            ],
+            [
+              "No password grant",
+              "must not",
+              "exposes credentials to the client; cannot carry two-factor flows"
+            ],
+            [
+              "Sender-constrained access tokens (mTLS, DPoP)",
+              "should",
+              "a stolen or leaked token is useless to another sender"
+            ],
+            [
+              "Refresh tokens for public clients sender-constrained or rotated",
+              "must",
+              "limits what a stolen refresh token can do"
+            ]
+          ],
+          "cites": [
+            "s5"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The JWT best current practice governs the receiving side. Libraries must let the caller specify the set of acceptable algorithms and must use no other, the alg header must match the operation performed, and each key is used with exactly one algorithm. When a token carries an issuer, the keys used must belong to that issuer, which OpenID Connect arranges by publishing a JWK set at an https address found through the issuer's metadata; when an issuer serves more than one relying party, the token must carry an audience and the recipient must reject a token whose audience is absent or not its own.",
+          "cites": [
+            "s6"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Together the two documents fix the token lifetimes a design should expect: short-lived access tokens validated statelessly at the resource server, with revocation handled by expiry rather than by lookup, and longer-lived refresh tokens held only by the client that can prove it is the client, rotated on use. Service-to-service calls use the client credentials grant or a workload identity with mutual TLS rather than a shared static key, which is also the first design principle of the AWS security pillar: centralise identity and aim to eliminate reliance on long-term static credentials.",
+          "cites": [
+            "s3",
+            "s8"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "An access token validated only for its signature is accepted from any issuer, for any audience, with any algorithm the attacker chose. Pin the algorithms, the issuer and the audience, and reject a missing audience.",
+          "cites": [
+            "s6"
+          ]
         }
-      ],
-      "id": "data-protection-and-secrets",
-      "title": "Protecting data, secrets and inputs"
+      ]
+    },
+    {
+      "id": "authorization-least-privilege-zero-trust",
+      "title": "Authorization, least privilege and zero trust",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Authentication says who the caller is; authorization decides what the caller may do, and it is enforced on the server for every request. The API Security list's first three entries are all authorization: object level, where the handler must check that this caller may act on this object; function level, where an administrative operation must not be reachable by an ordinary role; and property level, where a response or an update must not expose or accept fields the caller is not entitled to. Role-based rules decide the function; the object and the property need the ownership or tenant relation, which must come from the verified token and the stored record, never from a client-supplied field.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Least privilege applies the same discipline to machines. The AWS security pillar's first principle is a strong identity foundation: least privilege and separation of duties with appropriate authorization for each interaction, centralised identity management, and the elimination of long-term static credentials. In a design that means one identity per service with only the permissions its call paths need, a read-only database role for a read service, and network policy that allows only the declared paths, so that a compromised component reaches little.",
+          "cites": [
+            "s8"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Zero trust, in the words of NIST's architecture document rather than a vendor's, is a set of tenets about access decisions, not a product. The central one is that network location alone does not imply trust: a request from inside the old perimeter meets the same requirements as one from anywhere else, and every communication is secured and source-authenticated.",
+          "cites": [
+            "s7"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The zero trust tenets of NIST SP 800-207, condensed.",
+          "columns": [
+            "tenet",
+            "what it asks of a design"
+          ],
+          "rows": [
+            [
+              "All data sources and computing services are resources",
+              "every service and store is a thing to be authorized to, including small devices and SaaS"
+            ],
+            [
+              "All communication is secured regardless of network location",
+              "encrypt and authenticate internal calls as if they crossed the internet"
+            ],
+            [
+              "Access to individual resources is granted per session",
+              "evaluate trust before each access, with least privilege, and do not let one grant imply another"
+            ],
+            [
+              "Access is determined by dynamic policy",
+              "the decision uses client identity, the application and the requesting asset's state, plus behavioural and environmental attributes"
+            ],
+            [
+              "The enterprise monitors and measures the integrity and security posture of all assets",
+              "no asset is inherently trusted; posture feeds the decision"
+            ],
+            [
+              "Authentication and authorization are strictly enforced before access",
+              "a dynamic, continuous cycle of scanning, evaluating and reevaluating"
+            ],
+            [
+              "The enterprise collects as much information as possible about assets, infrastructure and communications",
+              "and uses it to improve policy"
+            ]
+          ],
+          "cites": [
+            "s7"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Deny by default. Decide function access by role, object and property access by the relation between the verified caller and the stored record, and give every machine identity the least it needs. Treat the internal network as untrusted.",
+          "cites": [
+            "s2",
+            "s8",
+            "s7"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tenant-isolation",
+      "title": "Tenant isolation: silo and pool",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "A multi-tenant design has one more boundary than a single-tenant one: between tenants. AWS's tenant isolation whitepaper names the two ends of the spectrum. In the silo model each tenant runs a fully separate stack of resources surrounded by shared identity, onboarding, metering, deployment and operations; isolation is an end-to-end construct around the whole stack, generally simpler to enforce with well-defined constructs, at a cost to the economies of scale and agility that make SaaS attractive. In the pool model tenants share some or all of the infrastructure, which scales in proportion to actual load, and the storage is shared too, a table indexed by tenant identifier.",
+          "cites": [
+            "s9"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Silo against pool, from the whitepaper.",
+          "columns": [
+            "",
+            "silo",
+            "pool"
+          ],
+          "rows": [
+            [
+              "Resources",
+              "a full stack per tenant",
+              "shared compute and storage, tenants side by side"
+            ],
+            [
+              "How isolation is enforced",
+              "a boundary around the whole stack; networking and IAM constructs apply",
+              "those constructs cannot separate tenants; isolation must be built into the application and the data access"
+            ],
+            [
+              "Scaling and cost",
+              "per tenant; trades efficiency for compliance or domain needs",
+              "in proportion to actual load; the efficiency SaaS is after"
+            ],
+            [
+              "Risk",
+              "a tenant escaping its environment",
+              "cross-tenant access through a shared path; the whitepaper calls for special diligence"
+            ]
+          ],
+          "cites": [
+            "s9"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The whitepaper's warning is the design rule: a shared model increases the chance of cross-tenant access and cannot be a reason to relax isolation. In a pooled design that means the tenant identifier is carried from the verified token into every query, enforced in the data layer as well as the handler, so that a handler bug cannot read another tenant's rows; that encryption keys, queues and caches are keyed by tenant where the blast radius justifies it; and that the noisy-neighbour problem, one tenant's load degrading another's, is treated with quotas and fairness controls as an availability threat.",
+          "cites": [
+            "s9"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Many products mix the models by tier: pooled resources for the standard tier and siloed stacks for tenants with compliance requirements, with the same identity and onboarding across both. The threat model gains a column for each: which tenant boundary a flow crosses and which control enforces it."
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Carry the tenant id from the verified token, never from the request body, apply it in every query, and enforce it in the storage layer as well as the handler. Pooling raises the standard; it does not lower it.",
+          "cites": [
+            "s9",
+            "s2"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "data-secrets-and-the-audit-trail",
+      "title": "Protecting data, secrets and the audit trail",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The AWS security pillar states the data principles a design should carry by default: classify data into sensitivity levels and protect it in transit and at rest with encryption, tokenisation and access control; keep people away from data by removing the need for direct access and manual handling; maintain traceability by monitoring, alerting and auditing actions and changes in real time; apply security at every layer; automate the controls as code; and prepare for security events with rehearsed incident response.",
+          "cites": [
+            "s8"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The AWS security pillar's design principles and what each means in a design document.",
+          "columns": [
+            "principle",
+            "in the design"
+          ],
+          "rows": [
+            [
+              "Implement a strong identity foundation",
+              "central identity, least privilege, no long-term static credentials"
+            ],
+            [
+              "Maintain traceability",
+              "audit events emitted and alerted on; logs integrated with investigation tooling"
+            ],
+            [
+              "Apply security at all layers",
+              "edge, network, load balancer, host, application and code each have a control"
+            ],
+            [
+              "Automate security best practices",
+              "controls defined as code in version-controlled templates"
+            ],
+            [
+              "Protect data in transit and at rest",
+              "classification, TLS on every hop, encryption at rest with managed keys"
+            ],
+            [
+              "Keep people away from data",
+              "no direct production data access; tooling instead"
+            ],
+            [
+              "Prepare for security events",
+              "an incident process, simulations, automated detection and recovery"
+            ]
+          ],
+          "cites": [
+            "s8"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Secrets are data with a short useful life. Database passwords, API keys and signing keys belong in a secrets manager and are injected at runtime, never committed to source control or baked into images; they are rotated so that a stolen credential works only briefly, and where the platform allows, issued dynamically per workload or session so that there is nothing long-lived to steal. The pillar's phrase for the goal is to eliminate reliance on long-term static credentials.",
+          "cites": [
+            "s8"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The audit trail is the control for repudiation and the input to detection. The OWASP logging cheat sheet lists what to always log: input and output validation failures, authentication successes and failures, authorization failures, session management failures such as suspicious JWT validation failures, application errors, start-ups and shut-downs, and higher-risk actions such as user administration, use of administrative or break-glass accounts, access to sensitive data, key use and rotation, and data export. It is equally clear about what to exclude: passwords, session identification values and access tokens.",
+          "cites": [
+            "s11"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Log security events with enough context to investigate, to a store the application cannot alter, and alert on them; the 2025 Top 10 renamed its logging category to say that logging without alerting is of little value. Never log a secret.",
+          "cites": [
+            "s11",
+            "s1"
+          ]
+        }
+      ]
     }
   ],
-  "diagram": {
-    "source": "sequenceDiagram\n  participant U as User browser\n  participant A as Application\n  participant I as Identity provider\n  participant S as API service\n  U->>A: Open protected page\n  A->>U: Redirect to login with code challenge\n  U->>I: Authenticate\n  I->>U: Redirect back with authorization code\n  U->>A: Deliver code\n  A->>I: Exchange code and verifier for tokens\n  I->>A: ID token, access token, refresh token\n  A->>S: Call API with access token\n  S->>S: Verify signature, issuer, audience, expiry, scope\n  S->>A: Response"
+  "worked_example": {
+    "title": "Worked example: the one-page threat model and controls for a multi-tenant invoicing API",
+    "blocks": [
+      {
+        "type": "p",
+        "text": "A small invoicing product exposes an API to its tenants' finance teams and to a mobile app. The counts below are assumptions chosen to make the exercise concrete; the controls follow the teaching, and the code after the steps shows the two checks that matter most."
+      },
+      {
+        "type": "steps",
+        "title": "From data flow diagram to controls",
+        "items": [
+          "Diagram: 3 external actors (browser, mobile app, a payment provider's webhook), 2 processes (API, worker), 2 stores (database, object storage) (assumption).",
+          "Trust boundaries: 4, between the internet and the edge, the edge and the API, the API and the stores, and between tenants inside the shared database.",
+          "Entry points: 14 endpoints and one webhook (assumption), each listed with the trust level it requires.",
+          "STRIDE over the boundaries: 6 categories times 4 boundaries gives 24 candidate threats; ranking by likelihood and effect leaves 7 to mitigate now.",
+          "Authentication: the identity provider with the authorization code flow and PKCE for both the web and the mobile client; no password grant.",
+          "Token lifetimes: access tokens of 10 minutes (assumption) validated statelessly; refresh tokens rotated on every use for the public mobile client.",
+          "Validation at the API: an allow-list of one signing algorithm, the issuer from discovery, the audience equal to the API's own identifier, expiry with 30 seconds of skew.",
+          "Object level authorization: every one of the 14 endpoints resolves the invoice and compares its tenant to the tenant claim in the token before doing anything else.",
+          "Tenant isolation in the pool: a tenant_id column on every table and a row-level security policy bound to the session's tenant, so a handler bug cannot cross tenants.",
+          "Resource consumption: a per-tenant rate limit of 600 requests per minute (assumption) and a 5 MB cap on uploads, against the unrestricted-consumption risk.",
+          "Webhook: the payment provider's signature verified before parsing, and the event id stored for replay rejection, against spoofing and tampering on that boundary.",
+          "Audit: 8 event classes from the logging list, each carrying the tenant and the caller, written to an append-only store with 400 days of retention (assumption) and alerts on authorization failures.",
+          "The decider: object level authorization. Every other control is a library or a platform setting; this one is a check in every handler, and it is the one that fails silently as the product grows."
+        ],
+        "cites": [
+          "s2",
+          "s4",
+          "s5",
+          "s6",
+          "s11"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "The threat model as the review should receive it: one row per ranked threat.",
+        "columns": [
+          "boundary",
+          "STRIDE",
+          "threat",
+          "control",
+          "status"
+        ],
+        "rows": [
+          [
+            "Internet to edge",
+            "denial of service",
+            "a tenant or a bot exhausts the API",
+            "per-tenant rate limit, upload cap",
+            "mitigated"
+          ],
+          [
+            "Edge to API",
+            "spoofing",
+            "a forged or replayed token",
+            "signature, issuer, audience, expiry; sender-constrained refresh",
+            "mitigated"
+          ],
+          [
+            "Edge to API",
+            "elevation of privilege",
+            "an ordinary user reaches an admin function",
+            "function level check by role",
+            "mitigated"
+          ],
+          [
+            "Tenant to tenant",
+            "information disclosure",
+            "an invoice id from another tenant is read",
+            "object level check plus row-level policy",
+            "mitigated"
+          ],
+          [
+            "API to stores",
+            "tampering",
+            "a worker writes with a shared credential",
+            "one identity per service, least privilege, no static keys",
+            "partially: rotation pending"
+          ],
+          [
+            "Webhook",
+            "spoofing",
+            "a fake payment event",
+            "provider signature and replay rejection",
+            "mitigated"
+          ],
+          [
+            "API to stores",
+            "repudiation",
+            "an export cannot be attributed",
+            "audit event with tenant and caller, append-only store",
+            "mitigated"
+          ]
+        ],
+        "cites": [
+          "s10"
+        ]
+      },
+      {
+        "type": "code",
+        "lang": "python",
+        "code": "import time\nimport jwt                                   # PyJWT\nfrom jwt import PyJWKClient\n\nISSUER = \"https://id.example.test/realms/invoicing\"      # from discovery, pinned\nAUDIENCE = \"invoicing-api\"                                  # this API's own identifier\nJWKS = PyJWKClient(f\"{ISSUER}/protocol/openid-connect/certs\")\n\ndef verify(token: str) -> dict:\n    key = JWKS.get_signing_key_from_jwt(token).key   # the issuer's published key for this token's kid\n    return jwt.decode(\n        token, key,\n        algorithms=[\"RS256\"],          # an allow-list of one; never the token's own alg\n        issuer=ISSUER,                 # iss must match exactly\n        audience=AUDIENCE,             # aud must name this API; a missing aud is rejected\n        leeway=30,                     # seconds of clock skew on exp\n        options={\"require\": [\"exp\", \"iss\", \"aud\", \"sub\"]},\n    )\n\ndef get_invoice(token: str, invoice_id: str, db):\n    claims = verify(token)\n    tenant = claims[\"tenant_id\"]                       # from the verified token, never from the request\n    invoice = db.fetch_one(\"select * from invoices where id = %s\", (invoice_id,))\n    if invoice is None or invoice[\"tenant_id\"] != tenant:\n        raise Forbidden()                              # object level authorization: the same answer for missing and foreign\n    return invoice",
+        "caption": "The two checks the example rests on: token validation pinned to one algorithm, the issuer and the audience, and the object level check against the tenant claim."
+      },
+      {
+        "type": "code",
+        "lang": "sql",
+        "code": "-- the pool model: every table carries the tenant, and the database enforces it even if a handler forgets\nalter table invoices enable row level security;\ncreate policy tenant_isolation on invoices\n  using (tenant_id = current_setting('app.tenant_id')::uuid);\n\n-- the API sets the session's tenant from the verified token before any query\nset local app.tenant_id = '2f9c3a4e-...';",
+        "caption": "Row-level security bound to the session's tenant: the second line of defence behind the handler's check."
+      }
+    ]
   },
+  "diagram": null,
   "code": [],
   "technologies": [
     "Keycloak",
@@ -104,25 +802,142 @@
   ],
   "sources": [
     {
+      "id": "s1",
+      "title": "OWASP Top 10:2025, Introduction (OWASP, 2025): the ten categories, their movement since 2021 and the share of tested applications affected",
+      "url": "https://owasp.org/Top10/2025/0x00_2025-Introduction/",
       "kind": "doc",
-      "title": "Keycloak server administration guide",
-      "url": "https://www.keycloak.org/docs/latest/server_admin/index.html"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "A01:2025 - Broken Access Control maintains its position at #1"
+      }
     },
     {
+      "id": "s2",
+      "title": "OWASP API Security Top 10 2023 (OWASP): the ten API risks, broken object level authorization first",
+      "url": "https://owasp.org/API-Security/editions/2023/en/0x11-t10/",
       "kind": "doc",
-      "title": "Keycloak: securing applications with OpenID Connect",
-      "url": "https://www.keycloak.org/securing-apps/oidc-layers"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Object level authorization checks should be considered in every function that accesses a data source using an ID from the user."
+      }
     },
     {
+      "id": "s3",
+      "title": "RFC 6749, The OAuth 2.0 Authorization Framework (IETF, October 2012): the four roles, the grant types, access and refresh tokens",
+      "url": "https://www.rfc-editor.org/rfc/rfc6749.html",
       "kind": "doc",
-      "title": "OWASP Top Ten",
-      "url": "https://owasp.org/projects/top-ten"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "OAuth defines four roles:"
+      }
+    },
+    {
+      "id": "s4",
+      "title": "OpenID Connect Core 1.0 (OpenID Foundation, 2014, incorporating errata): the identity layer, the authorization code flow, ID token claims and the validation rules",
+      "url": "https://openid.net/specs/openid-connect-core-1_0.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "The Issuer Identifier for the OpenID Provider (which is typically obtained during Discovery) MUST exactly match the value of the iss (issuer) Claim."
+      }
+    },
+    {
+      "id": "s5",
+      "title": "RFC 9700, Best Current Practice for OAuth 2.0 Security (IETF, January 2025): PKCE, no implicit or password grant, sender-constrained tokens, refresh token rotation",
+      "url": "https://www.rfc-editor.org/rfc/rfc9700.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Public clients MUST use PKCE [RFC7636] to this end"
+      }
+    },
+    {
+      "id": "s6",
+      "title": "RFC 8725, JSON Web Token Best Current Practices (IETF, February 2020): algorithm verification, issuer, subject and audience validation",
+      "url": "https://www.rfc-editor.org/rfc/rfc8725.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Perform Algorithm Verification"
+      }
+    },
+    {
+      "id": "s7",
+      "title": "NIST Special Publication 800-207, Zero Trust Architecture (August 2020, PDF): the seven tenets",
+      "url": "https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-207.pdf",
+      "kind": "paper",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "All communication is secured regardless of network location."
+      }
+    },
+    {
+      "id": "s8",
+      "title": "AWS Well-Architected Framework, Security Pillar, Security foundations (maintained): the seven design principles and the seven areas",
+      "url": "https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/security.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Implement a strong identity foundation"
+      }
+    },
+    {
+      "id": "s9",
+      "title": "AWS whitepaper, SaaS Tenant Isolation Strategies, Pool isolation (2020-08-01, marked historical reference): the silo and pool models and why pooling does not relax isolation",
+      "url": "https://docs.aws.amazon.com/whitepapers/latest/saas-tenant-isolation-strategies/pool-isolation.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "This shared infrastructure approach, which is referred to as a pool model, adds a level of complexity to the isolation story."
+      }
+    },
+    {
+      "id": "s10",
+      "title": "OWASP community page, Threat Modeling Process (maintained): data flow diagrams, entry points, assets, trust boundaries, the STRIDE threat list and mitigation techniques",
+      "url": "https://owasp.org/www-community/Threat_Modeling_Process",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Threat lists based on the STRIDE model are useful in the identification of threats"
+      }
+    },
+    {
+      "id": "s11",
+      "title": "OWASP Cheat Sheet Series, Logging Cheat Sheet (maintained): which security events to log and which data to exclude",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Authentication successes and failures"
+      }
+    },
+    {
+      "id": "s12",
+      "title": "Rory Ward and Betsy Beyer, BeyondCorp: A New Approach to Enterprise Security, USENIX ;login: December 2014 (PDF): access on device and user credentials regardless of network, managed devices, the device inventory",
+      "url": "https://www.usenix.org/system/files/login/articles/login_dec14_02_ward.pdf",
+      "kind": "paper",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "access depends solely on device and user credentials"
+      }
     }
   ],
   "practice": "practice/sd-security-basics",
   "provenance": {
-    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
-    "generated_on": "2026-10-13",
+    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center, format v2",
+    "generated_on": "2026-10-15",
     "reviewed_by": null,
     "reviewed_on": null
   },
@@ -131,6 +946,11 @@
       "version": 1,
       "date": "2026-10-13",
       "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-15",
+      "change": "rewritten by hand at format v2 (version 2): threat modelling in one page with the STRIDE table, the OWASP Top 10 2025 table and the API list, OAuth 2.0 roles as a table with OpenID Connect validation rules and the diagram in its subtopic, the token rules of RFC 9700 as a table with the JWT best practices, authorization and least privilege with the NIST zero trust tenets table, silo against pool isolation as a table, data, secrets and the audit trail with the AWS principles table and the logging list, a worked threat model for a multi-tenant invoicing API with the validation code and the row-level policy after the teaching, cited in-practice blocks (BeyondCorp, the OWASP data, the IETF decisions, the API project), 12 verified sources"
     }
   ]
 }
