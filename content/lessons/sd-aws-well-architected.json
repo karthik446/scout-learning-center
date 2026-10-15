@@ -1,0 +1,785 @@
+{
+  "schema_version": "learning-center-lesson:2",
+  "id": "sd-aws-well-architected",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Designing on AWS: the Well-Architected Framework",
+  "area": "infra",
+  "primary_key": "aws-well-architected",
+  "secondary_keys": [
+    "aws",
+    "solutions-architecture",
+    "serverless",
+    "cloud-infrastructure"
+  ],
+  "keys": [
+    "aws-well-architected",
+    "aws",
+    "solutions-architecture",
+    "serverless",
+    "cloud-infrastructure"
+  ],
+  "summary": "The AWS Well-Architected Framework is how AWS's own architects review a design: six pillars, each with design principles and questions, lenses that specialise the questions for serverless, SaaS, analytics or ML workloads, and a review in the Well-Architected Tool that ends in a list of high and medium risks and an improvement plan. This lesson gives the pillars and their principles as tables, the lenses and when each applies, the review as steps, the compute decision between Lambda, ECS on Fargate, EKS and EC2 as a decision table, and reviews this module's news feed design against all six pillars.",
+  "detail": [],
+  "in_practice": {
+    "blocks": [
+      {
+        "type": "p",
+        "text": "Netflix's account of going active-active across two AWS Regions, us-east-1 and us-west-2, is the reliability pillar's test recovery procedures principle carried out by a named team. The post states an internal availability goal of 99.99 percent, requires every service on the user path to be stateless with replication left to the data tier, forbids cross-region calls on that path, and reports an experiment in which one million records written in one Region were all readable from the other 500 milliseconds later under production load. The team then rehearsed zone loss, a severed inter-region link and a whole-Region evacuation before a real regional degradation was handled by routing users to the healthy Region.",
+        "cites": [
+          "s11"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Slack's migration to a cellular architecture started from an incident review. On 30 June 2021 a faulty network link in one Availability Zone of the US East Region degraded Slack for users even though the service ran in several zones, because a gray failure left servers in different zones with different views of which backends were healthy. The team's answer was to silo services so that each zone's instances talk only to their own zone, and to build an Envoy-based drain that removes traffic from a zone within five minutes, incrementally and without errors, the budget being a 99.99 percent SLA that allows under an hour a year of unavailability.",
+        "cites": [
+          "s7"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Amazon's own services apply the reliability principle of recovering without a control-plane dependency. The Builders' Library describes stateless fleets run across three or more Availability Zones and over-provisioned by 50 percent, so that each zone runs at 66 percent of its load-tested level and a zone impairment requires no action at all: the impaired instances fail health checks and the load balancer routes around them. Stateful services follow the same rule with a warm standby in another zone, as Amazon RDS does, so that recovery never waits on launching a replacement.",
+        "cites": [
+          "s12"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "The same article gives the arithmetic behind building zonal services. If a highly available regional service calls another regional service, a request's chance of avoiding one impaired zone is two thirds times two thirds, four ninths; with N such hops it falls as two thirds to the power N, whereas calling a zone-local endpoint keeps it at two thirds regardless of depth. That is why Amazon built the EC2 NAT gateway as a zonal resource, accepting the extra route tables it costs customers, and why the article separates a service's control plane from its data plane and designs the data plane to keep working when the control plane is impaired.",
+        "cites": [
+          "s12"
+        ]
+      }
+    ]
+  },
+  "subtopics": [
+    {
+      "id": "what-the-framework-is",
+      "title": "What the framework is, and what it is not",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The AWS Well-Architected Framework is AWS's written account of how its own solutions architects judge a design: questions grouped under six pillars, each pillar opening with design principles and continuing with best practices, and a review method that turns the answers into a prioritised list of risks. AWS publishes it as a whitepaper and offers the review as a free service in the console, the AWS Well-Architected Tool. The whitepaper is explicit that a review is a constructive conversation about decisions, not an audit.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The vocabulary matters because the Tool is organised around it. A component is the code, configuration and AWS resources that meet one requirement, usually the unit a team owns. A workload is a set of components that together deliver business value, and it is what you review. Architecture is how a workload's components work together. Milestones mark the workload's state at design, implementation, testing, go-live and in production, so that one review can be compared with the last.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The six pillars as the whitepaper defines them.",
+          "columns": [
+            "pillar",
+            "what it asks of a design"
+          ],
+          "rows": [
+            [
+              "Operational excellence",
+              "can the team run the workload, see what it is doing, and keep improving the procedures that support it"
+            ],
+            [
+              "Security",
+              "are data, systems and assets protected, and does the cloud improve the posture rather than weaken it"
+            ],
+            [
+              "Reliability",
+              "does the workload do its job correctly and consistently when expected, through its whole lifecycle"
+            ],
+            [
+              "Performance efficiency",
+              "are computing resources used efficiently, and does that hold as demand and technology change"
+            ],
+            [
+              "Cost optimization",
+              "does the workload deliver its business value at the lowest price point"
+            ],
+            [
+              "Sustainability",
+              "does the design keep reducing energy use and raising the useful work got out of the resources it provisions"
+            ]
+          ],
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The pillars are not a scorecard to maximise together. The whitepaper says you trade them off on business grounds: a development environment may give up reliability for cost and sustainability, a mission-critical system may buy reliability with more cost, an e-commerce site may put performance first because it moves revenue. Two pillars are the exception: security and operational excellence are generally not traded off against the others.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Treat the pillars as questions, not a grade. The framework's output is a list of risks with owners and dates, and the two pillars you do not spend to buy the others are security and operational excellence.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "list",
+          "items": [
+            "Stop guessing your capacity needs: scale in and out instead of sitting on idle or short hardware.",
+            "Test systems at production scale: a production-sized test environment can exist for an afternoon.",
+            "Automate with architectural experimentation in mind: a workload becomes cheap to replicate, change and revert.",
+            "Consider evolutionary architectures: decisions need not be one-time events when change is cheap to test.",
+            "Drive architectures using data: measure what each choice does to the workload.",
+            "Improve through game days: rehearse production events on a schedule."
+          ],
+          "cites": [
+            "s1"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "pillars-and-design-principles",
+      "title": "The six pillars and their design principles",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Each pillar opens with design principles: the habits AWS expects a team to hold before any best practice applies. The table lists every principle in the current whitepaper by its heading, 36 in all; the whitepaper gives each a paragraph. Read a row and the pillar's character shows: operational excellence is about automation and learning from events, reliability about recovering without a person in the loop, cost about paying for consumption and attributing it to an owner.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Design principles by pillar, by heading, as the whitepaper lists them.",
+          "columns": [
+            "pillar",
+            "design principles"
+          ],
+          "rows": [
+            [
+              "Operational excellence (8)",
+              "organize teams around business outcomes; implement observability for actionable insights; safely automate where possible; make frequent, small, reversible changes; refine operations procedures frequently; anticipate failure; learn from all operational events and metrics; use managed services"
+            ],
+            [
+              "Security (7)",
+              "implement a strong identity foundation; maintain traceability; apply security at all layers; automate security best practices; protect data in transit and at rest; keep people away from data; prepare for security events"
+            ],
+            [
+              "Reliability (5)",
+              "automatically recover from failure; test recovery procedures; scale horizontally to increase aggregate workload availability; stop guessing capacity; manage change through automation"
+            ],
+            [
+              "Performance efficiency (5)",
+              "democratize advanced technologies; go global in minutes; use serverless architectures; experiment more often; consider mechanical sympathy"
+            ],
+            [
+              "Cost optimization (5)",
+              "implement Cloud Financial Management; adopt a consumption model; measure overall efficiency; stop spending money on undifferentiated heavy lifting; analyze and attribute expenditure"
+            ],
+            [
+              "Sustainability (6)",
+              "understand your impact; establish sustainability goals; maximize utilization; anticipate and adopt new, more efficient hardware and software offerings; use managed services; reduce the downstream impact of your cloud workloads"
+            ]
+          ],
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Two ideas recur under different pillars, and the repetition is the point. Use managed services appears under operational excellence, where it reduces the procedures a team must own, and under sustainability, where sharing a service across many customers raises hardware utilisation. Stop guessing capacity is both a general and a reliability principle: on premises, saturation is a common cause of failure, while in the cloud demand is measured and capacity added by automation, so the failure mode becomes a scaling policy. The sustainability text gives utilisation its number: two hosts at 30 percent are less efficient than one at 60 percent, because each host has a baseline power draw.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Reading a principle as a product recommendation is the common mistake. Use serverless architectures sits under performance efficiency and names a direction, not a rule; the compute decision later in this lesson shows where it does not hold. Mechanical sympathy is the counterweight in the same pillar: understand how a service is consumed and pick the approach that matches the workload, such as a database chosen by its access pattern.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "A review that quotes a principle without the question it answers has skipped the framework. Principles set the direction; the pillar questions, answered honestly for this workload, find the risk.",
+          "cites": [
+            "s1"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "lenses",
+      "title": "Lenses: the framework specialised for one kind of workload",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "A lens is a second set of questions, best practices, notes and an improvement plan laid over the base framework for one technology or one industry. In the Well-Architected Tool the framework itself is a lens, applied automatically to every workload, and a team adds the lenses that fit. Up to five lenses can be added at a time and a workload can carry at most 20; removing a lens keeps its answers, which return if the lens is added back.",
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The official lenses in the Lens Catalog and when each one applies.",
+          "columns": [
+            "lens",
+            "what it covers, in the catalog's words",
+            "apply it when"
+          ],
+          "rows": [
+            [
+              "Serverless Applications",
+              "best practices for building serverless workloads: RESTful microservices, mobile backends, stream processing, web applications",
+              "the compute is Lambda, API Gateway, Step Functions and event sources rather than a fleet you size"
+            ],
+            [
+              "SaaS",
+              "designing, deploying and architecting software as a service on AWS",
+              "many tenants share the workload and isolation, tiering and noisy neighbours are design questions"
+            ],
+            [
+              "Data Analytics",
+              "insights from real-world case studies on the key design elements of analytics workloads",
+              "the workload is a pipeline, warehouse or lake rather than a request-serving service"
+            ],
+            [
+              "Machine Learning",
+              "managing ML resources and workloads on AWS",
+              "training, feature and inference systems are part of the design"
+            ],
+            [
+              "Generative AI",
+              "architecting generative AI workloads on AWS",
+              "a model, retrieval or an agent sits on the request path"
+            ],
+            [
+              "Container Build",
+              "the container design and build process",
+              "images, registries and the build pipeline are in scope"
+            ],
+            [
+              "DevOps",
+              "a structured approach to a high-velocity, security-focused culture",
+              "the review is about how the team ships, not one system"
+            ],
+            [
+              "Migration",
+              "how to migrate to the AWS cloud",
+              "the workload is moving from elsewhere and the plan is the design"
+            ],
+            [
+              "Industry lenses: Financial Services, Healthcare, Government, Connected Mobility, SAP, IoT, Mergers and Acquisitions",
+              "sector-specific best practices",
+              "regulation or a sector's operating model shapes the architecture"
+            ]
+          ],
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The Serverless Applications Lens is the one the exercises in this module reach for most, so its design principles are worth knowing on their own. Functions should be speedy, simple and singular; capacity is reasoned about in concurrent requests, not total requests; share nothing, because the runtime environment is short-lived and local storage is not guaranteed; assume no hardware affinity; orchestrate with state machines rather than by chaining functions; let events trigger transactions; and design for failures and duplicates, since an event can be delivered more than once and every operation must be idempotent.",
+          "cites": [
+            "s6"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "tip",
+          "text": "A custom lens carries your own pillars, questions and improvement plans and can be shared with other accounts. Encode the rules your organisation already has, such as every service has an SLO and a runbook, so that the review checks them alongside AWS's questions.",
+          "cites": [
+            "s3"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "how-a-review-runs",
+      "title": "How a Well-Architected review runs",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The whitepaper sets the ground rules. A review is consistent and blame-free, lightweight (hours, not days), and a conversation rather than an audit; its outcome is a set of actions. AWS recommends that the team building the architecture review it continually rather than wait for a formal meeting. Reviews belong at milestones: early in design, to avoid one-way doors that are hard to reverse, before go-live, and after any significant change.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "steps",
+          "title": "A review in the Well-Architected Tool, from workload to improvement plan",
+          "items": [
+            "Define the workload in the Tool: name, environment, Regions, accounts. The framework lens is applied automatically; add the lenses that fit.",
+            "Agree the rules before the session: who leads, who takes notes in the Tool, which pillars in which order, how much time each gets. The user guide suggests spreading the six pillars over several shorter sessions.",
+            "Answer each pillar's questions for the workload as it is today, ticking only the best practices actually followed, with notes, because a ticked box without context tells the next reviewer nothing. Maybe, kind of, or it is in the backlog usually means no.",
+            "Capture data points, not solutions; fixes belong to the improve phase.",
+            "Read the risks the Tool derives from the unticked best practices: a high risk issue (HRI) is a missing foundational, must-do practice, such as an unsecured AWS account; a medium risk issue (MRI) is a missing enabling practice, such as credentials never audited or rotated.",
+            "Generate the workload report: answers, notes, the count of high and medium risks, and an improvement plan for every question that carries a risk. The dashboard filters by workload, pillar and severity.",
+            "Within a day, send the recap: attendees, key findings, plan and timeline. Within two or three days, hold the HRI prioritisation meeting with the owning teams; rank by effort and impact.",
+            "Within a week, start the improvement plan, sized at 90 or 180 days, priority HRIs first and, where possible, one initiative that removes several.",
+            "Save a milestone at each session and as items complete, so that the fall in HRIs and MRIs is measured against the last milestone."
+          ],
+          "cites": [
+            "s1",
+            "s10",
+            "s4",
+            "s5"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The two risk levels the Tool reports.",
+          "columns": [
+            "level",
+            "what it means",
+            "the user guide's example",
+            "what happens next"
+          ],
+          "rows": [
+            [
+              "High risk issue (HRI)",
+              "a foundational, must-do practice of a pillar is not followed; may significantly hurt operations, assets or individuals",
+              "not securing the AWS account",
+              "ranked by effort and impact; the improvement plan starts here"
+            ],
+            [
+              "Medium risk issue (MRI)",
+              "an enabling practice that would substantially improve the workload is not followed",
+              "not auditing and rotating credentials periodically",
+              "after the HRIs, or inside an initiative that fixes several"
+            ]
+          ],
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "The review that fails is the one run as an exam. The user guide's tips are about honesty: reaffirm there is no blame, keep the discussion on the architecture rather than the Tool's screen, and accept that no workload is perfect and most need not be.",
+          "cites": [
+            "s10"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "compute-criteria",
+      "title": "The compute decision: the criteria",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "AWS's decision guides describe compute in layers. The capacity layer is where containers run: EC2 instances you choose and manage, or Fargate, which runs containers with no instances to provision. The orchestration layer schedules them, Amazon ECS or Amazon EKS, and both can use either capacity. Above them sit vertical solutions such as Lambda and App Runner that hide the layers entirely. The first fork is the operating model, serverless or Kubernetes, and the containers guide notes that most customers use both to varying degrees.",
+          "cites": [
+            "s8"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The criteria that decide between the four options, from the containers guide, the Fargate-or-Lambda guide and the static stability article.",
+          "columns": [
+            "criterion",
+            "AWS Lambda",
+            "ECS on Fargate",
+            "Amazon EKS",
+            "Amazon EC2",
+            "source"
+          ],
+          "rows": [
+            [
+              "State",
+              "stateless by design; state in S3, DynamoDB or EFS",
+              "in-memory state while the task runs; external storage for anything that matters",
+              "containers as on Fargate, scheduled by Kubernetes on Fargate or EC2 nodes",
+              "anything, including local disk and long-lived connections",
+              "s9, s8"
+            ],
+            [
+              "Cold start",
+              "under 100 ms to over 1 s by runtime and package; SnapStart, provisioned concurrency or Managed Instances remove it",
+              "task start is the image pull, shortened by SOCI lazy loading; then long-running",
+              "pod start as a Fargate task, or on a node that must already exist",
+              "an instance launch is a control-plane operation; provision ahead",
+              "s9, s12"
+            ],
+            [
+              "Steady or spiky load",
+              "scales per request; 1,000 concurrent by default, 1,000 more every 10 seconds, then throttling",
+              "scales by task count; up to 500 tasks in under a minute per service; predictive scaling",
+              "deploys and manages up to thousands of containers",
+              "Auto Scaling groups; Spot at a discount for interruptible work",
+              "s9, s8"
+            ],
+            [
+              "Ops burden",
+              "no servers, OS, capacity or scaling to run",
+              "no instances; ECS orchestrates",
+              "managed control plane, but Kubernetes has three major releases a year and deprecates old ones; needs SRE investment",
+              "setup, scaling, patching and securing the fleet; a dedicated operations team",
+              "s9, s8"
+            ],
+            [
+              "Cost shape",
+              "per request plus GB-seconds at 1 ms granularity; cheap at low volume, linear in requests",
+              "per vCPU-second and GB-second, one-minute minimum; provisioned tasks are paid whether busy or idle; Fargate Spot exists",
+              "the nodes or Fargate tasks it schedules plus the managed control plane",
+              "per instance by the second; Reserved, Savings Plans and Spot lower the unit price",
+              "s9, s8"
+            ],
+            [
+              "Limits that bite",
+              "15 minutes per invocation; 10 GB memory; 6 vCPU; 250 MB package or 10 GB image",
+              "32 vCPU and 244 GiB per task; no time limit",
+              "cluster limits and the upgrade cadence",
+              "the instance type; your own capacity planning",
+              "s9, s8"
+            ]
+          ],
+          "cites": [
+            "s8",
+            "s9",
+            "s12"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Decide by the shape of the load and the shape of the team, not by the newest service. Spiky and event-shaped work fits Lambda; steady container-shaped services fit Fargate; a team that already runs Kubernetes fits EKS; a workload that needs the machine fits EC2.",
+          "cites": [
+            "s8",
+            "s9"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "compute-decision",
+      "title": "The compute decision: picking one",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The Fargate-or-Lambda guide puts the choice in one sentence pair: Lambda for event-driven tasks, unpredictable workloads and wait-heavy orchestration; Fargate for containerised applications with specific resource needs or persistent processes. It adds that the two combine well, and that at low traffic Lambda usually costs less while per-second resource billing on Fargate is more economical for sustained, high-throughput work, because Lambda's cost grows linearly with requests and Fargate's stays flat within the provisioned tasks.",
+          "cites": [
+            "s9"
+          ]
+        },
+        {
+          "type": "decision",
+          "caption": "Picking the compute for one service of a design.",
+          "rows": [
+            {
+              "option": "AWS Lambda",
+              "pick_when": "the work is event-driven or spiky, each unit is short and stateless, the team wants no servers, and a cold start of up to a second is acceptable or is removed with SnapStart or provisioned concurrency",
+              "avoid_when": "the service holds persistent connections, runs longer than 15 minutes, needs more than 6 vCPU or 10 GB, or carries sustained high throughput where per-request cost overtakes a fleet",
+              "example": "resizing an uploaded image, or processing a stream in batches"
+            },
+            {
+              "option": "Amazon ECS on AWS Fargate",
+              "pick_when": "the service is a long-running container with a predictable load and specific CPU and memory, and the team wants orchestration without instances or Kubernetes",
+              "avoid_when": "the team needs the Kubernetes API and ecosystem, or the fleet is so large and steady that EC2 with Savings Plans or Spot is clearly cheaper",
+              "example": "the feed service and the fan-out workers of the news feed exercise"
+            },
+            {
+              "option": "Amazon EKS",
+              "pick_when": "the organisation already runs Kubernetes, values portability across clouds or on premises (EKS Anywhere, hybrid nodes), and has an SRE team for the upgrade cadence",
+              "avoid_when": "a small team would be adopting Kubernetes for one workload; three major releases a year is a standing cost",
+              "example": "a platform team hosting fifty services for other teams"
+            },
+            {
+              "option": "Amazon EC2",
+              "pick_when": "the workload needs the host: a particular instance family, GPUs, local NVMe, a kernel setting or a licence tied to a machine, or the highest sustained utilisation at reserved prices",
+              "avoid_when": "nobody owns patching, scaling and securing the fleet",
+              "example": "a self-managed database ring or a stateful cache that must stay on local disk"
+            }
+          ],
+          "cites": [
+            "s9",
+            "s8"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The Serverless Applications Lens adds the design rules that make the Lambda column work: think in concurrent requests rather than total requests, share nothing between invocations, orchestrate with a state machine rather than by chaining functions, and make every handler idempotent because an event can arrive twice. A team that cannot meet those rules for a service has found a reason to put it on containers.",
+          "cites": [
+            "s6"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Hybrids are normal. The containers guide treats serverless and Kubernetes as operating models most customers mix, and the Fargate-or-Lambda guide points to patterns where Lambda handles the event-shaped edge of a system and Fargate runs the steady core. The decision is per service, revisited when a service's load changes shape.",
+          "cites": [
+            "s8",
+            "s9"
+          ]
+        }
+      ]
+    }
+  ],
+  "worked_example": {
+    "title": "Worked example: the news feed reviewed against the six pillars",
+    "blocks": [
+      {
+        "type": "p",
+        "text": "The news feed design from this module's exercise is the workload: 10 million daily active users, fan-out on write into a replicated in-memory timeline cache, a celebrity exception, ranking behind a deadline. Treated as a review in the Tool, one question per pillar gives the data point, the risk and the choice; the numbers come from the exercise's estimates table."
+      },
+      {
+        "type": "steps",
+        "title": "One pillar per step: the question, the finding, the risk level and the choice",
+        "items": [
+          "Operational excellence. Question: how do you understand the health of the workload? Finding: fan-out lag (the freshness SLI, target 5 seconds) and the feed-open p99 are the KPIs, and the workers scale on lag rather than CPU. Risk: no runbook for a storm of timeline rebuilds after a cache node loss. Level: MRI. Choice: write the runbook and rate-limit rebuilds; both are already failure-mode rows in the exercise.",
+          "Security. Question: how do you manage identities and permissions? Finding: each service gets its own task role with least privilege, so the post service writes posts and the fan-out workers read the graph and write the cache, and visibility and deleted flags are read at render time rather than baked into any cache. Risk: the timeline cache reachable from outside the VPC would be an HRI. Choice: the cache keeps a VPC endpoint only.",
+          "Reliability. Question: how do you design the workload to withstand component failures? Finding: the cache is a derived view that rebuilds from the post store, rebuilds are bounded to 48 hours, and the read path survives a zone loss when the fleet is over-provisioned by about 50 percent across three zones so that no instance need launch during the event. Risk accepted: a lost cache node costs rebuild work, not data. Level: none, if the over-provisioning is real and tested on a game day.",
+          "Performance efficiency. Question: how do you select the best performing compute? Finding: a few hundred ids in a memory list give microsecond reads; the ranking call is bounded by a 50 millisecond deadline and degrades to chronological order; the fan-out workers are a steady 46,000 appends per second at peak and so run as containers on Fargate rather than Lambda, where the default 1,000 concurrent executions and per-request cost fit the shape badly. Risk: none recorded. Choice: Fargate for the steady core, Lambda only for event-shaped side jobs such as media thumbnails.",
+          "Cost optimization. Question: how do you measure overall efficiency? Finding: the design is held to about 0.0015 dollars per active user per month, and the fan-out line (40 appends per user per day) is the larger share, so the celebrity threshold is the lever. Risk accepted: a replicated cache fleet is paid for at night as well as at peak. Choice: keep the per-user figure on the dashboard next to the SLO; move the threshold before buying nodes.",
+          "Sustainability. Question: how do you take advantage of software and architecture patterns to minimise resources? Finding: the timeline cache holds 800 entries for every active user whether they open the feed or not, and the sustainability principles argue for fewer hosts at higher utilisation. Risk: memory held for users who have gone quiet. Choice: expire the timelines of users inactive for 30 days and rebuild on their return, which the exercise's design already allows."
+        ],
+        "cites": [
+          "s1",
+          "s12",
+          "s9"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "The review's output as the Tool would show it: one row per pillar.",
+        "columns": [
+          "pillar",
+          "risk found",
+          "level",
+          "improvement item",
+          "pillar traded against"
+        ],
+        "rows": [
+          [
+            "Operational excellence",
+            "no rebuild-storm runbook",
+            "MRI",
+            "runbook plus a rate limit on rebuilds",
+            "none"
+          ],
+          [
+            "Security",
+            "cache endpoint exposure",
+            "HRI if exposed",
+            "VPC endpoint only; task roles per service",
+            "none, by the whitepaper's rule"
+          ],
+          [
+            "Reliability",
+            "zone loss during peak",
+            "none if over-provisioned",
+            "game day that drains one zone",
+            "cost: the spare third of a fleet"
+          ],
+          [
+            "Performance efficiency",
+            "cold starts on the hot path",
+            "none",
+            "steady core on Fargate, Lambda at the edges",
+            "cost: paying for provisioned tasks"
+          ],
+          [
+            "Cost optimization",
+            "cache paid for at night",
+            "accepted",
+            "per-user cost on the dashboard; threshold as the lever",
+            "performance: lower threshold means more read-time merging"
+          ],
+          [
+            "Sustainability",
+            "memory held for inactive users",
+            "accepted",
+            "expire timelines idle for 30 days",
+            "performance: a rebuild on return"
+          ]
+        ],
+        "cites": [
+          "s1"
+        ]
+      },
+      {
+        "type": "callout",
+        "kind": "rule",
+        "text": "A review writes down the trade it makes, with the pillar it trades against and the number it watches. Here the design buys reliability and performance with cost, watches one cost figure per active user, and trades nothing against security or operations.",
+        "cites": [
+          "s1"
+        ]
+      }
+    ]
+  },
+  "diagram": null,
+  "code": [],
+  "technologies": [
+    "AWS Well-Architected Tool",
+    "AWS Lambda",
+    "Amazon ECS",
+    "AWS Fargate",
+    "Amazon EKS",
+    "Amazon EC2",
+    "Amazon DynamoDB",
+    "Amazon ElastiCache",
+    "Amazon SQS",
+    "Amazon S3",
+    "Amazon RDS"
+  ],
+  "related": [
+    "sd-numbers",
+    "sd-ex-news-feed",
+    "sd-cost",
+    "sd-reliability-slos"
+  ],
+  "sources": [
+    {
+      "id": "s1",
+      "title": "AWS Well-Architected Framework, the whitepaper (PDF, publication date November 6, 2024): definitions, the design principles of every pillar, and the review process",
+      "url": "https://docs.aws.amazon.com/pdfs/wellarchitected/latest/framework/wellarchitected-framework.pdf",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Organize teams around business outcomes"
+      }
+    },
+    {
+      "id": "s2",
+      "title": "AWS Well-Architected Tool user guide: Lens Catalog (the official lenses and what each covers)",
+      "url": "https://docs.aws.amazon.com/wellarchitected/latest/userguide/lens-catalog.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Applied by default to all workloads"
+      }
+    },
+    {
+      "id": "s3",
+      "title": "AWS Well-Architected Tool user guide: Using lenses (the default lens, custom lenses, how many lenses a workload can carry)",
+      "url": "https://docs.aws.amazon.com/wellarchitected/latest/userguide/lenses.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Five lenses can be added at a time to a workload"
+      }
+    },
+    {
+      "id": "s4",
+      "title": "AWS Well-Architected Tool user guide: Identify and understand risks (high risk and medium risk issues, the dashboard and the report)",
+      "url": "https://docs.aws.amazon.com/wellarchitected/latest/userguide/identify-and-understand-risks.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "A high risk best practice is considered a foundational, must-do practice"
+      }
+    },
+    {
+      "id": "s5",
+      "title": "AWS Well-Architected Tool user guide: Improving your workload (the improvement plan and its timeline after a review)",
+      "url": "https://docs.aws.amazon.com/wellarchitected/latest/userguide/improving-your-workload.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "90 or 180 days"
+      }
+    },
+    {
+      "id": "s6",
+      "title": "Serverless Applications Lens, AWS Well-Architected Framework (July 14, 2022): design principles for serverless workloads",
+      "url": "https://docs.aws.amazon.com/wellarchitected/latest/serverless-applications-lens/general-design-principles.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Think concurrent requests, not total requests"
+      }
+    },
+    {
+      "id": "s7",
+      "title": "Slack Engineering: Slack's Migration to a Cellular Architecture (Cooper Bethea, 2023-08-22)",
+      "url": "https://slack.engineering/slacks-migration-to-a-cellular-architecture/",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Remove as much traffic as possible from an AZ within 5 minutes"
+      }
+    },
+    {
+      "id": "s8",
+      "title": "AWS decision guide: Choosing an AWS container service (last updated May 16, 2025)",
+      "url": "https://docs.aws.amazon.com/decision-guides/latest/decision-guides/choosing-aws-container-service.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Kubernetes has three major releases a year"
+      }
+    },
+    {
+      "id": "s9",
+      "title": "AWS decision guide: AWS Fargate or AWS Lambda? (last updated August 21, 2026)",
+      "url": "https://docs.aws.amazon.com/decision-guides/latest/decision-guides/fargate-or-lambda.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Cold start duration varies from under 100 milliseconds to over 1 second"
+      }
+    },
+    {
+      "id": "s10",
+      "title": "AWS Well-Architected Tool user guide: Running a WAFR (roles, review tips, running the review in the Tool)",
+      "url": "https://docs.aws.amazon.com/wellarchitected/latest/userguide/running-a-wafr.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Think carefully about maybes"
+      }
+    },
+    {
+      "id": "s11",
+      "title": "Netflix TechBlog: Active-Active for Multi-Regional Resiliency (Netflix Technology Blog, 2013)",
+      "url": "https://netflixtechblog.com/active-active-for-multi-regional-resiliency-c47719f6685b",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "our internal availability goals are 99.99%"
+      }
+    },
+    {
+      "id": "s12",
+      "title": "Amazon Builders' Library: Static stability using Availability Zones (Becky Weiss and Mike Furr)",
+      "url": "https://builder.aws.com/content/3K9SiqiJ369TGkkGzqPM95BuYWI/static-stability-using-availability-zones",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "we overprovision by 50 percent"
+      }
+    }
+  ],
+  "practice": null,
+  "provenance": {
+    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center, format v2",
+    "generated_on": "2026-10-15",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-15",
+      "change": "written by hand from primary AWS documentation and named engineering blogs for the system design module, Part A after sd-numbers: the six pillars and their design principles as tables, the lenses, the review as steps, the compute decision as a decision block, the news feed reviewed against the pillars as the worked example, cited in-practice blocks, 12 verified sources with ids"
+    }
+  ]
+}
