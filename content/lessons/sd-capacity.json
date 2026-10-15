@@ -1,7 +1,7 @@
 {
-  "schema_version": "learning-center-lesson:1",
+  "schema_version": "learning-center-lesson:2",
   "id": "sd-capacity",
-  "version": 1,
+  "version": 2,
   "status": "published",
   "superseded_by": null,
   "title": "Capacity planning and performance",
@@ -18,80 +18,801 @@
     "workload-scheduling",
     "kubernetes"
   ],
-  "summary": "Capacity planning turns a demand forecast into a resource plan with known headroom, and performance work finds the limit of each component before production traffic does. The loop is: model the load, measure what one instance can sustain, find the bottleneck, then decide how the system grows, by hand or by autoscaling. Estimates start the conversation, but load tests settle it.",
+  "summary": "Capacity planning turns a demand forecast into a resource plan with stated headroom, and performance work finds the limit of each component before production traffic does. This lesson gives the planning cycle and Google's intent-based alternative, the arithmetic from a rate to a machine count, utilisation targets and the queueing curve behind them, the shapes of a load test, the USE method for finding the bottleneck, how a horizontal autoscaler decides and where it fails, capacity for zone loss, and a worked plan for one checkout service.",
   "detail": [],
-  "in_practice": "A team keeps a short capacity document per service: demand assumptions, measured throughput per instance, the known bottleneck, and the headroom policy. Before a launch or a major change they run ramp and soak tests from a distributed load generator against a production-like environment, with dashboards open on every tier. The results set replica minimums, autoscaler targets and pool sizes. Quarterly, the forecast is compared with production metrics and procurement or quota requests are raised for tiers with long lead times.",
+  "in_practice": {
+    "blocks": [
+      {
+        "type": "p",
+        "text": "Google's Auxon replaced per-service spreadsheets with intent. The SRE book records that a small group of engineers and a programme manager within SRE built it over two years, that it plans the use of many millions of dollars of machine resources, and that it accepts requirements of the form my service must be N+2 per continent or the frontends must be no more than 50 ms from the backends, solves them as a mixed-integer or linear program, and reports which requirements could not be met.",
+        "cites": [
+          "s1"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "The non-abstract design chapter's AdWords example, from first machine to a sharded multi-datacenter design.",
+        "columns": [
+          "step in the chapter",
+          "number"
+        ],
+        "rows": [
+          [
+            "Query rate chosen",
+            "500,000 per second"
+          ],
+          [
+            "Log volume per day",
+            "86.4 TB, rounded to 100 TB"
+          ],
+          [
+            "Disks at one write per entry",
+            "2,500"
+          ],
+          [
+            "Memory per task in the sharded design",
+            "157 MB"
+          ],
+          [
+            "Machines per datacenter for the maps",
+            "64, at 25 percent of each machine's network"
+          ]
+        ],
+        "cites": [
+          "s2"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "Niantic's Pokemon GO launch, from the SRE workbook's managing load chapter.",
+        "columns": [
+          "measure",
+          "value"
+        ],
+        "rows": [
+          [
+            "Load test before launch",
+            "5 times the most optimistic estimate"
+          ],
+          [
+            "Launch traffic",
+            "nearly 50 times the estimate"
+          ],
+          [
+            "True client demand found during the migration",
+            "200 percent higher than previously observed"
+          ],
+          [
+            "Synchronised client retries",
+            "20 times the previous global peak"
+          ]
+        ],
+        "cites": [
+          "s3"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Amazon's regional services are built so that a zone impairment needs no action: stateless fleets in an Auto Scaling group across three or more Availability Zones, over-provisioned by 50 percent so that each zone runs at 66 percent of its load-tested level, and a warm standby in another zone for stateful services such as Amazon RDS. The article's reasoning is that the recovery path must not depend on the EC2 control plane and the registration, configuration and credential systems a new instance needs.",
+        "cites": [
+          "s10"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "Google's Borg paper: the platform-level version of utilisation planning, in which Borg reclaims the reserved-but-unused resources of production jobs to run batch work.",
+        "columns": [
+          "measure from the paper",
+          "value"
+        ],
+        "rows": [
+          [
+            "Median cell size, excluding test cells",
+            "about 10,000 machines"
+          ],
+          [
+            "CPU allocated to production jobs in a representative cell",
+            "about 70 percent"
+          ],
+          [
+            "CPU actually used by those jobs",
+            "about 60 percent"
+          ],
+          [
+            "Extra machines if production and batch work were segregated",
+            "20 to 30 percent more in the median cell"
+          ]
+        ],
+        "cites": [
+          "s12"
+        ]
+      }
+    ]
+  },
   "subtopics": [
     {
-      "body": [
+      "id": "from-demand-to-a-plan",
+      "title": "From a demand forecast to a resource plan, and what intent adds",
+      "blocks": [
         {
-          "body": "Start from business drivers: active users, actions per user, payload sizes and growth rate. Convert them into peak request rate per endpoint, not the daily average, since peak hour is commonly several times the mean and launches or batch jobs add spikes. Split reads from writes and cheap calls from expensive ones, because one heavy endpoint can dominate. For each tier, derive throughput, storage growth per month, memory for working sets and caches, and network transfer. Record the assumptions so they can be checked against production metrics later.",
-          "heading": "Modelling the load"
+          "type": "p",
+          "text": "The SRE book describes the traditional cycle: collect demand forecasts for several quarters to years, devise build and allocation plans to meet them, review and sign off, then deploy and configure the resources when they arrive. It calls the result brittle, because a plan is disrupted by any small change: a service that becomes less efficient, adoption that rises, a cluster delivery that slips, a product decision that changes the footprint. Each change must be cross-checked against the whole plan, and a change in one quarter propagates into every later one. The tools make it worse: spreadsheets of machine counts go stale, and bin packing requests into limited space by hand is slow and approximate.",
+          "cites": [
+            "s1"
+          ]
         },
         {
-          "body": "Divide peak demand by the measured sustainable throughput of one instance to get a base count, then add headroom. Plan for N plus one or N plus two: the fleet must carry peak load with a node, or a whole zone, gone, and during a deploy that takes instances out of rotation. Run at a target utilisation well below saturation, since latency rises sharply as utilisation approaches one hundred percent. Stateful tiers need longer lead time than stateless ones, as adding a database shard or replica involves data movement.",
-          "heading": "Headroom and failure"
+          "type": "p",
+          "text": "Google's answer is intent-based capacity planning: specify the requirements, not the implementation. A service encodes its dependencies, its performance metrics and its priorities, and a solver generates the allocation plan; when demand, supply or requirements change, the plan is regenerated. The chapter's chain of abstraction shows what a requirement should look like, and it reports that services gain most once they reach the third level.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The chain of intent from the SRE book: each level gives the planner more freedom and says more about what happens if it is not met.",
+          "columns": [
+            "level",
+            "the request",
+            "what it leaves open"
+          ],
+          "rows": [
+            [
+              "Explicit resources",
+              "50 cores in clusters X, Y and Z for service Foo",
+              "nothing; why these clusters and this many is lost"
+            ],
+            [
+              "Footprint",
+              "a 50-core footprint in any three clusters in region YYY",
+              "which clusters"
+            ],
+            [
+              "Redundancy",
+              "meet Foo's demand in each region with N+2 redundancy",
+              "how many footprints and where; the consequence of missing it is understandable"
+            ],
+            [
+              "Reliability",
+              "run Foo at five nines",
+              "whether N+2 is even the right shape"
+            ]
+          ],
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Three inputs make intent computable. Dependencies constrain placement, such as a storage service that must sit within a stated network latency of its caller. Performance metrics convert demand into resources, how many cores Foo needs per N queries and how many megabits Bar sees for every N queries of Foo, and the chapter says they come from load testing and usage monitoring. Prioritisation decides which requirement gives way when resources are short, so the trade-off is made openly rather than ad hoc.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Write the capacity requirement as intent: the demand per region, the redundancy to survive, the latency to dependencies, and the performance metric that converts one into the other. The machine count is derived from it, not stated first.",
+          "cites": [
+            "s1"
+          ]
         }
-      ],
-      "id": "demand-model-and-headroom",
-      "title": "From demand model to resource plan"
+      ]
     },
     {
-      "body": [
+      "id": "from-a-rate-to-machines",
+      "title": "The arithmetic: from a rate to a machine count",
+      "blocks": [
         {
-          "body": "A load test is only as good as its workload model. In Locust, behaviour is plain Python: a user class holds tasks, weights set how often each task runs relative to the others, and a wait time between tasks models think time. Each simulated user runs in a lightweight greenlet, so one process can drive many concurrent users. Use realistic data variety, since hitting one cached key measures the cache and nothing else. Run the test against an environment with production-like data volume and the same topology, including the load balancer and connection pools.",
-          "heading": "Shaping a realistic test"
+          "type": "p",
+          "text": "The SRE workbook's non-abstract design chapter is the discipline of turning a whiteboard into numbers at every step. It asks four questions in two phases: in the basic design, is it possible and can we do better; then, scaling the requirement up dramatically, is it feasible under money and hardware constraints, is it resilient when a component or a whole datacenter fails, and again can we do better. The chapter is explicit that the assumptions and the reasoning matter more than the final values, because early assumptions dominate the results.",
+          "cites": [
+            "s2"
+          ]
         },
         {
-          "body": "Run several shapes: a ramp to find the breaking point, a soak at expected peak for hours to expose leaks and slow growth, and a spike to see recovery. Watch the load generator itself, as a saturated generator under-reports throughput and distorts latency. Locust scales out with one master process that coordinates and aggregates statistics and many worker processes that generate the load, typically one worker per CPU core across several machines. Run it headless in CI with a fixed user count, spawn rate and duration to catch regressions.",
-          "heading": "Kinds of test and scaling the generator"
+          "type": "list",
+          "items": [
+            "Is it possible? Ignore RAM, CPU and bandwidth and design something that satisfies the requirements at all.",
+            "Can we do better? Faster, smaller, more efficient; a better order of growth.",
+            "Is it feasible? Scale the design under the real constraints; find the distributed design that fits.",
+            "Is it resilient? What happens when this component fails, or an entire datacenter?"
+          ],
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The chapter's worked design shows the method on an ad click-through pipeline, and its first iteration is the one every capacity plan repeats: state the rate, round the unit of work up, multiply through to a daily volume, then divide by the capacity of one device to see whether one machine can do it. The division is where the bottleneck appears, and the chapter moves from disks to memory as soon as it does.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The first feasibility check in the workbook's AdWords example.",
+          "columns": [
+            "step",
+            "value",
+            "note"
+          ],
+          "rows": [
+            [
+              "Query rate",
+              "500,000 queries per second",
+              "chosen large on purpose"
+            ],
+            [
+              "Log entry size",
+              "2 KB",
+              "rounded up aggressively so that no limit arrives early"
+            ],
+            [
+              "Query log per day",
+              "86.4 TB",
+              "rounded to 100 TB with clicks and index overhead"
+            ],
+            [
+              "Disks needed at one write per entry",
+              "2,500",
+              "500,000 per second divided by 200 IOPS per 4 TB disk"
+            ],
+            [
+              "Conclusion",
+              "not disks",
+              "even with 10 to 1 batching it is hundreds of drives; the design moves to RAM"
+            ]
+          ],
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Two more conversions complete the chain. Little's law gives concurrency from rate and time: the average number of requests in a system equals the arrival rate times the average time each spends there, whatever the arrival pattern, which sizes thread pools, connection pools and memory per request. And the per-instance throughput that divides the peak rate into a machine count is a performance metric in the Auxon sense: it comes from a load test or production measurement, never from a reference table.",
+          "cites": [
+            "s4",
+            "s1"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "tip",
+          "text": "Carry units on every line and round up at every step. A plan whose daily total was divided by the wrong number of seconds is wrong by a factor of ten before the design starts.",
+          "cites": [
+            "s2"
+          ]
         }
-      ],
-      "id": "load-testing-with-locust",
-      "title": "Load testing"
+      ]
     },
     {
-      "body": [
+      "id": "utilisation-targets-and-headroom",
+      "title": "Utilisation targets and headroom for failure",
+      "blocks": [
         {
-          "body": "Plot throughput and latency percentiles against offered load. In the healthy region throughput rises linearly and latency is flat. At the knee, throughput flattens and tail latency climbs: some resource is saturated. Identify it by checking utilisation, saturation and errors for each resource: CPU, memory, disk IO, network, and also software limits such as thread pools, connection pools, file descriptors and locks. The limiting resource is frequently a downstream dependency or a pool size, not CPU. Report the ninety-ninth percentile, not the mean, and note that fan-out calls inherit the tail of every backend they touch.",
-          "heading": "Reading the results"
+          "type": "p",
+          "text": "A fleet sized to run at full utilisation at peak has no capacity for anything else, and the reason is not linear. Marc Brooker's post on utilisation takes the simplest model, one server with a queue in front of it, and defines utilisation as the arrival rate divided by the completion rate. The closer it gets to one, the more often arriving work finds the server busy and waits, and the mean number of items in the system grows as rho divided by one minus rho. His bottom line is that high-percentile latency is a bad measure of efficiency but a good leading indicator of overload.",
+          "cites": [
+            "s6"
+          ]
         },
         {
-          "body": "Fix the one bottleneck, retest, and expect the next one to appear. Typical remedies in order of cost: remove wasted work such as N plus one queries or chatty calls, add caching or batching, tune pool sizes and timeouts, scale the tier out, and finally change the architecture by partitioning or moving work to asynchronous processing. Keep the per-instance sustainable throughput figure from each test, as it is the main input to the capacity model.",
-          "heading": "Acting on it"
+          "type": "table",
+          "caption": "The single-server queue: mean items in the system by utilisation.",
+          "columns": [
+            "utilisation",
+            "mean items in the system",
+            "what it means for a plan"
+          ],
+          "rows": [
+            [
+              "0.5",
+              "1",
+              "comfortable; a burst doubles the queue briefly"
+            ],
+            [
+              "0.8",
+              "4",
+              "the knee; tail latency is already rising"
+            ],
+            [
+              "0.9",
+              "9",
+              "a dependency slowing by a little fills every pool"
+            ],
+            [
+              "0.99",
+              "99",
+              "saturated; any growth or a lost node is an outage"
+            ]
+          ],
+          "cites": [
+            "s6"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Brooker also explains why efficiency work seems to stop paying: raising the completion rate drops utilisation and the tail falls, then the system grows or servers are removed to bank the saving, utilisation returns to where it was, and so does the tail, with no code change in between. The SRE workbook gives the operational form of the same advice: keep the service far from its key bottlenecks, because the load spikes it can absorb grow with that distance, and reserve spare capacity for both overload protection and redundancy.",
+          "cites": [
+            "s6",
+            "s3"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Redundancy is the second component of headroom. Amazon's statically stable services run stateless fleets in an Auto Scaling group across three or more Availability Zones and over-provision so that the remaining zones carry the load when one is impaired: with three zones, by 50 percent, so that each zone runs at 66 percent of the level it was load-tested for. The point of the pattern is that a zone loss then requires no action at all, and in particular no dependency on the control plane that launches new instances, which is exactly the system most likely to be impaired at the same time.",
+          "cites": [
+            "s10"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Over-provisioning to survive one zone.",
+          "columns": [
+            "zones",
+            "over-provision",
+            "each zone runs at",
+            "after losing one zone"
+          ],
+          "rows": [
+            [
+              "2",
+              "100 percent",
+              "50 percent",
+              "the survivor carries all of it"
+            ],
+            [
+              "3",
+              "50 percent",
+              "66 percent",
+              "two zones at the load-tested level"
+            ],
+            [
+              "4",
+              "33 percent",
+              "75 percent",
+              "three zones at the load-tested level"
+            ]
+          ],
+          "cites": [
+            "s10"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Size for the peak at a target utilisation on the flat part of the curve, then add the capacity of the largest failure domain you intend to survive. Both margins are written in the plan, not discovered in the incident.",
+          "cites": [
+            "s6",
+            "s10"
+          ]
         }
-      ],
-      "id": "bottlenecks-and-saturation",
-      "title": "Finding the bottleneck"
+      ]
     },
     {
-      "body": [
+      "id": "load-testing",
+      "title": "Load testing: the shapes and what they settle",
+      "blocks": [
         {
-          "body": "The Kubernetes HorizontalPodAutoscaler is a control loop that periodically compares an observed metric with a target and sets the replica count to roughly the current replicas multiplied by the ratio of current to desired metric value, rounded up. Metrics can be resource based, such as average CPU utilisation relative to requests, or custom and external, such as requests per second or queue length. A tolerance band avoids reacting to small deviations, and a scale-down stabilisation window prevents flapping by using the highest recent recommendation. Minimum and maximum replica bounds cap the behaviour.",
-          "heading": "How horizontal autoscaling decides"
+          "type": "p",
+          "text": "Estimates start the conversation; a load test settles it, because the per-instance throughput, the latency at that throughput and the first resource to saturate are properties of this code on this hardware with this request mix. The k6 documentation names six shapes, each answering a different question, and recommends starting with the smallest and keeping the load pattern simple: ramp up, plateau, ramp down, never a rollercoaster that makes results impossible to attribute.",
+          "cites": [
+            "s11"
+          ]
         },
         {
-          "body": "Autoscaling reacts after load arrives, and new capacity takes time: scheduling, image pull, startup, warm-up and readiness. Keep enough headroom to absorb a spike for that long, or scale on a leading signal such as queue depth. Scaling a stateless tier can simply move the bottleneck to a database that does not scale the same way, exhausting its connections. Set correct resource requests, since utilisation targets are computed from them, and pair autoscaling with load shedding for demand beyond the maximum.",
-          "heading": "Design consequences"
+          "type": "table",
+          "caption": "The test types from the k6 guide.",
+          "columns": [
+            "type",
+            "load",
+            "duration",
+            "what it settles"
+          ],
+          "rows": [
+            [
+              "Smoke",
+              "minimal",
+              "seconds to minutes",
+              "the script works and the system responds; run on every change"
+            ],
+            [
+              "Average load",
+              "expected production",
+              "5 to 60 minutes",
+              "performance under normal conditions"
+            ],
+            [
+              "Stress",
+              "above average",
+              "5 to 60 minutes",
+              "how the system behaves beyond its expected load"
+            ],
+            [
+              "Soak",
+              "average",
+              "hours",
+              "leaks, slow growth and reliability over a long run"
+            ],
+            [
+              "Spike",
+              "very high",
+              "a few minutes",
+              "survival and recovery from a sudden surge"
+            ],
+            [
+              "Breakpoint",
+              "rising until failure",
+              "as long as needed",
+              "the capacity limit; the per-instance figure the plan is built on"
+            ]
+          ],
+          "cites": [
+            "s11"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The guide notes that k6 can drive load either by a fixed number of virtual users or by a target rate of iterations per second, which it calls the closed and open models. The distinction matters for capacity: a closed model throttles itself as latency rises, because each virtual user waits for its reply, so it under-reports what an open population of real users would do to a saturated service. A breakpoint test for a user-facing system should drive an arrival rate, not a user count.",
+          "cites": [
+            "s11"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "What the test is run against decides whether its number means anything: production-like data volume, the same topology including the load balancer and connection pools, and realistic key variety, since a test that hits one cached key measures the cache. The workbook's Pokemon GO case shows the limit of testing well: Niantic load-tested its stack to five times its most optimistic estimate, and the launch traffic was nearly fifty times that estimate. A load test bounds the known; the plan must also say what happens beyond it.",
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "A saturated load generator under-reports throughput and inflates latency. Measure the generator's own CPU and connection limits, and compare client-side and server-side latency: a gap between them is the network or the generator, not the service.",
+          "cites": [
+            "s11"
+          ]
         }
-      ],
-      "id": "autoscaling",
-      "title": "Autoscaling and its limits"
+      ]
+    },
+    {
+      "id": "finding-the-bottleneck",
+      "title": "Finding the bottleneck with the USE method",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "When throughput flattens and the tail climbs, some resource is saturated, and the fastest way to find it is a checklist rather than a hunch. Brendan Gregg's USE method is that checklist: for every resource, check utilisation, the average time it was busy; saturation, the extra work it could not service, usually a queue length; and errors, a count of error events. The method begins by posing the questions and then seeking the metrics, instead of starting from the metrics that happen to exist, which is why it catches the bottleneck nobody instrumented.",
+          "cites": [
+            "s5"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The USE checklist for the resources of a server, from Gregg's generic list, with software resources added as the page suggests.",
+          "columns": [
+            "resource",
+            "utilisation",
+            "saturation",
+            "errors"
+          ],
+          "rows": [
+            [
+              "CPUs",
+              "busy time per core",
+              "run-queue length",
+              "faults, throttling"
+            ],
+            [
+              "Memory",
+              "capacity in use",
+              "swapping, reclaim, OOM kills",
+              "allocation failures"
+            ],
+            [
+              "Network interfaces",
+              "throughput against link speed",
+              "queued or dropped packets",
+              "collisions, resets"
+            ],
+            [
+              "Storage devices",
+              "busy time, capacity",
+              "I/O queue depth",
+              "device errors"
+            ],
+            [
+              "Thread and connection pools",
+              "threads or connections in use",
+              "requests waiting for one",
+              "timeouts acquiring one"
+            ],
+            [
+              "A downstream dependency",
+              "its own utilisation",
+              "requests in flight against its limit",
+              "throttles and timeouts"
+            ]
+          ],
+          "cites": [
+            "s5"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Gregg warns about the measurement window: a customer's tool reported CPU never above 80 percent while the system suffered CPU saturation, because the tool averaged over five minutes and the CPU hit 100 percent for seconds at a time. Capacity work reads saturation and tail latency over short windows, or it sees nothing. He also notes that storage is two resources at once, a request resource for I/O and a capacity resource for space, and either can be the bottleneck.",
+          "cites": [
+            "s5"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The remedies run in order of cost. Remove wasted work first, such as a query per item or a chatty call chain; then add caching or batching; then tune pool sizes and timeouts; then scale the tier out; and only then change the architecture by partitioning or moving work off the request path. After each fix, retest and expect the next resource to saturate, because fixing one bottleneck exposes the next, and keep the per-instance sustainable throughput from every test as the input to the model."
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Walk the USE table for every resource, hardware and software, before changing anything. The limiting resource is often a pool size or a dependency rather than CPU.",
+          "cites": [
+            "s5"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "autoscaling-and-its-limits",
+      "title": "Autoscaling: how the loop decides and where it fails",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The Kubernetes HorizontalPodAutoscaler is the reference control loop. Every 15 seconds by default it reads a metric for the pods of its target, takes the mean, and sets the desired replica count to the current count times the ratio of the current metric value to the desired value, rounded up, taking no action when the ratio is within a tolerance of 0.1 of one. For CPU the metric is utilisation as a percentage of the container's resource request, so a pod without a request has no defined utilisation and is ignored, and requests must be set honestly. Pods that are not yet ready are set aside, and a pod's CPU is ignored for a configurable period after start, five minutes by default, so that a warming JVM does not look like load.",
+          "cites": [
+            "s7",
+            "s8"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The loop is deliberately asymmetric. The SRE workbook states that scaling up matters more and is less risky than scaling down, because a failure to scale up means overload and dropped traffic, so autoscalers add capacity quickly and remove it cautiously. The HPA implements that with a downscale stabilisation window, five minutes by default, within which it uses the highest recent recommendation, and with scaling policies that cap how many pods or what percentage may change per period in each direction.",
+          "cites": [
+            "s3",
+            "s7"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Autoscaling failure modes from the SRE workbook, and the guard for each.",
+          "columns": [
+            "failure",
+            "what happens",
+            "guard"
+          ],
+          "rows": [
+            [
+              "Unhealthy instances counted in the average",
+              "the average looks fine, so no scaling happens",
+              "scale on a capacity metric seen by the load balancer, which discounts unhealthy instances; count new instances only once healthy"
+            ],
+            [
+              "A release burns CPU without doing work",
+              "the autoscaler adds replicas until the quota is gone",
+              "a maximum bound with quota to match; a kill switch the on-call knows"
+            ],
+            [
+              "A dependency fails and requests pile up",
+              "more replicas send more traffic to the failing dependency",
+              "deadlines on requests; bounds; analyse backends before enabling scaling"
+            ],
+            [
+              "Load shedding starts before scaling",
+              "the system drops traffic it could have served",
+              "set thresholds so the fleet scales before it sheds"
+            ],
+            [
+              "Demand concentrates in one location",
+              "balancing and scaling feed each other until all capacity is in one place",
+              "a minimum per location kept for failover"
+            ]
+          ],
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Reactive scaling has a floor set by startup: scheduling, image pull, process start, warm-up and readiness, during which the existing replicas carry the spike. Hence leading signals such as queue depth, and forecasting: Amazon's predictive scaling detects daily and weekly patterns in historical load and launches capacity ahead of the forecast, recommended for cyclical traffic and for applications that take a long time to initialise.",
+          "cites": [
+            "s9"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "Scaling a stateless tier moves the bottleneck to the database behind it, which does not scale the same way and whose connections are finite. The workbook's rule is a dependency analysis before the autoscaler is turned on, and backends that degrade gracefully.",
+          "cites": [
+            "s3"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "the-plan-and-its-loop",
+      "title": "The capacity plan and the loop that keeps it true",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "A capacity plan is a short document that an on-call engineer and a reviewer can both check. It records the demand assumptions and their source, the measured per-instance throughput and the test it came from, the resource that saturates first, the target utilisation, the redundancy the fleet survives, the autoscaler's bounds, and the lead time of every tier that cannot scale in minutes. The loop below keeps the document honest: the forecast feeds the model, the model is checked by a load test, the test finds the bottleneck, the fix is retested, and the per-instance figure feeds back into the model and the autoscaler's targets."
+        },
+        {
+          "type": "diagram",
+          "mermaid": "flowchart LR\n  F[Demand forecast] --> M[Capacity model]\n  M --> T[Load test]\n  T --> B[Find bottleneck]\n  B --> X[Fix or scale]\n  X --> T\n  T --> P[Per instance throughput]\n  P --> M\n  M --> A[Autoscaler targets and replica bounds]\n  A --> O[Production metrics]\n  O --> F",
+          "legend": "The capacity loop: forecast, model, test, bottleneck, fix, and the measured per-instance throughput back into the model and the autoscaler (s2, s3)."
+        },
+        {
+          "type": "p",
+          "text": "Stateful tiers set the lead time. Amazon's active-standby pattern keeps a warm standby in another zone for a primary database, so that failover repoints a name rather than launching a replacement, and the general principle is that recovery never takes a new dependency on a control plane. Adding a shard or a replica moves data and takes hours to days; buying hardware or raising a cloud quota takes weeks. The plan names these tiers and the date by which their next step must start.",
+          "cites": [
+            "s10"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "What the plan records per tier.",
+          "columns": [
+            "tier",
+            "scales by",
+            "lead time",
+            "the number to watch"
+          ],
+          "rows": [
+            [
+              "Stateless service",
+              "replicas, autoscaled within bounds",
+              "minutes, set by startup",
+              "utilisation against the target; replicas against the maximum"
+            ],
+            [
+              "Cache",
+              "memory per node, then nodes",
+              "minutes to hours",
+              "hit rate and evictions"
+            ],
+            [
+              "Database",
+              "vertical first, then replicas or shards",
+              "hours to days, with data movement",
+              "connections in use; the first saturated resource from the USE table"
+            ],
+            [
+              "Quota or hardware",
+              "a request to a provider or a purchase",
+              "weeks",
+              "forecast against reserved capacity, reviewed quarterly"
+            ]
+          ],
+          "cites": [
+            "s10",
+            "s5"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Borg's operational lesson closes the loop at platform scale: priority decides who wins when resources are short, quota decides who is admitted, and unused reservations are reclaimed for work that tolerates lower-quality resources. The plan for one service lives inside the same arithmetic for the platform.",
+          "cites": [
+            "s12"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Review the plan on a schedule against production metrics. A row whose measured value disagrees with its assumption by more than a factor of a few is the first thing to investigate, because either the model or the system is not what the team believes.",
+          "cites": [
+            "s2"
+          ]
+        }
+      ]
     }
   ],
-  "diagram": {
-    "source": "flowchart LR\n  F[Demand forecast] --> M[Capacity model]\n  M --> T[Load test]\n  T --> B[Find bottleneck]\n  B --> X[Fix or scale]\n  X --> T\n  T --> P[Per instance throughput]\n  P --> M\n  M --> A[Autoscaler targets and replica bounds]\n  A --> O[Production metrics]\n  O --> F"
+  "worked_example": {
+    "title": "Worked example: a capacity plan for a checkout API at 3,000 requests per second",
+    "blocks": [
+      {
+        "type": "p",
+        "text": "A checkout API needs a plan for the coming year: how many instances, at what utilisation, with what headroom for a zone loss and a deployment, and which tier runs out first. Every input is an assumption chosen to make the arithmetic concrete; the HPA manifest after the steps encodes the result."
+      },
+      {
+        "type": "steps",
+        "title": "From forecast to fleet",
+        "items": [
+          "Demand: 1,200 requests per second on average today (assumption from production metrics).",
+          "Peak: a peak factor of 2.5 for the evening peak (assumption from the last quarter's traffic), so 3,000 requests per second.",
+          "Growth: 40 percent over the planning year (assumption from the product forecast), so the plan targets 4,200 requests per second at peak.",
+          "Load test: a breakpoint test shows one instance of 2 vCPU sustains 400 requests per second before p99 latency leaves the flat region (assumption, measured).",
+          "Base count: 4,200 divided by 400 is 10.5, so 11 instances would run at the knee with no headroom.",
+          "Utilisation target: run the fleet at 60 percent of the knee, so 11 divided by 0.6 is about 18 instances.",
+          "Zone loss: three zones and the 50 percent over-provision give 27 instances, 9 per zone; losing a zone leaves 18, the full target, with no scaling action needed.",
+          "Deployment: a rolling deploy takes 1 instance per zone out of rotation, so 24 serve during a deploy, still above the 18 the target needs.",
+          "Concurrency: at 120 ms mean latency (assumption, from the test) Little's law gives 4,200 times 0.12, about 500 requests in flight at peak across the fleet.",
+          "Connections: 500 in flight over 27 instances is about 19 database connections per instance; a pool of 25 per instance is 675 in total, inside a database limit of 1,000 (assumption).",
+          "Autoscaler: target CPU utilisation 60 percent of the request, minimum 27 replicas for static stability, maximum 60, downscale stabilisation at the 5-minute default.",
+          "Startup: a new instance is ready in 90 seconds (assumption), so a spike must be carried by the 27 running instances for that long; at the knee they carry 10,800 requests per second, 2.5 times the planned peak.",
+          "The database: each request makes 3 queries (assumption), so 4,200 requests per second is 12,600 queries per second against a database load-tested to 20,000, which is 63 percent utilisation at the planned peak.",
+          "The decider: the database. At the next doubling it saturates while the stateless tier simply adds replicas, so a read replica or a cache must be scheduled now, with weeks of lead time, not when the knee arrives."
+        ],
+        "cites": [
+          "s4",
+          "s6",
+          "s7",
+          "s10"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "The plan as a reviewer should receive it.",
+        "columns": [
+          "quantity",
+          "value",
+          "derived from"
+        ],
+        "rows": [
+          [
+            "Planned peak",
+            "4,200 requests per second",
+            "1,200 times 2.5, times 1.4 growth"
+          ],
+          [
+            "Per-instance capacity",
+            "400 requests per second",
+            "breakpoint test at the p99 knee"
+          ],
+          [
+            "Instances at the knee",
+            "11",
+            "4,200 divided by 400, rounded up"
+          ],
+          [
+            "Instances at the 60 percent target",
+            "18",
+            "11 divided by 0.6"
+          ],
+          [
+            "Instances with one-zone headroom",
+            "27",
+            "18 times 1.5 across 3 zones"
+          ],
+          [
+            "Requests in flight at peak",
+            "about 500",
+            "4,200 times 0.12 s"
+          ],
+          [
+            "Database connections",
+            "675 of 1,000",
+            "25 per instance times 27"
+          ],
+          [
+            "Database utilisation at peak",
+            "63 percent",
+            "12,600 of 20,000 queries per second"
+          ]
+        ]
+      },
+      {
+        "type": "code",
+        "lang": "yaml",
+        "code": "apiVersion: autoscaling/v2\nkind: HorizontalPodAutoscaler\nmetadata:\n  name: checkout\nspec:\n  scaleTargetRef:\n    apiVersion: apps/v1\n    kind: Deployment\n    name: checkout\n  minReplicas: 27        # static stability: 9 per zone, a zone loss needs no scaling\n  maxReplicas: 60        # bounded; quota checked to match\n  metrics:\n    - type: Resource\n      resource:\n        name: cpu\n        target:\n          type: Utilization\n          averageUtilization: 60    # of the container's CPU request, which must be set\n  behavior:\n    scaleUp:\n      stabilizationWindowSeconds: 0\n      policies:\n        - type: Percent\n          value: 100\n          periodSeconds: 15\n    scaleDown:\n      stabilizationWindowSeconds: 300   # the default rolling maximum\n      policies:\n        - type: Percent\n          value: 10\n          periodSeconds: 60",
+        "caption": "The autoscaler from the plan: a floor that survives a zone, a ceiling with quota behind it, fast up and slow down."
+      },
+      {
+        "type": "code",
+        "lang": "javascript",
+        "code": "import http from 'k6/http';\nimport { check } from 'k6';\n\n// Breakpoint test, open model: drive an arrival rate, not a user count,\n// so the generator does not throttle itself as latency rises.\nexport const options = {\n  scenarios: {\n    breakpoint: {\n      executor: 'ramping-arrival-rate',\n      startRate: 100, timeUnit: '1s',\n      preAllocatedVUs: 200, maxVUs: 2000,\n      stages: [{ duration: '10m', target: 1200 }],   // one instance: ramp past the expected knee\n    },\n  },\n  thresholds: { http_req_duration: ['p(99)<300'] },     // the knee is where this stops holding\n};\n\nexport default function () {\n  const res = http.post('https://checkout.example.test/orders',\n    JSON.stringify({ sku: 'A1', qty: 1 }), { headers: { 'Content-Type': 'application/json' } });\n  check(res, { 'status 2xx': r => r.status >= 200 && r.status < 300 });\n}",
+        "caption": "The breakpoint test that produced the per-instance figure: an open-model ramp against one instance until the p99 threshold fails."
+      }
+    ]
   },
-  "code": [
-    {
-      "code": "from locust import HttpUser, task, between\n\nclass Shopper(HttpUser):\n    wait_time = between(1, 3)\n\n    @task(5)\n    def browse(self):\n        self.client.get(\"/items\")\n\n    @task(1)\n    def checkout(self):\n        self.client.post(\"/orders\", json={\"sku\": \"A1\", \"qty\": 1})\n\n# locust -f locustfile.py --headless -u 500 -r 50 -t 10m --host HOST",
-      "lang": "python"
-    },
-    {
-      "code": "apiVersion: autoscaling/v2\nkind: HorizontalPodAutoscaler\nmetadata:\n  name: api\nspec:\n  scaleTargetRef:\n    apiVersion: apps/v1\n    kind: Deployment\n    name: api\n  minReplicas: 4\n  maxReplicas: 40\n  metrics:\n    - type: Resource\n      resource:\n        name: cpu\n        target:\n          type: Utilization\n          averageUtilization: 60",
-      "lang": "yaml"
-    }
-  ],
+  "diagram": null,
+  "code": [],
   "technologies": [
     "Locust",
     "Kubernetes HorizontalPodAutoscaler",
@@ -111,30 +832,142 @@
   ],
   "sources": [
     {
-      "kind": "doc",
-      "title": "Locust documentation",
-      "url": "https://docs.locust.io/en/stable/"
+      "id": "s1",
+      "title": "Site Reliability Engineering, chapter 18, Software Engineering in SRE: the Auxon case study of intent-based capacity planning (Google, 2016, free online)",
+      "url": "https://sre.google/sre-book/software-engineering-in-sre/",
+      "kind": "book",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Specify the requirements, not the implementation."
+      }
     },
     {
-      "kind": "doc",
-      "title": "Writing a locustfile",
-      "url": "https://docs.locust.io/en/stable/writing-a-locustfile.html"
+      "id": "s2",
+      "title": "The Site Reliability Workbook, chapter 12, Non-Abstract Large System Design (Google, 2018, free online): the iterative questions and the AdWords log-joining arithmetic",
+      "url": "https://sre.google/workbook/non-abstract-design/",
+      "kind": "book",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "aggressively round up to treat each query log entry as 2 KB"
+      }
     },
     {
-      "kind": "doc",
-      "title": "Locust distributed load generation",
-      "url": "https://docs.locust.io/en/stable/running-distributed.html"
+      "id": "s3",
+      "title": "The Site Reliability Workbook, chapter 11, Managing Load (Google, 2018, free online): autoscaling best practices and failure modes, the Pokemon GO and Dressy case studies",
+      "url": "https://sre.google/workbook/managing-load/",
+      "kind": "book",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Using autoscaling to scale up is more important and less risky than using it to scale down"
+      }
     },
     {
+      "id": "s4",
+      "title": "Little's law (Wikipedia): the long-term average number in a system equals the arrival rate times the time spent in it",
+      "url": "https://en.wikipedia.org/wiki/Little%27s_law",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "L = λW"
+      }
+    },
+    {
+      "id": "s5",
+      "title": "Brendan Gregg, The USE Method (maintained): for every resource, check utilization, saturation and errors; the resource list; why five-minute averages hide saturation",
+      "url": "https://www.brendangregg.com/usemethod.html",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "For every resource, check utilization, saturation, and errors."
+      }
+    },
+    {
+      "id": "s6",
+      "title": "Marc Brooker, Latency Sneaks Up On You (2021-08-05): utilisation, the M/M/1 queue, why efficiency wins disappear as the system grows",
+      "url": "https://brooker.co.za/blog/2021/08/05/utilization.html",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "E[N] = ⍴/(1-p)"
+      }
+    },
+    {
+      "id": "s7",
+      "title": "Kubernetes documentation, Horizontal Pod Autoscaling (maintained): the control loop, the replica formula, tolerance, readiness handling, the downscale stabilization window and scaling policies",
+      "url": "https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/",
       "kind": "doc",
-      "title": "Kubernetes Horizontal Pod Autoscaling",
-      "url": "https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "desiredReplicas = ceil"
+      }
+    },
+    {
+      "id": "s8",
+      "title": "Kubernetes documentation, Resource Management for Pods and Containers (maintained): requests against limits, CPU throttling and out-of-memory kills, CPU units",
+      "url": "https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "cpu limits are enforced by CPU throttling"
+      }
+    },
+    {
+      "id": "s9",
+      "title": "Amazon EC2 Auto Scaling User Guide, Predictive scaling (maintained): forecasting daily and weekly patterns, when it suits an application that is slow to initialise",
+      "url": "https://docs.aws.amazon.com/autoscaling/ec2/userguide/ec2-auto-scaling-predictive-scaling.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Predictive scaling works by analyzing historical load data to detect daily or weekly patterns in traffic flows"
+      }
+    },
+    {
+      "id": "s10",
+      "title": "Amazon Builders' Library, Static stability using Availability Zones (Becky Weiss and Mike Furr): over-provisioning across three zones by 50 percent, active-active and active-standby patterns, no control-plane dependency in recovery",
+      "url": "https://builder.aws.com/content/3K9SiqiJ369TGkkGzqPM95BuYWI/static-stability-using-availability-zones",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "when we use three Availability Zones, we overprovision by 50 percent"
+      }
+    },
+    {
+      "id": "s11",
+      "title": "Grafana k6 documentation, Load test types (maintained): smoke, average-load, stress, soak, spike and breakpoint tests with the cheat sheet",
+      "url": "https://grafana.com/docs/k6/latest/testing-guides/test-types/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Breakpoint tests gradually increase load to identify the capacity limits of the system"
+      }
+    },
+    {
+      "id": "s12",
+      "title": "Verma et al., Large-scale cluster management at Google with Borg (EuroSys 2015, PDF): cells, priority and quota, utilisation from sharing prod and non-prod work, resource reclamation",
+      "url": "https://static.googleusercontent.com/media/research.google.com/en//pubs/archive/43438.pdf",
+      "kind": "paper",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "segregating prod and non-prod work would need 20–30% more machines"
+      }
     }
   ],
   "practice": "practice/sd-capacity",
   "provenance": {
-    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
-    "generated_on": "2026-10-13",
+    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center, format v2",
+    "generated_on": "2026-10-15",
     "reviewed_by": null,
     "reviewed_on": null
   },
@@ -143,6 +976,11 @@
       "version": 1,
       "date": "2026-10-13",
       "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-15",
+      "change": "rewritten by hand at format v2 (version 2): the planning cycle and intent-based planning with the chain-of-intent table, the arithmetic from a rate to machines with the NALSD feasibility table and Little's law, utilisation targets with the M/M/1 table and the over-provisioning table, load test shapes as the k6 table, the USE checklist as a table, autoscaling with the HPA loop and the failure-mode table, the plan and its loop with the diagram in its subtopic, a worked checkout plan with the HPA manifest and the breakpoint test after the teaching, cited in-practice blocks (Auxon, NALSD, Niantic, Amazon, Borg), 12 verified sources"
     }
   ]
 }
