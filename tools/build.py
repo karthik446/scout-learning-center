@@ -140,8 +140,12 @@ def ext(url: str, text: str) -> str:
 SIDEBAR_CSS = """
 nav.sidebar details.sidebar-disclosure > summary { cursor: pointer; font-weight: 600; padding: 0.3rem 0; }
 @media (min-width: 821px) {
-  nav.sidebar details.sidebar-disclosure > summary { display: none; }
-  nav.sidebar details.sidebar-disclosure::details-content { content-visibility: visible; display: block; }
+  /* Wide screens: the list is always shown. Only browsers that can force the closed details' content visible
+     (::details-content, Chrome 131+, Safari 18.4+) hide the summary; older ones keep it as a clickable heading. */
+  @supports selector(::details-content) {
+    nav.sidebar details.sidebar-disclosure > summary { display: none; }
+    nav.sidebar details.sidebar-disclosure::details-content { content-visibility: visible; display: block; }
+  }
 }
 """
 
