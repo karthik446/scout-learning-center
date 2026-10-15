@@ -44,6 +44,9 @@ PAGES = [
     ("module-sd", "/learn/modules/system-design/"),
     ("key", "/learn/keys/mlflow/"),
     ("changelog", "/learn/changelog/"),
+    # the two exemplar pages of lesson format v2 (a concept lesson and a design exercise), checked like the others plus the v2 facts below
+    ("format-v2-sd-numbers", "/learn/lessons/sd-numbers/"),
+    ("format-v2-sd-ex-news-feed", "/learn/lessons/sd-ex-news-feed/"),
 ]
 
 
@@ -192,6 +195,14 @@ def check_page(ch: Chrome, base: str, name: str, path: str, width: int, shots: P
         "client_width": ev("document.documentElement.clientWidth"),
         "cookies": ev("document.cookie"),
     }
+    if name.startswith("format-v2"):
+        facts["v2"] = {
+            "table_scroll_boxes": ev("document.querySelectorAll('.table-scroll').length"),
+            "tables_overflowing_their_box": ev("[...document.querySelectorAll('.table-scroll')].filter((t) => t.scrollWidth > t.clientWidth).length"),
+            "boxes_wider_than_column": ev("[...document.querySelectorAll('.table-scroll')].filter((t) => t.getBoundingClientRect().right > document.documentElement.clientWidth + 1).length"),
+            "callouts": ev("document.querySelectorAll('.callout').length"), "cite_marks": ev("document.querySelectorAll('sup.cite a').length"),
+            "broken_cite_links": ev("[...document.querySelectorAll('sup.cite a')].filter((a) => !document.getElementById(a.getAttribute('href').slice(1))).length"),
+        }
     if name == "search":
         facts["result_count"] = ev("document.getElementById('result-count').getAttribute('data-count')")
         facts["result_text"] = ev("document.getElementById('result-count').textContent")
@@ -259,6 +270,13 @@ def check_page(ch: Chrome, base: str, name: str, path: str, width: int, shots: P
         elif m == "Network.loadingFailed":
             failed.append(f"{p.get('errorText')} {p.get('blockedReason', '')}")
     ch.send("Target.closeTarget", {"targetId": target})
+    if name.startswith("format-v2"):  # the page never scrolls sideways, every diagram became an svg, every cite mark has its source
+        if facts["scroll_width"] > facts["client_width"]:
+            errors.append(f"page scrolls sideways: scrollWidth {facts['scroll_width']} > clientWidth {facts['client_width']}")
+        if facts["mermaid_svg"] < facts["mermaid_blocks"]:
+            errors.append(f"{facts['mermaid_blocks']} diagram block(s), {facts['mermaid_svg']} rendered as svg")
+        if facts["v2"]["broken_cite_links"] or facts["v2"]["boxes_wider_than_column"]:
+            errors.append(f"v2 page facts: {json.dumps(facts['v2'])}")
     return {"name": name, "path": path, "width": width, "reduced_motion": reduced, "nav_frame": nav.get("frameId", ""), "facts": facts, "console_errors": errors,
             "console_warnings": warnings, "csp_violations": csp, "failed_requests": failed, "hosts": sorted(hosts)}
 
@@ -270,6 +288,7 @@ def main() -> int:
     ap.add_argument("--widths", default="1280,390")
     ap.add_argument("--sim", action="store_true", help="only the simulator pages (SIM_PAGES), each also with prefers-reduced-motion")
     ap.add_argument("--no-sim", action="store_true", help="leave the simulator pages out of the run")
+    ap.add_argument("--page", action="append", metavar="NAME=PATH", help="check only these pages (repeatable); a name starting 'format-v2' adds the v2 facts")
     args = ap.parse_args()
     out: Path = args.out
     out.mkdir(parents=True, exist_ok=True)
@@ -278,7 +297,9 @@ def main() -> int:
     results = []
     try:
         runs = [(n, p, w, False) for w in [int(x) for x in args.widths.split(",")] for n, p in ([] if args.sim else PAGES) + ([] if args.no_sim else SIM_PAGES)]
-        if args.sim:  # the reduced-motion pass, at the wide size
+        if args.page:
+            runs = [(n, p, w, False) for w in [int(x) for x in args.widths.split(",")] for n, _, p in (x.partition("=") for x in args.page)]
+        if args.sim and not args.page:  # the reduced-motion pass, at the wide size
             runs += [(n, p, 1280, True) for n, p in SIM_PAGES]
         if True:
             for name, path, w, reduced in runs:
