@@ -1,8 +1,8 @@
 {
-  "schema_version": "learning-center-lesson:1",
+  "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-rate-limiter",
-  "version": 1,
+  "version": 2,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: API rate limiter",
@@ -21,7 +21,9 @@
   ],
   "summary": "A classic design exercise: rate limiting for a public API served from twenty gateway nodes, with a 1 ms decision budget and a limiter that must never become the outage. The reference answer keeps token buckets on each node, corrects them from a shared store every 100 ms, fails open by default, and bounds overshoot in numbers. Converted by hand from the module outline's reference answer and its 45-minute script; every number and source is kept.",
   "detail": [],
-  "in_practice": "",
+  "in_practice": {
+    "blocks": []
+  },
   "subtopics": [],
   "diagram": null,
   "code": [],
@@ -34,268 +36,722 @@
   ],
   "sources": [
     {
-      "kind": "blog",
-      "title": "Stripe: Scaling your API with rate limiters",
-      "url": "https://stripe.com/blog/rate-limiters"
+      "id": "s1",
+      "title": "Stripe Engineering: Scaling your API with rate limiters (Paul Tarjan, 2017-03-30)",
+      "url": "https://stripe.com/blog/rate-limiters",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Request Rate Limiter"
+      }
     },
     {
-      "kind": "blog",
-      "title": "Cloudflare: How we built rate limiting capable of scaling to millions of domains",
-      "url": "https://blog.cloudflare.com/counting-things-a-lot-of-different-things/"
+      "id": "s2",
+      "title": "Cloudflare: How we built rate limiting capable of scaling to millions of domains (2017-06-07)",
+      "url": "https://blog.cloudflare.com/counting-things-a-lot-of-different-things/",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "An average difference of 6% between real rate and the approximate rate"
+      }
     },
     {
-      "kind": "doc",
+      "id": "s3",
       "title": "Wikipedia: Token bucket",
-      "url": "https://en.wikipedia.org/wiki/Token_bucket"
+      "url": "https://en.wikipedia.org/wiki/Token_bucket",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "tokens are added to the bucket"
+      }
     },
     {
-      "kind": "spec",
-      "title": "RFC 6585: Additional HTTP Status Codes (429 Too Many Requests)",
-      "url": "https://www.rfc-editor.org/rfc/rfc6585.html"
+      "id": "s4",
+      "title": "RFC 6585: Additional HTTP Status Codes (April 2012): 429 Too Many Requests",
+      "url": "https://www.rfc-editor.org/rfc/rfc6585.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "429 Too Many Requests"
+      }
     },
     {
-      "kind": "spec",
-      "title": "IETF draft: RateLimit header fields for HTTP",
-      "url": "https://datatracker.ietf.org/doc/draft-ietf-httpapi-ratelimit-headers/"
+      "id": "s5",
+      "title": "IETF draft-ietf-httpapi-ratelimit-headers-11: RateLimit header fields for HTTP (RateLimit and RateLimit-Policy)",
+      "url": "https://datatracker.ietf.org/doc/draft-ietf-httpapi-ratelimit-headers/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "RateLimit-Policy"
+      }
     },
     {
+      "id": "s6",
+      "title": "IETF draft-ietf-httpapi-ratelimit-headers-00: the first version, defining RateLimit-Limit, RateLimit-Remaining and RateLimit-Reset",
+      "url": "https://datatracker.ietf.org/doc/html/draft-ietf-httpapi-ratelimit-headers-00",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "RateLimit-Remaining"
+      }
+    },
+    {
+      "id": "s7",
+      "title": "Site Reliability Engineering (2016), chapter 21: Handling Overload",
+      "url": "https://sre.google/sre-book/handling-overload/",
       "kind": "book",
-      "title": "Site Reliability Engineering: Handling overload",
-      "url": "https://sre.google/sre-book/handling-overload/"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Client-Side Throttling"
+      }
     },
     {
-      "kind": "doc",
-      "title": "Amazon Builders' Library: Using load shedding to avoid overload",
-      "url": "https://builder.aws.com/content/3Eun1EEyX6p2e3VYNyRLSJzLuMV/using-load-shedding-to-avoid-overload"
+      "id": "s8",
+      "title": "Amazon Builders' Library: Using load shedding to avoid overload (David Yanacek, 2019-12-05)",
+      "url": "https://builder.aws.com/content/3Eun1EEyX6p2e3VYNyRLSJzLuMV/using-load-shedding-to-avoid-overload",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "goodput"
+      }
     },
     {
-      "kind": "doc",
+      "id": "s9",
       "title": "Azure Architecture Center: Throttling pattern",
-      "url": "https://learn.microsoft.com/en-us/azure/architecture/patterns/throttling"
+      "url": "https://learn.microsoft.com/en-us/azure/architecture/patterns/throttling",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Throttling pattern"
+      }
     },
     {
+      "id": "s10",
+      "title": "Netflix concurrency-limits (GitHub README): adaptive concurrency limits from TCP congestion control",
+      "url": "https://github.com/Netflix/concurrency-limits",
       "kind": "repo",
-      "title": "Netflix concurrency-limits: adaptive concurrency limiting",
-      "url": "https://github.com/Netflix/concurrency-limits"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "TCP congestion control"
+      }
     }
   ],
   "practice": null,
   "exercise": {
     "prompt": "Design the rate limiting for a public HTTP API served from many gateway nodes. Each API key has a limit; callers over the limit get a 429. The product team wants to add tiers and per-endpoint costs later.",
-    "constraints": [
-      {
-        "heading": "Functional",
-        "body": "A per-key limit with a burst; 429 with headers that tell the caller when to retry; policies editable without a deploy."
-      },
-      {
-        "heading": "Scale (assumption)",
-        "body": "50,000 requests per second across 20 gateway nodes in one region; 1 million active keys; typical limits of 100 requests per second with a burst of 200; a few keys hold 30 to 40 percent of traffic. All chosen for the exercise; derive the per-node rate, the policy data size and the per-node bucket memory yourself."
-      },
-      {
-        "heading": "Targets (assumption)",
-        "body": "The decision adds under 1 ms at p99; the limiter must never make the API unavailable; overshoot of up to 10 percent over a one-second window is acceptable, sustained overshoot is not."
-      },
-      {
-        "heading": "Non-goals",
-        "body": "DDoS protection at the network layer, billing."
-      }
-    ],
+    "constraints": {
+      "type": "table",
+      "caption": "Constraints and numbers.",
+      "columns": [
+        "kind",
+        "constraint",
+        "note"
+      ],
+      "rows": [
+        [
+          "Functional",
+          "A per-key limit with a burst; 429 with headers that tell the caller when to retry; policies editable without a deploy.",
+          ""
+        ],
+        [
+          "Scale (assumption)",
+          "50,000 requests per second across 20 gateway nodes in one region; 1 million active keys.",
+          "chosen for the exercise"
+        ],
+        [
+          "Scale (assumption)",
+          "Typical limits of 100 requests per second with a burst of 200; a few keys hold 30 to 40 percent of traffic.",
+          "derive the per-node rate, the policy data size and the per-node bucket memory yourself"
+        ],
+        [
+          "Targets (assumption)",
+          "The decision adds under 1 ms at p99; the limiter must never make the API unavailable.",
+          ""
+        ],
+        [
+          "Targets (assumption)",
+          "Overshoot of up to 10 percent over a one-second window is acceptable; sustained overshoot is not.",
+          ""
+        ],
+        [
+          "Non-goals",
+          "DDoS protection at the network layer, billing.",
+          ""
+        ]
+      ]
+    },
     "clarifying_questions": [
       {
-        "question": "Per key, per user or per IP?",
-        "answer": "Per key; per IP is a separate abuse limiter."
+        "q": "Per key, per user or per IP?",
+        "a": "Per key; per IP is a separate abuse limiter."
       },
       {
-        "question": "Exact or approximate?",
-        "answer": "Approximate within 10 percent per second."
+        "q": "Exact or approximate?",
+        "a": "Approximate within 10 percent per second."
       },
       {
-        "question": "What if the shared store is down?",
-        "answer": "The API must stay up; limits may loosen, and that must be visible."
+        "q": "What if the shared store is down?",
+        "a": "The API must stay up; limits may loosen, and that must be visible."
       },
       {
-        "question": "Limits per endpoint?",
-        "answer": "Later, via a cost per request."
+        "q": "Limits per endpoint?",
+        "a": "Later, via a cost per request."
       },
       {
-        "question": "Must Retry-After be exact?",
-        "answer": "A ceiling is fine."
+        "q": "Must Retry-After be exact?",
+        "a": "A ceiling is fine."
       },
       {
-        "question": "Do limits span regions?",
-        "answer": "Per region now; a global view later."
+        "q": "Do limits span regions?",
+        "a": "Per region now; a global view later."
       }
     ],
     "reference_answer": [
       {
         "id": "requirements-and-estimates",
         "title": "Requirements and estimates",
-        "body": [
+        "blocks": [
           {
-            "heading": "Derived numbers",
-            "body": "50,000 decisions per second across 20 nodes is 2,500 per node. An exact shared counter means one atomic read-modify-write per request on a shared store: 50,000 operations per second plus a network round trip inside the 1 ms budget on every request; feasible for one store but a single point of latency and failure, and it doubles under retry storms. Policy data: 1 million keys at 100 bytes is 100 MB, cacheable on every node. State: one token bucket per key per node is two numbers (tokens, last refill) in a map; 1 million keys at 32 bytes is 32 MB per node, fine."
+            "type": "p",
+            "text": "Every number below follows from the stated assumptions: a fleet of 20 gateway nodes serving 50,000 requests per second, a million active keys, and a decision budget of 1 ms at p99. The tables carry the arithmetic; the paragraphs carry the assumptions."
           },
           {
-            "heading": "Algorithms",
-            "body": "Fixed window: a counter per key per second; cheap, but allows up to twice the limit across a window boundary. Sliding log: exact, but stores every timestamp; too costly at this rate. Sliding window counter: weights the previous window's count by the overlap; the public Cloudflare write-up reports an average difference of 6 percent between the approximated and the real rate, with 0.003 percent of requests wrongly allowed or limited, at a fraction of the cost. Token bucket: a rate and a burst in two numbers, natural for '100 per second, burst 200', and the model Stripe describes for its request rate limiter. The answer uses token buckets locally and sliding window counters in the shared store for the global view."
+            "type": "table",
+            "caption": "Rates derived from the assumptions. The stated 50,000 requests per second is the design point, so the peak column repeats it.",
+            "columns": [
+              "quantity",
+              "per day",
+              "average per second",
+              "peak per second",
+              "note"
+            ],
+            "rows": [
+              [
+                "Limit decisions, whole fleet",
+                "4.3 billion",
+                "50,000",
+                "50,000",
+                "one decision per request"
+              ],
+              [
+                "Decisions per node",
+                "216 million",
+                "2,500",
+                "2,500",
+                "50,000 across 20 nodes with random balancing"
+              ],
+              [
+                "Shared-store operations, exact design",
+                "4.3 billion",
+                "50,000",
+                "50,000",
+                "one atomic read-modify-write per request, plus a network round trip inside the 1 ms budget; doubles under a retry storm"
+              ],
+              [
+                "Shared-store writes, correction loop",
+                "17 million",
+                "200",
+                "200",
+                "20 nodes reporting every 100 ms (assumption), each report a batch of the node's active keys"
+              ],
+              [
+                "Requests for the hottest key",
+                "1.7 billion",
+                "20,000",
+                "20,000",
+                "a key at 40 percent of all traffic; the case where local buckets drift most"
+              ]
+            ]
+          },
+          {
+            "type": "table",
+            "caption": "Sizes: policy data and per-node bucket state.",
+            "columns": [
+              "quantity",
+              "size",
+              "derived from"
+            ],
+            "rows": [
+              [
+                "Policy record",
+                "about 100 bytes",
+                "key or pattern, rate, burst, cost rules, scope"
+              ],
+              [
+                "Policy data",
+                "100 MB",
+                "1 million keys times 100 bytes; cacheable on every node"
+              ],
+              [
+                "Token bucket per key",
+                "32 bytes",
+                "two numbers (tokens, last refill) in a map"
+              ],
+              [
+                "Bucket state per node",
+                "32 MB",
+                "1 million keys times 32 bytes; fine"
+              ]
+            ]
+          },
+          {
+            "type": "table",
+            "caption": "The four algorithms.",
+            "columns": [
+              "algorithm",
+              "state per key",
+              "accuracy",
+              "verdict"
+            ],
+            "rows": [
+              [
+                "Fixed window",
+                "one counter per window",
+                "allows up to twice the limit across a window boundary",
+                "cheap, too loose"
+              ],
+              [
+                "Sliding log",
+                "every request timestamp",
+                "exact",
+                "too costly at this rate"
+              ],
+              [
+                "Sliding window counter",
+                "two counters: this window and the previous one, weighted by the overlap",
+                "Cloudflare measured an average difference of 6 percent between the approximated and the real rate, with 0.003 percent of requests wrongly allowed or limited",
+                "chosen for the shared store's global view"
+              ],
+              [
+                "Token bucket",
+                "two numbers: tokens and last refill",
+                "exact per bucket; a rate and a burst are its two parameters",
+                "chosen for the local decision; the model Stripe describes for its request rate limiter"
+              ]
+            ],
+            "cites": [
+              "s2",
+              "s1",
+              "s3"
+            ]
+          },
+          {
+            "type": "table",
+            "caption": "The cost of exactness per month. The unit price is an assumption chosen to make the arithmetic concrete; the version 1 answer called the cost of exactness a business decision without a figure.",
+            "columns": [
+              "design",
+              "store operations per month",
+              "unit price (assumption)",
+              "monthly cost",
+              "note"
+            ],
+            "rows": [
+              [
+                "Exact: one shared-store operation per request",
+                "130 billion",
+                "$0.20 per million operations",
+                "about $26,000",
+                "plus one network round trip on every request, which is the 1 ms the budget does not have"
+              ],
+              [
+                "Local buckets with a correction loop",
+                "520 million",
+                "$0.20 per million operations",
+                "about $104",
+                "200 batched reports a second; the store is off the request path"
+              ]
+            ]
           }
         ]
       },
       {
         "id": "high-level-design",
         "title": "High-level design",
-        "body": [
+        "blocks": [
           {
-            "heading": "Container view",
-            "body": "The limiter is a library inside each gateway node plus a shared store, not a separate network hop, because of the latency budget. Local buckets decide; the shared store corrects them a few times per second; a policy service pushes policies that every node caches."
+            "type": "p",
+            "text": "The limiter is a library inside each gateway node plus a shared store, not a separate network hop, because of the latency budget. Local buckets decide; the shared store corrects them a few times per second; a policy service pushes policies that every node caches."
+          },
+          {
+            "type": "diagram",
+            "mermaid": "flowchart LR\n  CL[API clients] --> LB[Load balancer]\n  LB --> G1[Gateway node 1: local buckets]\n  LB --> G2[Gateway node 2..20: local buckets]\n  G1 --> S[(Shared counter store, sliding windows)]\n  G2 --> S\n  G1 --> B[Backend services]\n  G2 --> B\n  PC[Policy service] -->|policies, pushed and cached| G1\n  PC --> G2\n  G1 -->|metrics: allowed, rejected, overshoot| M[(Metrics)]",
+            "legend": "Boxes are containers; cylinders are stores. The shared store is off the request path."
+          },
+          {
+            "type": "p",
+            "text": "Stripe's write-up describes the token bucket with a centralised bucket host that every request consults; this answer moves the bucket into the node and keeps the shared store as a correction, which trades a little exactness for the round trip. The sliding window counter in the store is the Cloudflare method: two fixed-window counters, the previous one weighted by how much of it overlaps the sliding window.",
+            "cites": [
+              "s1",
+              "s2"
+            ]
           }
-        ],
-        "diagram": {
-          "source": "flowchart LR\n  CL[API clients] --> LB[Load balancer]\n  LB --> G1[Gateway node 1: local buckets]\n  LB --> G2[Gateway node 2..20: local buckets]\n  G1 --> S[(Shared counter store, sliding windows)]\n  G2 --> S\n  G1 --> B[Backend services]\n  G2 --> B\n  PC[Policy service] -->|policies, pushed and cached| G1\n  PC --> G2\n  G1 -->|metrics: allowed, rejected, overshoot| M[(Metrics)]",
-          "legend": "Boxes are containers; cylinders are stores. The shared store is off the request path."
-        }
+        ]
       },
       {
         "id": "data-model",
         "title": "The data model",
-        "body": [
+        "blocks": [
           {
-            "heading": "Entities and the in-process API",
-            "body": "Policy {key_pattern or key, rate, burst, cost_rules[], scope: region or global}. In-process: allow(key, cost) returns {allowed, remaining, reset_in}."
+            "type": "table",
+            "caption": "Entities.",
+            "columns": [
+              "entity",
+              "fields",
+              "key or partition",
+              "notes"
+            ],
+            "rows": [
+              [
+                "Policy",
+                "key_pattern or key, rate, burst, cost_rules[], scope (region or global)",
+                "key or pattern",
+                "pushed by the policy service and cached on every node with a long TTL"
+              ],
+              [
+                "Bucket (in process, per node)",
+                "key, tokens, last_refill",
+                "key, in a per-node map",
+                "refills at rate divided by 20 with burst divided by 20; never persisted"
+              ],
+              [
+                "WindowCounter (shared store)",
+                "key, window_start, count",
+                "key",
+                "two windows per key; the node reports and reads them every 100 ms"
+              ]
+            ]
           },
           {
-            "heading": "Response contract",
-            "body": "Headers on every response: a RateLimit field carrying the limit, the remaining quota and the time to reset, and a RateLimit-Policy field describing the policy (the two header fields of the current IETF draft; its first versions defined RateLimit-Limit, RateLimit-Remaining and RateLimit-Reset instead, and the X-RateLimit-Limit, X-RateLimit-Remaining and X-RateLimit-Reset variants that the draft's appendix catalogues are what many APIs still send), and on 429 also Retry-After (RFC 6585 defines 429)."
+            "type": "table",
+            "caption": "The in-process API and the correction calls.",
+            "columns": [
+              "call",
+              "input",
+              "output",
+              "notes"
+            ],
+            "rows": [
+              [
+                "allow(key, cost)",
+                "the API key and the request's cost in tokens (1 by default)",
+                "{allowed, remaining, reset_in}",
+                "the only call on the request path; answered from the local bucket"
+              ],
+              [
+                "report(node, counts)",
+                "the node's counts per active key since the last report",
+                "the global count for the last second per key",
+                "every 100 ms (assumption); batched, off the request path"
+              ],
+              [
+                "policies()",
+                "",
+                "the current policy set",
+                "pushed on change; cached with a long TTL so a policy-service outage delays changes but never decisions"
+              ]
+            ]
+          },
+          {
+            "type": "table",
+            "caption": "The response contract on every response, and on a 429.",
+            "columns": [
+              "header or status",
+              "content",
+              "defined in"
+            ],
+            "rows": [
+              [
+                "RateLimit",
+                "the limit, the remaining quota and the time to reset",
+                "the current IETF draft"
+              ],
+              [
+                "RateLimit-Policy",
+                "the policy the limit comes from",
+                "the current IETF draft"
+              ],
+              [
+                "RateLimit-Limit, RateLimit-Remaining, RateLimit-Reset",
+                "what the draft's first version defined instead; the X-RateLimit-Limit, X-RateLimit-Remaining and X-RateLimit-Reset variants its appendix catalogues are what many APIs still send",
+                "the draft's first version"
+              ],
+              [
+                "429 Too Many Requests, with Retry-After",
+                "the status code and the time to wait; a ceiling is fine",
+                "RFC 6585"
+              ]
+            ],
+            "cites": [
+              "s5",
+              "s6",
+              "s4"
+            ]
           }
         ]
       },
       {
         "id": "core-flow",
         "title": "The core flow, step by step",
-        "body": [
+        "blocks": [
           {
-            "body": "The decision path on one node, and the correction loop behind it."
+            "type": "p",
+            "text": "The decision path on one node, and the correction loop behind it."
+          },
+          {
+            "type": "steps",
+            "title": "Decide locally, correct globally",
+            "items": [
+              "Each node holds a token bucket per key sized to its share of the limit: with 20 nodes and random balancing, each node gets about 1/20 of a key's traffic, so each bucket refills at rate/20 with burst/20.",
+              "A request takes cost tokens from the key's local bucket; if the bucket is empty the node answers 429 with Retry-After and the RateLimit headers, at no backend cost.",
+              "Every 100 ms (assumption) a node reports its counts per active key to the shared store and reads the global count for the last second.",
+              "If the global count shows a key over its limit while the local buckets allowed it (uneven balancing, a hot key pinned to few nodes), the node tightens that key's local bucket for the next interval. The shared store therefore corrects, it does not decide; its latency is off the request path.",
+              "The store's own cost is 20 nodes times 10 reports per second, each a batch of the node's active keys, which is a few hundred batched writes per second, not 50,000 single ones."
+            ],
+            "cites": [
+              "s4",
+              "s5"
+            ]
           }
-        ],
-        "steps": [
-          "Each node holds a token bucket per key sized to its share of the limit: with 20 nodes and random balancing, each node gets about 1/20 of a key's traffic, so each bucket refills at rate/20 with burst/20.",
-          "A request takes cost tokens from the key's local bucket; if the bucket is empty the node answers 429 with Retry-After and the RateLimit headers, at no backend cost.",
-          "Every 100 ms (assumption) a node reports its counts per active key to the shared store and reads the global count for the last second.",
-          "If the global count shows a key over its limit while the local buckets allowed it (uneven balancing, a hot key pinned to few nodes), the node tightens that key's local bucket for the next interval. The shared store therefore corrects, it does not decide; its latency is off the request path.",
-          "The store's own cost is 20 nodes times 10 reports per second, each a batch of the node's active keys, which is a few hundred batched writes per second, not 50,000 single ones."
         ]
       },
       {
         "id": "scaling-and-the-bottleneck",
         "title": "Scaling and the bottleneck",
-        "body": [
+        "blocks": [
           {
-            "heading": "The shared store is slow or down",
-            "body": "Fail open: nodes keep enforcing local buckets at their share, so each key is still bounded (by at most the number of nodes times its share, in the worst case of all traffic for a key on one node, which balancing makes unlikely). Emit a metric and an alert the moment the store is unreachable. Fail closed (reject when the store is unreachable) would turn a store outage into an API outage, which breaks the first target; fail closed is the right choice only where the limit protects something that must not be exceeded, such as a payment endpoint with a legal cap, and that is a per-policy flag. This follows the overload guidance of the SRE book's handling-overload chapter (reject cheaply, protect the service, never let the protection become the outage) and the Builders' Library article on load shedding."
+            "type": "p",
+            "text": "When the shared store is slow or down, the design fails open: nodes keep enforcing local buckets at their share, so each key is still bounded (by at most the number of nodes times its share, in the worst case of all traffic for a key on one node, which balancing makes unlikely). Emit a metric and an alert the moment the store is unreachable."
           },
           {
-            "heading": "Hot keys and exactness",
-            "body": "A key at 40 percent of all traffic (20,000 requests per second against a limit it may well exceed) is the case where local buckets drift most. Options: pin that key to a dedicated node pair with consistent hashing so one bucket sees all of it (exact, but a hot node); or shorten the correction interval for keys above a traffic threshold; or accept the stated 10 percent overshoot. The answer shortens the interval for the top keys (adaptive, no topology change) and documents the overshoot bound. Per-endpoint cost is a multiplier on the tokens taken; tiers are just different policies; neither changes the architecture."
+            "type": "p",
+            "text": "Fail closed (reject when the store is unreachable) would turn a store outage into an API outage, which breaks the first target; fail closed is the right choice only where the limit protects something that must not be exceeded, such as a payment endpoint with a legal cap, and that is a per-policy flag. This follows the overload guidance of the SRE book's handling-overload chapter (reject cheaply, protect the service, never let the protection become the outage) and the Builders' Library article on load shedding, which measures the service by goodput rather than throughput.",
+            "cites": [
+              "s7",
+              "s8"
+            ]
+          },
+          {
+            "type": "table",
+            "caption": "The hot key: one key at 20,000 requests per second, 40 percent of all traffic.",
+            "columns": [
+              "option",
+              "exactness",
+              "cost",
+              "verdict"
+            ],
+            "rows": [
+              [
+                "Pin the key to a dedicated node pair with consistent hashing, so one bucket sees all of it",
+                "exact",
+                "a hot node; a topology change",
+                "kept in reserve"
+              ],
+              [
+                "Shorten the correction interval for keys above a traffic threshold",
+                "overshoot shrinks with the interval",
+                "a few more store reports per second for a few keys",
+                "chosen: adaptive, no topology change"
+              ],
+              [
+                "Accept the stated 10 percent overshoot",
+                "bounded, documented",
+                "none",
+                "the floor the other two improve on"
+              ]
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Per-endpoint cost is a multiplier on the tokens taken; tiers are just different policies; neither changes the architecture. Azure's throttling pattern describes the same server-side shape: a service that rejects or degrades when a limit is reached, with autoscaling as the slower complement.",
+            "cites": [
+              "s9"
+            ]
           }
         ]
       },
       {
         "id": "failure-modes",
         "title": "Failure modes and what degrades",
-        "body": [
+        "blocks": [
           {
-            "body": "Each row names the failure, its effect on the limit, and the mitigation."
-          }
-        ],
-        "table": {
-          "columns": [
-            "Failure",
-            "Effect",
-            "Mitigation"
-          ],
-          "rows": [
-            [
-              "Shared store down",
-              "drift up to node count times share",
-              "fail open per policy, alert, local buckets still bound"
+            "type": "p",
+            "text": "Each row names the failure, its effect on the limit, and the mitigation."
+          },
+          {
+            "type": "table",
+            "caption": "Failure modes.",
+            "columns": [
+              "Failure",
+              "Effect",
+              "Mitigation"
             ],
-            [
-              "Node restart",
-              "bucket starts full",
-              "one burst of overshoot, accepted"
-            ],
-            [
-              "Policy service down",
-              "stale policies",
-              "policies cached on nodes with a long TTL; changes delayed, limits still enforced"
-            ],
-            [
-              "Clock skew between nodes",
-              "window misalignment",
-              "local monotonic clocks for buckets; store windows keyed by store time"
-            ],
-            [
-              "Retry storm from a rejected client",
-              "more rejects, cheap",
-              "429 with Retry-After; rejects cost no backend work"
-            ],
-            [
-              "Hot key on few nodes",
-              "overshoot",
-              "adaptive correction interval; optional pinning"
+            "rows": [
+              [
+                "Shared store down",
+                "drift up to node count times share",
+                "fail open per policy, alert, local buckets still bound"
+              ],
+              [
+                "Node restart",
+                "bucket starts full",
+                "one burst of overshoot, accepted"
+              ],
+              [
+                "Policy service down",
+                "stale policies",
+                "policies cached on nodes with a long TTL; changes delayed, limits still enforced"
+              ],
+              [
+                "Clock skew between nodes",
+                "window misalignment",
+                "local monotonic clocks for buckets; store windows keyed by store time"
+              ],
+              [
+                "Retry storm from a rejected client",
+                "more rejects, cheap",
+                "429 with Retry-After; rejects cost no backend work"
+              ],
+              [
+                "Hot key on few nodes",
+                "overshoot",
+                "adaptive correction interval; optional pinning"
+              ]
             ]
-          ]
-        }
+          }
+        ]
       },
       {
         "id": "trade-offs",
         "title": "Trade-offs and the alternative not taken",
-        "body": [
+        "blocks": [
           {
-            "body": "The decisions a reviewer reads first."
-          }
-        ],
-        "table": {
-          "columns": [
-            "Decision",
-            "Options",
-            "Chosen",
-            "Why"
-          ],
-          "rows": [
-            [
-              "Where the decision is made",
-              "shared store per request versus local buckets with correction",
-              "local with correction",
-              "the 1 ms budget and the availability target"
+            "type": "p",
+            "text": "The decisions a reviewer reads first."
+          },
+          {
+            "type": "table",
+            "caption": "Trade-offs.",
+            "columns": [
+              "Decision",
+              "Options",
+              "Chosen",
+              "Why"
             ],
-            [
-              "Algorithm",
-              "fixed window, sliding log, sliding window counter, token bucket",
-              "token bucket locally, sliding window counters globally",
-              "burst semantics locally, cheap approximate global view"
+            "rows": [
+              [
+                "Where the decision is made",
+                "shared store per request versus local buckets with correction",
+                "local with correction",
+                "the 1 ms budget and the availability target"
+              ],
+              [
+                "Algorithm",
+                "fixed window, sliding log, sliding window counter, token bucket",
+                "token bucket locally, sliding window counters globally",
+                "burst semantics locally, cheap approximate global view"
+              ],
+              [
+                "Store failure",
+                "fail open versus fail closed",
+                "fail open by default, closed per policy",
+                "the limiter must not become the outage"
+              ],
+              [
+                "Exactness",
+                "exact versus 10 percent overshoot",
+                "bounded overshoot",
+                "exactness costs a round trip per request and buys nothing at this product's limits"
+              ]
             ],
-            [
-              "Store failure",
-              "fail open versus fail closed",
-              "fail open by default, closed per policy",
-              "the limiter must not become the outage"
-            ],
-            [
-              "Exactness",
-              "exact versus 10 percent overshoot",
-              "bounded overshoot",
-              "exactness costs a round trip per request and buys nothing at this product's limits"
+            "cites": [
+              "s1",
+              "s2",
+              "s7"
             ]
-          ]
-        }
+          }
+        ]
       },
       {
         "id": "at-10x",
         "title": "What changes at 10x",
-        "body": [
+        "blocks": [
           {
-            "body": "A global limit across regions becomes a second, slower correction loop on a replicated store, with the same local-first rule. A concurrency limiter (in-flight requests rather than rate) protects slow endpoints; Stripe describes running both. Adaptive concurrency limits (the Netflix concurrency-limits library) can replace static numbers for internal services. Quotas (per day or month) are a different system: exact, persisted, billed."
+            "type": "table",
+            "caption": "The numbers at 10x.",
+            "columns": [
+              "quantity",
+              "at 50,000 requests per second",
+              "at 500,000 requests per second",
+              "note"
+            ],
+            "rows": [
+              [
+                "Scope of the limit",
+                "per region",
+                "global across regions: a second, slower correction loop on a replicated store",
+                "the same local-first rule"
+              ],
+              [
+                "What is limited",
+                "request rate",
+                "rate, plus a concurrency limiter (in-flight requests) for slow endpoints",
+                "Stripe describes running both"
+              ],
+              [
+                "How limits are set",
+                "static numbers in policies",
+                "adaptive concurrency limits for internal services",
+                "the Netflix concurrency-limits library takes the idea from TCP congestion control"
+              ],
+              [
+                "Quotas (per day or month)",
+                "none",
+                "a different system: exact, persisted, billed",
+                "not a rate limiter"
+              ]
+            ],
+            "cites": [
+              "s1",
+              "s10"
+            ]
+          },
+          {
+            "type": "table",
+            "caption": "The cost of exactness at 10x, at the same assumed unit price.",
+            "columns": [
+              "design",
+              "at 50,000 requests per second",
+              "at 500,000 requests per second",
+              "note"
+            ],
+            "rows": [
+              [
+                "Exact: one store operation per request",
+                "about $26,000 per month",
+                "about $260,000 per month",
+                "130 billion and 1.3 trillion operations at $0.20 per million"
+              ],
+              [
+                "Local buckets with a correction loop",
+                "about $104 per month",
+                "about $1,040 per month",
+                "the loop's cost grows with nodes, not with requests"
+              ]
+            ]
+          },
+          {
+            "type": "p",
+            "text": "The arithmetic is the L3 point: exactness is a product decision with a price, and at ten times the traffic the price of an exact limiter is the budget of a small team."
           }
         ]
       }
@@ -316,54 +772,29 @@
         "How the design behaves during a retry storm from a large customer."
       ]
     },
-    "interview_frame": [
-      {
-        "time": "0:00 to 0:05",
-        "text": "Requirements. Ask: who is limited (API key, user, IP, tenant tier)? What limit shape (requests per second with a burst, or per minute)? What happens on reject (429 with a Retry-After header)? Must limits be exact, or is a small overshoot acceptable? Where does it sit (every edge node, or a central service)? State the numbers you will design for and say them aloud: 50k requests per second at the edge across 20 nodes (chosen for the exercise), 1 million distinct keys, decision latency under 1 ms added at p99, limits of the order of 100 requests per second with a burst of 200. Non-goals: billing, abuse detection, DDoS mitigation."
-      },
-      {
-        "time": "0:05 to 0:10",
-        "text": "API and entities. check(key, cost=1) returns allowed, remaining, reset_at; a policy object (key pattern, rate, burst, window, scope); response headers (RateLimit-*, Retry-After, status 429). Say that the limiter is a library plus a shared store, not a separate network hop, because of the latency budget."
-      },
-      {
-        "time": "0:10 to 0:20",
-        "text": "High-level design and the diagram. Token bucket per key; local in-process buckets on each node for the fast path; a shared store (Redis-class) for the global count; policies loaded from a config service and cached. Explain the two-tier idea: local buckets take the decision, the shared store corrects them a few times per second."
-      },
-      {
-        "time": "0:20 to 0:40",
-        "text": "Two deep dives. (1) Exactness versus cost: a fixed window per node allows up to N times the limit at window edges; a sliding window approximated from two fixed windows (the Cloudflare method) brings the average rate error to about 6 percent at the cost of two counters per key; an exact distributed token bucket needs an atomic read-modify-write on the shared store per request, which is the 1 ms you do not have at 50k per second across 20 nodes. Choose: local token buckets with a global budget split per node, re-split every 100 ms from the shared counts. (2) Failure modes: shared store down (fail open with local limits, alert; say why fail closed is wrong for a public API and right for a payment endpoint); hot key (one tenant at 40 percent of traffic: a dedicated shard or a local-only limit for that key); node restart (buckets start full; acceptable overshoot of one burst); clock skew (windows keyed on monotonic local time, store time only for TTL)."
-      },
-      {
-        "time": "0:40 to 0:45",
-        "text": "Evolution. Tiers and per-endpoint costs (cost parameter), limits per region, moving the policy store to the gateway, metrics: allowed, rejected, overshoot ratio per key, shared-store latency. Ask what the interviewer would like to see deeper. The level shows in the deep dives: L1 gives a correct single-store token bucket; L2 gives the two-tier design with the exactness trade-off and the fail-open argument; L3 asks whether the product needs a limiter at all or a cost-based quota, and reframes the hot tenant as a tenancy question."
-      }
-    ],
-    "design_doc_frame": [
-      {
-        "section": "Context and scope",
-        "text": "The public API, its gateway fleet, the keys and tiers that exist today, and the incidents or abuse that motivate a limiter."
-      },
-      {
-        "section": "Goals and non-goals",
-        "text": "Bound every key within 10 percent per second, add under 1 ms, never make the API unavailable; DDoS and billing out of scope."
-      },
-      {
-        "section": "Design",
-        "text": "This answer fills it: local token buckets, the correction loop against the shared store, the policy service and the header contract."
-      },
-      {
-        "section": "Alternatives considered",
-        "text": "Where the decision is made (shared store per request versus local with correction) and the algorithm choice, with the trade-off table."
-      },
-      {
-        "section": "Cross-cutting concerns",
-        "text": "Observability of drift (allowed, rejected, overshoot ratio per key, store latency) and the fail-open policy as a security review item."
-      },
-      {
-        "section": "Review questions the doc must answer",
-        "text": "The worst-case overshoot under a store outage, and the behaviour when the policy service is down."
-      }
-    ],
+    "interview_frame": {
+      "type": "steps",
+      "title": "A 45-minute interview",
+      "items": [
+        "0:00 to 0:05: Requirements. Ask: who is limited (API key, user, IP, tenant tier)? What limit shape (requests per second with a burst, or per minute)? What happens on reject (429 with a Retry-After header)? Must limits be exact, or is a small overshoot acceptable? Where does it sit (every edge node, or a central service)? State the numbers you will design for and say them aloud: 50k requests per second at the edge across 20 nodes (chosen for the exercise), 1 million distinct keys, decision latency under 1 ms added at p99, limits of the order of 100 requests per second with a burst of 200. Non-goals: billing, abuse detection, DDoS mitigation.",
+        "0:05 to 0:10: API and entities. check(key, cost=1) returns allowed, remaining, reset_at; a policy object (key pattern, rate, burst, window, scope); response headers (RateLimit-*, Retry-After, status 429). Say that the limiter is a library plus a shared store, not a separate network hop, because of the latency budget.",
+        "0:10 to 0:20: High-level design and the diagram. Token bucket per key; local in-process buckets on each node for the fast path; a shared store (Redis-class) for the global count; policies loaded from a config service and cached. Explain the two-tier idea: local buckets take the decision, the shared store corrects them a few times per second.",
+        "0:20 to 0:40: Two deep dives. (1) Exactness versus cost: a fixed window per node allows up to N times the limit at window edges; a sliding window approximated from two fixed windows (the Cloudflare method) brings the average rate error to about 6 percent at the cost of two counters per key; an exact distributed token bucket needs an atomic read-modify-write on the shared store per request, which is the 1 ms you do not have at 50k per second across 20 nodes. Choose: local token buckets with a global budget split per node, re-split every 100 ms from the shared counts. (2) Failure modes: shared store down (fail open with local limits, alert; say why fail closed is wrong for a public API and right for a payment endpoint); hot key (one tenant at 40 percent of traffic: a dedicated shard or a local-only limit for that key); node restart (buckets start full; acceptable overshoot of one burst); clock skew (windows keyed on monotonic local time, store time only for TTL).",
+        "0:40 to 0:45: Evolution. Tiers and per-endpoint costs (cost parameter), limits per region, moving the policy store to the gateway, metrics: allowed, rejected, overshoot ratio per key, shared-store latency. Ask what the interviewer would like to see deeper. The level shows in the deep dives: L1 gives a correct single-store token bucket; L2 gives the two-tier design with the exactness trade-off and the fail-open argument; L3 asks whether the product needs a limiter at all or a cost-based quota, and reframes the hot tenant as a tenancy question."
+      ]
+    },
+    "design_doc_frame": {
+      "type": "list",
+      "items": [
+        "Context and scope: The public API, its gateway fleet, the keys and tiers that exist today, and the incidents or abuse that motivate a limiter.",
+        "Goals and non-goals: Bound every key within 10 percent per second, add under 1 ms, never make the API unavailable; DDoS and billing out of scope.",
+        "Design: This answer fills it: local token buckets, the correction loop against the shared store, the policy service and the header contract.",
+        "Alternatives considered: Where the decision is made (shared store per request versus local with correction) and the algorithm choice, with the trade-off table.",
+        "Cross-cutting concerns: Observability of drift (allowed, rejected, overshoot ratio per key, store latency) and the fail-open policy as a security review item.",
+        "Review questions the doc must answer: The worst-case overshoot under a store outage, and the behaviour when the policy service is down."
+      ],
+      "ordered": true
+    },
     "depth_notes": {
       "L1": "A token bucket per key in a shared store with correct headers.",
       "L2": "Sliding windows, local plus global limits, fail-open versus fail-closed, hot keys.",
@@ -371,16 +802,21 @@
     }
   },
   "provenance": {
-    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center M4a",
+    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center M4a; format v2 restructure by hand, Claude (Fable 5.1), Scout learning center F2-E1",
     "generated_on": "2026-10-12",
-    "reviewed_by": "a second reader (Claude Fable 5.1), Scout learning center M4b",
-    "reviewed_on": "2026-10-12"
+    "reviewed_by": null,
+    "reviewed_on": null
   },
   "changelog": [
     {
       "version": 1,
       "date": "2026-10-12",
       "change": "converted by hand from the system design outline, sections 6.3 and 4.1 (reference answer and the 45-minute script; numbers and sources unchanged)"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-15",
+      "change": "format v2 restructure (batch E1): rates, sizes, the four algorithms, the cost of exactness, entities, the in-process API, the header contract, the hot-key options, failure modes, trade-offs and the 10x numbers as tables, the decision path as steps; sources with ids and cites on every claim about a real system (Stripe, Cloudflare's measured accuracy, the RateLimit drafts, RFC 6585, the SRE book, the Builders' Library, Netflix concurrency-limits); one addition of substance: a cost-of-exactness table with a stated unit-price assumption, where version 1 called it a business decision without a figure; the simulation block unchanged; no Building it on AWS section (held by the operator's decision); reviewed_by cleared for a second read"
     }
   ],
   "sim": {
