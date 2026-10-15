@@ -157,7 +157,11 @@ EXERCISE_SECTION_IDS = ["requirements-and-estimates", "high-level-design", "data
                         "failure-modes", "trade-offs", "at-10x"]
 AWS_SECTION = "building-it-on-aws"   # :2 only, optional, right after high-level-design (format v2 addendum B)
 EXERCISE2_SECTION_IDS = EXERCISE_SECTION_IDS[:2] + [AWS_SECTION] + EXERCISE_SECTION_IDS[2:]
-AWS_MIN_TABLES = 3   # component table, the decision rows, the Well-Architected pillar table
+# The AWS section's shape (orchestrator #46, 2026-10-15): it opens with the AWS architecture diagram (the section's only
+# diagram, and the one exception to "a diagram belongs in high-level-design only"), carries at least one decision block
+# (the choices as decisions, not prices) and holds at most one cost table, which comes last. A table is a cost table when
+# any column header contains "monthly", "cost" or "price" (case-insensitive).
+AWS_COST_COLUMN = re.compile(r"(?i)monthly|cost|price")
 TITLED_BODY = {"title": str, "body": str}
 DIAGRAM_START = re.compile(r"^\s*(flowchart|graph)\s")
 
@@ -1034,8 +1038,19 @@ def exercise2_checks(l: dict) -> list[str]:
     for sec in secs:
         sid, bl = sec["id"], [b for b in sec["blocks"] if isinstance(b, dict)]
         tables = [b for b in bl if b.get("type") == "table"]
-        if sid == AWS_SECTION and len(tables) < AWS_MIN_TABLES:
-            out.append(f"section {sid}: needs at least {AWS_MIN_TABLES} table blocks (components, decisions, pillars), has {len(tables)}")
+        if sid == AWS_SECTION:
+            first = bl[0].get("type") if bl else "missing"
+            if first != "diagram":
+                out.append(f"section {sid}: must start with a diagram block (the AWS architecture, mirroring the high-level-design one); "
+                           f"the first block is {first!r}")
+            if sum(1 for b in bl if b.get("type") == "diagram") > 1:
+                out.append(f"section {sid}: one diagram block only, the AWS architecture at the start")
+            if not any(b.get("type") == "decision" for b in bl):
+                out.append(f"section {sid}: needs at least one decision block (the choices as decisions: option, pick when, avoid when, for this design)")
+            cost_tables = [t for t in tables if any(AWS_COST_COLUMN.search(c) for c in t["columns"])]
+            if len(cost_tables) > 1:
+                out.append(f"section {sid}: at most one cost table (a column header containing monthly, cost or price), has {len(cost_tables)}; "
+                           f"cost comes last and small, the per-fork price tables go")
         if sid == "requirements-and-estimates" and not any(t["columns"] == EST_COLUMNS for t in tables):
             out.append(f"section {sid}: needs a table block with the columns {EST_COLUMNS}")
         if sid == "data-model" and not (any(t["columns"] == DATA_COLUMNS for t in tables) or any(b.get("type") == "code" for b in bl)):
@@ -1045,8 +1060,8 @@ def exercise2_checks(l: dict) -> list[str]:
         n_diagrams = sum(1 for b in bl if b.get("type") == "diagram")
         if sid == "high-level-design" and n_diagrams != 1:
             out.append(f"section {sid}: needs exactly one diagram block, has {n_diagrams}")
-        if sid != "high-level-design" and n_diagrams:
-            out.append(f"section {sid}: a diagram block belongs in high-level-design only")
+        if sid not in ("high-level-design", AWS_SECTION) and n_diagrams:
+            out.append(f"section {sid}: a diagram block belongs in high-level-design only (or at the start of {AWS_SECTION})")
         for t in tables:
             if t["columns"][:1] == ["method"] and t["columns"] != API_COLUMNS:
                 out.append(f"section {sid}: an API table has the columns {API_COLUMNS}, got {t['columns']}")

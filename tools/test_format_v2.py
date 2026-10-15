@@ -214,19 +214,58 @@ class Negative(Fixture):
         docs["lessons/sd-caching.json"] = lesson
         self.assertTrue(any("about a choice" in p for p in scan.validate(docs)))
 
+    # The AWS section (orchestrator #46): a diagram first and only there, a decision block, at most one cost table.
+    AWS = {"id": "building-it-on-aws", "title": "Building it on AWS", "blocks": [
+        {"type": "diagram", "mermaid": "flowchart TB\n  C[client] -->|HTTPS, sync| ALB[Application Load Balancer]\n  ALB -->|HTTP, sync| S[ECS on Fargate]\n  S -->|PutItem, sync| D[(DynamoDB)]",
+         "legend": "The neutral boxes, one AWS service each."},
+        {"type": "steps", "title": "The write path", "items": ["The client calls the ALB over HTTPS, sync; it retries with backoff.", "The service writes with PutItem, sync."]},
+        {"type": "list", "items": ["Identity: one task role per service.", "Public: the ALB only."]},
+        {"type": "decision", "caption": "Store", "rows": [{"option": "DynamoDB", "pick_when": "key lookups", "avoid_when": "joins", "example": "For this design: chosen, every read is a key lookup."}]},
+        {"type": "table", "caption": "Pillars", "columns": ["pillar", "asks", "choice", "risk"], "rows": [["security", "least privilege", "IAM roles", "none"]]},
+        {"type": "table", "caption": "Cost", "columns": ["component", "AWS service", "monthly at 10M daily active users", "monthly at 100M daily active users"],
+         "rows": [["store", "DynamoDB", "about $300", "about $3,000"]]},
+        {"type": "p", "text": "The store dominates."}]}
+
+    def with_aws(self, mutate=None, at: int = 2):
+        def m(d):
+            s = copy.deepcopy(self.AWS)
+            if mutate:
+                mutate(s)
+            d["exercise"]["reference_answer"].insert(at, s)
+        return m
+
     def test_aws_section_after_high_level_design(self) -> None:
-        aws = {"id": "building-it-on-aws", "title": "Building it on AWS", "blocks": [
-            {"type": "table", "caption": "Components", "columns": ["component", "AWS pick", "the alternative", "pick the alternative when"],
-             "rows": [["store", "DynamoDB", "Aurora", "joins"]]},
-            {"type": "table", "caption": "Decisions", "columns": ["fork", "choice", "why"], "rows": [["queue", "SQS", "no replay needed"]]},
-            {"type": "table", "caption": "Pillars", "columns": ["pillar", "asks", "choice", "risk"], "rows": [["security", "least privilege", "IAM roles", "none"]]}]}
-        def ok(d): d["exercise"]["reference_answer"].insert(2, copy.deepcopy(aws))
-        self.assertEqual(self.problems_after(EXERCISE, ok), [])
-        def wrong_place(d): d["exercise"]["reference_answer"].insert(3, copy.deepcopy(aws))
-        self.refuses(EXERCISE, wrong_place, "right after high-level-design")
-        def too_few_tables(d):
-            s = copy.deepcopy(aws); s["blocks"] = s["blocks"][:2]; d["exercise"]["reference_answer"].insert(2, s)
-        self.refuses(EXERCISE, too_few_tables, "at least 3 table blocks")
+        self.assertEqual(self.problems_after(EXERCISE, self.with_aws()), [])
+        self.refuses(EXERCISE, self.with_aws(at=3), "right after high-level-design")
+
+    def test_aws_section_without_a_leading_diagram(self) -> None:
+        def drop(s): s["blocks"] = s["blocks"][1:]
+        self.refuses(EXERCISE, self.with_aws(drop), "section building-it-on-aws: must start with a diagram block")
+        def later(s): s["blocks"] = s["blocks"][1:2] + s["blocks"][:1] + s["blocks"][2:]
+        self.refuses(EXERCISE, self.with_aws(later), "must start with a diagram block (the AWS architecture, mirroring the high-level-design one); the first block is 'steps'")
+
+    def test_aws_section_with_two_diagrams(self) -> None:
+        def twice(s): s["blocks"].append(copy.deepcopy(s["blocks"][0]))
+        self.refuses(EXERCISE, self.with_aws(twice), "section building-it-on-aws: one diagram block only")
+
+    def test_aws_section_without_a_decision(self) -> None:
+        def drop(s): s["blocks"] = [b for b in s["blocks"] if b["type"] != "decision"]
+        self.refuses(EXERCISE, self.with_aws(drop), "section building-it-on-aws: needs at least one decision block")
+
+    def test_aws_section_with_two_cost_tables(self) -> None:
+        def second(s):
+            s["blocks"].insert(4, {"type": "table", "caption": "Posts store priced", "columns": ["option", "unit price", "quantity per month", "monthly cost"],
+                                   "rows": [["DynamoDB", "$0.625 per million writes", "60 million", "$37.50"]]})
+        self.refuses(EXERCISE, self.with_aws(second), "section building-it-on-aws: at most one cost table (a column header containing monthly, cost or price), has 2")
+        def pillars_are_not_cost(s):
+            s["blocks"].insert(4, {"type": "table", "caption": "Components", "columns": ["component", "AWS pick", "the alternative"], "rows": [["store", "DynamoDB", "Aurora"]]})
+        self.assertEqual(self.problems_after(EXERCISE, self.with_aws(pillars_are_not_cost)), [])
+
+    def test_aws_section_is_the_only_other_place_for_a_diagram(self) -> None:
+        def m(d):
+            self.with_aws()(d)
+            section(d, "at-10x")["blocks"].append(copy.deepcopy(self.AWS["blocks"][0]))
+        self.refuses(EXERCISE, m, "section at-10x: a diagram block belongs in high-level-design only (or at the start of building-it-on-aws)")
 
     def test_cite_column_holds_source_ids(self) -> None:
         def m(d):
