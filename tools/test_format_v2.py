@@ -202,6 +202,20 @@ class Negative(Fixture):
         docs["lessons/sd-caching.json"] = lesson
         self.assertTrue(any("about a choice" in p for p in scan.validate(docs)))
 
+    def test_aws_section_after_high_level_design(self) -> None:
+        aws = {"id": "building-it-on-aws", "title": "Building it on AWS", "blocks": [
+            {"type": "table", "caption": "Components", "columns": ["component", "AWS pick", "the alternative", "pick the alternative when"],
+             "rows": [["store", "DynamoDB", "Aurora", "joins"]]},
+            {"type": "table", "caption": "Decisions", "columns": ["fork", "choice", "why"], "rows": [["queue", "SQS", "no replay needed"]]},
+            {"type": "table", "caption": "Pillars", "columns": ["pillar", "asks", "choice", "risk"], "rows": [["security", "least privilege", "IAM roles", "none"]]}]}
+        def ok(d): d["exercise"]["reference_answer"].insert(2, copy.deepcopy(aws))
+        self.assertEqual(self.problems_after(EXERCISE, ok), [])
+        def wrong_place(d): d["exercise"]["reference_answer"].insert(3, copy.deepcopy(aws))
+        self.refuses(EXERCISE, wrong_place, "right after high-level-design")
+        def too_few_tables(d):
+            s = copy.deepcopy(aws); s["blocks"] = s["blocks"][:2]; d["exercise"]["reference_answer"].insert(2, s)
+        self.refuses(EXERCISE, too_few_tables, "at least 3 table blocks")
+
     def test_too_few_sources(self) -> None:
         def m(d):
             del d["sources"][7]

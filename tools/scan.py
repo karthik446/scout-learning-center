@@ -155,6 +155,9 @@ EXERCISE = {
 }
 EXERCISE_SECTION_IDS = ["requirements-and-estimates", "high-level-design", "data-model", "core-flow", "scaling-and-the-bottleneck",
                         "failure-modes", "trade-offs", "at-10x"]
+AWS_SECTION = "building-it-on-aws"   # :2 only, optional, right after high-level-design (format v2 addendum B)
+EXERCISE2_SECTION_IDS = EXERCISE_SECTION_IDS[:2] + [AWS_SECTION] + EXERCISE_SECTION_IDS[2:]
+AWS_MIN_TABLES = 3   # component table, the decision rows, the Well-Architected pillar table
 TITLED_BODY = {"title": str, "body": str}
 DIAGRAM_START = re.compile(r"^\s*(flowchart|graph)\s")
 
@@ -1003,11 +1006,14 @@ def exercise2_checks(l: dict) -> list[str]:
         out.append("summary and exercise.prompt must not be empty")
     secs = ex["reference_answer"]
     ids = [sec["id"] for sec in secs]
-    if ids != EXERCISE_SECTION_IDS:
-        out.append(f"reference_answer sections must be exactly {EXERCISE_SECTION_IDS} in that order, got {ids}")
+    if ids not in (EXERCISE_SECTION_IDS, EXERCISE2_SECTION_IDS):
+        out.append(f"reference_answer sections must be exactly {EXERCISE_SECTION_IDS} in that order, "
+                   f"optionally with {AWS_SECTION!r} right after high-level-design; got {ids}")
     for sec in secs:
         sid, bl = sec["id"], [b for b in sec["blocks"] if isinstance(b, dict)]
         tables = [b for b in bl if b.get("type") == "table"]
+        if sid == AWS_SECTION and len(tables) < AWS_MIN_TABLES:
+            out.append(f"section {sid}: needs at least {AWS_MIN_TABLES} table blocks (components, decisions, pillars), has {len(tables)}")
         if sid == "requirements-and-estimates" and not any(t["columns"] == EST_COLUMNS for t in tables):
             out.append(f"section {sid}: needs a table block with the columns {EST_COLUMNS}")
         if sid == "data-model" and not (any(t["columns"] == DATA_COLUMNS for t in tables) or any(b.get("type") == "code" for b in bl)):
