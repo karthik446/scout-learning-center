@@ -1,7 +1,7 @@
 {
-  "schema_version": "learning-center-lesson:1",
+  "schema_version": "learning-center-lesson:2",
   "id": "sd-api-design",
-  "version": 1,
+  "version": 2,
   "status": "published",
   "superseded_by": null,
   "title": "API design",
@@ -16,90 +16,722 @@
     "rest-apis",
     "microservices"
   ],
-  "summary": "An API is a long-lived contract: once clients depend on it, every field and status code is hard to change. Good design models the domain as resources with a small set of consistent operations, writes the contract down in a machine-readable form, and plans for evolution, large result sets, failures and slow operations from the start.",
+  "summary": "An API is a contract that outlives its implementation: once clients depend on a path, a field or a status code, changing it costs every one of them a release. This lesson models the domain as resources with standard methods, uses HTTP's safe and idempotent semantics and status codes as the protocol defines them, settles one error shape, paginates every list from the first release, handles work that outlives the request with 202 and an operation resource, states what counts as a breaking change and how to version, writes the contract in OpenAPI or protobuf, and chooses REST, gRPC or GraphQL per boundary with a decision table.",
   "detail": [],
-  "in_practice": "A team writes the OpenAPI description in a pull request before any handler code, and reviewers from consuming teams comment on names, error cases and pagination. A linter enforces the house style guide, and a diff tool in continuous integration fails the build on a breaking change to a published version. Documentation, client libraries and a mock server are generated from the same file, and contract tests check the deployed service against it. An API gateway handles authentication, quotas and per-version routing, while usage metrics per operation and version guide deprecation decisions.",
+  "in_practice": {
+    "blocks": [
+      {
+        "type": "p",
+        "text": "Stripe versions its API by release date and pins each account to the version current at its first request, so no integration receives a breaking change until its owner upgrades; a Stripe-Version header overrides the pin per request. Each incompatible change is a version change module that transforms responses backwards from the current shape, which keeps old versions out of the core code and generates the changelog, and every outgoing change goes through a lightweight review on a mailing list before release.",
+        "cites": [
+          "s8"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Google publishes its API design rules as numbered API Improvement Proposals and enforces them with an API linter. The pagination proposal requires page_size and page_token on every list method from the first release, opaque tokens, and coercion rather than an error for an oversized page; the compatibility proposal forbids removing, renaming or retyping any component within a major version and treats a change of default behaviour as breaking.",
+        "cites": [
+          "s4",
+          "s6"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Zalando's guidelines, which its teams must follow for every API, require pagination on every list, prefer cursors over offsets and discourage total counts; require Problem JSON for every error and forbid stack traces; and treat versioning as a last resort, with media type versioning when it cannot be avoided and URL versions banned. Shutting an API down requires the consent of every client on a sunset date and monitoring of the deprecated version's usage until then.",
+        "cites": [
+          "s12"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Microsoft's Azure Architecture Center guidance, used for the Azure REST APIs, returns 202 with the status endpoint in Location for any operation that would otherwise make the client wait, redirects with 303 to the created resource when the operation finishes, and documents four versioning mechanisms with the trade-off that a version in the URI leaks into every link.",
+        "cites": [
+          "s5"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "The GraphQL project documents the N+1 problem and batching with DataLoader as the standard answer, and names demand control (paginated lists, depth and breadth limits, complexity analysis) as the server's protection against the queries its own flexibility invites.",
+        "cites": [
+          "s11"
+        ]
+      }
+    ]
+  },
   "subtopics": [
     {
-      "body": [
+      "id": "resources-and-methods",
+      "title": "Resources, collections and the standard methods",
+      "blocks": [
         {
-          "body": "Start from the nouns of the domain, not from the screens or the database tables. Each resource has a stable identifier and lives in a collection, and collections can nest to show ownership, such as orders under a customer. A small set of standard methods covers most needs: list, get, create, update and delete, mapped to GET, POST, PUT or PATCH, and DELETE. Operations that do not fit, such as cancel or publish, become explicit custom actions rather than being forced into an update of a status field.",
-          "heading": "Resources, collections and standard methods"
+          "type": "p",
+          "text": "An API is a contract that outlives the code behind it. Once clients depend on a field, a path or a status code, changing it costs every one of them a release, so the design work is in getting the shape right before the first client ships. Google's resource-oriented design, the pattern behind its public APIs, starts from one idea: the building blocks of an API are individually named resources, the nouns of the domain, and the relationships and hierarchy between them. A small set of standard methods supplies the verbs for most operations, and custom methods exist for the actions that the standard ones cannot express.",
+          "cites": [
+            "s1"
+          ]
         },
         {
-          "body": "Use the protocol as intended, because intermediaries and client libraries rely on it. GET is safe and cacheable; PUT and DELETE are idempotent; POST is neither by default. PUT replaces the whole resource while PATCH changes part of it. Status codes carry meaning: 201 with a location for a create, 204 for success with no body, 400 for a malformed request, 404 for a missing resource, 409 for a conflict, 429 for throttling. Avoid deep URI nesting; beyond collection, item, collection it becomes rigid.",
-          "heading": "HTTP semantics"
+          "type": "p",
+          "text": "The Azure guidance gives the same rule from the HTTP side. Name resources with plural nouns and let the method carry the verb: a client creates an order with a POST to the orders collection, not with a call to a create-order path. Organise collections by ownership (the orders of a customer live under that customer) but keep the nesting shallow, because a path deeper than collection, item, collection becomes rigid. Two anti-patterns recur. A chatty API exposes many small resources, so a client needs several round trips to assemble one screen; and an API that mirrors the database tables leaks the storage model, so a schema change becomes an API change.",
+          "cites": [
+            "s5"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The standard methods and how they map to HTTP, from the Google AIPs and the Azure guidance. The body of a custom method is a POST to the resource with the verb after a colon.",
+          "columns": [
+            "method",
+            "HTTP request",
+            "returns",
+            "notes"
+          ],
+          "rows": [
+            [
+              "List",
+              "GET on the collection",
+              "a page of resources and a next-page token",
+              "always paginated, filterable; never a streaming response"
+            ],
+            [
+              "Get",
+              "GET on the resource",
+              "the resource",
+              "safe and cacheable"
+            ],
+            [
+              "Create",
+              "POST on the collection",
+              "the created resource, 201 with a Location header",
+              "the server assigns the id unless the client can supply a reliable one"
+            ],
+            [
+              "Update",
+              "PATCH on the resource",
+              "the resource",
+              "a field mask or merge patch names the fields that change; PUT replaces the whole representation"
+            ],
+            [
+              "Delete",
+              "DELETE on the resource",
+              "nothing, 204",
+              "idempotent: a second delete finds nothing and is still a success from the client's view"
+            ],
+            [
+              "custom method",
+              "POST on the resource, path ending in :verb (archive, cancel, publish)",
+              "whatever the action produces",
+              "only for what the standard methods cannot express; a verb plus a noun, no prepositions"
+            ]
+          ],
+          "cites": [
+            "s1",
+            "s2",
+            "s5"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The standard methods matter because their semantics are consistent: a generated client, a gateway or a cache can treat every Get the same way without reading the documentation. Google's guidance therefore says to prefer them whenever the operation genuinely fits, and not to contort an action such as cancelling an order into an update of a status field. The custom method keeps the vocabulary honest: a client that calls cancel is stating its intent, and the server can refuse it with a precise error.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Write the resource list, the hierarchy and the schema of each resource before any path or method. The methods follow from the resources; the paths follow from the methods.",
+          "cites": [
+            "s1"
+          ]
         }
-      ],
-      "id": "resource-oriented-design",
-      "title": "Resource-oriented modelling"
+      ]
     },
     {
-      "body": [
+      "id": "http-semantics",
+      "title": "Safe, idempotent and the status codes",
+      "blocks": [
         {
-          "body": "An OpenAPI description is a JSON or YAML document that states what an HTTP API offers. Its paths object lists each URL template and the operations on it; every operation declares parameters, a request body, and responses by status code. Reusable schemas, parameters and responses live under components and are referenced, which keeps the document small and consistent. Security schemes describe how callers authenticate. Because the format is machine-readable, the same file drives documentation, client and server code generation, mock servers, and request validation.",
-          "heading": "What the description contains"
+          "type": "p",
+          "text": "HTTP's method properties are not style; intermediaries and client libraries act on them. RFC 9110 defines a method as safe when its semantics are essentially read-only, so the client requests no state change: GET, HEAD, OPTIONS and TRACE. A method is idempotent when the intended effect of several identical requests equals the effect of one: PUT, DELETE and the safe methods. POST is neither. The distinction exists so that automated retrieval and cache prefetching can use safe methods freely, and so that a client whose connection dropped before the response can repeat an idempotent request automatically.",
+          "cites": [
+            "s2"
+          ]
         },
         {
-          "body": "In a design-first workflow the description is written and reviewed before the implementation, so consumers can comment and build against a mock while the service is developed. The alternative, generating the description from code, tends to expose whatever the framework produced. Either way, keep exactly one authoritative description in source control, lint it in continuous integration, and test that the running service conforms to it. Large descriptions are split into several files joined by references, and operations are tagged so generated documentation stays navigable.",
-          "heading": "Design first, single source of truth"
+          "type": "p",
+          "text": "The last point is the one that shapes API design. The RFC says a client should not automatically retry a non-idempotent request unless it has some means to know the semantics are idempotent, or to detect that the original was never applied. A POST that creates an order is exactly that case: a timeout leaves the client unable to tell whether the order exists. The fix is to make the operation idempotent by design with a client-supplied key, which the idempotency lesson covers; the API design decision is that every mutating endpoint states whether a repeat is safe and how.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Status codes a client has to tell apart, and what each one means in RFC 9110.",
+          "columns": [
+            "code",
+            "meaning",
+            "use it for"
+          ],
+          "rows": [
+            [
+              "201 Created",
+              "a resource was created; Location names it",
+              "a successful Create"
+            ],
+            [
+              "202 Accepted",
+              "accepted for processing, not completed; deliberately noncommittal",
+              "a long-running operation, with a link to its status"
+            ],
+            [
+              "204 No Content",
+              "succeeded, nothing to send back",
+              "Delete, or an update with no body"
+            ],
+            [
+              "400 Bad Request",
+              "the server will not process the request as sent",
+              "a malformed request; the error body says which field"
+            ],
+            [
+              "404 Not Found",
+              "no current representation",
+              "a missing resource"
+            ],
+            [
+              "409 Conflict",
+              "the request conflicts with the resource's current state",
+              "a duplicate create, a transition the state does not allow"
+            ],
+            [
+              "412 Precondition Failed",
+              "a request-header condition was false",
+              "an If-Match that did not match: another writer got there first"
+            ],
+            [
+              "503 Service Unavailable",
+              "temporarily unable to handle the request",
+              "overload or maintenance, with Retry-After"
+            ]
+          ],
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Two headers carry the rest of the story. Retry-After, sent with a 503 or a redirect, tells the client how long to wait as a date or a number of seconds, and it is the only standard way for an API to say when to come back. Conditional headers turn a read-modify-write into a safe update: the client sends If-Match with the version it read, and a 412 tells it another writer got there first. Zalando's guidelines add the throttling case: a caller over its limit gets a 429 with the rate-limit headers, never a generic client error.",
+          "cites": [
+            "s2",
+            "s12"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "A client that retries a POST on timeout, with no idempotency key, will create duplicates under exactly the conditions the retry was meant to survive. The RFC says not to; the API has to give the client a way to do it safely.",
+          "cites": [
+            "s2"
+          ]
         }
-      ],
-      "id": "contract-first-openapi",
-      "title": "Contract-first design with OpenAPI"
+      ]
     },
     {
-      "body": [
+      "id": "one-error-shape",
+      "title": "One error shape for the whole API",
+      "blocks": [
         {
-          "body": "Every list method needs pagination from its first release, because adding it later breaks clients that assumed a complete result. Offset and limit is simple but slows down on deep pages and skips or repeats items when data changes between calls. Cursor pagination returns an opaque token for the next page; the server encodes the position, typically the last sort key seen, so each page is an index seek. Enforce a maximum page size on the server and return the next token only when more data exists.",
-          "heading": "Bounding list responses"
+          "type": "p",
+          "text": "An error response has three readers: the code that decides whether to retry, fix the request or give up; the developer reading a log; and the person who wrote the client, who sees the message in a support ticket a year later. The status code serves the first reader only partly, because a 400 does not say which field was wrong and a 409 does not say which state was in the way. RFC 9457 defines the standard answer, Problem Details, as a JSON object with the media type application/problem+json and five members.",
+          "cites": [
+            "s3"
+          ]
         },
         {
-          "body": "Filtering and sorting belong in query parameters, restricted to fields the store can serve from an index, since an unrestricted filter language becomes a way to run arbitrary scans. Field selection lets a client ask for only the attributes it needs, which reduces payload size for mobile clients; a field mask on update states exactly which fields to change. Keep parameter names and behaviour identical across all collections so that a client learns the conventions once.",
-          "heading": "Narrowing the payload"
+          "type": "table",
+          "caption": "The members of a Problem Details object (RFC 9457). Any API may add extension members, such as a list of invalid fields.",
+          "columns": [
+            "member",
+            "what it holds",
+            "note"
+          ],
+          "rows": [
+            [
+              "type",
+              "a URI that identifies the problem type",
+              "the machine-readable key; about:blank means the status code says it all"
+            ],
+            [
+              "title",
+              "a short human-readable summary of the type",
+              "the same for every occurrence of that type"
+            ],
+            [
+              "status",
+              "the HTTP status code",
+              "a copy for consumers that lost the status line"
+            ],
+            [
+              "detail",
+              "a human-readable explanation of this occurrence",
+              "written for the developer, never parsed by code"
+            ],
+            [
+              "instance",
+              "a URI for this specific occurrence",
+              "a correlation id or a request id in practice"
+            ]
+          ],
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Zalando's guidelines make the format mandatory for every error (MUST support problem JSON) and forbid exposing stack traces, because an internal class name or a SQL fragment in a response is both a leak and a dependency that some client will start parsing. The design principle underneath both rules is that anything a client needs to branch on is a stable, documented value in a named member, and anything written for a human may change at any time.",
+          "cites": [
+            "s12"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Validation errors are the common case and deserve a defined extension: a list of fields, each with the field path, a stable reason code and a message. A retryable condition should be distinguishable from a permanent one without parsing text, which is why the type URI and the status code together have to carry it: a 503 or a 429 with Retry-After is retryable, a 400 or a 409 is not. Document the whole shape once in the contract, under the components section, and reference it from every operation.",
+          "cites": [
+            "s3",
+            "s9"
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "json",
+          "code": "{\n  \"type\": \"https://api.example.com/problems/validation\",\n  \"title\": \"The request failed validation.\",\n  \"status\": 400,\n  \"detail\": \"Two fields were rejected.\",\n  \"instance\": \"/requests/7f3c2a\",\n  \"errors\": [\n    {\"field\": \"customer_id\", \"reason\": \"NOT_FOUND\"},\n    {\"field\": \"lines[2].quantity\", \"reason\": \"OUT_OF_RANGE\"}\n  ]\n}",
+          "caption": "A validation error as a Problem Details object with an errors extension member."
         }
-      ],
+      ]
+    },
+    {
       "id": "pagination-filtering",
-      "title": "Pagination, filtering and partial responses"
-    },
-    {
-      "body": [
+      "title": "Pagination, filtering and partial responses",
+      "blocks": [
         {
-          "body": "Adding an optional request field, a new response field, a new resource or a new method is normally compatible, provided clients ignore fields they do not recognise. Removing or renaming a field, changing a type, making an optional field required, tightening validation, or changing the meaning of an existing value breaks clients. Adding a value to an enumeration is a common trap, because generated clients often reject unknown values. Default behaviour must also stay stable: changing a default page size or sort order is a behaviour break even if the schema is unchanged.",
-          "heading": "What counts as breaking"
+          "type": "p",
+          "text": "Every list method is paginated from its first release, and Google's pagination guidance explains why with an example. A user whose collection holds 75 resources deploys code that reads the whole list. The API later adds pagination with a default page of 50, and that code silently sees 50 and stops. Even a higher default only delays the break until the collection grows, and client libraries generate different method signatures for paginated calls, so adding pagination later is a backwards-incompatible change however it is done.",
+          "cites": [
+            "s4"
+          ]
         },
         {
-          "body": "The major version can be carried in the path, in a header, in a query parameter, or through media type negotiation. Path versioning is the most visible and the easiest to route and cache. Only breaking changes justify a new major version; everything else evolves in place. Running two versions costs real effort, so publish a deprecation policy with dates, mark deprecated operations in the description, measure remaining traffic per version, and contact the remaining callers before removal.",
-          "heading": "Version mechanisms and deprecation"
+          "type": "p",
+          "text": "The Google shape is a page_size request field and a page_token field, both optional, with a next_page_token in the response that is empty only at the end of the collection. A page size above the maximum is coerced down, not rejected; a negative one is an error; the server may return fewer items than asked for even before the end. Tokens are opaque and URL-safe, and base64 over a readable value is not opacity: if users can decode a token they will, and the pagination internals become part of the API surface. A token carries position only, never authorisation, and may expire after a few days.",
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Offset against cursor pagination, from the Azure and Zalando guidance.",
+          "columns": [
+            "aspect",
+            "offset and limit",
+            "cursor (key-based)"
+          ],
+          "rows": [
+            [
+              "request",
+              "limit=25&offset=50",
+              "an opaque token from the previous page"
+            ],
+            [
+              "deep pages",
+              "the store skips offset rows on every page, so cost grows with depth",
+              "each page is an index seek from the key, constant cost"
+            ],
+            [
+              "data changing between pages",
+              "items skipped or repeated when rows are inserted or deleted ahead of the offset",
+              "stable, because the cursor is a position in the sort order"
+            ],
+            [
+              "jumping to page n",
+              "trivial",
+              "not possible; only next and previous"
+            ],
+            [
+              "framework support",
+              "widest; every ORM paginates this way",
+              "needs a sort key and encoding work"
+            ],
+            [
+              "Zalando's rule",
+              "avoid",
+              "prefer; and avoid a total count, which costs a full index scan"
+            ]
+          ],
+          "cites": [
+            "s5",
+            "s12"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Filtering and sorting live in query parameters and are restricted to fields the store can serve from an index, since an open filter language is a way to run arbitrary scans. Partial responses let a client name the fields it wants, which keeps mobile payloads small, and a field mask on update names exactly the fields that change, which is the mechanism behind PATCH. The parameter names and behaviour are the same on every collection, so a client learns the conventions once.",
+          "cites": [
+            "s5"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Cap the page size on the server and document the default. The Azure guidance suggests either clamping an oversized request to the maximum or rejecting it; pick one and state it in the contract.",
+          "cites": [
+            "s5"
+          ]
         }
-      ],
+      ]
+    },
+    {
+      "id": "work-that-outlives-the-request",
+      "title": "Long-running operations",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Some operations take longer than a client, a gateway or a load balancer will hold a connection open: a bulk export, a report, a provisioning step. HTTP has a status code for the case. RFC 9110 defines 202 Accepted as accepted for processing but not completed, and calls it intentionally noncommittal: the request may still be refused when the processing runs, and HTTP has no way to deliver a status code later. The 202 therefore has to carry a pointer to where the outcome will appear.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "diagram",
+          "mermaid": "sequenceDiagram\n  participant C as Client\n  participant A as API\n  participant W as Worker\n  C->>A: POST /exports\n  A->>W: enqueue job\n  A-->>C: 202 Accepted with operation id\n  C->>A: GET /operations/id\n  A-->>C: 200 done false\n  W-->>A: result stored\n  C->>A: GET /operations/id\n  A-->>C: 200 done true with result link",
+          "legend": "The long-running operation pattern: the API accepts the job, returns an operation resource, and the client polls it until done is true. The 202 and the status resource follow RFC 9110 and the Azure guidance (s2, s5)."
+        },
+        {
+          "type": "p",
+          "text": "The Azure guidance spells out the mechanics. The asynchronous method returns 202 with the status endpoint's URI in the Location header. A GET on that endpoint returns the current status, optionally an estimated completion time and a link to cancel. When the operation creates a resource, the status endpoint answers 303 See Other with the new resource's URI in Location once it is done, so a client following redirects lands on the result. In Google's APIs the same pattern is a single Operation resource type shared by every API, with a done flag, a metadata message for progress and either a response or an error on completion.",
+          "cites": [
+            "s5"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Polling needs a cadence the server controls. Return Retry-After on the status resource, and treat a client that ignores it like any other caller over its limit. Operation resources are garbage: give them an expiry, and document it. For events the server originates, such as a job finishing or a payment settling, the inverse pattern is a webhook: the consumer registers an endpoint, the API posts to it, and because delivery is at least once the payload carries an event id for deduplication and a signature so the receiver can verify the sender. The design question is the same as for the 202: what the client does when it never hears back.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "tip",
+          "text": "Decide the threshold once, as a number of seconds, and make every operation that can exceed it asynchronous from the start. Converting a synchronous call to a 202 later is a breaking change for every client that expected the body.",
+          "cites": [
+            "s6"
+          ]
+        }
+      ]
+    },
+    {
       "id": "versioning-compatibility",
-      "title": "Versioning and backwards compatibility"
-    },
-    {
-      "body": [
+      "title": "What counts as breaking, and how to version",
+      "blocks": [
         {
-          "body": "Clients need to decide in code whether to retry, fix the request or give up. Return the correct status code plus a structured body with a stable machine-readable code, a human-readable message, and details such as which field failed validation. Use one error shape across the whole API and document it in the contract. Never leak stack traces or internal identifiers. Indicate retryable conditions clearly, and on throttling tell the client how long to wait.",
-          "heading": "A consistent error model"
+          "type": "p",
+          "text": "Google's compatibility guidance separates three kinds of compatibility. Source compatibility means code written against the old version still compiles with the new client library; wire compatibility means it still talks to the new server; semantic compatibility means it still receives what a reasonable developer would expect. The last is the hardest, because clients depend on undocumented behaviour, and the guidance treats a visible behaviour change as breaking whenever reasonable user code would break.",
+          "cites": [
+            "s6"
+          ]
         },
         {
-          "body": "When an operation takes longer than a reasonable request timeout, accept it, return 202 with a reference to an operation resource, and let the client poll that resource for status and result. For events that originate on the server, webhooks push a notification to an endpoint the consumer registered. Webhook delivery is at least once, so payloads carry an event id for deduplication, requests are signed so receivers can verify the sender, and failed deliveries are retried with backoff.",
-          "heading": "Work that outlives the request"
+          "type": "table",
+          "caption": "Which changes are compatible within a major version, from AIP-180. Default behaviour is part of the contract: a new default page size or sort order breaks clients even though the schema is unchanged.",
+          "columns": [
+            "change",
+            "compatible?",
+            "why"
+          ],
+          "rows": [
+            [
+              "add a method, a resource or an optional field",
+              "yes",
+              "old clients ignore what they do not know; a new field defaults to the old behaviour"
+            ],
+            [
+              "add a required request field",
+              "no",
+              "every existing request becomes invalid"
+            ],
+            [
+              "add an enum value in a response",
+              "with care",
+              "generated clients may reject an unknown value; document that the enum grows"
+            ],
+            [
+              "remove or rename anything",
+              "no",
+              "a rename is a remove plus an add; add the new, keep the old"
+            ],
+            [
+              "change a field's type",
+              "no",
+              "even a wire-compatible change alters the generated code"
+            ],
+            [
+              "change the set of valid resource names",
+              "no",
+              "users store and validate names; breaks across major versions too"
+            ],
+            [
+              "change a default, a limit or an ordering",
+              "no",
+              "a semantic change that reasonable code depends on"
+            ]
+          ],
+          "cites": [
+            "s6"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Every incompatible change needs a mechanism, and there are four: a version in the path, in a query parameter, in a header, or negotiated through the media type. The Azure guidance lists their trade-offs: path versioning is the simplest to route and cache but puts the version into every link; query and header versions keep one URI per resource; media type versioning fits content negotiation but is the least visible. Zalando's guidelines take a position: avoid versioning by preferring compatible extensions, and when it is unavoidable use media type versioning, never a version in the URL.",
+          "cites": [
+            "s5",
+            "s12"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Stripe took a third path. Its versions are rolling and named by release date, each carrying a small set of incompatible changes so that upgrades stay incremental. An account is pinned to the current version at its first request until its owner upgrades, and a header overrides the pin per request. Each incompatible change is a version change module that transforms the current response backwards, applied in order until the caller's version is reached, so old versions stay out of the core code and the changelog is generated from the modules. The post reports almost a hundred such upgrades over six years without a major version.",
+          "cites": [
+            "s8"
+          ]
+        },
+        {
+          "type": "steps",
+          "title": "The parallel change (expand and contract) for a rename, which the compatibility rules turn from a break into three releases.",
+          "items": [
+            "Expand: add the new field or method beside the old one and populate both; the old clients notice nothing.",
+            "Migrate: move every client to the new field, one at a time; for external clients this is the longest phase, bounded by a published deprecation window.",
+            "Contract: once usage of the old field is zero on the metrics, remove it and the code that filled it."
+          ],
+          "cites": [
+            "s7"
+          ]
         }
-      ],
-      "id": "errors-async-webhooks",
-      "title": "Errors, long-running operations and webhooks"
-    }
-  ],
-  "diagram": {
-    "source": "sequenceDiagram\n  participant C as Client\n  participant A as API\n  participant W as Worker\n  C->>A: POST /exports\n  A->>W: enqueue job\n  A-->>C: 202 Accepted with operation id\n  C->>A: GET /operations/id\n  A-->>C: 200 done false\n  W-->>A: result stored\n  C->>A: GET /operations/id\n  A-->>C: 200 done true with result link"
-  },
-  "code": [
+      ]
+    },
     {
-      "code": "openapi: 3.1.0\ninfo: {title: Orders API, version: 1.0.0}\npaths:\n  /v1/orders:\n    get:\n      operationId: listOrders\n      parameters:\n      - {name: page_size, in: query, schema: {type: integer, maximum: 100}}\n      - {name: page_token, in: query, schema: {type: string}}\n      responses:\n        '200':\n          description: One page of orders\n          content:\n            application/json:\n              schema: {$ref: '#/components/schemas/OrderPage'}\ncomponents:\n  schemas:\n    OrderPage:\n      type: object\n      properties: {next_page_token: {type: string}}",
-      "lang": "yaml"
+      "id": "contracts-and-generated-clients",
+      "title": "Contracts: OpenAPI, protobuf and generated clients",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "A contract is the API written down in a form a machine can check. For HTTP APIs the form is an OpenAPI description, whose current version is 3.2.1. Its Paths Object holds the relative path of every endpoint and the operations on it; each operation declares its parameters, request body and the responses by status code; and the Components Object holds the reusable schemas, parameters, responses and security schemes that the operations reference, so that the error shape or the pagination parameters are defined once. The same file drives documentation, client and server generation, mock servers and request validation.",
+          "cites": [
+            "s9"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "For RPC between services the contract is usually a protobuf service definition, and gRPC generates the client and server stubs from it. A gRPC service defines four kinds of method: unary (one request, one response), server streaming, client streaming and bidirectional streaming, and the framework guarantees message order within one call. Deadlines are part of the contract: a client states how long it will wait, and the server can check how much time remains before starting expensive work. The schema is binary and versioned by field number, which is what makes add-a-field compatible on the wire.",
+          "cites": [
+            "s10"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "What a contract gives each party, and the house rules that keep it true.",
+          "columns": [
+            "party",
+            "gets from the contract",
+            "rule"
+          ],
+          "rows": [
+            [
+              "consuming team",
+              "a generated client, a mock server to build against before the service exists, the error shape",
+              "review the description in the pull request, before the handlers"
+            ],
+            [
+              "producing team",
+              "request validation, conformance tests, a diff that flags breaking changes in continuous integration",
+              "one authoritative description in source control; the running service is tested against it"
+            ],
+            [
+              "platform or gateway",
+              "routing, authentication and quota configuration, per-version metrics",
+              "operations are tagged and named; large descriptions are split by reference"
+            ],
+            [
+              "documentation",
+              "generated reference, kept current by the build",
+              "examples live in the description, not in a separate wiki"
+            ]
+          ],
+          "cites": [
+            "s9"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Design first or code first is a choice of where the single source of truth lives, not of whether to have one. Generating the description from code exposes whatever the framework produced and makes the review happen after the fact; writing it first lets consumers comment on names, errors and pagination while the service is still a stub. Either way the file is linted against the house style and diffed on every change, and a change that the diff classes as breaking against the compatibility table fails the build unless it comes with a new version.",
+          "cites": [
+            "s9",
+            "s6"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "The contract is the deliverable of API design. If a decision about paths, errors, pagination or versions is not in the description, it has not been made.",
+          "cites": [
+            "s9"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "choosing-the-style",
+      "title": "REST, gRPC or GraphQL: choosing per boundary",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The three styles answer different questions, and a system usually carries more than one. A public API over HTTP and JSON is readable with any tool, cacheable by any intermediary and the easiest to document and support for years. gRPC gives internal services a typed binary contract, streaming in both directions and deadlines built in, at the cost of needing a generated client and a proxy for browsers. GraphQL gives client teams a single endpoint and a query language, so a mobile screen fetches exactly its fields in one round trip instead of chaining several chatty REST calls.",
+          "cites": [
+            "s10",
+            "s11",
+            "s5"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "GraphQL's flexibility has a server-side price that the project's own documentation names. A naive resolver per field turns one request for a list into N follow-up queries, the N+1 problem, which is solved by batching loads over a short window with a tool such as DataLoader. Because a client can ask for anything the schema allows, the server needs demand control: paginated list fields, limits on operation depth and breadth, and query complexity analysis. Queries are sent as POST by default, so HTTP caching needs the GET form or a client-side cache. These are solvable, but they are work that a REST API does not have.",
+          "cites": [
+            "s11"
+          ]
+        },
+        {
+          "type": "decision",
+          "caption": "Picking the API style for one boundary of a design.",
+          "rows": [
+            {
+              "option": "REST over HTTP and JSON",
+              "pick_when": "the consumers are external or unknown, the data is resource-shaped, intermediaries should cache reads, and the API will be supported for years with a deprecation policy",
+              "avoid_when": "the calls are streams or long-lived sessions, or the boundary is internal and chatty enough that per-call overhead dominates",
+              "example": "the public orders API of a shop; a partner integration"
+            },
+            {
+              "option": "gRPC with protobuf",
+              "pick_when": "service to service inside one organisation, typed contracts and generated clients in several languages, streaming or deadlines matter",
+              "avoid_when": "browsers or third parties are the clients and no gateway translates for them; the team cannot maintain the schema discipline",
+              "example": "the fan-out and ranking calls behind a feed service"
+            },
+            {
+              "option": "GraphQL",
+              "pick_when": "several client applications need different slices of a rich graph and the team owning the schema can batch, paginate and bound every query",
+              "avoid_when": "the API is public to unknown callers, or the data is flat and one REST resource per screen already fits",
+              "example": "a mobile app's backend-for-frontend over a dozen internal services"
+            }
+          ],
+          "cites": [
+            "s10",
+            "s11",
+            "s5"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The usual layering is public REST at the edge, gRPC between services and, where the client teams need it, a GraphQL layer that composes the internal services for the user interface. Each boundary then has its own versioning policy and its own contract format, and the compatibility rules above apply to all three: a removed protobuf field or a removed GraphQL type breaks a client exactly as a removed JSON field does.",
+          "cites": [
+            "s6"
+          ]
+        }
+      ]
     }
   ],
+  "worked_example": {
+    "title": "Worked example: the orders API of a small shop, from resources to a contract",
+    "blocks": [
+      {
+        "type": "p",
+        "text": "A shop needs an API for its own web and mobile clients and for a few partners. The design walks the lesson in order: resources, methods, pagination, a long-running export, the error shape and one compatible change. Every quantity below is an assumption stated so a reviewer can attack it; the only cited facts are the HTTP semantics and the pagination rules."
+      },
+      {
+        "type": "steps",
+        "title": "Designing the orders API",
+        "items": [
+          "List the resources: customers, orders and order lines; the lines live under their order, so the deepest path is 3 segments (collection, item, collection) and nothing nests further.",
+          "Map the methods: a POST on the orders collection creates (201 with a Location header), a PATCH changes the shipping address, and cancellation is a custom method, POST on the order with the verb cancel, so that it can be refused with a 409 when the order has already shipped.",
+          "Pick the page size: a default of 25 orders per page, which is the Azure example value, and a hard cap of 100; a request for 500 is clamped to 100 and the contract says so.",
+          "Size the deep page problem: the largest partner has 12,000 orders, which is 120 pages at the cap; with offsets the last page skips 11,900 rows on every read, so the list uses an opaque cursor over the order id.",
+          "Find the slow operation: a full export of 12,000 orders with lines is measured at about 90 seconds against a gateway that closes idle connections after 30 seconds, so the export is a long-running operation.",
+          "Shape it: POST /exports returns 202 with the operation URI in Location; the operation resource answers with Retry-After of 10 seconds until done, then 303 to the file in object storage.",
+          "Define the error shape once: a Problem Details object with an errors extension listing field, reason and message; a 429 carries Retry-After; stack traces never appear.",
+          "Make one compatible change: the postal code field is renamed; expand adds postal_code beside zip and fills both, migrate runs for the 90-day deprecation window published in the contract, contract removes zip when its usage metric reads 0 for 2 weeks.",
+          "Write it down: the OpenAPI description below is the contract; it is reviewed in the pull request before the handlers, linted, and diffed on every change."
+        ],
+        "cites": [
+          "s2",
+          "s4",
+          "s5",
+          "s7"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "The numbers of the example and where each comes from.",
+        "columns": [
+          "quantity",
+          "value",
+          "source or assumption"
+        ],
+        "rows": [
+          [
+            "path depth",
+            "3 segments",
+            "the Azure guidance's collection, item, collection limit (s5)"
+          ],
+          [
+            "default and maximum page size",
+            "25 and 100",
+            "assumption; 25 is the Azure example default (s5)"
+          ],
+          [
+            "largest partner",
+            "12,000 orders, 120 pages",
+            "assumption; 12,000 / 100"
+          ],
+          [
+            "rows skipped by the last offset page",
+            "11,900",
+            "arithmetic: 12,000 minus one page"
+          ],
+          [
+            "export duration and gateway idle timeout",
+            "90 s and 30 s",
+            "assumptions (a load test and the gateway's setting)"
+          ],
+          [
+            "poll interval",
+            "10 s",
+            "assumption, sent as Retry-After (s2)"
+          ],
+          [
+            "deprecation window",
+            "90 days, then 2 weeks at zero usage",
+            "assumption; the policy is published in the contract"
+          ]
+        ]
+      },
+      {
+        "type": "code",
+        "lang": "yaml",
+        "code": "openapi: 3.2.1\ninfo: {title: Orders API, version: 2026-10-15}\npaths:\n  /v1/orders:\n    get:\n      operationId: listOrders\n      parameters:\n        - {name: page_size, in: query, schema: {type: integer, default: 25, maximum: 100}}\n        - {name: page_token, in: query, schema: {type: string}}\n      responses:\n        '200': {$ref: '#/components/responses/OrderPage'}\n        '429': {$ref: '#/components/responses/Problem'}\n    post:\n      operationId: createOrder\n      responses:\n        '201': {description: created, headers: {Location: {schema: {type: string}}}}\n        '400': {$ref: '#/components/responses/Problem'}\n  /v1/orders/{id}:cancel:\n    post:\n      operationId: cancelOrder\n      responses:\n        '200': {description: cancelled}\n        '409': {$ref: '#/components/responses/Problem'}\n  /v1/exports:\n    post:\n      operationId: startExport\n      responses:\n        '202': {description: accepted, headers: {Location: {schema: {type: string}}}}\ncomponents:\n  responses:\n    Problem:\n      description: error\n      content:\n        application/problem+json:\n          schema: {$ref: '#/components/schemas/Problem'}\n    OrderPage:\n      description: one page of orders\n  schemas:\n    Problem:\n      type: object\n      properties:\n        type: {type: string, format: uri}\n        title: {type: string}\n        status: {type: integer}\n        detail: {type: string}\n        instance: {type: string}\n        errors: {type: array, items: {type: object}}",
+        "caption": "The contract for the example: the list with its page parameters, the create, the custom cancel method, the asynchronous export and the shared Problem response."
+      }
+    ]
+  },
+  "diagram": null,
+  "code": [],
   "technologies": [
     "OpenAPI",
     "Swagger UI",
@@ -122,35 +754,142 @@
   ],
   "sources": [
     {
+      "id": "s1",
+      "title": "Google API Improvement Proposals, AIP-121 Resource-oriented design (the Google API design guide now redirects here): named resources, a small set of standard methods, custom methods where they do not fit",
+      "url": "https://google.aip.dev/121",
       "kind": "doc",
-      "title": "OpenAPI Specification (latest)",
-      "url": "https://spec.openapis.org/oas/latest.html"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "The fundamental building blocks of an API are individually-named resources"
+      }
     },
     {
+      "id": "s2",
+      "title": "RFC 9110, HTTP Semantics (June 2022): safe and idempotent methods, 201, 202, 204, 405, 409, 412, the Retry-After field",
+      "url": "https://www.rfc-editor.org/rfc/rfc9110.html",
       "kind": "doc",
-      "title": "OpenAPI specification explained (learn.openapis.org)",
-      "url": "https://learn.openapis.org/specification/"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "PUT, DELETE, and safe request methods are idempotent"
+      }
     },
     {
+      "id": "s3",
+      "title": "RFC 9457, Problem Details for HTTP APIs (July 2023): the application/problem+json object and its type, status, title, detail and instance members",
+      "url": "https://www.rfc-editor.org/rfc/rfc9457.html",
       "kind": "doc",
-      "title": "OpenAPI best practices (learn.openapis.org)",
-      "url": "https://learn.openapis.org/best-practices.html"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Members of a Problem Details Object"
+      }
     },
     {
+      "id": "s4",
+      "title": "Google AIP-158, Pagination: page_size and page_token, opaque tokens, why pagination cannot be added later",
+      "url": "https://google.aip.dev/158",
       "kind": "doc",
-      "title": "Google API design guide",
-      "url": "https://docs.cloud.google.com/apis/design"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Adding pagination to an existing RPC is a backwards-incompatible change"
+      }
     },
     {
+      "id": "s5",
+      "title": "Azure Architecture Center, RESTful web API design: nouns for resources, chatty APIs, PUT idempotence, 202 with a status endpoint, limit and offset, the four versioning mechanisms",
+      "url": "https://learn.microsoft.com/en-us/azure/architecture/best-practices/api-design",
       "kind": "doc",
-      "title": "RESTful web API design (Azure Architecture Center)",
-      "url": "https://learn.microsoft.com/en-us/azure/architecture/best-practices/api-design"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Include the URI of the status endpoint in the Location header of the 202 response"
+      }
+    },
+    {
+      "id": "s6",
+      "title": "Google AIP-180, Backwards compatibility: source, wire and semantic compatibility; what may be added and what must never be removed, renamed or retyped",
+      "url": "https://google.aip.dev/180",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Existing client code must not be broken by a service updating to a new minor or patch release"
+      }
+    },
+    {
+      "id": "s7",
+      "title": "Martin Fowler, ParallelChange (expand and contract): the three phases of a backward-incompatible interface change",
+      "url": "https://martinfowler.com/bliki/ParallelChange.html",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "breaking the change into three distinct phases: expand, migrate, and contract"
+      }
+    },
+    {
+      "id": "s8",
+      "title": "Stripe engineering blog, APIs as infrastructure: making changes at Stripe (Brandur Leach, 2017): date-named rolling versions, account pinning, version change modules, the API review list",
+      "url": "https://stripe.com/blog/api-versioning",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "we implement versioning with rolling versions that are named with the date they"
+      }
+    },
+    {
+      "id": "s9",
+      "title": "OpenAPI Specification v3.2.1 (10 September 2026): the Paths Object, the Components Object, operations and responses as a machine-readable contract",
+      "url": "https://spec.openapis.org/oas/latest.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Holds the relative paths to the individual endpoints and their operations"
+      }
+    },
+    {
+      "id": "s10",
+      "title": "gRPC documentation, Core concepts, architecture and lifecycle: protobuf service definitions, the four kinds of method, ordering within a call, deadlines",
+      "url": "https://grpc.io/docs/what-is-grpc/core-concepts/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "gRPC lets you define four kinds of service method"
+      }
+    },
+    {
+      "id": "s11",
+      "title": "GraphQL documentation, Performance: the N+1 problem and batching, demand control (pagination, depth, breadth, complexity), GET for queries",
+      "url": "https://graphql.org/learn/performance/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "This is known as the N+1 problem"
+      }
+    },
+    {
+      "id": "s12",
+      "title": "Zalando RESTful API and Event Guidelines: the MUST and SHOULD rules on pagination, problem JSON, 429, compatibility, versioning and deprecation",
+      "url": "https://opensource.zalando.com/restful-api-guidelines/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "SHOULD prefer cursor-based pagination, avoid offset-based pagination"
+      }
     }
   ],
   "practice": "practice/sd-api-design",
   "provenance": {
-    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
-    "generated_on": "2026-10-13",
+    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center, format v2",
+    "generated_on": "2026-10-15",
     "reviewed_by": null,
     "reviewed_on": null
   },
@@ -159,6 +898,11 @@
       "version": 1,
       "date": "2026-10-13",
       "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-15",
+      "change": "rewritten by hand from primary sources at format v2 (learning-center-lesson:2): 8 subtopics with the standard-method table, the status-code table, the Problem Details table, the offset-against-cursor table, the long-running-operation diagram in its subtopic, the compatibility table, the parallel change as steps, the contract table, a decision block over REST, gRPC and GraphQL, a worked orders API with the OpenAPI contract after the teaching, 5 cited in-practice blocks (Stripe, Google, Zalando, Microsoft, GraphQL), 12 verified sources with ids"
     }
   ]
 }
