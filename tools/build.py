@@ -89,21 +89,22 @@ class Library:
         self.lessons = {d["id"]: d for r, d in docs.items() if r.startswith("lessons/")}
         self.scenarios = {d["id"]: d for r, d in docs.items() if r.startswith("scenarios/")}
         self.practice = {d["lesson"]: d for r, d in docs.items() if r.startswith("practice/")}
-        self.pathways = {d["id"]: d for r, d in docs.items() if r.startswith("pathways/")}
-        self.module = docs["modules/system-design.json"]
-        self.families = {d["id"]: d for r, d in docs.items() if r.startswith("families/") and r != "families/index.json"}
-        self.family_index = docs["families/index.json"]["families"]
+        self.modules = {d["id"]: d for r, d in docs.items() if r.startswith("modules/") and r != "modules/index.json"}
+        self.module_index = docs["modules/index.json"]["modules"]
         self.changelog = docs["changelog.json"]["entries"]
-        self.redirects = docs["redirects.json"]["redirects"]
-        self.module_entries = {l["id"]: l for l in self.module["lessons"]}   # the 40 sd- entries: planned or published
         self._check_provenance()
-        # lesson -> (pathway, step) for the sidebar and the breadcrumb: the first pathway that lists it
-        self.home_of: dict[str, tuple[str, dict]] = {}
-        self.pathways_of: dict[str, list[str]] = {}
-        for pid, pw in self.pathways.items():
-            for s in pw["steps"]:
-                self.home_of.setdefault(s["lesson"], (pid, s))
-                self.pathways_of.setdefault(s["lesson"], []).append(pid)
+        # lesson -> (module id, position among the module's published lessons, entry); every published lesson has exactly one (scan.py)
+        self.home_of: dict[str, tuple[str, int, dict]] = {}
+        self.module_lessons: dict[str, list[str]] = {}
+        self.planned: dict[str, dict] = {}
+        for mid, m in self.modules.items():
+            ids = self.module_lessons.setdefault(mid, [])
+            for e in m["lessons"]:
+                if e["status"] == "published":
+                    ids.append(e["id"])
+                    self.home_of[e["id"]] = (mid, len(ids), e)
+                else:
+                    self.planned[e["id"]] = e
         self.children: dict[str, list[str]] = {}
         for k in self.keys.values():
             if k["parent"]:
@@ -187,13 +188,13 @@ def tail_scripts(*, mermaid: bool = False, code: bool = False, extra: tuple[str,
     return "\n".join(s) + "\n</body>\n</html>\n"
 
 
-NAV = (("/", "Scout", "scout"), ("/learn/", "Learning center", "learn"), ("/learn/families/", "Families", "families"),
-       ("/learn/modules/system-design/", "System design", "sd"), ("/learn/search/", "Search", "search"))
+NAV = (("/", "Scout", "scout"), ("/learn/", "Learning center", "learn"), ("/learn/modules/", "Modules", "modules"),
+       ("/learn/search/", "Search", "search"))
 
 
 def site_page(title: str, body: str, *, current: str = "", crumbs: list[tuple[str, str]] | None = None, description: str = "",
               brand: str = "learn", indexed: bool = True, extra_scripts: tuple[str, ...] = (), extra_head_css: bool = False) -> str:
-    """A page of the site shell (landing, learning center, families, keys, modules, changelog, search, 404)."""
+    """A page of the site shell (landing, learning center, modules, keys, changelog, search, 404)."""
     brand_html = (
         a("/", 'Scout <span>&middot; scout.edgelab.one</span>', "brand") if brand == "scout"
         else a("/learn/", 'Learning center <span>&middot; scout.edgelab.one/learn</span>', "brand")
@@ -213,35 +214,37 @@ def site_page(title: str, body: str, *, current: str = "", crumbs: list[tuple[st
     )
 
 
-def sidebar(lib: Library, pid: str | None, current: str) -> str:
-    """The product's sidebar: the pathway's modules and lessons, with Practice links; `current` is a page path."""
-    parts = ['<nav class="sidebar" aria-label="Pathway">']
-    if pid is None:
+def sidebar(lib: Library, mid: str | None, current: str) -> str:
+    """The product's sidebar: the module's lessons (by part when it has parts), with Practice links; `current` is a page path."""
+    parts = ['<nav class="sidebar" aria-label="Module">']
+    if mid is None:
         parts.append('<div class="sidebar-title">' + a("/learn/", "Learning center") + "</div>")
         parts.append("</nav>")
         return "\n".join(parts)
-    pw = lib.pathways[pid]
-    here = f"/learn/pathways/{pid}/"
-    parts.append(f'<div class="sidebar-title">{a(here, esc(pw["title"]), "current" if current == here else "")}</div>')
+    m = lib.modules[mid]
+    here = f"/learn/modules/{mid}/"
+    parts.append(f'<div class="sidebar-title">{a(here, esc(m["title"]), "current" if current == here else "")}</div>')
     parts.append('<div class="sidebar-search"><input type="search" id="sidebar-search-input" placeholder="Filter lessons" '
-                 'autocomplete="off" aria-label="Filter lessons in this pathway"></div>')
+                 'autocomplete="off" aria-label="Filter lessons in this module"></div>')
     parts.append('<ul class="sidebar-overview">')
-    parts.append(f'<li>{a(here + "#expectations", "What the role asks for")}</li>')
-    parts.append(f'<li>{a(here + "#technologies", "Technologies")}</li>')
-    parts.append(f'<li>{a("/learn/modules/system-design/", "System design module")}</li>')
+    parts.append(f'<li>{a("/learn/modules/", "All modules")}</li>')
     parts.append(f'<li>{a("/learn/search/", "Search the whole site")}</li>')
     parts.append("</ul>")
-    by_module: dict[str, list[dict]] = {}
-    for s in pw["steps"]:
-        by_module.setdefault(s["module"], []).append(s)
-    for mi, m in enumerate(pw["modules"], 1):
+    published = [e for e in m["lessons"] if e["status"] == "published"]
+    groups = ([(f"{p['id']}. {p['title']}", [e for e in published if e["part"] == p["id"]]) for p in m["parts"]]
+              if m.get("parts") else [("Lessons", published)])
+    n = 0
+    for gi, (gtitle, entries) in enumerate(groups, 1):
+        if not entries:
+            continue
         parts.append('<details class="toc-module" open>')
-        parts.append(f'<summary data-module-title="{esc(m["title"].lower())}">{mi}. {esc(m["title"])}</summary>')
+        parts.append(f'<summary data-module-title="{esc(gtitle.lower())}">{esc(gtitle)}</summary>')
         parts.append('<ul class="module-lessons">')
-        for ci, s in enumerate(by_module.get(m["title"], []), 1):
-            lid = s["lesson"]
+        for e in entries:
+            n += 1
+            lid = e["id"]
             href = f"/learn/lessons/{lid}/"
-            title = f"{mi}.{ci} {lib.lessons[lid]['title']}"
+            title = f"{n}. {lib.lessons[lid]['title']}"
             cls = " current" if current == href else ""
             pr = ""
             if lid in lib.practice:
@@ -256,13 +259,13 @@ def sidebar(lib: Library, pid: str | None, current: str) -> str:
     return "\n".join(parts)
 
 
-def lesson_shell(lib: Library, title: str, body: str, *, pid: str | None, current: str, crumbs: list[tuple[str, str]],
+def lesson_shell(lib: Library, title: str, body: str, *, mid: str | None, current: str, crumbs: list[tuple[str, str]],
                  description: str, mermaid: bool = False, code: bool = False, sim: bool = False) -> str:
     parts = [a(h, esc(t)) for h, t in crumbs[:-1]] + [esc(crumbs[-1][1])]
     return (
         head(title, description, code=code, sim=sim)
         + '<body>\n<div class="shell">\n'
-        + sidebar(lib, pid, current)
+        + sidebar(lib, mid, current)
         + '\n<div class="page">\n<div class="page-top">\n'
         + f'<nav class="breadcrumb" aria-label="Breadcrumb">{" &rsaquo; ".join(parts)}</nav>\n{theme_toggle()}\n</div>\n'
         + f"<main data-pagefind-body>\n{body}\n</main>\n"
@@ -330,18 +333,17 @@ def render_sim(lib: Library, l: dict, level: int = 2) -> str:
 
 def render_lesson(lib: Library, l: dict) -> tuple[str, str]:
     lid = l["id"]
-    pid, step = lib.home_of.get(lid, (None, None))
+    mid, pos, _ = lib.home_of[lid]
     here = f"/learn/lessons/{lid}/"
     body = [f"<h1>{esc(l['title'])}</h1>", attribution(l["provenance"])]
     if l["status"] == "superseded":
         body.append(f'<p class="banner">This lesson is superseded by {a(f"/learn/lessons/{l["superseded_by"]}/", esc(lib.lessons[l["superseded_by"]]["title"]))}.</p>')
-    # keys and pathway
+    # keys and module
     krow = ["Concept: " + a(f"/learn/keys/{l['primary_key']}/", esc(lib.keys[l["primary_key"]]["display"]))]
     if l["secondary_keys"]:
         krow.append("also covers " + ", ".join(a(f"/learn/keys/{k}/", esc(lib.keys[k]["display"])) for k in l["secondary_keys"]))
     line = " &middot; ".join(krow)
-    if pid:
-        line += f" &middot; Step {step['n']} of {len(lib.pathways[pid]['steps'])} in " + a(f"/learn/pathways/{pid}/", esc(lib.pathways[pid]["title"]))
+    line += f" &middot; Lesson {pos} of {len(lib.module_lessons[mid])} in " + a(f"/learn/modules/{mid}/", esc(lib.modules[mid]["title"]))
     body.append(f'<p class="key-line">{line} &middot; version {l["version"]}</p>')
     if lid in lib.practice:
         body.append(a(f"/learn/practice/{lid}/", "Practice this", "practice-link-button"))
@@ -381,19 +383,14 @@ def render_lesson(lib: Library, l: dict) -> tuple[str, str]:
         body.append(f'<h2>Related lessons</h2>\n<ul class="related-list">{rel}</ul>')
     if lid in lib.practice:
         body.append(a(f"/learn/practice/{lid}/", "Practice this", "practice-link-button practice-link-button-end"))
-    if pid:
-        steps = lib.pathways[pid]["steps"]
-        i = step["n"] - 1
-        prev_ = a(f"/learn/lessons/{steps[i-1]['lesson']}/", esc(lib.lessons[steps[i-1]["lesson"]]["title"])) if i > 0 else "<span></span>"
-        next_ = a(f"/learn/lessons/{steps[i+1]['lesson']}/", esc(lib.lessons[steps[i+1]["lesson"]]["title"])) if i + 1 < len(steps) else "<span></span>"
-        body.append(f'<div class="prevnext">{prev_}{next_}</div>')
-    crumbs = [("/learn/", "Learning center")]
-    if pid:
-        fam = lib.pathways[pid]["family"]
-        crumbs += [(f"/learn/families/{fam}/", lib.families[fam]["title"]), (f"/learn/pathways/{pid}/", lib.pathways[pid]["title"])]
-    crumbs.append((here, l["title"]))
+    ids = lib.module_lessons[mid]
+    i = pos - 1
+    prev_ = a(f"/learn/lessons/{ids[i-1]}/", esc(lib.lessons[ids[i-1]]["title"])) if i > 0 else "<span></span>"
+    next_ = a(f"/learn/lessons/{ids[i+1]}/", esc(lib.lessons[ids[i+1]]["title"])) if i + 1 < len(ids) else "<span></span>"
+    body.append(f'<div class="prevnext">{prev_}{next_}</div>')
+    crumbs = [("/learn/", "Learning center"), (f"/learn/modules/{mid}/", lib.modules[mid]["title"]), (here, l["title"])]
     code = bool(l["code"])
-    page = lesson_shell(lib, f"{l['title']} - Learning center", "\n".join(body), pid=pid, current=here, crumbs=crumbs,
+    page = lesson_shell(lib, f"{l['title']} - Learning center", "\n".join(body), mid=mid, current=here, crumbs=crumbs,
                         description=l["summary"][:200], mermaid=has_diagram, code=code, sim="sim" in l)
     return here, page
 
@@ -418,14 +415,16 @@ def render_exercise(lib: Library, l: dict) -> tuple[str, str]:
     Mermaid flowchart), the rubric by level, the interview and design-doc frames, depth notes, sources, related lessons."""
     lid, ex = l["id"], l["exercise"]
     here = f"/learn/lessons/{lid}/"
-    mod_here = "/learn/modules/system-design/"
+    mid, _, entry = lib.home_of[lid]
+    mod_here = f"/learn/modules/{mid}/"
     body = [f"<h1>{esc(l['title'])}</h1>", exercise_attribution(l["provenance"])]
     krow = ["Concept: " + a(f"/learn/keys/{l['primary_key']}/", esc(lib.keys[l["primary_key"]]["display"]))]
     if l["secondary_keys"]:
         krow.append("also covers " + ", ".join(a(f"/learn/keys/{k}/", esc(lib.keys[k]["display"])) for k in l["secondary_keys"]))
-    entry = lib.module_entries.get(lid)
-    if entry:
-        krow.append(f"Part {esc(entry['part'])} ({esc(entry['part_title'])}) of the " + a(mod_here, "system design module"))
+    mod = lib.modules[mid]
+    if entry.get("part"):
+        part_title = next(p["title"] for p in mod["parts"] if p["id"] == entry["part"])
+        krow.append(f"Part {esc(entry['part'])} ({esc(part_title)}) of the " + a(mod_here, esc(mod["title"]) + " module"))
     body.append(f'<p class="key-line">{" &middot; ".join(krow)} &middot; design exercise &middot; version {l["version"]}</p>')
     otp = [("prompt", "The prompt"), ("constraints", "Constraints and numbers"), ("clarifying-questions", "Clarifying questions worth asking"),
            ("reference-answer", "Reference answer")] + [(sec["id"], sec["title"]) for sec in ex["reference_answer"]] + [
@@ -473,10 +472,10 @@ def render_exercise(lib: Library, l: dict) -> tuple[str, str]:
             if r in lib.lessons:
                 items.append(f'<li>{a(f"/learn/lessons/{r}/", esc(lib.lessons[r]["title"]))}</li>')
             else:  # an outlined system design lesson without a page yet: named, not linked
-                items.append(f'<li>{esc(lib.module_entries[r]["title"])} <code>{esc(r)}</code> <span class="status">planned</span></li>')
+                items.append(f'<li>{esc(lib.planned[r]["title"])} <code>{esc(r)}</code> <span class="status">planned</span></li>')
         body.append(f'<h2 id="related">Related lessons</h2>\n<ul class="related-list">{"".join(items)}</ul>')
-    crumbs = [("/learn/", "Learning center"), (mod_here, "System design"), (here, l["title"])]
-    page = lesson_shell(lib, f"{l['title']} - Learning center", "\n".join(body), pid=None, current=here, crumbs=crumbs,
+    crumbs = [("/learn/", "Learning center"), (mod_here, mod["title"]), (here, l["title"])]
+    page = lesson_shell(lib, f"{l['title']} - Learning center", "\n".join(body), mid=mid, current=here, crumbs=crumbs,
                         description=l["summary"][:200], mermaid=has_diagram, code=False, sim="sim" in l)
     return here, page
 
@@ -547,18 +546,15 @@ def written_body(l: dict, pr: dict) -> list[str]:
 def render_practice(lib: Library, pr: dict) -> tuple[str, str]:
     lid = pr["lesson"]
     l = lib.lessons[lid]
-    pid, _ = lib.home_of.get(lid, (None, None))
+    mid = lib.home_of[lid][0]
     here = f"/learn/practice/{lid}/"
     if pr.get("kind", "tool") != "tool":
         body = written_body(l, pr)
         body.append(f'<p class="practice-back-link">{a(f"/learn/lessons/{lid}/", "Back to " + esc(l["title"]))}</p>')
-        crumbs = [("/learn/", "Learning center")]
-        if pid:
-            fam = lib.pathways[pid]["family"]
-            crumbs += [(f"/learn/families/{fam}/", lib.families[fam]["title"]), (f"/learn/pathways/{pid}/", lib.pathways[pid]["title"])]
-        crumbs += [(f"/learn/lessons/{lid}/", l["title"]), (here, "Practice")]
+        crumbs = [("/learn/", "Learning center"), (f"/learn/modules/{mid}/", lib.modules[mid]["title"]),
+                  (f"/learn/lessons/{lid}/", l["title"]), (here, "Practice")]
         what = "Case exercise" if pr["kind"] == "case" else "Artifact exercise"
-        page = lesson_shell(lib, f"{what}: {l['title']} - Learning center", "\n".join(body), pid=pid, current=here, crumbs=crumbs,
+        page = lesson_shell(lib, f"{what}: {l['title']} - Learning center", "\n".join(body), mid=mid, current=here, crumbs=crumbs,
                             description=f"{what} for {l['title']}, written by a model for this lesson.")
         return here, page
     body = [f"<h1>Practice: {esc(l['title'])}</h1>", attribution(pr["provenance"])]
@@ -578,12 +574,9 @@ def render_practice(lib: Library, pr: dict) -> tuple[str, str]:
     body.append('<h2 class="practice-section-title">Steps</h2>')
     body.append(render_practice_steps(pr["steps"]))
     body.append(f'<p class="practice-back-link">{a(f"/learn/lessons/{lid}/", "Back to " + esc(l["title"]))}</p>')
-    crumbs = [("/learn/", "Learning center")]
-    if pid:
-        fam = lib.pathways[pid]["family"]
-        crumbs += [(f"/learn/families/{fam}/", lib.families[fam]["title"]), (f"/learn/pathways/{pid}/", lib.pathways[pid]["title"])]
-    crumbs += [(f"/learn/lessons/{lid}/", l["title"]), (here, "Practice")]
-    page = lesson_shell(lib, f"Practice: {l['title']} - Learning center", "\n".join(body), pid=pid, current=here, crumbs=crumbs,
+    crumbs = [("/learn/", "Learning center"), (f"/learn/modules/{mid}/", lib.modules[mid]["title"]),
+              (f"/learn/lessons/{lid}/", l["title"]), (here, "Practice")]
+    page = lesson_shell(lib, f"Practice: {l['title']} - Learning center", "\n".join(body), mid=mid, current=here, crumbs=crumbs,
                         description=f"Hands-on practice path for {l['title']}: {pr['tool']}.")
     return here, page
 
@@ -592,149 +585,93 @@ def key_chips(lib: Library, keys: list[str]) -> str:
     return '<ul class="chips">' + "".join(f'<li>{a(f"/learn/keys/{k}/", esc(lib.keys[k]["display"]))}</li>' for k in keys) + "</ul>"
 
 
-def render_pathway(lib: Library, pw: dict) -> tuple[str, str]:
-    pid = pw["id"]
-    here = f"/learn/pathways/{pid}/"
-    fam = pw["family"]
-    body = [f"<h1>{esc(pw['title'])}</h1>",
-            f'<p class="key-line">Pathway version {pw["version"]} &middot; {len(pw["steps"])} lessons in {len(pw["modules"])} modules &middot; shared module: '
-            f'{a("/learn/modules/system-design/", "system design (planned)")}</p>',
-            f"<p>{esc(pw['summary'])}</p>"]
-    exp = pw["expectations"]
-    if exp:
-        body.append('<h2 id="expectations">What the role asks for</h2>')
-        for g, ks in exp.items():
-            body.append(f"<h3>{esc(g.replace('_', ' ').capitalize())}</h3>{key_chips(lib, ks)}")
-    tech = pw["technologies"]
-    if tech:
-        body.append('<h2 id="technologies">Technologies</h2>')
-        for g, ks in tech.items():
-            body.append(f"<h3>{esc(g)}</h3>{key_chips(lib, ks)}")
-    body.append('<h2 id="path">The path</h2>')
-    by_module: dict[str, list[dict]] = {}
-    for s in pw["steps"]:
-        by_module.setdefault(s["module"], []).append(s)
-    for mi, m in enumerate(pw["modules"], 1):
-        body.append(f'<h3>{mi}. {esc(m["title"])}</h3>')
-        if m["intro"]:
-            body.append(f'<p class="muted">{esc(m["intro"])}</p>')
-        items = []
-        for s in by_module.get(m["title"], []):
-            lid = s["lesson"]
-            pr = f' &middot; {a(f"/learn/practice/{lid}/", "Practice")}' if lid in lib.practice else ""
-            items.append(
-                f'<li><span class="path-number">{s["n"]}.</span> {a(f"/learn/lessons/{lid}/", esc(lib.lessons[lid]["title"]))}'
-                f'<span class="depth-chip">{esc(s["depth"])}</span>{pr}<p class="step-why">{esc(s["why"])}</p></li>'
-            )
-        body.append(f'<ul class="path-list">{"".join(items)}</ul>')
-    body.append('<h2>Changes</h2>')
-    body.append("<ul>" + "".join(f"<li>Version {c['version']}, {esc(c['date'])}: {esc(c['change'])}</li>" for c in pw["changelog"]) + "</ul>")
-    crumbs = [("/learn/", "Learning center"), (f"/learn/families/{fam}/", lib.families[fam]["title"]), (here, pw["title"])]
-    page = lesson_shell(lib, f"{pw['title']} pathway - Learning center", "\n".join(body), pid=pid, current=here, crumbs=crumbs,
-                        description=pw["summary"][:200])
-    return here, page
+def first_sentence(text: str) -> str:
+    return re.split(r"(?<=[.!?])\s", text.strip(), maxsplit=1)[0]
 
 
-def render_family(lib: Library, fam: dict) -> tuple[str, str]:
-    here = f"/learn/families/{fam['id']}/"
-    body = [f"<h1>{esc(fam['title'])}</h1>",
-            f'<p class="muted">{esc(fam["summary"])} Roles in this family share the {a("/learn/modules/system-design/", "system design module")} '
-            "and most of the platform, data and operations lessons. Each role has a curated pathway; the lessons themselves live in the shared library.</p>",
-            "<h2>Roles</h2>", '<ul class="roles">']
-    for r in fam["roles"]:
-        pw = lib.pathways[r["pathway"]]
-        mods = [m["title"] for m in pw["modules"]]
-        body.append(
-            '<li><div class="role-head">' f'<h3>{a(f"/learn/pathways/{pw["id"]}/", esc(r["title"]))}</h3>'
-            f'{a(f"/learn/pathways/{pw["id"]}/", "Open the pathway &rarr;", "pathway")}</div>'
-            f'<p class="status">pathway v{pw["version"]} &middot; {len(mods)} modules &middot; {len(pw["steps"])} lessons</p>'
-            f'<ul class="areas">{"".join(f"<li>{esc(m)}</li>" for m in mods)}</ul></li>'
-        )
-    body.append("</ul>")
-    body.append("<h2>Concept areas this family touches</h2>")
-    counts: dict[str, int] = {}
-    for r in fam["roles"]:
-        for s in lib.pathways[r["pathway"]]["steps"]:
-            counts[lib.lessons[s["lesson"]]["area"]] = counts.get(lib.lessons[s["lesson"]]["area"], 0) + 1
-    body.append("<ul>" + "".join(f"<li>{esc(lib.areas[ar])}: {n} lessons</li>" for ar, n in sorted(counts.items(), key=lambda t: (-t[1], t[0]))) + "</ul>")
-    return here, site_page(f"{fam['title']} - Learning center", "\n".join(body), current="families",
-                           crumbs=[("/learn/", "Learning center"), ("/learn/families/", "Families"), (here, fam["title"])],
-                           description=fam["summary"])
+def module_counts(lib: Library, row: dict) -> str:
+    m = lib.modules[row["id"]]
+    total = len(m["lessons"])
+    pub = row["lessons_published"]
+    n_prac = sum(1 for lid in lib.module_lessons[row["id"]] if lid in lib.practice)
+    chips = [f"{pub} lessons" if pub == total else f"{pub} of {total} lessons published"]
+    if n_prac:
+        chips.append(f"{n_prac} practice paths")
+    return '<ul class="chips">' + "".join(f"<li>{esc(c)}</li>" for c in chips) + "</ul>"
 
 
-def family_cards(lib: Library) -> str:
+def module_cards(lib: Library) -> str:
+    """One card per module of modules/index.json, in index order."""
     out = ['<ul class="cards">']
-    for f in lib.family_index:
-        if f["status"] == "published":
-            fam = lib.families[f["id"]]
-            n_path = len(fam["roles"])
-            n_les = len({s["lesson"] for r in fam["roles"] for s in lib.pathways[r["pathway"]]["steps"]})
-            out.append(f'<li class="card"><h3>{a(f"/learn/families/{f["id"]}/", esc(f["title"]))}</h3><p>{esc(f["summary"])}</p>'
-                       f'<ul class="chips"><li>{n_path} pathways</li><li>{n_les} lessons</li><li>Practice paths</li></ul></li>')
-        else:
-            out.append(f'<li class="card planned"><h3>{esc(f["title"])}</h3><p>{esc(f["summary"])}</p>'
-                       '<ul class="chips"><li>planned</li></ul></li>')
+    for row in lib.module_index:
+        out.append(f'<li class="card"><h3>{a(f"/learn/modules/{row["id"]}/", esc(row["title"]))}</h3><p>{esc(row["summary"])}</p>'
+                   f"{module_counts(lib, row)}</li>")
     out.append("</ul>")
     return "\n".join(out)
-
-
-def sd_card(lib: Library) -> str:
-    n = len(lib.module["lessons"])
-    n_pub = sum(1 for l in lib.module["lessons"] if l["status"] == "published")
-    state = f"{n} lessons are planned; none is published yet" if n_pub == 0 else f"{n} lessons are outlined; {n_pub} are published, the other {n - n_pub} are planned"
-    return (f'<ul class="cards"><li class="card module"><h3>{a("/learn/modules/system-design/", "System design module")}</h3>'
-            "<p>Cross-cutting for every engineering role: scalability, data, reliability and the design exercises interviewers and real projects ask for, "
-            f'each with a reference answer. {state}.</p>'
-            '<ul class="chips"><li>Planned</li><li>Topics by depth level</li><li>Design exercises with reference answers</li></ul></li></ul>')
 
 
 def render_home(lib: Library) -> tuple[str, str]:
     body = [
         "<h1>Learn what the job asks for</h1>",
-        '<p class="muted">A library of lessons and hands-on practice paths, keyed by concept, with a curated pathway per role. '
+        '<p class="muted">A library of lessons and hands-on practice paths, keyed by concept and grouped in topic modules. '
+        "Scout builds your own pathway from them on your computer. "
         "Everything here is public and generalised: no job postings, no companies, no personal data.</p>",
         '<form class="search" role="search" action="/learn/search/" method="get">'
         '<label for="q" hidden>Search lessons</label>'
         '<input id="q" name="q" type="search" placeholder="Search lessons, concepts, technologies" autocomplete="off">'
         '<button type="submit">Search</button></form>',
         '<p class="muted">Search runs in your browser from a prebuilt index. Nothing you type leaves this page.</p>',
-        "<h2>Role families</h2>", family_cards(lib), "<h2>Shared module</h2>", sd_card(lib),
+        f'<h2>{a("/learn/modules/", "Modules")}</h2>', module_cards(lib),
         "<h2>How this library works</h2>",
-        "<p>Lessons are keyed by concept and shared across roles. A pathway is a curated, evolving sequence of lessons for one role. "
+        "<p>Lessons are keyed by concept. A module is one topic's lessons in teaching order; every lesson sits in exactly one module. "
         f"Links to outside documentation are re-checked every week. Site version {esc(lib.site['site_version'])}; see the {a('/learn/changelog/', 'changelog')}.</p>",
     ]
-    return "/learn/", site_page("Learning center", "\n".join(body), current="learn", description="A public library of lessons and practice paths, organised by role family and concept. Static pages, no tracking.")
+    return "/learn/", site_page("Learning center", "\n".join(body), current="learn", description="A public library of lessons and practice paths, grouped in topic modules and organised by concept. Static pages, no tracking.")
 
 
-def render_families_index(lib: Library) -> tuple[str, str]:
-    body = ["<h1>Role families</h1>", '<p class="muted">Families that are published have pathways; the others are planned.</p>', family_cards(lib)]
-    return "/learn/families/", site_page("Families - Learning center", "\n".join(body), current="families",
-                                         crumbs=[("/learn/", "Learning center"), ("/learn/families/", "Families")],
-                                         description="Role families of the learning center.")
+def render_modules_index(lib: Library) -> tuple[str, str]:
+    n = sum(r["lessons_published"] for r in lib.module_index)
+    body = ["<h1>Modules</h1>",
+            f'<p class="muted">{len(lib.module_index)} topic modules, {n} lessons. A module lists one topic\'s lessons in teaching order; every lesson sits in exactly one module.</p>',
+            module_cards(lib)]
+    return "/learn/modules/", site_page("Modules - Learning center", "\n".join(body), current="modules",
+                                        crumbs=[("/learn/", "Learning center"), ("/learn/modules/", "Modules")],
+                                        description="The topic modules of the learning center and their lessons.")
 
 
-def render_module(lib: Library) -> tuple[str, str]:
-    m = lib.module
-    n_pub = sum(1 for l in m["lessons"] if l["status"] == "published")
+def render_module(lib: Library, m: dict) -> tuple[str, str]:
+    here = f"/learn/modules/{m['id']}/"
+    n_all = len(m["lessons"])
+    n_pub = sum(1 for e in m["lessons"] if e["status"] == "published")
+    body = [f"<h1>{esc(m['title'])}</h1>"]
     if n_pub == 0:
-        banner = (f'<p class="banner">Planned. These {len(m["lessons"])} lessons are outlined and not yet written; '
-                  "none of them has a page. They are listed so that pathways and the library can refer to them by their stable keys.</p>")
-    else:
-        banner = (f'<p class="banner">In progress. {n_pub} of these {len(m["lessons"])} lessons are published; the other {len(m["lessons"]) - n_pub} '
-                  "are outlined and not yet written. All are listed so that pathways and the library can refer to them by their stable keys.</p>")
-    body = [f"<h1>{esc(m['title'])} module</h1>", banner, f"<p>{esc(m['summary'])}</p>"]
+        body.append(f'<p class="banner">Planned. These {n_all} lessons are outlined and not yet written; none of them has a page.</p>')
+    elif n_pub < n_all:
+        body.append(f'<p class="banner">In progress. {n_pub} of these {n_all} lessons are published; the other {n_all - n_pub} are outlined and not yet written.</p>')
+    body.append(f"<p>{esc(m['summary'])}</p>")
+    if m.get("intro"):
+        body.append(f"<p>{esc(m['intro'])}</p>")
 
-    def entry(l: dict) -> str:
-        if l["status"] == "published":
-            return f'<li>{a(f"/learn/lessons/{l["id"]}/", esc(l["title"]))}<code>{esc(l["id"])}</code> <span class="status">published</span></li>'
-        return f'<li>{esc(l["title"])}<code>{esc(l["id"])}</code> <span class="status">planned</span></li>'
-    for part in m["parts"]:
-        ls = [l for l in m["lessons"] if l["part"] == part["id"]]
-        body.append(f"<h2>Part {esc(part['id'])}. {esc(part['title'])} ({len(ls)} lessons)</h2>")
-        body.append('<ul class="planned-list">' + "".join(entry(l) for l in ls) + "</ul>")
-    here = "/learn/modules/system-design/"
-    return here, site_page("System design module - Learning center", "\n".join(body), current="sd",
-                           crumbs=[("/learn/", "Learning center"), (here, "System design")], description=m["summary"][:200])
+    def entry(e: dict) -> str:
+        if e["status"] == "published":
+            lid = e["id"]
+            pr = f' &middot; {a(f"/learn/practice/{lid}/", "Practice")}' if lid in lib.practice else ""
+            return (f'<li>{a(f"/learn/lessons/{lid}/", esc(lib.lessons[lid]["title"]))}{pr}'
+                    f'<p class="muted">{esc(first_sentence(lib.lessons[lid]["summary"]))}</p></li>')
+        return f'<li>{esc(e["title"])}<code>{esc(e["id"])}</code> <span class="status">planned</span></li>'
+    if m.get("parts"):
+        for part in m["parts"]:
+            ls = [e for e in m["lessons"] if e["part"] == part["id"]]
+            body.append(f"<h2>Part {esc(part['id'])}. {esc(part['title'])} ({len(ls)} lessons)</h2>")
+            body.append('<ul class="planned-list">' + "".join(entry(e) for e in ls) + "</ul>")
+    else:
+        body.append(f"<h2>Lessons ({n_all})</h2>")
+        body.append('<ul class="planned-list">' + "".join(entry(e) for e in m["lessons"]) + "</ul>")
+    if m.get("changelog"):
+        body.append("<h2>Changes</h2>")
+        body.append("<ul>" + "".join(f"<li>Version {c['version']}, {esc(c['date'])}: {esc(c['change'])}</li>" for c in m["changelog"]) + "</ul>")
+    return here, site_page(f"{m['title']} - Learning center", "\n".join(body), current="modules",
+                           crumbs=[("/learn/", "Learning center"), ("/learn/modules/", "Modules"), (here, m["title"])], description=m["summary"][:200])
 
 
 def render_key(lib: Library, k: dict) -> tuple[str, str]:
@@ -752,7 +689,9 @@ def render_key(lib: Library, k: dict) -> tuple[str, str]:
     prim = [l for l in lib.lessons_by_key.get(key, []) if lib.lessons[l]["primary_key"] == key]
     also = [l for l in lib.lessons_by_key.get(key, []) if l not in prim]
     def lesson_list(ids):
-        return "<ul>" + "".join(f'<li>{a(f"/learn/lessons/{i}/", esc(lib.lessons[i]["title"]))}</li>' for i in sorted(ids)) + "</ul>"
+        return "<ul>" + "".join(
+            f'<li>{a(f"/learn/lessons/{i}/", esc(lib.lessons[i]["title"]))} &middot; module '
+            f'{a(f"/learn/modules/{lib.home_of[i][0]}/", esc(lib.modules[lib.home_of[i][0]]["title"]))}</li>' for i in sorted(ids)) + "</ul>"
     if prim:
         body.append("<h2>The lesson for this</h2>" + lesson_list(prim))
     if also:
@@ -760,10 +699,7 @@ def render_key(lib: Library, k: dict) -> tuple[str, str]:
     prac = [p["lesson"] for p in lib.practice.values() if p.get("tool_key") == key]
     if prac:
         body.append("<h2>Practice paths with this tool</h2><ul>" + "".join(f'<li>{a(f"/learn/practice/{i}/", esc("Practice: " + lib.lessons[i]["title"]))}</li>' for i in sorted(prac)) + "</ul>")
-    pws = sorted({p for l in lib.lessons_by_key.get(key, []) for p in lib.pathways_of.get(l, [])})
-    if pws:
-        body.append("<h2>Pathways that reach it</h2><ul>" + "".join(f'<li>{a(f"/learn/pathways/{p}/", esc(lib.pathways[p]["title"]))}</li>' for p in pws) + "</ul>")
-    if not (prim or also or prac or pws):
+    if not (prim or also or prac):
         body.append('<p class="muted">No lesson uses this concept yet.</p>')
     return here, site_page(f"{k['display']} - Learning center", "\n".join(body), current="learn",
                            crumbs=[("/learn/", "Learning center"), (here, k["display"])],
@@ -808,9 +744,9 @@ def render_landing(lib: Library) -> tuple[str, str]:
         f'<li class="card"><h3>{ext(GIGAI_DOCS, "Scout / GigAI")}</h3><p>Install, documentation and the source. Runs with your own model subscription; '
         "nothing of yours leaves your machine except the model calls you approve.</p>"
         '<ul class="chips"><li>Install</li><li>Docs</li><li>Source</li></ul></li>',
-        f'<li class="card module"><h3>{a("/learn/", "Learning center")}</h3><p>Public lessons and hands-on practice paths, keyed by concept, with a curated pathway per role: '
-        "what the job asks for, and how to learn it.</p>"
-        '<ul class="chips"><li>Role families</li><li>System design module</li><li>No account needed</li></ul></li>',
+        f'<li class="card module"><h3>{a("/learn/", "Learning center")}</h3><p>Public lessons and hands-on practice paths, keyed by concept and grouped in topic modules. '
+        "Scout builds your own pathway from them on your computer.</p>"
+        '<ul class="chips"><li>Topic modules</li><li>Practice paths</li><li>No account needed</li></ul></li>',
         "</ul>",
     ]
     return "/", site_page("Scout", "\n".join(body), current="scout", brand="scout", indexed=False,
@@ -820,7 +756,7 @@ def render_landing(lib: Library) -> tuple[str, str]:
 def render_404(lib: Library) -> tuple[str, str]:
     body = [
         "<h1>Page not found</h1>",
-        "<p>There is no page at this address. Lessons, practice paths and pathways live under "
+        "<p>There is no page at this address. Lessons, practice paths and modules live under "
         f'{a("/learn/", "the learning center")}; try the search:</p>',
         '<form class="search" role="search" action="/learn/search/" method="get"><label for="q" hidden>Search</label>'
         '<input id="q" name="q" type="search" placeholder="Search lessons, concepts, technologies" autocomplete="off">'
@@ -986,8 +922,9 @@ def sitemap(lib: Library, urls: list[str]) -> str:
         last[f"/learn/lessons/{lid}/"] = l["changelog"][-1]["date"]
     for lid, pr in lib.practice.items():
         last[f"/learn/practice/{lid}/"] = pr["changelog"][-1]["date"]
-    for pid, pw in lib.pathways.items():
-        last[f"/learn/pathways/{pid}/"] = pw["changelog"][-1]["date"]
+    for mid, m in lib.modules.items():
+        if m.get("changelog"):
+            last[f"/learn/modules/{mid}/"] = m["changelog"][-1]["date"]
     default = lib.site["updated"]
     rows = "".join(f"<url><loc>{ORIGIN}{esc(u)}</loc><lastmod>{last.get(u, default)}</lastmod></url>\n" for u in sorted(urls))
     return f'<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n{rows}</urlset>\n'
@@ -999,18 +936,12 @@ def build(content: Path, out: Path) -> dict:
         shutil.rmtree(out)
     out.mkdir(parents=True)
     written: dict[str, int] = {}
-    pages: list[tuple[str, str]] = [render_landing(lib), render_home(lib), render_families_index(lib), render_module(lib),
-                                    render_changelog(lib), render_search(lib), render_404(lib)]
-    pages += [render_family(lib, f) for f in lib.families.values()]
-    pages += [render_pathway(lib, p) for p in lib.pathways.values()]
+    pages: list[tuple[str, str]] = [render_landing(lib), render_home(lib), render_modules_index(lib), render_changelog(lib),
+                                    render_search(lib), render_404(lib)]
+    pages += [render_module(lib, m) for m in lib.modules.values()]
     pages += [render_exercise(lib, l) if l.get("kind") == "design-exercise" else render_lesson(lib, l) for l in lib.lessons.values()]
     pages += [render_practice(lib, p) for p in lib.practice.values()]
     pages += [render_key(lib, k) for k in lib.keys.values()]
-    for r in lib.redirects:  # a stub page at each old path (works on any static host)
-        to = r["to"]
-        stub = (head("Moved", "This page moved.").replace("</head>", f'<meta http-equiv="refresh" content="0; url={esc(to)}">\n</head>')
-                + f'<body class="site"><main><p>This page moved to {a(to, esc(to))}.</p></main>\n{footer()}' + tail_scripts())
-        pages.append((r["from"], stub))
     for url, text in pages:
         write(out, url, text, written)
     # assets, once, at the root (shared by / and /learn/)
@@ -1046,7 +977,7 @@ def build(content: Path, out: Path) -> dict:
             problems.append(f"{p.relative_to(out)}: larger than 25 MiB")
     if problems:
         raise BuildError("build checks failed:\n  " + "\n  ".join(problems[:60]))
-    kinds = {"lessons": len(lib.lessons), "practice": len(lib.practice), "pathways": len(lib.pathways), "families": len(lib.families),
+    kinds = {"lessons": len(lib.lessons), "practice": len(lib.practice), "modules": len(lib.modules),
              "keys": len(lib.keys), "html pages": len(written), "files": len(files), "html bytes": total_html}
     return kinds
 
