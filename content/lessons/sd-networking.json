@@ -1,7 +1,7 @@
 {
-  "schema_version": "learning-center-lesson:1",
+  "schema_version": "learning-center-lesson:2",
   "id": "sd-networking",
-  "version": 1,
+  "version": 4,
   "status": "published",
   "superseded_by": null,
   "title": "Networking for designers",
@@ -16,58 +16,729 @@
     "networking",
     "low-latency"
   ],
-  "summary": "Every distributed design is constrained by what happens between machines: name resolution, connection setup, encryption and the request protocol on top. This lesson covers the parts of the network stack a designer must reason about, with attention to where round trips, state and timeouts hide.",
+  "summary": "Every distributed design is bounded by what happens between machines: a name lookup, a connection handshake, encryption and the request protocol on top, each paid in round trips that distance sets. This lesson counts those round trips, explains the TTL knob in DNS, the handshake costs of TCP, TLS and QUIC, what HTTP/2 and HTTP/3 change, how to choose between polling, server-sent events and WebSockets, and how an anycast edge with pooled connections collects the savings, with a worked budget from Sydney to Virginia.",
   "detail": [],
-  "in_practice": "Teams put a reverse proxy or managed load balancer at the edge that terminates TLS, speaks HTTP/2 to clients and keeps pooled upstream connections to services. Timeouts are set at every hop and made shorter the deeper the call goes, so a caller never waits longer than its own deadline. DNS names point at the load balancer with moderate TTLs, certificates are renewed automatically, and connection counts, handshake rates and upstream latency are tracked on dashboards alongside request metrics.",
+  "in_practice": {
+    "blocks": [
+      {
+        "type": "p",
+        "text": "Google's frontends balance in two layers, as the SRE book describes. DNS is the first layer, and because authoritative servers see only resolvers, Google keeps a list of known resolvers with the approximate user population behind each and uses the client-subnet extension where resolvers send it. The second layer is a virtual IP in front of a network load balancer, which forwards packets by encapsulating them in GRE so that backends need not share a network with the balancer, and which falls back to consistent hashing under pressure so that a balancer failure does not reset every connection.",
+        "cites": [
+          "s9"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Cloudflare's edge is an anycast network: its data centres in more than two hundred cities announce the same IP addresses, and inside each one a layer 4 balancer, Unimog, chooses the server for each new connection from measured server load. The post notes that the balancer cannot see or change the bytes of a connection, which is why TLS and HTTP are handled by proxies behind it, and that it supports connections that stay established for days.",
+        "cites": [
+          "s10"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "What connection reuse is worth at the edge: Cloudflare's measurements after replacing its NGINX-based proxy with Pingora, whose connection pool is shared across threads rather than per worker.",
+        "columns": [
+          "metric",
+          "measured change"
+        ],
+        "rows": [
+          [
+            "median time to first byte",
+            "5 ms lower"
+          ],
+          [
+            "95th percentile time to first byte",
+            "80 ms lower"
+          ],
+          [
+            "new connections per second to origins, all customers",
+            "one third of the previous number"
+          ],
+          [
+            "connection reuse ratio for one large customer",
+            "from 87.1 percent to 99.92 percent, about 160 times fewer new connections"
+          ],
+          [
+            "CPU and memory for the same traffic",
+            "about 70 percent and 67 percent less"
+          ]
+        ],
+        "cites": [
+          "s11"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Slack runs one persistent WebSocket per connected client. The client connects to the nearest edge region, where Envoy terminates TLS and forwards to a gateway server that holds the user's channel subscriptions in memory. Channels are mapped to channel servers by consistent hashing, with about 16 million channels served per host at peak; when a channel server is replaced, the users of its channels see elevated delivery latency for under 20 seconds while the ring is updated through the service registry.",
+        "cites": [
+          "s12"
+        ]
+      }
+    ]
+  },
   "subtopics": [
     {
-      "body": [
+      "id": "round-trips-are-the-unit",
+      "title": "The round trip is the unit of cost",
+      "blocks": [
         {
-          "body": "DNS translates a hostname into IP addresses. A client asks a recursive resolver, which, on a cache miss, walks from a root server to the top-level domain server to the authoritative server for the zone, then caches the answer for the record's time to live. Common record types are A and AAAA for addresses and CNAME for aliases. For design, the TTL is the key knob: a short TTL lets traffic shift quickly during failover but increases lookup volume and latency, while a long TTL is cheap and slow to change. Clients and intermediate resolvers do not always honour TTLs, so DNS-based failover is coarse and should be paired with health-checked load balancers behind a stable name.",
-          "heading": "Resolution path and caching"
-        }
-      ],
-      "id": "dns-resolution",
-      "title": "DNS as the first hop"
-    },
-    {
-      "body": [
-        {
-          "body": "A new TCP connection costs one round trip for the handshake, and TLS adds one more with TLS 1.3 or two with TLS 1.2, plus CPU for the key exchange. On a 100 millisecond path that is several hundred milliseconds before the first byte of the request. Designs therefore reuse connections: keep-alive between clients and the edge, pooled connections between services and to databases, and TLS session resumption so returning clients skip the full handshake. TLS is usually terminated at a proxy or load balancer, which holds the certificate and private key, selects protocol versions and ciphers, and can cache sessions across worker processes. Decide explicitly whether traffic behind the terminator is re-encrypted.",
-          "heading": "The cost of a new connection"
-        }
-      ],
-      "id": "connection-setup-and-tls",
-      "title": "Connection setup, TLS and reuse"
-    },
-    {
-      "body": [
-        {
-          "body": "HTTP semantics are defined independently of the wire version. Safe methods such as GET and HEAD do not request state changes; idempotent methods, which include the safe ones plus PUT and DELETE, have the same intended effect when repeated, so intermediaries and clients may retry them. POST is neither by default. Status code classes tell callers how to react: 4xx means fix the request, 5xx means the server failed. Cache-related headers and conditional requests let caches and CDNs serve or revalidate responses.",
-          "heading": "Semantics that designs depend on"
+          "type": "p",
+          "text": "A network is slow in a way that hardware does not fix. Bandwidth grows every year, but the time a signal needs to cross a continent is set by the speed of light in glass, which is about two thirds of its speed in a vacuum. A request and its reply must make the trip twice, so the round-trip time is the smallest unit a design can spend, and most of what this lesson teaches is counting how many of those units a request pays before the first useful byte arrives.",
+          "cites": [
+            "s1"
+          ]
         },
         {
-          "body": "HTTP/1.1 handles one request at a time per connection, so clients open several connections. HTTP/2 multiplexes many concurrent streams over one connection with header compression, which removes application-level head-of-line blocking and suits high-fanout service calls such as gRPC. A single lost TCP packet still stalls all streams on that connection. Proxies commonly speak HTTP/2 to clients and limit concurrent streams per connection.",
-          "heading": "HTTP/1.1 versus HTTP/2"
+          "type": "table",
+          "caption": "Round-trip times set by distance alone, over fibre along the shortest path. Real routes are longer and add queueing, so measured values are higher.",
+          "columns": [
+            "path",
+            "distance",
+            "one way in fibre",
+            "round trip in fibre"
+          ],
+          "rows": [
+            [
+              "New York to San Francisco",
+              "4,148 km",
+              "21 ms",
+              "42 ms"
+            ],
+            [
+              "New York to London",
+              "5,585 km",
+              "28 ms",
+              "56 ms"
+            ],
+            [
+              "New York to Sydney",
+              "15,993 km",
+              "80 ms",
+              "160 ms"
+            ],
+            [
+              "Around the equator",
+              "40,075 km",
+              "200 ms",
+              "400 ms"
+            ]
+          ],
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Two more facts shape the table's use. The last mile is often the slowest part: the FCC's broadband measurements that the book cites put the latency from a home to its ISP's routing node at tens of milliseconds, with fibre fastest, cable next and DSL slowest, before a packet has gone anywhere. And a client that is far away pays the full round trip for every dependent exchange, which is why the number of exchanges matters more than the size of any one of them.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Last-mile latency to the ISP's routing node, from the FCC measurements the book cites.",
+          "columns": [
+            "access technology",
+            "typical latency"
+          ],
+          "rows": [
+            [
+              "Fibre",
+              "10 to 20 ms"
+            ],
+            [
+              "Cable",
+              "15 to 40 ms"
+            ],
+            [
+              "DSL",
+              "30 to 65 ms"
+            ]
+          ],
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "A single request from a cold start is a chain of exchanges: a DNS lookup, a TCP handshake, a TLS handshake, then the request itself. Each is at least one round trip, and only the last carries the application's data. The rest of this lesson takes those stages in order, gives the round trips each one costs, and shows which costs a design can remove by caching the lookup, reusing the connection or moving the endpoint closer.",
+          "cites": [
+            "s2",
+            "s3"
+          ]
+        },
+        {
+          "type": "diagram",
+          "mermaid": "sequenceDiagram\n  participant C as Client\n  participant R as DNS resolver\n  participant P as Edge proxy\n  participant S as Service\n  C->>R: Resolve hostname\n  R-->>C: IP address with TTL\n  C->>P: TCP handshake (1 round trip)\n  C->>P: TLS handshake (1 round trip with TLS 1.3)\n  C->>P: HTTP/2 request\n  P->>S: Request on a pooled upstream connection\n  S-->>P: Response\n  P-->>C: Response on the same stream",
+          "legend": "One request from a cold start. The client pays a DNS lookup and two handshakes before its request leaves; the proxy pays none, because its connection to the service is already open."
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Count round trips before you count bytes. Write down every dependent exchange between the user and the first useful byte, multiply by the round-trip time of the farthest hop, and compare with the latency budget. If the sum exceeds the budget, remove exchanges or shorten the hop; a faster server does not help.",
+          "cites": [
+            "s1",
+            "s2"
+          ]
         }
-      ],
-      "id": "http-semantics-and-versions",
-      "title": "HTTP semantics and protocol versions"
+      ]
     },
     {
-      "body": [
+      "id": "dns-and-ttl",
+      "title": "DNS: the first hop and the TTL knob",
+      "blocks": [
         {
-          "body": "A WebSocket starts as an HTTP/1.1 request carrying Upgrade and Connection headers; the server answers with status 101 and the connection becomes a bidirectional message channel. Upgrade and Connection are hop-by-hop headers, so a reverse proxy must be configured to pass them to the backend explicitly. Proxies also close connections that are idle longer than their read timeout, so either raise the timeout or send periodic ping frames. For capacity, long-lived connections change the model: the limit becomes concurrent connections and memory per connection rather than requests per second, each connection is pinned to one backend, deploys must drain or disconnect clients, and clients need reconnection with backoff to avoid a reconnect storm.",
-          "heading": "Upgrading and proxying"
+          "type": "p",
+          "text": "Before a client can send a request it needs an address, and it usually asks a recursive resolver run by its ISP or a public operator rather than the authoritative server for the zone. The resolver answers from its cache when it can and otherwise walks the hierarchy to the authoritative server, then caches the reply for the time to live, the TTL, that the record carries. The SRE book's frontend chapter calls the resolver the DNS middleman and lists the consequences: the authoritative server sees the resolver's address, not the user's; it cannot tell how many users sit behind one resolver; and it cannot force a resolver to drop a cached answer early.",
+          "cites": [
+            "s9"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The TTL is the designer's one knob. A long TTL makes lookups cheap and fast, because almost every query is a cache hit somewhere, and it makes a change slow to take effect, because every cache keeps the old answer until its copy expires. A short TTL makes a change visible quickly at the price of more lookups and more latency on a cache miss. The classic DNS specification suggests TTLs on the order of days for a typical host, and the usual practice before a planned change is to lower the TTL in advance, make the change, then raise it again.",
+          "cites": [
+            "s9"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "What a TTL buys and costs. Resolvers and client stacks do not always honour the value, so treat the switch-over time as a floor, not a promise.",
+          "columns": [
+            "TTL",
+            "time for a change to reach most clients",
+            "lookup load and miss latency",
+            "use it for"
+          ],
+          "rows": [
+            [
+              "about 5 minutes",
+              "minutes",
+              "high: every resolver re-asks often",
+              "entry points that must move during a failover"
+            ],
+            [
+              "about 1 hour",
+              "an hour, longer for stragglers",
+              "moderate",
+              "service names that change rarely but on purpose"
+            ],
+            [
+              "a day or more",
+              "a day or more",
+              "low",
+              "stable names; lower it ahead of a planned move"
+            ]
+          ],
+          "cites": [
+            "s9"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "DNS can also balance load. The simplest form returns several A or AAAA records and lets the client pick one. The SRE book names its weaknesses: no control over which address a client picks, no knowledge of the client's location, and no idea how much traffic one answer will attract, because a resolver fans it out to an unknown population for the whole TTL. The book's conclusion is that DNS is the first layer of balancing and must be followed by a layer the operator controls directly.",
+          "cites": [
+            "s9"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "DNS failover is coarse. A record change propagates no faster than the TTL, some caches hold it longer, and a resolver may keep sending an entire ISP's users to the address you removed. Put health-checked load balancers behind a stable name and fail over there; use DNS to move whole regions, not single machines.",
+          "cites": [
+            "s9"
+          ]
         }
-      ],
+      ]
+    },
+    {
+      "id": "tcp-handshake-and-slow-start",
+      "title": "TCP: the handshake and slow start",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "A new TCP connection begins with a three-way handshake, so every connection pays one full round trip before any application data moves. It then starts slowly on purpose: the sender may have only an initial congestion window in flight, ten segments on a modern system, and doubles it each round trip as acknowledgements arrive. A short transfer on a new connection therefore spends most of its time waiting for acknowledgements rather than sending.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "steps",
+          "title": "The book's example: a 64 KB response over a new connection, 56 ms round trip, 40 ms of server time",
+          "items": [
+            "0 ms: the client sends SYN.",
+            "28 ms: the server answers SYN-ACK.",
+            "56 ms: the client acknowledges and sends the request in the same flight.",
+            "124 ms: the server has generated the response and sends 10 segments, its whole initial window, then waits.",
+            "180 ms: the acknowledgements arrive and the window doubles, so 20 segments go out.",
+            "236 ms: the remaining 15 segments go out.",
+            "264 ms: the client holds the whole response. Over an already open connection the same request completes at 96 ms, because the window is already large and the handshake is paid."
+          ],
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The example is the oldest rule in this area in numbers: open connections rarely and keep them. Browsers keep connections alive to the edge, proxies hold pools of warm connections to each upstream, and services pool their database connections, so that the handshake and the slow start are paid once per connection rather than once per request. A pool also bounds the number of connections a busy service opens against its dependency, which protects the dependency from a burst of handshakes when the service restarts.",
+          "cites": [
+            "s2",
+            "s11"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "tip",
+          "text": "Measure the stages rather than guessing. The curl timing variables in the worked example print the lookup, connect, TLS and first-byte times for one request, and the difference between a first request and a second over the same connection is the handshake tax you are paying.",
+          "cites": [
+            "s2"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tls-quic-and-termination",
+      "title": "TLS, QUIC and where to terminate",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "TLS adds its own round trips on top of TCP's. A full TLS 1.2 handshake costs two, an abbreviated handshake that resumes an earlier session costs one, and the book records TLS 1.3's design goals as one round trip for a new session and none for a resumed one, where the client sends its first request alongside the handshake. Session tickets make resumption stateless on the server: the negotiated parameters travel encrypted inside the ticket the client presents, which matters once a fleet of load-balanced servers must all be able to resume a session any of them started.",
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Round trips spent before the request leaves, by protocol stack. Add one more for the request and response themselves, and one for a DNS miss.",
+          "columns": [
+            "connection",
+            "TCP",
+            "TLS",
+            "total before the request"
+          ],
+          "rows": [
+            [
+              "New, TLS 1.2",
+              "1",
+              "2",
+              "3"
+            ],
+            [
+              "New, TLS 1.3",
+              "1",
+              "1",
+              "2"
+            ],
+            [
+              "Resumed, TLS 1.3 with 0-RTT",
+              "1",
+              "0",
+              "1"
+            ],
+            [
+              "New QUIC connection",
+              "combined with TLS",
+              "1",
+              "1"
+            ],
+            [
+              "Resumed QUIC with 0-RTT",
+              "combined",
+              "0",
+              "0"
+            ],
+            [
+              "Reused, already open",
+              "0",
+              "0",
+              "0"
+            ]
+          ],
+          "cites": [
+            "s2",
+            "s3",
+            "s4"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "QUIC folds the transport and cryptographic handshakes into one exchange, so a new connection costs a single round trip and a resumed one can carry data in its first packet. The specification is explicit about the price: 0-RTT data has no protection against replay, so it is only safe for requests an attacker gains nothing by repeating, which in HTTP terms means idempotent ones. The same caveat applies to TLS 1.3 early data over TCP.",
+          "cites": [
+            "s4",
+            "s3"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Where TLS terminates is a design decision, not a deployment detail. An edge proxy that holds the certificate and private key can resume sessions for every server behind it, selects protocol versions and ciphers in one place, and keeps its own long-lived encrypted connections to the services, so the user's handshake is short and the long haul is paid once. The decision must also say whether traffic behind the terminator is re-encrypted, and the answer usually depends on whether the proxy and the services share a trusted network.",
+          "cites": [
+            "s3",
+            "s11"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "Certificate revocation checks are a hidden round trip to a third party. The book cites browser telemetry in which the online check added about 350 ms when it succeeded and timed out a noticeable share of the time; staple the response to the handshake instead.",
+          "cites": [
+            "s3"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "http-versions",
+      "title": "HTTP semantics and the three wire versions",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "HTTP's meaning is defined separately from its wire format, and the meaning is what a design leans on. The semantics specification defines safe methods as those whose defined effect is read-only, so a client may issue them without expecting a state change, and idempotent methods as those where repeating an identical request has the same intended effect as sending it once. GET, HEAD, OPTIONS and TRACE are safe; PUT, DELETE and the safe methods are idempotent; POST is neither unless the application makes it so.",
+          "cites": [
+            "s6"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "That classification decides who may retry. The specification says an idempotent request can be repeated automatically when the connection fails before the client has read the response, that a client should not automatically retry a non-idempotent request unless it has some other way to know the repeat is harmless, and that a proxy must never retry a non-idempotent request on its own. A design that wants safe retries of a POST therefore adds its own idempotency key, which the lesson on idempotency and retries covers.",
+          "cites": [
+            "s6"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The three wire versions and what each changes for a designer.",
+          "columns": [
+            "version",
+            "connection model",
+            "what it fixes",
+            "what remains"
+          ],
+          "rows": [
+            [
+              "HTTP/1.1",
+              "one request in flight per connection; browsers open up to six per origin",
+              "keep-alive reuses the connection",
+              "responses queue behind each other; parallelism is capped by the connection count"
+            ],
+            [
+              "HTTP/2",
+              "binary frames, many streams multiplexed on one connection per origin, header compression",
+              "application-level head-of-line blocking and the connection limit",
+              "one lost TCP packet stalls every stream on the connection"
+            ],
+            [
+              "HTTP/3",
+              "the same streams carried by QUIC over UDP",
+              "a lost packet blocks only the streams it carried; the connection survives an address change",
+              "UDP may be blocked or throttled on some networks; new tooling"
+            ]
+          ],
+          "cites": [
+            "s5",
+            "s4"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "HTTP/2's one connection per origin changes the shape of traffic between services. A fan-out of dozens of calls to one upstream that would have needed dozens of HTTP/1.1 connections rides on one multiplexed connection, with fewer handshakes and fewer sockets to track; the book reports that deployments found the single connection preferable even though a lost packet now stalls every stream until TCP recovers it. QUIC removes that last stall by making stream delivery independent, and its connection identifiers let a connection survive the client moving from one network to another.",
+          "cites": [
+            "s5",
+            "s4"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "Multiplexing moves the limit, it does not remove it. A proxy caps concurrent streams per HTTP/2 connection, and a single slow stream can still hold the connection's flow-control window. Size the stream limits and watch the per-connection queue, not only requests per second.",
+          "cites": [
+            "s5"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The practical reading for a design: speak HTTP/2 between services so that connections are few and long-lived, terminate older clients at the edge, and treat HTTP/3 as an edge-facing option for mobile and lossy networks.",
+          "cites": [
+            "s5",
+            "s4"
+          ]
+        }
+      ]
+    },
+    {
       "id": "long-lived-connections",
-      "title": "WebSockets and long-lived connections"
+      "title": "Polling, server-sent events and WebSockets",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Request and response fits most traffic, but a chat, a dashboard or a collaborative editor needs the server to speak first. Polling repeats a request on a timer and wastes a round trip per empty answer; long polling holds the request open until there is news; server-sent events stream events down one open response; a WebSocket upgrades the connection to a two-way channel. Each step buys lower latency and less overhead per message and costs more state on the server.",
+          "cites": [
+            "s8",
+            "s7"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "A WebSocket starts as an HTTP request carrying Upgrade and Connection headers and a random key; the server answers with status 101 Switching Protocols, and from then on the TCP connection carries frames in both directions, each with a header of 2 to 14 bytes. Ping and Pong control frames serve as a keepalive, which is how an idle connection survives the idle timeouts of the proxies in between.",
+          "cites": [
+            "s7"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Server-sent events are the simpler half of the idea. The client opens an EventSource, the server replies with the content type text/event-stream and never closes the response, and the browser parses the text events as they arrive. The client reconnects on its own if the stream drops and sends the id of the last event it saw, so the server resumes from there. The channel is one way and text only.",
+          "cites": [
+            "s8"
+          ]
+        },
+        {
+          "type": "decision",
+          "caption": "Choosing a delivery mechanism for server-initiated updates.",
+          "rows": [
+            {
+              "option": "Polling",
+              "pick_when": "updates are rare, a delay of seconds is fine, and clients are many and anonymous",
+              "avoid_when": "latency must be sub-second, or empty responses dominate the load",
+              "example": "a status page refreshed every half minute"
+            },
+            {
+              "option": "Long polling",
+              "pick_when": "near-real-time delivery through infrastructure that only understands plain HTTP",
+              "avoid_when": "events are frequent, so each costs a new request",
+              "example": "legacy clients behind strict proxies"
+            },
+            {
+              "option": "Server-sent events",
+              "pick_when": "the server pushes text events one way and you want automatic reconnection with a last event id for free",
+              "avoid_when": "the client must send frequent messages back, or payloads are binary",
+              "example": "live feeds, build logs, progress of a long job"
+            },
+            {
+              "option": "WebSocket",
+              "pick_when": "both sides send frequently with low latency and small framing",
+              "avoid_when": "the traffic is mostly request and response, or intermediaries cannot pass the Upgrade",
+              "example": "chat, multiplayer, collaborative editing"
+            }
+          ],
+          "cites": [
+            "s7",
+            "s8"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Long-lived connections change the capacity model. The scarce resource becomes concurrent connections and the memory each holds, not requests per second; every connection is pinned to one server, so a deploy must drain its clients; and a restart makes every client reconnect at once, so clients need randomised backoff or the reconnect storm outlasts the outage. Slack's real-time system shows the shape: one persistent WebSocket per client to the nearest edge, where Envoy terminates TLS and forwards to a stateful gateway server holding the user's subscriptions.",
+          "cites": [
+            "s12"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "A proxy in front of WebSockets must pass the Upgrade and Connection headers, which are hop by hop, and its idle timeout must exceed the ping interval. Check both before blaming the application for dropped connections.",
+          "cites": [
+            "s7"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "load-balancers",
+      "title": "Load balancers at layer 4 and layer 7",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Between DNS and the servers sits a layered edge, and the SRE book's frontend chapter lays out the layers in order. DNS gives the client an address and spreads clients coarsely across sites. The address is a virtual IP, not a machine: a network load balancer receives the packets for it and forwards each connection to one backend. Above that, a layer 7 proxy reads the request itself and routes by host, path or header. Each layer sees less traffic than the one below and knows more about it.",
+          "cites": [
+            "s9"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The network balancer's job is to keep every packet of a connection going to the same backend while backends come and go. Tracking each connection in memory works until a balancer fails or the backend set changes under load; the book's fallback is consistent hashing, which keeps the mapping stable when backends are added or removed. Forwarding itself can rewrite addresses, let the backend reply directly to the client so that large responses skip the balancer, or encapsulate the packet so that the backend can sit anywhere a route exists, at the price of 24 bytes of overhead per packet with GRE over IPv4.",
+          "cites": [
+            "s9"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Layer 4 and layer 7 balancing, as the SRE chapter and Cloudflare's Unimog post describe them.",
+          "columns": [
+            "",
+            "layer 4 (network) balancer",
+            "layer 7 (proxy) balancer"
+          ],
+          "rows": [
+            [
+              "decides on",
+              "the connection: which backend gets all of its packets",
+              "the request: host, path, headers, cookies"
+            ],
+            [
+              "can change the bytes",
+              "no; it cannot take part in TLS or HTTP",
+              "yes; it terminates TLS, rewrites, retries, caches"
+            ],
+            [
+              "cost per request",
+              "lowest; packet forwarding",
+              "a full parse and a second connection"
+            ],
+            [
+              "typical place",
+              "in front of every server in a site, the first hop after routing",
+              "in front of a service, or as the edge proxy"
+            ]
+          ],
+          "cites": [
+            "s10",
+            "s9"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Put the cheap layer in front of the expensive one. A layer 4 balancer spreads connections across the proxies; the proxies terminate TLS, route by request and hold the pooled connections to services. Neither layer should be the only one, because DNS alone cannot move traffic quickly and a proxy alone cannot absorb a flood.",
+          "cites": [
+            "s9",
+            "s10"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "anycast-and-cdns",
+      "title": "Anycast and CDNs: the edge as one address",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Anycast makes the whole edge one address. Many sites announce the same prefix, Internet routing carries each client to the nearest one, and every server at that site can accept a connection to any of the announced addresses. Cloudflare describes its network this way: data centres in more than two hundred cities serve the same IP addresses, a layer 4 balancer inside each site picks the server, and connections may stay up for days. The trade-off is that a routing change can move a client's packets to a different site in the middle of a connection, so state tied to a connection must live where any site can reach it, or the design must tolerate a reconnect.",
+          "cites": [
+            "s10"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "A CDN is the layer 7 edge with a cache in it. Static responses are stored at the site nearest the user and served without a trip to the origin, so the user pays only the short round trip to the edge and the origin sees one fetch per object per site instead of one per user. Dynamic responses still pass through, but they benefit from the edge's warm, long-lived connections to the origin, which is where the handshake savings of the previous subtopics are collected.",
+          "cites": [
+            "s11",
+            "s10"
+          ]
+        },
+        {
+          "type": "list",
+          "items": [
+            "The cache key: which parts of the request identify a cacheable response (path, selected query parameters, selected headers) and which must be ignored so that the same object is not stored many times.",
+            "Freshness: how long the edge may serve a stored response without asking the origin, set by the origin's cache headers or an edge rule.",
+            "Invalidation: how a changed object is removed before its freshness expires, by purge or by versioned URLs.",
+            "Bypass: which responses must never be cached, such as anything personalised or carrying a session cookie."
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The lesson on caching treats the freshness and invalidation story in depth; here the point is architectural. A CDN removes the long round trip for the responses it can store, and an anycast edge with pooled connections shortens the handshake part of every other response. Together they are why a global product can meet a latency budget that a single origin never could.",
+          "cites": [
+            "s1",
+            "s11"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Terminate TLS as close to the user as you can and keep the connections behind that point long-lived. The user pays short handshakes to a nearby edge; the long haul to the origin runs on a connection that was opened once.",
+          "cites": [
+            "s11"
+          ]
+        }
+      ]
     }
   ],
-  "diagram": {
-    "source": "sequenceDiagram\n  participant C as Client\n  participant R as DNS resolver\n  participant P as Edge proxy\n  participant S as Service\n  C->>R: Resolve hostname\n  R-->>C: IP address with TTL\n  C->>P: TCP handshake\n  C->>P: TLS handshake\n  C->>P: HTTP/2 request\n  P->>S: Request on pooled upstream connection\n  S-->>P: Response\n  P-->>C: Response on same stream"
+  "worked_example": {
+    "title": "Worked example: fitting a Sydney user into a 300 ms budget with the service in Virginia",
+    "blocks": [
+      {
+        "type": "p",
+        "text": "A product sets a budget of 300 ms from a click to the first byte of the response for users in Sydney, with the service running in Virginia. The round trip between the two is taken as 200 ms: the fibre minimum from the table above plus real routing and queueing, an assumption to be replaced by a measurement. Every step below spends or saves whole round trips.",
+        "cites": [
+          "s1"
+        ]
+      },
+      {
+        "type": "steps",
+        "title": "Counting round trips from Sydney to Virginia",
+        "items": [
+          "Budget: 300 ms to the first byte (requirement).",
+          "Round trip Sydney to Virginia: 200 ms (assumption; the fibre minimum is 160 ms).",
+          "DNS miss: 1 round trip to an authoritative server, 200 ms, before anything else; a cached answer costs nothing.",
+          "TCP handshake to Virginia: 1 round trip, 200 ms.",
+          "TLS 1.3 handshake: 1 round trip, 200 ms.",
+          "The request itself: 1 round trip, 200 ms.",
+          "Total on a cold start: 4 round trips, 800 ms, nearly 3 times the budget; even with the lookup cached it is 600 ms.",
+          "Move the edge: an anycast or regional edge in Sydney 20 ms away. DNS, TCP and TLS now cost 3 round trips of 20 ms, which is 60 ms.",
+          "The edge forwards on a pooled, already-open connection to Virginia: 1 round trip, 200 ms, no handshake.",
+          "New total: 260 ms on a cold start, inside the budget with 40 ms to spare; a returning user with a resumed session saves one more edge round trip.",
+          "The decider: the one long round trip. If the response needs a second dependent call to Virginia, the budget is gone; the remaining options are to move data to the edge, to cache the response there, or to make the second call asynchronous."
+        ],
+        "cites": [
+          "s1",
+          "s2",
+          "s3",
+          "s11"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "The budget as a reviewer should receive it.",
+        "columns": [
+          "stage",
+          "direct to Virginia",
+          "through a Sydney edge"
+        ],
+        "rows": [
+          [
+            "DNS lookup on a miss",
+            "200 ms",
+            "20 ms"
+          ],
+          [
+            "TCP handshake",
+            "200 ms",
+            "20 ms"
+          ],
+          [
+            "TLS 1.3 handshake",
+            "200 ms",
+            "20 ms"
+          ],
+          [
+            "Request and response",
+            "200 ms",
+            "200 ms on a pooled connection"
+          ],
+          [
+            "Total, cold start",
+            "800 ms",
+            "260 ms"
+          ],
+          [
+            "Total, lookup cached",
+            "600 ms",
+            "240 ms"
+          ]
+        ],
+        "cites": [
+          "s1",
+          "s3"
+        ]
+      },
+      {
+        "type": "code",
+        "lang": "bash",
+        "code": "# print where one request spends its time: lookup, connect, TLS, first byte, total\ncurl -o /dev/null -s -w 'dns %{time_namelookup}s  tcp %{time_connect}s  tls %{time_appconnect}s  first-byte %{time_starttransfer}s  total %{time_total}s\\n' https://example.com/\n\n# the same request twice on one connection: the second pays no handshake\ncurl -o /dev/null -o /dev/null -s -w 'first-byte %{time_starttransfer}s\\n' https://example.com/ https://example.com/",
+        "caption": "curl's timing variables separate the stages this lesson counted. Run it from the user's region, not from the data centre."
+      }
+    ]
   },
+  "diagram": null,
   "code": [],
   "technologies": [
     "nginx",
@@ -88,35 +759,142 @@
   ],
   "sources": [
     {
-      "kind": "doc",
-      "title": "nginx HTTP/2 module",
-      "url": "https://nginx.org/en/docs/http/ngx_http_v2_module.html"
+      "id": "s1",
+      "title": "High Performance Browser Networking, chapter 1, Primer on Latency and Bandwidth (Ilya Grigorik, O'Reilly 2013, free online): the speed of light in fibre, the round-trip table and last-mile latency",
+      "url": "https://hpbn.co/primer-on-latency-and-bandwidth/",
+      "kind": "book",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "New York to Sydney"
+      }
     },
     {
-      "kind": "doc",
-      "title": "nginx WebSocket proxying",
-      "url": "https://nginx.org/en/docs/http/websocket.html"
+      "id": "s2",
+      "title": "High Performance Browser Networking, chapter 2, Building Blocks of TCP: the three-way handshake, slow-start and the 64 KB fetch over a new versus a reused connection",
+      "url": "https://hpbn.co/building-blocks-of-tcp/",
+      "kind": "book",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "264 ms to transfer a 64 KB file on a new TCP connection"
+      }
     },
     {
-      "kind": "doc",
-      "title": "nginx SSL module",
-      "url": "https://nginx.org/en/docs/http/ngx_http_ssl_module.html"
+      "id": "s3",
+      "title": "High Performance Browser Networking, chapter 4, Transport Layer Security: the full and abbreviated handshakes, session tickets, OCSP stapling and the TLS 1.3 round-trip goals",
+      "url": "https://hpbn.co/transport-layer-security-tls/",
+      "kind": "book",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "1-RTT for new, and 0-RTT for resumed sessions"
+      }
     },
     {
+      "id": "s4",
+      "title": "RFC 9000, QUIC: A UDP-Based Multiplexed and Secure Transport (IETF, May 2021): the combined handshake, 0-RTT and its replay caveat, streams without head-of-line blocking, connection migration",
+      "url": "https://www.rfc-editor.org/rfc/rfc9000.html",
       "kind": "doc",
-      "title": "RFC 9110 HTTP Semantics",
-      "url": "https://www.rfc-editor.org/rfc/rfc9110.html"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "avoidance of head-of-line blocking across multiple streams"
+      }
     },
     {
+      "id": "s5",
+      "title": "High Performance Browser Networking, chapter 12, HTTP/2: binary framing, multiplexing, one connection per origin, and the head-of-line blocking that remains at the TCP layer",
+      "url": "https://hpbn.co/http2/",
+      "kind": "book",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "One Connection Per Origin"
+      }
+    },
+    {
+      "id": "s6",
+      "title": "RFC 9110, HTTP Semantics (IETF, June 2022), section 9.2: safe and idempotent methods and the rules for automatic retries",
+      "url": "https://www.rfc-editor.org/rfc/rfc9110.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "PUT, DELETE, and safe request methods are idempotent"
+      }
+    },
+    {
+      "id": "s7",
+      "title": "RFC 6455, The WebSocket Protocol (IETF, December 2011): the Upgrade handshake, status 101, framing, Ping and Pong",
+      "url": "https://www.rfc-editor.org/rfc/rfc6455.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "101 Switching Protocols"
+      }
+    },
+    {
+      "id": "s8",
+      "title": "High Performance Browser Networking, chapter 16, Server-Sent Events: the EventSource interface, text/event-stream, automatic reconnection and the last event id",
+      "url": "https://hpbn.co/server-sent-events-sse/",
+      "kind": "book",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "text/event-stream"
+      }
+    },
+    {
+      "id": "s9",
+      "title": "Site Reliability Engineering, chapter 19, Load Balancing at the Frontend (Google, 2016, free online): DNS load balancing and its resolver problem, virtual IPs, consistent hashing, GRE encapsulation",
+      "url": "https://sre.google/sre-book/load-balancing-frontend/",
+      "kind": "book",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Load Balancing at the Virtual IP Address"
+      }
+    },
+    {
+      "id": "s10",
+      "title": "Cloudflare blog, Unimog: Cloudflare's edge load balancer (2020-09-09): an anycast network, layer 4 balancing inside a data centre, long-lived connections",
+      "url": "https://blog.cloudflare.com/unimog-cloudflares-edge-load-balancer/",
       "kind": "article",
-      "title": "What is DNS (Cloudflare Learning)",
-      "url": "https://www.cloudflare.com/learning/dns/what-is-dns/"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Cloudflare operates an anycast network"
+      }
+    },
+    {
+      "id": "s11",
+      "title": "Cloudflare blog, How we built Pingora, the proxy that connects Cloudflare to the Internet (2022-09-14): connection reuse and its measured effect on time to first byte",
+      "url": "https://blog.cloudflare.com/how-we-built-pingora-the-proxy-that-connects-cloudflare-to-the-internet/",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "connection reuse ratio from 87.1% to 99.92%"
+      }
+    },
+    {
+      "id": "s12",
+      "title": "Slack Engineering, Real-time Messaging (2023-04-11): one persistent WebSocket per client, Envoy at the edge, channel servers mapped by consistent hashing",
+      "url": "https://slack.engineering/real-time-messaging/",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "about 16 million channels are served per host"
+      }
     }
   ],
   "practice": "practice/sd-networking",
   "provenance": {
-    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
-    "generated_on": "2026-10-13",
+    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center, format v2",
+    "generated_on": "2026-10-15",
     "reviewed_by": null,
     "reviewed_on": null
   },
@@ -125,6 +903,21 @@
       "version": 1,
       "date": "2026-10-13",
       "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-15",
+      "change": "rewritten by hand from primary sources at format v2 (learning-center-lesson:2): 6 subtopics with the round-trip, last-mile, TTL, handshake, HTTP-version and layer 4 versus layer 7 tables, a decision block over polling, long polling, server-sent events and WebSockets, the TCP slow-start example as steps, a Sydney to Virginia latency budget as the worked example with the curl timing command after the teaching, cited in-practice blocks (Google, Cloudflare, Slack), 12 verified sources with ids"
+    },
+    {
+      "version": 3,
+      "date": "2026-10-15",
+      "change": "rewritten by hand from primary sources at format v2 (learning-center-lesson:2): 8 subtopics with the round-trip, last-mile, TTL, handshake, HTTP-version and layer 4 versus layer 7 tables, a decision block over polling, long polling, server-sent events and WebSockets, the TCP slow-start example as steps, a Sydney to Virginia latency budget as the worked example with the curl timing command after the teaching, cited in-practice blocks (Google, Cloudflare, Slack), 12 verified sources with ids"
+    },
+    {
+      "version": 4,
+      "date": "2026-10-15",
+      "change": "rewritten by hand from primary sources at format v2 (learning-center-lesson:2): 8 subtopics with the round-trip, last-mile, TTL, handshake, HTTP-version and layer 4 versus layer 7 tables, a decision block over polling, long polling, server-sent events and WebSockets, the TCP slow-start example as steps, a Sydney to Virginia latency budget as the worked example with the curl timing command after the teaching, cited in-practice blocks (Google, Cloudflare, Slack), 12 verified sources with ids"
     }
   ]
 }
