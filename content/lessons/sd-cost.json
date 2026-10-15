@@ -1,7 +1,7 @@
 {
-  "schema_version": "learning-center-lesson:1",
+  "schema_version": "learning-center-lesson:2",
   "id": "sd-cost",
-  "version": 1,
+  "version": 2,
   "status": "published",
   "superseded_by": null,
   "title": "Cost as a design constraint",
@@ -16,70 +16,615 @@
     "cost-efficiency",
     "cloud-infrastructure"
   ],
-  "summary": "Cost is a design constraint like latency or availability: every architectural choice has a price, and the right design delivers the required outcome at the lowest sustainable spend. A designer should be able to state what a request, a tenant or a gigabyte costs, which components drive the bill, and what extra reliability would cost. Cloud well-architected frameworks and the FinOps practice give the vocabulary and the operating model.",
+  "summary": "Cost is a design constraint like latency or availability: every architectural choice has a price, and the right design meets the requirement at the lowest sustainable spend. This lesson lays out what a cloud bill is made of and which transfers are free, unit economics as the measure that makes spend comparable, the design levers that change the bill with the discounts each carries, the FinOps operating model, the cost of each extra nine, what a design document's cost section must contain, and a worked costing of one pipeline two ways from dated unit prices.",
   "detail": [],
-  "in_practice": "Resources are tagged by team, service and environment at creation through infrastructure-as-code policy, so the bill can be allocated without manual work. Each team reviews its spend and unit cost monthly, with budget and anomaly alerts in between, and a central group buys commitment discounts for the measured baseline. Design proposals include a cost estimate with the dominant terms and the alternative considered. Rightsizing and lifecycle recommendations are worked as ordinary backlog items, prioritised by saving against effort and risk.",
+  "in_practice": {
+    "blocks": [
+      {
+        "type": "table",
+        "caption": "37signals' cloud exit, in the company's own figures.",
+        "columns": [
+          "measure",
+          "value"
+        ],
+        "rows": [
+          [
+            "Cloud run rate before the exit",
+            "$3.2 million a year"
+          ],
+          [
+            "Cloud bill in 2024, the first clean year",
+            "$1.3 million, nearly all of it S3"
+          ],
+          [
+            "Hardware bought for the exit",
+            "about $700,000, recouped during 2023"
+          ],
+          [
+            "Data still in S3",
+            "almost 10 petabytes, duplicated across regions"
+          ],
+          [
+            "Projected saving over five years",
+            "well over $10 million"
+          ]
+        ],
+        "cites": [
+          "s12"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "The same post is candid about what the comparison leaves out: a company entirely in the cloud with no racks would pay for colocation too, the savings estimate excludes some of those costs, and the lead time for new servers is weeks rather than minutes. The team running the systems stayed the same size through the move, which is the claim the post rests on for the operating cost.",
+        "cites": [
+          "s12"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Google's SRE book records how Bigtable's cost was made visible to its users: low-latency clusters with slack capacity for services that need them, and throughput clusters run hot with less redundancy at perhaps 10 to 50 percent of the cost, so that each client picks the level of service with the lowest cost that still meets its needs. The chapter presents the same logic for products, with an availability target that is exceeded but not by much, because the margin would otherwise be spent on features or technical debt.",
+        "cites": [
+          "s7"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "AWS's own cost pillar gives its consumption-model example with numbers: development and test environments are typically used for eight hours a day during the working week, and stopping them when not in use is a potential saving of 75 percent, 40 hours against 168. The Lambda pricing page's worked example applies a 72 percent three-year Compute Savings Plan discount to an on-demand instance price, which is the rate lever stated by the provider rather than estimated.",
+        "cites": [
+          "s1",
+          "s8"
+        ]
+      }
+    ]
+  },
   "subtopics": [
     {
-      "body": [
+      "id": "what-the-bill-is-made-of",
+      "title": "What the bill is made of",
+      "blocks": [
         {
-          "body": "Build the cost model from the same numbers as the capacity model. Sum compute (instance hours at the planned replica count), storage (gigabytes per month by tier, times replication factor, plus backups), network (especially data leaving a region or the cloud, and cross-zone traffic), and managed service charges per request or per unit of throughput. Then divide by a business unit to get cost per thousand requests, per active user or per tenant. Unit cost is what makes spend comparable over time: total spend rising while unit cost falls is healthy growth, and the reverse signals a design problem.",
-          "heading": "Estimating the bill from the design"
+          "type": "p",
+          "text": "A cloud bill is a sum of metered units, and a designer who knows the units can read a design as a bill. Compute is sold by instance hour or, for serverless functions, by request and by memory-seconds; storage by gigabyte-month per class, with requests and retrievals charged separately; managed services by request, by throughput unit or by provisioned capacity; and the network by the gigabyte for the paths that are not free. AWS's own pricing pages give the shape: a function costs a fee per million requests plus a fee per gigabyte-second of duration, an object store charges a small fee per thousand GET requests on top of storage, and an instance has an hourly on-demand price that commitment discounts reduce.",
+          "cites": [
+            "s8",
+            "s9"
+          ]
         },
         {
-          "body": "In most systems a few lines account for most of the bill. Common surprises are data transfer between zones or out to the internet, observability data volume, over-retained storage and snapshots, idle non-production environments, and chatty calls to per-request-priced services. Identify the dominant term early, since it tells you where design effort pays back and where optimisation would be wasted.",
-          "heading": "Finding what dominates"
+          "type": "table",
+          "caption": "Units of pricing on AWS, with the figures stated on the pricing pages as of 2026-10-15.",
+          "columns": [
+            "resource",
+            "metered as",
+            "a stated price",
+            "what moves it"
+          ],
+          "rows": [
+            [
+              "Instance compute",
+              "instance hours",
+              "m7g.xlarge at $0.1632 per hour on demand in US East",
+              "instance family, commitment, Spot"
+            ],
+            [
+              "Function compute",
+              "requests plus gigabyte-seconds",
+              "$0.20 per million requests; $0.0000167 per GB-second",
+              "memory setting, duration, invocation count"
+            ],
+            [
+              "Object storage requests",
+              "per thousand requests by type",
+              "GET at $0.0004 per 1,000 from S3 Standard",
+              "read pattern, small objects, listing"
+            ],
+            [
+              "Object storage",
+              "gigabyte-months by class, plus retrieval",
+              "by class; minimum durations in archive classes",
+              "retention, lifecycle, class"
+            ],
+            [
+              "Data transfer",
+              "gigabytes out, by destination",
+              "inbound and same-zone free",
+              "zone layout, NAT, egress to the internet"
+            ]
+          ],
+          "cites": [
+            "s8",
+            "s9",
+            "s10"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Data transfer is the term designers forget, and the AWS architecture blog on the subject sets out the rules. Inbound transfer from the internet is free across services and regions; transfer within one Availability Zone is free; transfer out to the internet is charged per service at the originating region's rates; reaching public service endpoints through an internet gateway in the same region carries no transfer charge, but the same path through a NAT gateway carries a data processing charge; and Transit Gateway adds an hourly charge per attachment plus processing per gigabyte.",
+          "cites": [
+            "s10"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The consequence for a design is that the cheapest topology keeps chatty components in one zone where latency allows, places replicas across zones deliberately rather than by accident, and routes traffic to managed services through endpoints rather than NAT. The line that surprises most teams is cross-zone chatter between tiers that were spread across zones for availability without anyone pricing the replication and the calls between them."
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Write the design as a list of metered units before pricing it: instance hours, requests, gigabyte-seconds, gigabyte-months per class, gigabytes out by destination. If a unit cannot be named, the cost cannot be estimated.",
+          "cites": [
+            "s8",
+            "s9",
+            "s10"
+          ]
         }
-      ],
+      ]
+    },
+    {
       "id": "unit-economics",
-      "title": "Cost models and unit economics"
-    },
-    {
-      "body": [
+      "title": "Unit economics: cost per unit of value",
+      "blocks": [
         {
-          "body": "Paying only for what is consumed is a core principle of the cloud cost pillars. Right-size instances from measured utilisation rather than guesses, scale in during quiet periods, and stop non-production environments outside working hours. Choose the pricing model by workload shape: commitment discounts for the steady baseline, on-demand for the variable part, and spare-capacity or spot instances for interruptible, stateless or batch work that tolerates eviction. Serverless and per-request services suit spiky or low volume and become expensive at sustained high throughput, so recheck the choice as load grows.",
-          "heading": "Match supply to demand"
+          "type": "p",
+          "text": "Total spend says little on its own. The FinOps principles state that unit economic and value-based metrics demonstrate business impact better than aggregate or categorised spend, and that business value, not cost alone, drives technology decisions: conscious trade-offs among cost, quality and speed. The unit is whatever the product sells or serves: a request, an active user, a tenant, a gigabyte stored, a job processed. Spend divided by that unit is the number that stays comparable as the product grows.",
+          "cites": [
+            "s5"
+          ]
         },
         {
-          "body": "Storage cost is governed by tiering and lifecycle: move cold data to cheaper classes, set retention and expiry policies, compress, and avoid keeping more replicas than the durability target needs. Keep chatty components in the same zone or region to cut transfer charges, and put a content delivery network or cache in front of expensive origins. Batch and move work to asynchronous processing to smooth peaks and run on cheaper capacity. Prefer managed services where they remove operational labour, since engineer time is part of total cost.",
-          "heading": "Data and architecture choices"
-        }
-      ],
-      "id": "design-levers",
-      "title": "Design levers that change cost"
-    },
-    {
-      "body": [
-        {
-          "body": "FinOps is the operating model in which engineering, finance and product share responsibility for cloud spend. The framework describes three phases that teams iterate through: Inform, which makes cost visible and allocates it to owners; Optimize, which identifies and prioritises savings such as rate commitments and usage reductions; and Operate, which builds the policies, automation and review cadence that keep it working. Allocation depends on consistent tagging or labelling of every resource by team, service and environment, plus a rule for splitting shared platform costs.",
-          "heading": "The practice"
+          "type": "p",
+          "text": "Azure's first cost principle is to develop a cost model before any tracking: a model that segments expenses, estimates total cost of ownership including support and implementation, identifies the cost drivers early and predicts how growth or shrinkage changes spending. Google's first principle is the same from the other side: cloud resources must deliver measurable business value, which requires aligning spending with business objectives, and a culture in which everyone considering a change has the cost information to weigh it.",
+          "cites": [
+            "s3",
+            "s4"
+          ]
         },
         {
-          "body": "Teams receive showback or chargeback reports with their own spend and unit costs, budgets with alerts, and anomaly detection that flags sudden changes. Cost appears on service dashboards beside latency and error rate, and significant design changes include a cost estimate. The aim is not minimum spend but informed trade-offs: a team may choose to spend more for speed or reliability, as long as the choice is explicit and owned.",
-          "heading": "What engineers see"
+          "type": "steps",
+          "title": "From a monthly bill to a unit cost",
+          "items": [
+            "Take one month's bill for the service, tagged to it: $18,000 (assumption).",
+            "Count the units served in the month: 60 million requests (assumption).",
+            "Unit cost: $18,000 divided by 60 million is $0.0003 per request, or $0.30 per 1,000 requests.",
+            "Find the dominant term: egress at $7,200 is 40 percent of the bill, so it is the term the design should attack first.",
+            "Compare over time: the month before was $0.33 per 1,000 requests, so the unit cost fell while the bill rose, which is healthy growth.",
+            "Set the budget line as a unit cost, $0.30 per 1,000 requests, and alert on it, not on the total."
+          ],
+          "cites": [
+            "s5",
+            "s3"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Two unit costs are usually needed: a resource efficiency metric, such as cost per million requests, which engineers can act on, and a business metric, such as cost per active customer, which product and finance can act on, with the relation between them documented. A design that cannot be expressed in both has either a missing tag or a missing definition of what it is for.",
+          "cites": [
+            "s5"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Report spend as a unit cost against the unit the product sells. Total spend rising while unit cost falls is growth; the reverse is a design problem, whatever the total.",
+          "cites": [
+            "s5",
+            "s4"
+          ]
         }
-      ],
+      ]
+    },
+    {
+      "id": "the-levers",
+      "title": "The levers that change the bill",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The AWS cost pillar's principles name the levers in order. Adopt a consumption model: pay only for what is consumed and scale usage with the business; its example is a development environment used eight hours a day on working days, which can be stopped outside those hours for a potential saving of 75 percent, 40 hours against 168. Measure overall efficiency as business output against cost. Stop spending on undifferentiated heavy lifting by using managed services where they remove operational work. Analyse and attribute expenditure so that owners see their own costs.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The pillar's demand-and-supply guidance adds the two mechanisms behind the consumption model. Supply can be matched to demand just in time, eliminating overprovisioning, but balanced against the need to provision for resource failures, high availability and provisioning time. And demand itself can be modified with a throttle, a buffer or a queue to smooth it and serve it with fewer resources, provided the acceptable and maximum delay of the workload is known.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The pricing and architecture levers, with the discounts stated on AWS pages as of 2026-10-15.",
+          "columns": [
+            "lever",
+            "what it does",
+            "fits",
+            "the risk or cost"
+          ],
+          "rows": [
+            [
+              "Right-size from measured utilisation",
+              "smaller or fewer instances",
+              "any steady tier",
+              "needs the measurements; undersizing shows as latency"
+            ],
+            [
+              "Scale in and stop idle environments",
+              "pay for the hours used",
+              "non-production, diurnal services",
+              "startup time; the AWS example saves 75 percent on an 8-hour environment"
+            ],
+            [
+              "Commitment discounts",
+              "lower hourly rate for a term",
+              "the steady baseline",
+              "the Lambda example applies a 72 percent three-year Compute Savings Plan discount; commitment outlives the design"
+            ],
+            [
+              "Spot capacity",
+              "up to 90 percent off On-Demand",
+              "interruptible, stateless or batch work",
+              "capacity can be reclaimed; the work must tolerate interruption"
+            ],
+            [
+              "Serverless per-request pricing",
+              "zero cost at zero load",
+              "spiky or low volume",
+              "per-request cost overtakes a fleet at sustained throughput"
+            ],
+            [
+              "Queue, buffer, throttle",
+              "serve peaks with fewer resources",
+              "work with a tolerable delay",
+              "the delay must be stated and acceptable"
+            ],
+            [
+              "Storage tiering and retention",
+              "cheaper classes, expiry",
+              "logs, backups, cold data",
+              "retrieval fees and minimum durations in archive classes"
+            ],
+            [
+              "Caching and a CDN",
+              "fewer origin requests and less egress",
+              "read-heavy public content",
+              "staleness; the cache's own cost"
+            ]
+          ],
+          "cites": [
+            "s1",
+            "s2",
+            "s8",
+            "s11",
+            "s9"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The levers interact with the other constraints. Commitments reduce the rate but not the usage, so right-size first and commit second. Spot and scale-to-zero cut cost by accepting interruption or startup delay, which the reliability and capacity lessons price in minutes of error budget and seconds of startup. Per-request pricing is the cheapest design at low volume and the most expensive at high volume, so the choice must be rechecked as load grows, with the crossover computed from the unit prices rather than assumed."
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Usage first, then rate: remove waste and match supply to demand before buying commitments, and recheck serverless against a fleet at each doubling of load.",
+          "cites": [
+            "s1",
+            "s2"
+          ]
+        }
+      ]
+    },
+    {
       "id": "finops-operating-model",
-      "title": "FinOps: visibility and accountability"
-    },
-    {
-      "body": [
+      "title": "FinOps: visibility, allocation and accountability",
+      "blocks": [
         {
-          "body": "Each additional increment of availability costs considerably more than the last: more redundant capacity, more regions, more engineering time and slower feature delivery. The site reliability engineering view is that a service should be as reliable as its users need and no more, since reliability beyond what users can perceive is waste. Users on a network that is itself less reliable than the service will not notice the difference. Set the availability target from the business value of the extra uptime compared with its cost, then manage against that target with an error budget.",
-          "heading": "Reliability has a price curve"
+          "type": "p",
+          "text": "FinOps, in the FinOps Foundation's definition, is an operational framework and cultural practice that maximises the business value of technology, enables timely data-driven decisions, and creates financial accountability through collaboration between engineering, finance and business teams. It is performed by working iteratively through three phases. In Inform, the organisation examines cost, usage and efficiency data: ingestion, allocation, reporting, forecasting and unit economics. In Optimize, it identifies opportunities such as rightsizing, modern architectures and the elimination of waste. In Operate, it builds the policies, automation and cadence that keep the first two going, and the page is explicit that the phases are cycled rapidly rather than completed once.",
+          "cites": [
+            "s6"
+          ]
         },
         {
-          "body": "Not every component needs the same tier. A checkout path may justify multi-zone active redundancy, while a reporting job can run on interruptible capacity and retry. State the target per component, cost the options, for example single zone, multi-zone and multi-region, and pick the cheapest that meets the target. The same reasoning applies to performance: quantify what lower latency or longer retention is worth before paying for it.",
-          "heading": "Applying it in a design"
+          "type": "table",
+          "caption": "The FinOps principles and what each asks of an engineering team.",
+          "columns": [
+            "principle",
+            "for the team that owns a design"
+          ],
+          "rows": [
+            [
+              "Teams need to collaborate",
+              "finance, product and engineering decide together, at the granularity each category needs"
+            ],
+            [
+              "Business value drives technology decisions",
+              "unit economics over aggregate spend; conscious trade-offs among cost, quality and speed"
+            ],
+            [
+              "Everyone takes ownership for their technology usage",
+              "accountability pushed to the edge: engineers own cost from design to operation, against budgets they help set"
+            ],
+            [
+              "FinOps data should be accessible, timely and accurate",
+              "cost data shared as soon as it exists; real-time visibility changes behaviour"
+            ],
+            [
+              "FinOps should be enabled centrally",
+              "a central function evangelises and enables; it does not own every team's bill"
+            ],
+            [
+              "Take advantage of the variable cost model of the cloud",
+              "just-in-time prediction, planning and purchasing of capacity to reduce waste"
+            ]
+          ],
+          "cites": [
+            "s5"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Allocation is what makes ownership real: every resource carries the tags or labels that map it to a team, a service and an environment, shared platform costs are split by a stated rule, and the result is shown back to each team as its own spend and unit cost. Azure's principle of cost-management discipline adds the governance: an accountability model with assigned roles, realistic budgets covering functional and non-functional requirements and growth, notifications when thresholds are exceeded, and a channel for communicating the cost implications of design changes learned from production.",
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The AWS pillar frames the same culture as cloud financial management, a capability to be built deliberately with knowledge, programmes and processes, in the same way an organisation builds security or operations capability, and it asks for expenditure to be analysed and attributed so that usage changes where the owners are.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Tag at creation through the infrastructure code, show each team its spend and unit cost, and put a budget with an alert on every service. A cost nobody owns is a cost nobody reduces.",
+          "cites": [
+            "s5",
+            "s3",
+            "s1"
+          ]
         }
-      ],
-      "id": "cost-of-reliability",
-      "title": "Trading cost against reliability and performance"
+      ]
+    },
+    {
+      "id": "cost-against-reliability",
+      "title": "Trading cost against reliability and performance",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The SRE book's chapter on risk states the shape of the reliability cost curve: cost does not rise linearly with reliability, and an incremental improvement may cost a hundred times the previous one, in redundant compute and equipment and in the opportunity cost of engineers not building features. Users mostly cannot tell: a user on a smartphone that is 99 percent reliable cannot distinguish a service at four nines from one at five. So the target is set where the business value of the extra reliability exceeds its cost, and then treated as both a minimum and a maximum.",
+          "cites": [
+            "s7"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The chapter's worked trade-off for one more nine, where every request has equal value.",
+          "columns": [
+            "quantity",
+            "value"
+          ],
+          "rows": [
+            [
+              "Proposed change",
+              "99.9 to 99.99 percent"
+            ],
+            [
+              "Increase in availability",
+              "0.09 percent"
+            ],
+            [
+              "Service revenue",
+              "$1 million"
+            ],
+            [
+              "Value of the improvement",
+              "$900: the most the extra nine may cost before it loses money"
+            ]
+          ],
+          "cites": [
+            "s7"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The chapter's infrastructure example is the pattern for a design: Bigtable offers low-latency clusters with slack capacity and more redundancy for clients that need them, and throughput clusters run hot with less redundancy for clients that do not, the latter at perhaps 10 to 50 percent of the cost. Delineated levels of service expose the cost difference to clients, who then pick the cheapest level that meets their need: critical data in the globally consistent store, optional data in the cheaper eventually consistent one.",
+          "cites": [
+            "s7"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Azure's principles say the same about every quality: expect trade-offs with security, scalability, resilience and operability, and make them against stated requirements rather than by default. In a design that means a target per component, not per system: a checkout path may justify multi-zone active redundancy while a reporting job runs on interruptible capacity and retries, and a stated latency or retention requirement is priced before it is granted.",
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Price each quality per component: the cost of single-zone, multi-zone and multi-region for this tier, against the revenue or budget the extra protection defends. Pick the cheapest option that meets the stated target.",
+          "cites": [
+            "s7",
+            "s3"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cost-in-the-design-document",
+      "title": "Cost in the design document",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "A design document carries a cost section the way it carries a capacity section, and the two share their inputs. The section states the metered units the design consumes, the unit prices with their date and source, the monthly cost at the planned load and at ten times it, the dominant term, the unit cost against the product's unit, and at least one alternative at a different cost point with its consequences. Google's pillar asks for the review to continue after launch, optimising continuously and addressing inefficiencies before they become significant; Azure's asks that cost implications learned from production feed back into design.",
+          "cites": [
+            "s4",
+            "s3"
+          ]
+        },
+        {
+          "type": "diagram",
+          "mermaid": "flowchart LR\n  I[Inform: tag, allocate, show unit cost] --> O[Optimize: rightsize, commit, tier, remove waste]\n  O --> P[Operate: budgets, policies, reviews, automation]\n  P --> I\n  D[Design review with cost estimate] --> I\n  S[Reliability target per component] --> D",
+          "legend": "The FinOps cycle with the design review feeding it: the reliability target per component sets what the design may cost, and the estimate enters the Inform phase as the first forecast (s6, s3)."
+        },
+        {
+          "type": "table",
+          "caption": "The questions a cost review asks of a design, and the evidence each needs.",
+          "columns": [
+            "question",
+            "evidence"
+          ],
+          "rows": [
+            [
+              "What are the metered units and the prices?",
+              "a table with the date and the pricing page for each price"
+            ],
+            [
+              "Which term dominates, and at 10x?",
+              "the sum at both loads; the term that grows fastest"
+            ],
+            [
+              "What is the unit cost?",
+              "spend per request, user or tenant, and the budget line it is held to"
+            ],
+            [
+              "What is the cheaper design, and what does it give up?",
+              "an alternative with its latency, availability or operational cost"
+            ],
+            [
+              "Who owns the bill?",
+              "the tags, the budget and the alert"
+            ],
+            [
+              "When is this choice rechecked?",
+              "the load at which serverless or a managed premium stops paying, written down"
+            ]
+          ],
+          "cites": [
+            "s4",
+            "s3",
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The most useful line in the section is the crossover: the load at which the chosen option stops being the cheapest, computed from the unit prices. A serverless pipeline that is cheapest at a million events a day may cost more than a small fleet at a hundred million, and a design that states the crossover gives the team a trigger for the migration rather than a surprise on the bill."
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "No design review without a cost table: units, dated prices, the dominant term at planned load and at 10x, the unit cost, and the alternative. A paragraph of estimates hides the term that matters.",
+          "cites": [
+            "s4",
+            "s3"
+          ]
+        }
+      ]
     }
   ],
-  "diagram": {
-    "source": "flowchart LR\n  I[Inform: tag, allocate, show unit cost] --> O[Optimize: rightsize, commit, tier, remove waste]\n  O --> P[Operate: budgets, policies, reviews, automation]\n  P --> I\n  D[Design review with cost estimate] --> I\n  S[Reliability target per component] --> D"
+  "worked_example": {
+    "title": "Worked example: costing a thumbnail pipeline two ways",
+    "blocks": [
+      {
+        "type": "p",
+        "text": "A photo product generates thumbnails for every upload and serves them to the web. The team costs the pipeline on serverless functions and on a small instance fleet. Prices marked stated are taken from the AWS pricing pages as of 2026-10-15 and cited; prices marked assumed are stand-ins that must be checked against the price list before the number is used. The script after the steps recomputes everything."
+      },
+      {
+        "type": "steps",
+        "title": "From uploads to a monthly bill and a unit cost",
+        "items": [
+          "Uploads: 50 million a month (assumption), each producing one function invocation.",
+          "Function duration: 1 GB of memory for 0.5 seconds per image (assumption, from a test), so 25 million GB-seconds a month.",
+          "Function duration cost: 25 million times $0.0000167 per GB-second (stated) is about $418.",
+          "Function requests: 50 million at $0.20 per million (stated) is $10.",
+          "Thumbnail reads: 200 million GET requests a month (assumption) at $0.0004 per 1,000 (stated) is $80.",
+          "Storage growth: 50 million thumbnails of 200 kB is 10 TB a month, at an assumed $0.023 per GB-month, about $230 for the first month and growing by that each month.",
+          "Egress: 200 million reads of 200 kB is 40 TB a month to the internet, at an assumed $0.09 per GB, about $3,600.",
+          "Serverless total in month one: about $4,340, of which egress is 83 percent, so egress is the dominant term, not compute.",
+          "Fleet alternative: 3 m7g.xlarge instances (assumption) at $0.1632 per hour on demand (stated) for 730 hours is about $357 a month, idle at night.",
+          "Fleet with commitment: the 72 percent three-year Compute Savings Plan discount in the Lambda page's example gives about $100 a month, but commits for three years.",
+          "Crossover: compute is $428 serverless against $357 on demand at 50 million uploads, so the fleet wins only slightly here and loses at lower volume; the choice is not where the money is.",
+          "The lever: a CDN in front of the thumbnails at an assumed 90 percent hit rate cuts origin egress to 4 TB, about $360, if the CDN's own per-gigabyte price is lower, which must be checked on its page.",
+          "Unit cost: about $4,340 over 50 million uploads is $0.087 per 1,000 uploads before the CDN, and about $1,100 over 50 million, $0.022 per 1,000, after it.",
+          "The decider: egress. The compute choice moves tens of dollars; the delivery path moves thousands, and the design review should spend its time there."
+        ],
+        "cites": [
+          "s8",
+          "s9",
+          "s10"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "The cost section as the review should receive it: month one at 50 million uploads.",
+        "columns": [
+          "term",
+          "units",
+          "unit price",
+          "monthly",
+          "status of the price"
+        ],
+        "rows": [
+          [
+            "Function duration",
+            "25 million GB-seconds",
+            "$0.0000167 per GB-second",
+            "$418",
+            "stated on the S3 page's example"
+          ],
+          [
+            "Function requests",
+            "50 million",
+            "$0.20 per million",
+            "$10",
+            "stated on the Lambda page"
+          ],
+          [
+            "GET requests",
+            "200 million",
+            "$0.0004 per 1,000",
+            "$80",
+            "stated on the S3 page"
+          ],
+          [
+            "Storage, first month",
+            "10 TB",
+            "$0.023 per GB-month",
+            "$230",
+            "assumed; check the S3 page"
+          ],
+          [
+            "Egress to the internet",
+            "40 TB",
+            "$0.09 per GB",
+            "$3,600",
+            "assumed; charged per service and region"
+          ],
+          [
+            "Fleet alternative, on demand",
+            "3 instances, 730 hours",
+            "$0.1632 per hour",
+            "$357",
+            "stated on the Lambda page's example"
+          ]
+        ],
+        "cites": [
+          "s8",
+          "s9",
+          "s10"
+        ]
+      },
+      {
+        "type": "code",
+        "lang": "python",
+        "code": "# unit prices as of 2026-10-15; 'stated' ones are on the cited pricing pages, 'assumed' ones must be checked\nuploads = 50_000_000\nreads = 200_000_000\nthumb_bytes = 200_000\ngb_seconds_per_image = 1.0 * 0.5\n\nprice_gb_second = 0.0000167     # stated\nprice_per_m_requests = 0.20     # stated\nprice_get_per_1000 = 0.0004     # stated\nprice_storage_gb_month = 0.023  # assumed\nprice_egress_gb = 0.09          # assumed\nprice_instance_hour = 0.1632    # stated, m7g.xlarge on demand\n\ncompute = uploads * gb_seconds_per_image * price_gb_second + uploads / 1e6 * price_per_m_requests\ngets = reads / 1000 * price_get_per_1000\nstorage = uploads * thumb_bytes / 1e9 * price_storage_gb_month\negress = reads * thumb_bytes / 1e9 * price_egress_gb\nfleet = 3 * 730 * price_instance_hour\n\ntotal = compute + gets + storage + egress\nprint(f\"serverless compute {compute:,.0f}  gets {gets:,.0f}  storage {storage:,.0f}  egress {egress:,.0f}  total {total:,.0f}\")\nprint(f\"fleet on demand {fleet:,.0f}; egress share {egress / total:.0%}; unit cost {total / uploads * 1000:.3f} per 1,000 uploads\")",
+        "caption": "The cost model as a script: change one price or one assumption and the dominant term and the unit cost follow."
+      }
+    ]
   },
+  "diagram": null,
   "code": [],
   "technologies": [
     "AWS Well-Architected Framework",
@@ -103,35 +648,142 @@
   ],
   "sources": [
     {
+      "id": "s1",
+      "title": "AWS Well-Architected Framework, Cost Optimization Pillar, Design principles (maintained): cloud financial management, the consumption model, measuring efficiency, attribution",
+      "url": "https://docs.aws.amazon.com/wellarchitected/latest/cost-optimization-pillar/design-principles.html",
       "kind": "doc",
-      "title": "AWS Well-Architected cost optimization pillar",
-      "url": "https://docs.aws.amazon.com/wellarchitected/latest/cost-optimization-pillar/welcome.html"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "potential cost savings of 75% (40 hours versus 168 hours)"
+      }
     },
     {
+      "id": "s2",
+      "title": "AWS Well-Architected Framework, Cost Optimization Pillar, Manage demand and supply resources (maintained): throttle, buffer or queue the demand; just-in-time supply against provisioning for failure",
+      "url": "https://docs.aws.amazon.com/wellarchitected/latest/cost-optimization-pillar/manage-demand-and-supply-resources.html",
       "kind": "doc",
-      "title": "Azure Well-Architected cost optimization",
-      "url": "https://learn.microsoft.com/en-us/azure/well-architected/cost-optimization/"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "You can also modify the demand using a throttle, buffer, or queue to smooth the demand and serve it with less resources."
+      }
     },
     {
+      "id": "s3",
+      "title": "Azure Well-Architected Framework, Cost Optimization design principles (Microsoft, maintained): cost-management discipline, the cost model, budgets, the cost-efficiency mindset, usage and rate optimisation",
+      "url": "https://learn.microsoft.com/en-us/azure/well-architected/cost-optimization/principles",
       "kind": "doc",
-      "title": "Google Cloud Well-Architected cost optimization",
-      "url": "https://docs.cloud.google.com/architecture/framework/cost-optimization"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Develop cost-management discipline"
+      }
     },
     {
+      "id": "s4",
+      "title": "Google Cloud Well-Architected Framework, Cost optimization pillar (maintained): align spending with business value, a culture of cost awareness, optimise usage, optimise continuously",
+      "url": "https://docs.cloud.google.com/architecture/framework/cost-optimization",
       "kind": "doc",
-      "title": "FinOps Framework",
-      "url": "https://www.finops.org/framework/"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Foster a culture of cost awareness"
+      }
     },
     {
+      "id": "s5",
+      "title": "FinOps Foundation, FinOps Principles (maintained): collaboration, business value, ownership at the edge, accessible data, central enablement, the variable cost model",
+      "url": "https://www.finops.org/framework/principles/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Unit economic and value-based metrics demonstrate business impact better than just aggregate or categorized technology spend."
+      }
+    },
+    {
+      "id": "s6",
+      "title": "FinOps Foundation, FinOps Phases (maintained): Inform, Optimize and Operate as an iterative cycle",
+      "url": "https://www.finops.org/framework/phases/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "FinOps is performed by working iteratively on the Framework Capabilities through three phases: Inform, Optimize and Operate."
+      }
+    },
+    {
+      "id": "s7",
+      "title": "Site Reliability Engineering, chapter 3, Embracing Risk (Google, 2016, free online): the cost of each increment of reliability, the revenue arithmetic, Bigtable's two service levels",
+      "url": "https://sre.google/sre-book/embracing-risk/",
       "kind": "book",
-      "title": "Embracing risk (SRE book)",
-      "url": "https://sre.google/sre-book/embracing-risk/"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "an incremental improvement in reliability may cost 100x more than the previous increment"
+      }
+    },
+    {
+      "id": "s8",
+      "title": "AWS Lambda pricing (as of 2026-10-15): request and duration pricing, the Managed Instances example with the m7g.xlarge on-demand price and the Compute Savings Plan discount",
+      "url": "https://aws.amazon.com/lambda/pricing/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "EC2 on-demand price: $0.1632 per hour (US East N. Virginia)"
+      }
+    },
+    {
+      "id": "s9",
+      "title": "Amazon S3 pricing (as of 2026-10-15): storage, request and retrieval charges by class, the GET request price and the Lambda GB-second price in the Object Lambda example",
+      "url": "https://aws.amazon.com/s3/pricing/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "S3 GET requests from the S3 Standard storage class cost $0.0004 per 1,000 requests."
+      }
+    },
+    {
+      "id": "s10",
+      "title": "AWS Architecture Blog, Overview of Data Transfer Costs for Common Architectures (2021-06-30): what transfer is free, what is charged, NAT gateway processing, Direct Connect",
+      "url": "https://aws.amazon.com/blogs/architecture/overview-of-data-transfer-costs-for-common-architectures/",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Data transfer within the same Availability Zone is free."
+      }
+    },
+    {
+      "id": "s11",
+      "title": "Amazon EC2 Spot Instances pricing (as of 2026-10-15): the discount against On-Demand and the Spot Instance Advisor",
+      "url": "https://aws.amazon.com/ec2/spot/pricing/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Spot Instances are available at a discount of up to 90% off compared to On-Demand pricing."
+      }
+    },
+    {
+      "id": "s12",
+      "title": "David Heinemeier Hansson (37signals), Our cloud-exit savings will now top ten million over five years (2024-10-17): the cloud budget before and after, the hardware spend, the remaining S3 contract",
+      "url": "https://world.hey.com/dhh/our-cloud-exit-savings-will-now-top-ten-million-over-five-years-c7d9b5bd",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "we've brought the cloud bill down from the original $3.2 million/year run rate to $1.3 million"
+      }
     }
   ],
   "practice": null,
   "provenance": {
-    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
-    "generated_on": "2026-10-13",
+    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center, format v2",
+    "generated_on": "2026-10-15",
     "reviewed_by": null,
     "reviewed_on": null
   },
@@ -140,6 +792,11 @@
       "version": 1,
       "date": "2026-10-13",
       "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-15",
+      "change": "rewritten by hand at format v2 (version 2): what the bill is made of with the units-of-pricing table and the data transfer rules, unit economics with a steps block, the levers table with the discounts stated on AWS pages, the FinOps phases and principles table, cost against reliability with the SRE revenue table, cost in the design document with the diagram in its subtopic and the review-questions table, a worked two-way costing of a thumbnail pipeline with stated and assumed prices and the cost model as a script after the teaching, cited in-practice blocks (37signals, Google Bigtable, AWS's own examples), 12 verified sources"
     }
   ]
 }
