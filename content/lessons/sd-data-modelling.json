@@ -1,7 +1,7 @@
 {
-  "schema_version": "learning-center-lesson:1",
+  "schema_version": "learning-center-lesson:2",
   "id": "sd-data-modelling",
-  "version": 1,
+  "version": 2,
   "status": "published",
   "superseded_by": null,
   "title": "Data modelling across stores",
@@ -16,90 +16,781 @@
     "data-stores",
     "data-systems"
   ],
-  "summary": "The same business data is modelled differently depending on the store that holds it. Relational systems start from entities and normalise; distributed key-value and wide-column stores start from the queries and denormalise; analytical warehouses organise data as facts and dimensions. Choosing the model means knowing the access patterns first and accepting the write-side cost of the read-side shape.",
+  "summary": "The same business data takes a different shape in each store. A relational system of record starts from the entities and normalises; a wide-column or key-value store starts from the queries and duplicates on purpose, with the partition key deciding both placement and the only efficient read; a document store embeds what is read together and references what grows; a warehouse models facts at a declared grain with dimensions that keep history. This lesson teaches each shape from its own documentation, sizes a partition with the Cassandra formula, chooses an id scheme against how the store places keys, gives a decision table over the models, and ends with how denormalised copies are kept consistent.",
   "detail": [],
-  "in_practice": "A team keeps a written list of access patterns with expected request rates next to the schema and reviews both together. The transactional source of truth usually stays in a relational database; high-volume or key-based read paths get a purpose-built table in a wide-column or key-value store; and analytics run on a warehouse with star schemas loaded from change streams. Before launch they estimate partition sizes and key skew with realistic data, load test the hottest queries, and write the backfill and reconciliation jobs for every denormalised copy. Schema changes go through migrations that are compatible with both the old and the new application version.",
+  "in_practice": {
+    "blocks": [
+      {
+        "type": "p",
+        "text": "Discord stored messages in Cassandra with the channel as the partition key and the Snowflake message id as the clustering key, found partitions over 100 MB in its largest channels, and re-keyed to a compound partition key of channel and a time bucket sized so that about 10 days of the busiest channel stays under 100 MB; recent messages are read by walking buckets backwards until enough are collected.",
+        "cites": [
+          "s9"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Twitter built Snowflake to replace a single database sequence for tweet ids: a 64-bit id with a 41-bit millisecond timestamp, a 10-bit machine id and a 12-bit sequence, generated independently on each machine, k-sorted within about a second, and dependent on NTP-disciplined clocks that are never allowed to run backwards.",
+        "cites": [
+          "s10"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Amazon's DynamoDB guidance tells teams to keep as few tables as possible, to model an application's entities as item collections that share a partition key and sort together, to add a global secondary index per further access pattern, and to size keys against the per-partition limits of 3,000 read units and 1,000 write units per second.",
+        "cites": [
+          "s2",
+          "s3"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Google's Spanner schema guidance tells its customers not to lead a primary key with a timestamp or a sequence, because the key range of every new row would land on one server; it recommends random UUIDv4 keys, bit-reversed sequences, or a high-cardinality column ahead of the monotonic one.",
+        "cites": [
+          "s12"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "The Kimball Group's method, used for the dimensional models of most warehouses, declares the grain of each fact table before any dimension or measure, keeps one grain per table, and handles a changed dimension attribute with a type 2 row that carries a new surrogate key, effective dates and a current flag.",
+        "cites": [
+          "s7",
+          "s8"
+        ]
+      }
+    ]
+  },
   "subtopics": [
     {
-      "body": [
+      "id": "two-starting-points",
+      "title": "Entity-first and query-first: two starting points",
+      "blocks": [
         {
-          "body": "In a relational database you model the entities and their relationships, normalise to remove duplication, and let joins and secondary indexes answer queries that were not foreseen. The schema is flexible and writes are simple, at the cost of read-time work. In a distributed store without joins, such as Cassandra or DynamoDB, you begin with the list of queries the application will run and design one table or item layout per query. Data is duplicated on purpose, so reads are a single partition lookup, and new access patterns may need a new table and a backfill.",
-          "heading": "Two starting points"
+          "type": "p",
+          "text": "The same order, customer or message is stored in different shapes depending on the store that holds it, and the difference starts before any table is drawn. A relational design starts from the entities and their relationships, normalises away duplication, and relies on joins and secondary indexes to answer queries nobody listed in advance. The DynamoDB guidance describes the opposite discipline for a distributed key-value store: do not start designing the schema until the questions it must answer are known, because such a store answers a limited set of queries efficiently and everything outside that set is expensive and slow.",
+          "cites": [
+            "s2"
+          ]
         },
         {
-          "body": "Work in three steps. The conceptual model names entities and relationships independent of any store. The application workflow lists every query, with its filter, sort order and expected volume. The logical model then assigns each query to a table, and the physical model adds types, key definitions and size estimates. Skipping the workflow step is the usual cause of a model that looks tidy but needs scans or cross-partition reads for its most frequent request.",
-          "heading": "A repeatable process"
+          "type": "p",
+          "text": "Cassandra's documentation says the same for a wide-column store. Data modelling there is query-driven: the access patterns determine the structure of the tables, each query is best served by one table, and an entity that several queries need is copied into several tables. Duplication and a high write throughput buy the read performance, and there are no joins to fall back on, so a query that was not designed for is a scan or a client-side join.",
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "diagram",
+          "mermaid": "flowchart TD\n  A[List access patterns and volumes] --> B[Conceptual model of entities]\n  B --> C[Logical model with one table per query]\n  C --> D[Physical model with keys and types]\n  D --> E[Estimate partition size and key skew]\n  E -->|too large or skewed| C\n  E -->|within limits| F[Plan backfill and reconciliation]",
+          "legend": "The query-first process: access patterns and volumes first, then the entities, then a table per query, then keys and types, then a sizing check that sends an oversized or skewed design back to the logical model. The order follows the DynamoDB and Cassandra guidance (s2, s4, s5)."
+        },
+        {
+          "type": "table",
+          "caption": "The two disciplines side by side.",
+          "columns": [
+            "aspect",
+            "entity-first (relational)",
+            "query-first (key-value, wide-column)"
+          ],
+          "rows": [
+            [
+              "what is designed first",
+              "entities, relationships, constraints",
+              "the list of queries, each with its filter, order and volume"
+            ],
+            [
+              "duplication",
+              "removed by normalisation",
+              "introduced on purpose: one table per query"
+            ],
+            [
+              "an unforeseen query",
+              "a new index or a join; the schema stands",
+              "often a new table plus a backfill of the history"
+            ],
+            [
+              "write cost",
+              "one row per fact",
+              "one write per copy, kept consistent by the application or a stream"
+            ],
+            [
+              "read cost",
+              "joins and index lookups at query time",
+              "one partition read, shaped as the query wants it"
+            ],
+            [
+              "what breaks at scale",
+              "join and index cost on hot tables",
+              "partitions that grow without bound, keys that concentrate traffic"
+            ]
+          ],
+          "cites": [
+            "s2",
+            "s4"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The two disciplines meet in practice: the system of record for a transactional domain is usually relational, the hottest read paths get a purpose-built table in a key-value or wide-column store, and the analytical questions run on a dimensional model in a warehouse. The rest of the lesson takes each shape in turn and ends with a decision table over them.",
+          "cites": [
+            "s2"
+          ]
         }
-      ],
-      "id": "entity-first-vs-query-first",
-      "title": "Entity-first versus query-first modelling"
+      ]
     },
     {
-      "body": [
+      "id": "normalise-then-denormalise",
+      "title": "Relational: normalise, then denormalise on purpose",
+      "blocks": [
         {
-          "body": "In Cassandra the primary key has two parts. The partition key is hashed to choose the nodes that hold the row, so all rows with the same partition key live together and can be read in one request. Clustering columns order the rows inside a partition and support range queries on that order. A query must supply the full partition key; filtering on other columns without it means a cluster-wide scan. The key therefore encodes both the data placement and the only efficient query for the table.",
-          "heading": "What the primary key decides"
+          "type": "p",
+          "text": "Normalisation is the relational answer to duplication. Codd's stated objectives for the normal forms beyond the first were to free the relations from undesirable insertion, update and deletion dependencies, to reduce the need to restructure the tables as new kinds of data arrive, and so to lengthen the life of the application programs that use them. Each normal form is a rule about functional dependencies: in second normal form every non-key attribute depends on the whole of every candidate key, and in third normal form every non-trivial dependency starts with a key or ends with a key attribute.",
+          "cites": [
+            "s1"
+          ]
         },
         {
-          "body": "A good partition key spreads load evenly and keeps each partition bounded. Estimate rows per partition and bytes per partition before going live: a partition that grows without limit, such as all events for a device forever, eventually hurts read latency and repair. The standard fix is bucketing, adding a time component like a day or month to the partition key. A key with low cardinality or heavy skew produces hot partitions that one replica set must serve alone.",
-          "heading": "Sizing and hot partitions"
+          "type": "table",
+          "caption": "What each of the first three normal forms removes, with the anomaly it prevents.",
+          "columns": [
+            "normal form",
+            "the rule",
+            "the anomaly it prevents"
+          ],
+          "rows": [
+            [
+              "first (1NF)",
+              "every column holds a single value, not a list or a nested relation",
+              "a list of phone numbers in one column that cannot be queried or indexed"
+            ],
+            [
+              "second (2NF)",
+              "every non-key attribute depends on the whole candidate key",
+              "a product name stored on every order line, so renaming it means updating thousands of rows"
+            ],
+            [
+              "third (3NF)",
+              "no non-key attribute depends on another non-key attribute",
+              "a customer's city stored with the postcode on every order; the city cannot exist without an order and changes inconsistently"
+            ]
+          ],
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "A normalised schema is the safest default for the system of record: each fact lives once, the constraints the database enforces (keys, uniqueness, foreign keys, checks) keep it true, and any query can be answered with a join. The price is paid at read time, and the place to pay it back is a deliberate, written-down denormalisation: a copy of a value that is read often and changes rarely, or a snapshot that must not change, such as the price at the moment of purchase. Both are copies with an owner, and the owner is written down next to the schema.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Two patterns keep a copy honest inside one database. A materialised view or a store-maintained aggregate is refreshed by the database, so the copy cannot drift silently. An application-maintained copy, such as a counter on the parent row, is written in the same transaction as the fact it summarises, so a crash between the two cannot leave them apart. Copies that cross a database boundary are the subject of the last subtopic.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Normalise the system of record. Every denormalised copy has a named owner, a reason (read rate or a snapshot), a refresh mechanism and a reconciliation job; a copy without those four is a future incident.",
+          "cites": [
+            "s1"
+          ]
         }
-      ],
+      ]
+    },
+    {
       "id": "partition-and-clustering-keys",
-      "title": "Partition keys and clustering columns in wide-column stores"
-    },
-    {
-      "body": [
+      "title": "Wide-column stores: partition keys, clustering columns and partition size",
+      "blocks": [
         {
-          "body": "DynamoDB guidance is to avoid designing the schema until the questions it must answer are known. Each item has a partition key and optionally a sort key; a query reads items of one partition in sort key order, optionally with a range condition on the sort key. Related items of different types can share a partition key, with sort key prefixes that distinguish them, so one query returns a parent together with its children. This item collection technique replaces the join, and it lets many applications use few tables.",
-          "heading": "Design from access patterns"
+          "type": "p",
+          "text": "In Cassandra a primary key has two parts with two jobs. The first component is the partition key: it is hashed to choose the nodes that hold the row, so every row with the same partition key lives together and can be read in one request. The remaining components are the clustering columns, which sort the rows inside the partition and make range reads over that order cheap. A query that does not supply the full partition key has to scan the cluster, so the key encodes both where the data lives and the only efficient query on the table. Fewer partitions per query means a faster query, because each extra partition can be another node for the coordinator to ask.",
+          "cites": [
+            "s4"
+          ]
         },
         {
-          "body": "Secondary indexes provide additional access paths. A global secondary index has its own partition and sort key and is updated asynchronously, so reads from it are eventually consistent; a local secondary index shares the table partition key with a different sort key. Sparse indexes, which contain only items carrying the indexed attribute, are a cheap way to find a small subset. Throughput is tied to partitions, so keys should have high cardinality and uniform access, and a key that concentrates traffic causes throttling.",
-          "heading": "Indexes and key distribution"
-        }
-      ],
-      "id": "dynamodb-access-patterns",
-      "title": "Key-value design in DynamoDB"
-    },
-    {
-      "body": [
-        {
-          "body": "Analytical stores answer aggregate questions over history, so they use a different shape. A fact table records measurements of a business process, such as an order line with quantity and amount, and holds foreign keys to dimension tables that describe the context: customer, product, date, store. The first design decision is the grain, the exact meaning of one fact row; mixing grains in one table makes sums wrong. Dimensions are wide and denormalised, which gives the star schema that query engines and analysts handle well.",
-          "heading": "Facts, dimensions and grain"
+          "type": "p",
+          "text": "The documentation's refining chapter gives the sizing discipline. A partition's size is counted in cells: the number of values is N_v = N_r (N_c - N_pk - N_s) + N_s, where N_r is the rows per partition, N_c the columns, N_pk the primary key columns and N_s the static columns. The hard limit is 2 billion cells per partition and performance suffers long before it. A second formula estimates the bytes on disk from the column sizes and the row count, and both are run per table before the design is accepted.",
+          "cites": [
+            "s5"
+          ]
         },
         {
-          "body": "Dimension attributes change, for example a customer moves to another region. Slowly changing dimension techniques define the response: overwrite the value and lose history, or add a new dimension row with validity dates and a new surrogate key so that old facts keep pointing at the old description. Conformed dimensions, shared with identical keys and meaning across fact tables, allow results from different business processes to be combined in one report.",
-          "heading": "Handling change over time"
+          "type": "steps",
+          "title": "Sizing the hotel availability table from the Cassandra documentation's example.",
+          "items": [
+            "The table holds one row per room per night for one hotel per partition, with 4 columns of which 3 are in the primary key and none static, so each row contributes 1 cell.",
+            "The system keeps 2 years of inventory, which is 730 nights.",
+            "An average hotel has 100 rooms, so a partition holds 100 × 730 = 73,000 rows.",
+            "The documentation's verdict: 73,000 cells is well within the limit, but inventory kept for longer, or a hotel with 1,000 rooms, moves the design towards bucketing."
+          ],
+          "cites": [
+            "s5"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "When a partition can grow without bound the fix is to add a column to the partition key, either an existing column such as the date or a synthetic bucket such as the month, which the chapter calls bucketing. Discord learned the same lesson from its message store: with one partition per channel, partitions were found over 100 MB, which caused garbage-collection pressure during compaction and stopped the data spreading across the cluster. They bucketed messages by time so that about 10 days of the busiest channel stays under 100 MB, making the key ((channel_id, bucket), message_id) and reading recent messages by walking bucket by bucket until enough are collected.",
+          "cites": [
+            "s5",
+            "s9"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "A partition that grows with time (all events of a device, all messages of a channel) is a partition that will one day be too large. Put a time bucket in the key on day one; adding it later is a migration of every row.",
+          "cites": [
+            "s5",
+            "s9"
+          ]
         }
-      ],
+      ]
+    },
+    {
+      "id": "key-value-single-table",
+      "title": "Key-value stores: DynamoDB from the access patterns",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "DynamoDB's design guidance begins with three properties to know before the first table: the data size, because it decides how to partition; the data shape, because the store organises data so that its shape in the database matches what will be queried instead of reshaping it at query time; and the data velocity, because the store scales by adding physical partitions and the peak load decides how to spread the keys. Only then do the principles apply.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The DynamoDB design principles and what each one asks of the key design.",
+          "columns": [
+            "principle",
+            "what it means",
+            "in the key design"
+          ],
+          "rows": [
+            [
+              "keep related data together",
+              "locality of reference: what one request needs lives in one partition",
+              "a parent and its children share a partition key, with sort-key prefixes telling the types apart (an item collection)"
+            ],
+            [
+              "use sort order",
+              "items that sort together are read together",
+              "a sort key such as a timestamp or a type prefix, so one Query returns a parent with its children"
+            ],
+            [
+              "distribute queries",
+              "a high volume of requests must not land on one part of the table",
+              "high-cardinality keys with uniform access; write sharding where one key is hot"
+            ],
+            [
+              "use global secondary indexes",
+              "a GSI carries another partition and sort key over the same items",
+              "a second access pattern is a second index, not a second table; an inverted index answers the reverse question"
+            ],
+            [
+              "few tables",
+              "fewer tables scale better and cost less to run",
+              "many entity types in one table, except high-volume time series and data with very different access patterns"
+            ]
+          ],
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The reason the key distribution matters is a hard number: every physical partition of a table has a fixed throughput ceiling, whatever the table's provisioned or on-demand setting says, and the cost of a read or a write grows with the item size. The guidance works one example through, in the table below, and the conclusion is that item size is part of the model, not an implementation detail.",
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The per-partition limits and the item-size arithmetic from the DynamoDB partition-key guidance.",
+          "columns": [
+            "quantity",
+            "value",
+            "note"
+          ],
+          "rows": [
+            [
+              "reads per partition",
+              "3,000 read units per second",
+              "one read unit is one strongly consistent read of an item up to 4 KB, or two eventually consistent reads"
+            ],
+            [
+              "writes per partition",
+              "1,000 write units per second",
+              "one write unit is one write of an item up to 1 KB"
+            ],
+            [
+              "a 20 KB item",
+              "5 read units per consistent read",
+              "size divided by 4 KB, rounded up"
+            ],
+            [
+              "ceiling for that one item",
+              "about 600 consistent reads per second",
+              "3,000 divided by 5; the partition is full before the table is"
+            ]
+          ],
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The practical procedure is the one the diagram above showed: write every access pattern down with its expected rate, assign each one to a key lookup, a Query on a sort-key range or a GSI, and reject any pattern that would need a Scan. The published example designs do exactly this, ending with a table that lists each access pattern beside the single key operation that serves it.",
+          "cites": [
+            "s2"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "document-models",
+      "title": "Document models: embed or reference",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "A document store holds a nested record as one unit, so the modelling question is which related data to embed inside a document and which to keep in its own collection and reference by id. Embedding wins when the pieces are read, updated and archived together: one read returns the whole aggregate, and one write changes it atomically. Referencing wins when the child side is large or unbounded, when the child exists on its own, or when the same data would otherwise be duplicated into many parents.",
+          "cites": [
+            "s6"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "When to embed and when to reference, from the MongoDB modelling guidance.",
+          "columns": [
+            "signal",
+            "embed",
+            "reference"
+          ],
+          "rows": [
+            [
+              "relationship",
+              "has-a or contains; the child does not exist without the parent",
+              "the child exists by itself, or has high cardinality"
+            ],
+            [
+              "access",
+              "the pieces are queried, updated and archived together",
+              "the pieces are written at different times in a write-heavy workload"
+            ],
+            [
+              "growth",
+              "bounded: a fixed number of addresses, a short list of tags",
+              "the embedded array grows without bounds"
+            ],
+            [
+              "size and transfer",
+              "the aggregate fits what one request needs",
+              "the combined size is too much memory or bandwidth for the application"
+            ],
+            [
+              "duplication",
+              "a little duplicated data that rarely changes",
+              "duplication would be too complicated to manage"
+            ]
+          ],
+          "cites": [
+            "s6"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The failure mode of the document model is the unbounded array: a post that embeds its comments, a course that embeds its lessons, a sensor that embeds its readings. The first version is simple and fast; by the time the array has thousands of entries, every read moves the whole document, every write rewrites it, and the document size limit of the store decides when the application stops working. The guidance's own worked example moves lessons out of the course document into their own collection once each lesson needs its own content types.",
+          "cites": [
+            "s6"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Document models still denormalise. A product name copied into each order document is the same deliberate copy as in the relational case, with the same need for an owner and a refresh plan; the difference is only that the store does not enforce the relationship, so the application carries the whole burden of keeping the copies true.",
+          "cites": [
+            "s6"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "tip",
+          "text": "Model the document around the screen or the request that reads it, then check every embedded list for an upper bound. A list without one becomes a reference.",
+          "cites": [
+            "s6"
+          ]
+        }
+      ]
+    },
+    {
       "id": "dimensional-modelling",
-      "title": "Dimensional modelling for analytics"
-    },
-    {
-      "body": [
+      "title": "Dimensional modelling for analytics: facts, dimensions and grain",
+      "blocks": [
         {
-          "body": "Once the same fact is stored in several tables or several stores, every write must reach every copy. Stores without multi-table transactions give no automatic guarantee here, so the design must state which copy is the source of truth and how the others catch up. Options include writing all copies in one atomic batch where the store offers it, store-maintained copies such as secondary indexes or materialised views, and asynchronous propagation from a change stream. Each has a different window during which readers see divergent data.",
-          "heading": "The cost of duplicated data"
+          "type": "p",
+          "text": "Analytical questions aggregate over history, and the shape that serves them is the star schema of the Kimball method: a fact table of numeric measurements from a business process, each row carrying foreign keys to the dimension tables that describe its context, such as date, customer, product and store. Dimensions are wide and denormalised on purpose so that analysts filter and group by their attributes without joins between dimensions.",
+          "cites": [
+            "s7"
+          ]
         },
         {
-          "body": "Duplicate data that is read often and changes rarely; a product name copied into order lines is cheap, while a frequently updated counter copied into thousands of rows is not. Sometimes the copy should be a deliberate snapshot, such as the price at time of purchase. Plan a backfill and a reconciliation job for each derived table, because a new access pattern needs historical data and silent drift between copies is otherwise found only by users.",
-          "heading": "Choosing what to duplicate"
+          "type": "p",
+          "text": "The decision that governs the design is the grain. Kimball calls declaring the grain the pivotal step: it establishes exactly what a single fact row represents, it is declared before any dimension or fact is chosen because each of them must be consistent with it, and it becomes a binding contract on the design. Start at the atomic grain, the lowest level the process captures, because it withstands unpredictable queries where a summary grain presupposes the questions. Different grains are never mixed in one fact table; a second grain is a second table.",
+          "cites": [
+            "s7"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Responding to a changed dimension attribute: the slowly changing dimension types.",
+          "columns": [
+            "type",
+            "what happens",
+            "history",
+            "cost"
+          ],
+          "rows": [
+            [
+              "type 1, overwrite",
+              "the attribute is updated in place",
+              "lost; past facts now report the new value",
+              "none; right for corrections"
+            ],
+            [
+              "type 2, add a row",
+              "a new dimension row with a new surrogate key, begin and end effective dates and a current flag; facts from then on use the new key",
+              "exact: each fact points at the description that was true when it happened",
+              "a surrogate key pipeline in the load; more rows"
+            ],
+            [
+              "type 3, add a field",
+              "an alternate attribute column holds the other value",
+              "both realities available at once, for one change",
+              "a column per alternate; does not scale to many changes"
+            ]
+          ],
+          "cites": [
+            "s8"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Type 2 is the workhorse, and it is why dimensions carry surrogate keys rather than natural ones: when an employee moves, the natural key stays the glue between the rows while a new sequentially assigned surrogate key identifies the new description, and every fact table loaded afterwards must use the current surrogate so that it points at the right profile. Kimball's advice is to add the effective-from and effective-to timestamps, a reason and a current flag to any dimension that takes type 2 changes.",
+          "cites": [
+            "s8"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Declare the grain in one sentence before you choose any measure. If two measures need different sentences, they go in different fact tables.",
+          "cites": [
+            "s7"
+          ]
         }
-      ],
-      "id": "denormalisation-consistency",
-      "title": "Denormalisation and keeping copies consistent"
-    }
-  ],
-  "diagram": {
-    "source": "flowchart TD\n  A[List access patterns and volumes] --> B[Conceptual model of entities]\n  B --> C[Logical model with one table per query]\n  C --> D[Physical model with keys and types]\n  D --> E[Estimate partition size and key skew]\n  E -->|too large or skewed| C\n  E -->|within limits| F[Plan backfill and reconciliation]"
-  },
-  "code": [
+      ]
+    },
     {
-      "code": "-- Query: latest readings for one sensor on one day\nCREATE TABLE readings_by_sensor_day (\n  sensor_id  uuid,\n  day        date,\n  ts         timestamp,\n  value      double,\n  PRIMARY KEY ((sensor_id, day), ts)\n) WITH CLUSTERING ORDER BY (ts DESC);\n\nSELECT ts, value\nFROM readings_by_sensor_day\nWHERE sensor_id = ? AND day = ?\nLIMIT 100;",
-      "lang": "sql"
+      "id": "time-versions-and-ids",
+      "title": "Modelling time, and choosing an id",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Time enters a model three ways. An event table is append-only: each row is something that happened, with its own timestamp, and nothing is updated, so the history is the table. A versioned entity keeps a row per version with effective dates, which is the type 2 dimension pattern applied to an operational store. A soft delete marks a row deleted with a timestamp instead of removing it, which keeps references valid and audit trails complete at the cost of a filter on every query and a job that purges or archives later. The choice is per entity, and it is driven by who needs the history and for how long.",
+          "cites": [
+            "s8"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Three id schemes and what each one gives up.",
+          "columns": [
+            "scheme",
+            "example",
+            "sortable by time",
+            "generation",
+            "trade-off"
+          ],
+          "rows": [
+            [
+              "sequential integer",
+              "a database sequence",
+              "yes",
+              "one place issues them, or each shard issues its own range",
+              "reveals volume; a single issuer is a bottleneck; on a range-partitioned store all inserts hit one server"
+            ],
+            [
+              "random",
+              "UUIDv4",
+              "no",
+              "anywhere, no coordination",
+              "spreads writes evenly; no locality, so related rows scatter and indexes fragment"
+            ],
+            [
+              "time-ordered",
+              "Snowflake, UUIDv7",
+              "roughly, to the millisecond",
+              "anywhere, with a per-node id or random bits for uniqueness",
+              "sortable and evenly spread within a time window; depends on clocks"
+            ]
+          ],
+          "cites": [
+            "s10",
+            "s11",
+            "s12"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Two time-ordered id layouts: Twitter's Snowflake and UUIDv7.",
+          "columns": [
+            "field",
+            "Snowflake (64 bits)",
+            "UUIDv7 (128 bits)"
+          ],
+          "rows": [
+            [
+              "time",
+              "41 bits of milliseconds from a custom epoch: 69 years",
+              "48 bits of Unix milliseconds"
+            ],
+            [
+              "generator",
+              "10 bits of machine id: up to 1,024 generators",
+              "none; uniqueness comes from the random bits"
+            ],
+            [
+              "within one millisecond",
+              "12-bit sequence: 4,096 ids per machine per millisecond",
+              "74 random bits, or part of them as a monotonic counter for batches"
+            ],
+            [
+              "ordering",
+              "k-sorted: in time order within a bound, promised at a second and aimed at tens of milliseconds",
+              "monotonic by timestamp; a counter keeps a batch ordered"
+            ]
+          ],
+          "cites": [
+            "s10",
+            "s11"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Both depend on the clock. Snowflake's README asks for NTP and refuses to issue ids while the clock runs backwards, until time has passed the last id issued. The RFC's advice for databases is to store a UUID as its 16 binary bytes rather than the 36-character text, and it notes that a database-generated UUID gives the best monotonicity when one database issues them. The ids sort without loading the objects, which is what makes a time-ordered id a usable clustering column.",
+          "cites": [
+            "s10",
+            "s11"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Which scheme fits depends on how the store places keys. Spanner's schema guidance warns that a monotonically increasing key such as a timestamp sends every insert to the same key range and so to one server, and recommends a random UUIDv4, a bit-reversed sequence, or putting a high-cardinality column before the monotonic one. Discord's design shows the other arrangement: the partition key is the hashed channel id, so writes spread, and the Snowflake message id is the clustering column, so messages sort by time inside the partition.",
+          "cites": [
+            "s12",
+            "s9"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "choosing-the-model",
+      "title": "Choosing the model, and keeping the copies consistent",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "A domain of any size uses more than one of these shapes, so the decision is made per entity and per access pattern.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "decision",
+          "caption": "Picking the data model for one entity or access pattern.",
+          "rows": [
+            {
+              "option": "normalised relational schema",
+              "pick_when": "the entity is the system of record, writes need constraints and transactions, and not every query is known in advance",
+              "avoid_when": "the read path is one key lookup at very high volume, or the entity is a time series that never updates",
+              "example": "customers, orders and payments; a wallet ledger"
+            },
+            {
+              "option": "wide-column, one table per query",
+              "pick_when": "each query is known, reads must be one partition, writes are heavy and the data has a natural partition key with a time order inside it",
+              "avoid_when": "queries change often, joins are needed, or a partition would grow without a bucket",
+              "example": "a channel's messages by channel and time bucket"
+            },
+            {
+              "option": "key-value single table with sort keys and GSIs",
+              "pick_when": "the access patterns are enumerable, a parent and its children are read together, and the table scales by partitions without operations work",
+              "avoid_when": "ad hoc queries run against it, or one key takes most of the traffic",
+              "example": "a user's profile, sessions and settings as one item collection"
+            },
+            {
+              "option": "document with embedding",
+              "pick_when": "an aggregate is read, written and archived as a unit and every embedded list has a bound",
+              "avoid_when": "a child list grows without bound or children exist on their own",
+              "example": "a product with its fixed variants and images"
+            },
+            {
+              "option": "dimensional star schema",
+              "pick_when": "the questions are aggregates over history by many attributes",
+              "avoid_when": "it is the operational store, or rows are updated in place",
+              "example": "order lines as the fact, with date, customer, product and store dimensions"
+            }
+          ],
+          "cites": [
+            "s1",
+            "s2",
+            "s4",
+            "s5",
+            "s6",
+            "s7"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Whatever the choice, the same fact ends up in several places: a denormalised table, a secondary index, a cache, a search index, a warehouse. Every copy needs an answer to two questions: which copy is the source of truth, and how do the others catch up. DynamoDB maintains its own indexes from the table; a wide-column design writes every copy from the application or a change stream, the duplication the Cassandra documentation describes as the price of a query-centric model.",
+          "cites": [
+            "s2",
+            "s4"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "How a copy catches up with its source, and the window in which readers see them differ.",
+          "columns": [
+            "mechanism",
+            "who maintains the copy",
+            "window of divergence",
+            "fits"
+          ],
+          "rows": [
+            [
+              "one atomic write of all copies",
+              "the store, with a multi-item transaction",
+              "none",
+              "a few copies in one store"
+            ],
+            [
+              "store-maintained index or view",
+              "the store",
+              "the index's own propagation, often eventual",
+              "a second access path over the same table"
+            ],
+            [
+              "change stream to the copy",
+              "a stream consumer",
+              "the stream's lag",
+              "copies in another store: cache, search index, warehouse"
+            ],
+            [
+              "backfill and reconciliation",
+              "a batch job",
+              "until the next run; the repair for the other three",
+              "every derived copy, as the safety net"
+            ]
+          ],
+          "cites": [
+            "s2",
+            "s4"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "List the copies of each entity next to its schema: source of truth, propagation mechanism, reconciliation job. Drift is found by that job or by a user; there is no third way.",
+          "cites": [
+            "s4"
+          ]
+        }
+      ]
     }
   ],
+  "worked_example": {
+    "title": "Worked example: a hotel booking domain in three stores",
+    "blocks": [
+      {
+        "type": "p",
+        "text": "The domain is the one the Cassandra documentation uses: hotels, rooms, availability by night, guests and reservations. The system of record is relational; the availability read path moves to a wide-column table; the reporting runs on a star schema. The numbers from the documentation are cited; every other quantity is an assumption stated in the table after the steps."
+      },
+      {
+        "type": "steps",
+        "title": "Modelling the domain",
+        "items": [
+          "System of record: a normalised schema with hotels, rooms, guests and reservations; a reservation row references its room and guest, and a check constraint keeps the end date after the start date, which is 4 tables and no copies.",
+          "The hot query: the search page asks for the available rooms of one hotel over a date range, which the documentation models as one table partitioned by hotel with the date and room number as clustering columns.",
+          "Partition size: with 100 rooms per hotel and 730 nights of inventory the partition holds 73,000 rows of 1 cell each, from the documentation's formula.",
+          "Bytes on disk: at an assumed 40 bytes per row the partition is about 2.9 MB, and 5,000 hotels make about 14.6 GB before replication.",
+          "Replication: with 3 replicas the table costs about 44 GB of disk, small enough that the single-partition-per-hotel design is accepted without a bucket; a month bucket is noted as the change if inventory grows past 2 years.",
+          "The reverse question (a guest's reservations) is a second table keyed by guest, written in the same application call as the reservation, so the reservation exists in 2 copies plus the relational row.",
+          "Ids: reservations take a UUIDv7 generated by the application, stored as 16 bytes binary, so the relational primary key index grows in time order and the id is unique across the two stores without a coordinator.",
+          "Hot key check for a key-value variant: if the availability item for a hotel were a single 20 KB item in DynamoDB, one consistent read would cost 5 read units and the item's partition would saturate at about 600 reads per second, so a busy hotel's item is split by month.",
+          "Reporting: a fact table at the grain of one room-night sold, with date, hotel, room type and guest dimensions; the room-type dimension takes type 2 changes so that a renovated room's old nights keep their old description."
+        ],
+        "cites": [
+          "s4",
+          "s5",
+          "s3",
+          "s7",
+          "s8",
+          "s11"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "The numbers of the example and where each comes from.",
+        "columns": [
+          "quantity",
+          "value",
+          "source or assumption"
+        ],
+        "rows": [
+          [
+            "rooms per hotel, nights of inventory",
+            "100 and 730",
+            "the documentation's example (s5)"
+          ],
+          [
+            "rows per partition",
+            "73,000",
+            "100 × 730, as in s5"
+          ],
+          [
+            "bytes per row, bytes per partition",
+            "40 bytes, about 2.9 MB",
+            "assumption (40 bytes), then 73,000 × 40"
+          ],
+          [
+            "hotels, raw size, replicated size",
+            "5,000, about 14.6 GB, about 44 GB",
+            "5,000 hotels from s5; 5,000 × 2.9 MB; × 3 replicas (assumption)"
+          ],
+          [
+            "DynamoDB item read cost and ceiling",
+            "5 read units, about 600 reads per second",
+            "the 20 KB example in s3"
+          ],
+          [
+            "id size",
+            "16 bytes binary",
+            "RFC 9562 section 6.13 (s11)"
+          ]
+        ]
+      },
+      {
+        "type": "code",
+        "lang": "sql",
+        "code": "-- the hot query: available rooms of one hotel over a date range\nCREATE TABLE available_rooms_by_hotel_date (\n  hotel_id    text,\n  date        date,\n  room_number smallint,\n  is_available boolean,\n  PRIMARY KEY ((hotel_id), date, room_number)\n);\n\n-- the same table with a month bucket, if inventory grows past the sizing\nCREATE TABLE available_rooms_by_hotel_month (\n  hotel_id    text,\n  month       int,\n  date        date,\n  room_number smallint,\n  is_available boolean,\n  PRIMARY KEY ((hotel_id, month), date, room_number)\n);\n\n-- the reverse question is its own table\nCREATE TABLE reservations_by_guest (\n  guest_id   uuid,\n  start_date date,\n  hotel_id   text,\n  room_number smallint,\n  confirm_number text,\n  PRIMARY KEY ((guest_id), start_date, hotel_id, room_number)\n);",
+        "caption": "The availability table from the Cassandra documentation's hotel example, its bucketed variant, and the reservations-by-guest table that answers the reverse question."
+      }
+    ]
+  },
+  "diagram": null,
+  "code": [],
   "technologies": [
     "PostgreSQL",
     "MySQL",
@@ -122,35 +813,142 @@
   ],
   "sources": [
     {
-      "kind": "doc",
-      "title": "Cassandra data modelling introduction",
-      "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/data-modeling/intro.html"
-    },
-    {
-      "kind": "doc",
-      "title": "Cassandra logical data modelling",
-      "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/data-modeling/data-modeling_logical.html"
-    },
-    {
-      "kind": "doc",
-      "title": "Cassandra Query Language (CQL)",
-      "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/cql/index.html"
-    },
-    {
-      "kind": "doc",
-      "title": "NoSQL design for DynamoDB",
-      "url": "https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/bp-general-nosql-design.html"
-    },
-    {
+      "id": "s1",
+      "title": "Wikipedia, Database normalization: Codd's objectives for normalisation, the normal forms, the anomalies a normalised design removes",
+      "url": "https://en.wikipedia.org/wiki/Database_normalization",
       "kind": "article",
-      "title": "Kimball dimensional modelling techniques",
-      "url": "https://www.kimballgroup.com/data-warehouse-business-intelligence-resources/kimball-techniques/dimensional-modeling-techniques/"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "To free the collection of relations from undesirable insertion, update and deletion dependencies"
+      }
+    },
+    {
+      "id": "s2",
+      "title": "Amazon DynamoDB Developer Guide, NoSQL design for DynamoDB: design from the access patterns, few tables, locality, sort order, distribute, global secondary indexes",
+      "url": "https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/bp-general-nosql-design.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "you shouldn't start designing your schema for DynamoDB until you know the questions it will need to answer"
+      }
+    },
+    {
+      "id": "s3",
+      "title": "Amazon DynamoDB Developer Guide, Best practices for designing and using partition keys: uniform activity, the per-partition throughput limits, read and write unit sizes",
+      "url": "https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/bp-partition-key-design.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "3,000 read units per second and 1,000 write units per second"
+      }
+    },
+    {
+      "id": "s4",
+      "title": "Apache Cassandra documentation, Data modeling introduction: query-driven modelling, partition and clustering keys, denormalisation, the magazine example",
+      "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/data-modeling/intro.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "In Cassandra, data modeling is query-driven"
+      }
+    },
+    {
+      "id": "s5",
+      "title": "Apache Cassandra documentation, Evaluating and refining data models: the partition size formula, the cell limit, size on disk, breaking up large partitions by bucketing",
+      "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/data-modeling/data-modeling_refining.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "hard limit is 2 billion cells per partition"
+      }
+    },
+    {
+      "id": "s6",
+      "title": "MongoDB Manual, Best practices for data modeling: when to embed and when to reference, unbounded growth, duplicated data",
+      "url": "https://www.mongodb.com/docs/manual/data-modeling/best-practices/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Your embedded data grows without bounds"
+      }
+    },
+    {
+      "id": "s7",
+      "title": "Kimball Group, Dimensional modeling techniques, Grain: the grain as a binding contract, atomic grain, one grain per fact table",
+      "url": "https://www.kimballgroup.com/data-warehouse-business-intelligence-resources/kimball-techniques/dimensional-modeling-techniques/grain/",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "different grains must not be mixed in the same fact table"
+      }
+    },
+    {
+      "id": "s8",
+      "title": "Ralph Kimball, Slowly Changing Dimensions, Part 2 (Kimball Group design tip, 2008-09-22): type 2 rows with surrogate keys and effective dates, type 3 alternate attributes",
+      "url": "https://www.kimballgroup.com/2008/09/slowly-changing-dimensions/",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "You must make a new surrogate primary key whenever you process a Type 2 change"
+      }
+    },
+    {
+      "id": "s9",
+      "title": "Discord engineering blog, How Discord Stores Billions of Messages (Stanislav Vishnevskiy, 2017): channel partitions, Snowflake clustering keys, partitions over 100 MB, bucketing by 10 days",
+      "url": "https://discord.com/blog/how-discord-stores-billions-of-messages",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "our new primary key became ((channel_id, bucket), message_id)"
+      }
+    },
+    {
+      "id": "s10",
+      "title": "Twitter Snowflake README (snowflake-2010 branch): the 64-bit id layout, k-sorted ids, the clock dependency",
+      "url": "https://github.com/twitter-archive/snowflake/tree/snowflake-2010",
+      "kind": "repo",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "time - 41 bits (millisecond precision w/ a custom epoch gives us 69 years)"
+      }
+    },
+    {
+      "id": "s11",
+      "title": "RFC 9562, Universally Unique IDentifiers (May 2024): UUIDv7 layout, monotonicity and counters, storing UUIDs in databases",
+      "url": "https://www.rfc-editor.org/rfc/rfc9562.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "UUIDv7 values are created by allocating a Unix timestamp in milliseconds in the most significant 48 bits"
+      }
+    },
+    {
+      "id": "s12",
+      "title": "Google Cloud Spanner documentation, Schema design best practices: hotspots from monotonic keys, UUIDs, bit-reversed sequences, swapping key order",
+      "url": "https://docs.cloud.google.com/spanner/docs/schema-design",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "a monotonic key directs all insert traffic to a single server"
+      }
     }
   ],
   "practice": "practice/sd-data-modelling",
   "provenance": {
-    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
-    "generated_on": "2026-10-13",
+    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center, format v2",
+    "generated_on": "2026-10-15",
     "reviewed_by": null,
     "reviewed_on": null
   },
@@ -159,6 +957,11 @@
       "version": 1,
       "date": "2026-10-13",
       "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-15",
+      "change": "rewritten by hand from primary sources at format v2 (learning-center-lesson:2): 8 subtopics with the entity-first-against-query-first table and the modelling flowchart in its subtopic, the normal-form table, the Cassandra partition-size formula as steps and Discord's bucketing, the DynamoDB principle table with the per-partition limits, the embed-or-reference table, the slowly-changing-dimension table, the id-scheme table with Snowflake, UUIDv7 and the Spanner hotspot rule, a decision block over the five models and a copy-propagation table, a worked hotel domain in three stores with the CQL after the teaching, 5 cited in-practice blocks (Discord, Twitter, Amazon, Google, Kimball), 12 verified sources with ids"
     }
   ]
 }
