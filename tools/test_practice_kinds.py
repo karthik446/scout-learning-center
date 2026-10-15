@@ -4,8 +4,9 @@
     python3 tools/test_practice_kinds.py            # unittest
     python3 tools/test_practice_kinds.py --keep DIR # also leave the temp content/ and the built site under DIR (for a browser check)
 
-Two synthetic fixtures (tools/fixtures/, invented names only) are imported through import_course.py into a temp copy of content/,
-then scan.py and build.py run on it. Nothing is written to content/ or site/.
+Two synthetic fixtures (tools/fixtures/, invented names only) are imported through import_course.py --module into a temp copy of
+content/ (with a fixture module file listing them, so each sits in exactly one module), then scan.py, build.py and
+export_catalog.py run on it. Nothing is written to content/ or site/.
 """
 
 from __future__ import annotations
@@ -31,9 +32,22 @@ def run(*args: str | Path) -> subprocess.CompletedProcess:
     return subprocess.run([sys.executable, *map(str, args)], capture_output=True, text=True, cwd=ROOT)
 
 
-def import_into(content: Path, gigai: Path) -> subprocess.CompletedProcess:
-    return run(TOOLS / "import_course.py", "--gigai", gigai, "--keys", content / "keys/concept-keys.json", "--content", content,
-               "--courses", "fixture-course")
+def with_fixture_module(content: Path) -> None:
+    """The fixture module: two planned entries (the import flips them to published) and a row in modules/index.json."""
+    entries = [{"id": "fixture-case-lesson", "title": "Fixture lesson with a case exercise", "status": "planned"},
+               {"id": "fixture-artifact-lesson", "title": "Fixture lesson with an artifact exercise", "status": "planned"}]
+    module = {"schema_version": "learning-center-module:2", "id": "fixture-course", "version": 1, "title": "Fixture module", "status": "planned",
+              "summary": "Two synthetic lessons for the page tests.", "intro": "Invented lessons used only to test the build.", "lessons": entries,
+              "changelog": [{"version": 1, "date": "2026-10-14", "change": "fixture"}]}
+    (content / "modules/fixture-course.json").write_text(json.dumps(module), encoding="utf-8")
+    index = json.loads((content / "modules/index.json").read_text(encoding="utf-8"))
+    index["modules"].append({"id": "fixture-course", "title": module["title"], "status": "planned", "summary": module["summary"],
+                             "lessons_published": 0, "lessons_planned": 2})
+    (content / "modules/index.json").write_text(json.dumps(index), encoding="utf-8")
+
+
+def import_into(content: Path, export: Path) -> subprocess.CompletedProcess:
+    return run(TOOLS / "import_course.py", "--content", content, "--module", "fixture-course", "--export", export / COURSE)
 
 
 class Imported(unittest.TestCase):
@@ -42,10 +56,13 @@ class Imported(unittest.TestCase):
         cls.tmp = Path(tempfile.mkdtemp(prefix="practice-kinds-"))
         cls.content = cls.tmp / "content"
         shutil.copytree(ROOT / "content", cls.content)
+        with_fixture_module(cls.content)
         cls.imp = import_into(cls.content, FIXTURES)
         cls.scan = run(TOOLS / "scan.py", "--content", cls.content)
         cls.site = cls.tmp / "site"
         cls.build = run(TOOLS / "build.py", "--content", cls.content, "--out", cls.site)
+        cls.catalog_path = cls.tmp / "catalog.json"
+        cls.export = run(TOOLS / "export_catalog.py", cls.catalog_path, "--content", cls.content)
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -60,6 +77,56 @@ class Imported(unittest.TestCase):
         self.assertEqual(self.imp.returncode, 0, self.imp.stdout + self.imp.stderr)
         self.assertEqual(self.scan.returncode, 0, self.scan.stdout + self.scan.stderr)
         self.assertEqual(self.build.returncode, 0, self.build.stdout + self.build.stderr)
+        self.assertEqual(self.export.returncode, 0, self.export.stdout + self.export.stderr)
+
+    def test_fixture_lessons_sit_in_one_module(self) -> None:
+        module = json.loads((self.content / "modules/fixture-course.json").read_text(encoding="utf-8"))
+        self.assertEqual([e["status"] for e in module["lessons"]], ["published", "published"])
+        index = {r["id"]: r for r in json.loads((self.content / "modules/index.json").read_text(encoding="utf-8"))["modules"]}
+        self.assertEqual((index["fixture-course"]["status"], index["fixture-course"]["lessons_published"]), ("published", 2))
+        page = (self.site / "learn/modules/fixture-course/index.html").read_text(encoding="utf-8")
+        self.assertIn("Fixture lesson with a case exercise", page)
+        lesson = (self.site / "learn/lessons/fixture-case-lesson/index.html").read_text(encoding="utf-8")
+        self.assertIn("Lesson 1 of 2 in", lesson)
+        self.assertIn("Learning center</a> &rsaquo; <a href=\"/learn/modules/fixture-course/\">Fixture module</a>", lesson)
+
+    def test_a_lesson_in_two_modules_is_refused(self) -> None:
+        tmp = Path(tempfile.mkdtemp(prefix="practice-kinds-twice-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        content = tmp / "content"
+        shutil.copytree(self.content, content)
+        path = content / "modules/software-foundations.json"
+        module = json.loads(path.read_text(encoding="utf-8"))
+        module["lessons"].append({"id": "fixture-case-lesson", "status": "published"})
+        path.write_text(json.dumps(module), encoding="utf-8")
+        result = run(TOOLS / "scan.py", "--content", content)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("exactly one", result.stdout)
+
+    def test_exported_catalog_shape(self) -> None:
+        cat = json.loads(self.catalog_path.read_text(encoding="utf-8"))
+        self.assertEqual(cat["schema_version"], "scout-learning-catalog:3")
+        self.assertEqual(sorted(cat), ["catalog_version", "concept_keys_version", "keys", "lessons", "modules", "schema_version", "site"])
+        self.assertEqual(sorted(cat["site"]), ["base_url", "lessons_path", "modules_path", "practice_path", "site_version"])
+        self.assertEqual(cat["modules"][-1]["id"], "fixture-course")
+        self.assertEqual(cat["modules"][-1]["lessons"], ["fixture-case-lesson", "fixture-artifact-lesson"])
+        by_id = {l["id"]: l for l in cat["lessons"]}
+        case = by_id["fixture-case-lesson"]
+        self.assertEqual(sorted(case), ["concept_keys", "has_practice", "id", "module", "practice_kind", "subtopics", "title"])
+        self.assertEqual((case["module"], case["practice_kind"], case["has_practice"]), ("fixture-course", "case", True))
+        self.assertEqual(case["concept_keys"], ["system-design"])
+        self.assertEqual(case["subtopics"], [{"id": "the-idea", "title": "The idea"}])
+        self.assertEqual(by_id["fixture-artifact-lesson"]["practice_kind"], "artifact")
+        self.assertEqual(by_id["agents-and-mcp"]["practice_kind"], "tool")
+        self.assertIsNone(by_id["sd-numbers"]["practice_kind"])
+        self.assertEqual(len(cat["lessons"]), 102)
+        self.assertEqual(len(cat["modules"]), 14)
+        self.assertEqual(len(cat["keys"]), 247)
+        self.assertEqual(sorted(cat["keys"][0]), ["aliases", "area", "category", "display", "key", "technical"])
+        flat = json.dumps(cat)
+        for word in ("expectations", "role_key", "postings", "sequence", '"summary"', '"detail"'):
+            self.assertNotIn(word, flat)
+        self.assertEqual([m["order"] for m in cat["modules"]], list(range(1, 15)))
 
     def test_content_files_keep_kind_and_fields(self) -> None:
         for lid, kind in (("fixture-case-lesson", "case"), ("fixture-artifact-lesson", "artifact")):
@@ -112,6 +179,7 @@ class Refusals(unittest.TestCase):
         edit(data)
         target.write_text(json.dumps(data), encoding="utf-8")
         shutil.copytree(ROOT / "content", tmp / "content")
+        with_fixture_module(tmp / "content")
         return import_into(tmp / "content", gigai)
 
     def refused(self, lid: str, edit, needle: str) -> None:
