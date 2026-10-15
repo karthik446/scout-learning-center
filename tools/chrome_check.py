@@ -35,13 +35,13 @@ ROOT = Path(__file__).resolve().parent.parent
 PAGES = [
     ("landing", "/"),
     ("learn-home", "/learn/"),
-    ("family", "/learn/families/software-engineering/"),
-    ("pathway", "/learn/pathways/mlops-ml-platform-engineer/"),
+    ("modules-index", "/learn/modules/"),
     ("lesson", "/learn/lessons/mlflow-experiment-tracking/"),
     ("practice", "/learn/practice/mlflow-experiment-tracking/"),
     ("search", "/learn/search/?q=kubernetes"),
     ("not-found", "/learn/lessons/no-such-lesson/"),
-    ("module", "/learn/modules/system-design/"),
+    ("module", "/learn/modules/ml-platform/"),
+    ("module-sd", "/learn/modules/system-design/"),
     ("key", "/learn/keys/mlflow/"),
     ("changelog", "/learn/changelog/"),
 ]
