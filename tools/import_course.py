@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""One-off import of the shipped gigai courses into content/ (standard library only, no model call).
+"""Import a pipeline course's export into one module of content/ (standard library only, no model call).
 
-Reads, never imports, the public package data of a released gigai:
-    <gigai>/src/gigai/scout/data/learning/shipped/<role>/{catalog.json,course.json,paths/*.json}
-and writes content/lessons, content/practice, content/pathways, content/keys, content/merge-candidates.json.
-Every concept id of a lesson is mapped through the key list's id map (former_ids included); an unknown id is refused.
+    python3 tools/import_course.py --module ID --export DIR [--date YYYY-MM-DD] [--replace]
+
+Reads the export folder written by gigai's tools/learning_export_shipped.py (course.json, catalog.json, paths/*.json) and
+writes content/lessons, content/practice, flips the entries of content/modules/<ID>.json to published and updates that
+module's row (status and counts) in content/modules/index.json. Nothing else is written: there is no pathway, no family,
+no key list and no merge-candidates file any more. Every concept id of a lesson must be a key of the site's own
+content/keys/concept-keys.json; an unknown id is refused.
 
 A practice path has a ``kind``: ``tool`` (also when missing; the steps cited into one tool's documentation), ``case`` or
 ``artifact`` (the written pages of gigai.scout.learning_case). A case or artifact file is written with its kind and its
 fields unchanged; an unknown kind, an unknown field, or a text with an address, a backtick or a company-looking name is refused.
-``--keys`` may also be the site's public key list (schema ``learning-center-concept-keys:1``): a concept id equal to one of its
-keys then maps to that key, which lets a later course be added to an existing content/.
 """
 
 from __future__ import annotations
@@ -25,16 +26,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import scan  # noqa: E402  (the checks of the public scan: reused for the written pages, never copied)
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_GIGAI = Path("/Users/kar/orca/workspaces/gigai/gigai-v0.1.11.10")
-DEFAULT_KEYS = Path("/Users/kar/orca/workspaces/gigai/orchestrator/research/learning-center/library/concept-keys-v0.json")
-COURSES = ("mlops-ml-platform-engineer", "ai-forward-deployed-engineer")
-GENERATED_BY = "Claude through GigAI 0.1.11.10"
 FALLBACK_DATE = "2026-10-12"
 IMPORT_DATE = "2026-10-12"
-SITE_VERSION = "2026.10.1"
-FAMILY = "software-engineering"
-# A lesson with no mapped key at all gets one by decision of record (REPORT-library 2.1).
-PRIMARY_OVERRIDE = {"design-docs-and-adrs": "design-and-code-reviews"}
 # 'N of M postings' sentences and the sentences of a personal course that speak of one machine's postings.
 # The keys a written page holds (gigai.scout.learning_shipped._CASE_PATH_KEYS / _ARTIFACT_PATH_KEYS).
 WRITTEN_KEYS = {
@@ -55,52 +48,12 @@ def dump(path: Path, data) -> None:
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
-def first_sentence(text: str) -> str:
-    text = " ".join(text.split())
-    m = re.search(r"(?<=[.!?])\s", text)
-    return text[: m.start()] if m else text
-
-
 def strip_count_sentences(text: str) -> str:
     """Drop every sentence that carries a posting-count phrase."""
     if not text or not POSTING_COUNT.search(text):
         return text
     sentences = re.split(r"(?<=[.!?])\s+", text.strip())
     return " ".join(s for s in sentences if not POSTING_COUNT.search(s))
-
-
-def key_map(keys: dict) -> dict[tuple[str, str], str]:
-    m: dict[tuple[str, str], str] = {}
-    for k in keys["keys"]:
-        for course, ids in k.get("ids_in_course", {}).items():
-            for i in ids:
-                m[(course, i)] = k["key"]
-        for course, ids in k.get("former_ids", {}).items():
-            for i in ids:
-                m[(course, i)] = k["key"]
-    return m
-
-
-def public_keys(seed: dict, kmap: dict) -> dict:
-    """The key list as the site publishes it: the seed's analysis fields (counts, merge reasons, the raw
-    phrase-under-different-ids table, which course used a key) stay in the spike; the public file keeps what a
-    lesson, a pathway or a later import needs."""
-    out = []
-    for k in seed["keys"]:
-        former = {c: [i for i in ids if i != k["key"]] for c, ids in k.get("former_ids", {}).items()}
-        former = {c: ids for c, ids in former.items() if ids}
-        e = {f: k[f] for f in ("key", "display", "area", "category", "technical", "aliases", "parent")}
-        e["former_ids"] = former
-        if k.get("category_note"):
-            e["category_note"] = k["category_note"]
-        out.append(e)
-    # the public file must map every old id exactly as the seed did
-    check = {(c, i): e["key"] for e in out for c, ids in e["former_ids"].items() for i in ids}
-    check.update({("*", e["key"]): e["key"] for e in out})
-    for (c, i), key in kmap.items():
-        if i != key and check.get((c, i)) != key:
-            raise SystemExit(f"refused: public key list loses the mapping {c}:{i} -> {key}")
-    return {"schema_version": "learning-center-concept-keys:1", "version": int(seed.get("version", 1)), "areas": seed["areas"], "keys": out}
 
 
 def map_ids(course: str, ids: list[str], kmap: dict, where: str) -> list[str]:
@@ -137,10 +90,6 @@ def path_dates(path: dict) -> list[str]:
     dates = [s["source"]["verified"]["checked"] for k in ("setup", "steps") for s in path.get(k, []) if s.get("source", {}).get("verified")]
     dates += [s["verified"]["checked"] for s in path.get("sources", []) if s.get("verified")]
     return dates
-
-
-def jaccard(a: set, b: set) -> float:
-    return len(a & b) / len(a | b) if a | b else 0.0
 
 
 def write_lesson(content: Path, lesson: dict, path: dict | None, mapped: list[str], key_by: dict, cat_entry: dict, *,
@@ -237,8 +186,7 @@ def import_module(args) -> int:
     ids are entries of content/modules/<ID>.json, imported as published lessons of that module.
 
     Every concept id must be a key of the site's own content/keys/concept-keys.json (replace that file first when the run
-    added keys). The module's entries flip to published; no pathway, no family, no key list and no merge candidates are
-    written. The hand-written entries of the module (sd-ex-*) are never touched: an export may only carry ids the
+    added keys). The module's entries flip to published; no key list is written. The hand-written entries of the module (sd-ex-*) are never touched: an export may only carry ids the
     module lists, and a lesson file that already exists is refused unless --replace is given.
     """
     content: Path = args.content
@@ -289,8 +237,16 @@ def import_module(args) -> int:
         )
         n_lessons += 1
         entries[lid]["status"] = "published"
-    dump(module_file, module)
     n_pub = sum(1 for l in module["lessons"] if l["status"] == "published")
+    if n_pub:
+        module["status"] = "published"
+    dump(module_file, module)
+    index_file = content / "modules/index.json"   # the index row carries the counts and the status; keep it in step
+    index = load(index_file)
+    for row in index["modules"]:
+        if row["id"] == args.module:
+            row.update(status=module["status"], lessons_published=n_pub, lessons_planned=len(module["lessons"]) - n_pub)
+    dump(index_file, index)
     print(f"module {args.module}: lessons {n_lessons} practice {n_practice}; module entries published {n_pub} of {len(module['lessons'])}")
     return 0
 
@@ -301,115 +257,14 @@ MODULE_VERIFIED_BY = "gigai learning pipeline link check (karthik446/gigai-learn
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--gigai", type=Path, default=DEFAULT_GIGAI)
-    ap.add_argument("--keys", type=Path, default=DEFAULT_KEYS)
     ap.add_argument("--content", type=Path, default=ROOT / "content")
-    ap.add_argument("--courses", nargs="+", default=list(COURSES), help="course folder names under the shipped folder")
-    ap.add_argument("--module", help="import a pipeline course's export folder as published lessons of content/modules/<ID>.json (with --export)")
+    ap.add_argument("--module", required=True, help="import a pipeline course's export folder as published lessons of content/modules/<ID>.json (with --export)")
     ap.add_argument("--export", type=Path, help="--module: the export folder written by gigai's tools/learning_export_shipped.py")
     ap.add_argument("--generated-by", default=MODULE_GENERATED_BY, help="--module: provenance.generated_by of every lesson and practice file")
     ap.add_argument("--date", default=IMPORT_DATE, help="--module: provenance.generated_on and the changelog date")
     ap.add_argument("--replace", action="store_true", help="--module: overwrite a lesson file that already exists")
     args = ap.parse_args()
-    if args.module:
-        return import_module(args)
-    shipped = args.gigai / "src/gigai/scout/data/learning/shipped"
-    content: Path = args.content
-
-    keys = load(args.keys)
-    public_list = keys.get("schema_version") == "learning-center-concept-keys:1"
-    kmap = key_map(keys)  # built from the full seed file (ids_in_course and former_ids), before the analysis fields go
-    keys = public_keys(keys, kmap)
-    key_by = {k["key"]: k for k in keys["keys"]}
-    dump(content / "keys/concept-keys.json", keys)
-
-    lesson_keys: dict[str, tuple[str, set[str], str]] = {}  # lesson id -> (course, keys, title)
-    seen_lessons: dict[str, str] = {}
-    pathways = []
-    n_lessons = n_practice = 0
-    for course_id in args.courses:
-        if public_list:
-            kmap.update({(course_id, k["key"]): k["key"] for k in keys["keys"] if (course_id, k["key"]) not in kmap})
-        folder = shipped / course_id
-        course = load(folder / "course.json")
-        catalog = load(folder / "catalog.json")
-        paths = {p.stem: load(p) for p in sorted((folder / "paths").glob("*.json"))}
-        cat_by = {l["id"]: l for l in catalog["lessons"]}
-        steps = []
-        module_list = []
-        n = 0
-        for module in course["modules"]:
-            module_list.append({"id": module["id"], "title": module["title"], "intro": module.get("intro", "")})
-            for lesson in module["concepts"]:
-                lid = lesson["id"]
-                if lid in seen_lessons:
-                    raise SystemExit(f"refused: lesson id {lid} appears in {seen_lessons[lid]} and {course_id}")
-                seen_lessons[lid] = course_id
-                mapped = map_ids(course_id, lesson.get("concept_keys", []), kmap, f"lesson {lid}")
-                if lid in PRIMARY_OVERRIDE:
-                    pk = PRIMARY_OVERRIDE[lid]
-                    if pk not in key_by:
-                        raise SystemExit(f"refused: override key {pk} is not in the key list")
-                    mapped = [pk] + [k for k in mapped if k != pk]
-                wrote_practice = write_lesson(
-                    content, lesson, paths.get(lid), mapped, key_by, cat_by[lid],
-                    generated_by=GENERATED_BY, generated_on=None, import_date=IMPORT_DATE,
-                    change="imported from the gigai 0.1.11.10 shipped course " + course_id,
-                    practice_change="imported from the gigai shipped course " + course_id,
-                    verified_by="gigai 0.1.11.10 release-time link check",
-                )
-                n_lessons += 1
-                n_practice += wrote_practice
-                lesson_keys[lid] = (course_id, set(mapped), lesson["title"])
-                n += 1
-                steps.append({
-                    "n": n, "lesson": lid, "module": module["title"], "depth": "L2",
-                    "why": first_sentence(lesson["summary"]), "prerequisites": [],
-                })
-        for lid, l in ((l["id"], l) for l in catalog["lessons"]):
-            if lid not in seen_lessons:
-                raise SystemExit(f"refused: catalog lesson {lid} is not in the course")
-        exp = {g: [map_ids(course_id, [i["id"]], kmap, f"expectations {g}")[0] for i in items] for g, items in course.get("expectations", {}).items()}
-        tech = {g: [map_ids(course_id, [i["id"]], kmap, f"technologies {g}")[0] for i in items] for g, items in course.get("technologies", {}).items()}
-        pathways.append({
-            "schema_version": "learning-center-pathway:1",
-            "id": course_id,
-            "version": 1,
-            "title": course["role"],
-            "family": FAMILY,
-            "role_key": course_id,
-            "titles": catalog["titles"],
-            "summary": f"A curated sequence over the library for a {course['role']}: {len(steps)} lessons in {len(module_list)} modules, from the foundations of the role to its advanced topics.",
-            "shared_modules": ["system-design"],
-            "modules": module_list,
-            "expectations": exp,
-            "technologies": tech,
-            "steps": steps,
-            "changelog": [{"version": 1, "date": IMPORT_DATE, "change": "re-expressed the gigai 0.1.11.10 shipped course as references into the library"}],
-        })
-    for p in pathways:
-        dump(content / f"pathways/{p['id']}.json", p)
-
-    # near-duplicate pairs across the two courses: written for a later merge, nothing is merged in M1
-    cands = []
-    ids = sorted(lesson_keys)
-    for i, a in enumerate(ids):
-        for b in ids[i + 1:]:
-            if lesson_keys[a][0] == lesson_keys[b][0]:
-                continue
-            j = jaccard(lesson_keys[a][1], lesson_keys[b][1])
-            if j >= 0.33:
-                cands.append((j, a, b))
-    cands.sort(key=lambda t: (-t[0], t[1], t[2]))
-    dump(content / "merge-candidates.json", {
-        "schema_version": "learning-center-merge-candidates:1",
-        "note": "Pairs of lessons from different courses whose merged-key Jaccard is at least 0.33. Pairs at 0.5 or more are merge candidates; none was merged in site 2026.10.1, both originals are published.",
-        "pairs": [{"a": a, "b": b, "jaccard": round(j, 2), "action": "merge candidate" if j >= 0.5 else "link as related",
-                   "shared_keys": sorted(lesson_keys[a][1] & lesson_keys[b][1])} for j, a, b in cands],
-    })
-    print(f"lessons {n_lessons} practice {n_practice} pathways {len(pathways)} keys {len(keys['keys'])} "
-          f"merge candidates {sum(1 for j, *_ in cands if j >= 0.5)} (of {len(cands)} pairs >= 0.33)")
-    return 0
+    return import_module(args)
 
 
 if __name__ == "__main__":
