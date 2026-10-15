@@ -1,8 +1,8 @@
 {
-  "schema_version": "learning-center-lesson:1",
+  "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-autocomplete",
-  "version": 2,
+  "version": 3,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: search autocomplete",
@@ -21,7 +21,9 @@
   ],
   "summary": "A classic design exercise: search-box suggestions within a 100 ms budget at tens of thousands of requests per second. The reference answer precomputes the top ten completions per prefix from an hourly, decayed aggregation of the query log, serves them from in-memory shards by first letters behind a short-TTL edge cache, re-ranks with the user's own recent queries, and treats freshness as a cost dial on the build pipeline.",
   "detail": [],
-  "in_practice": "",
+  "in_practice": {
+    "blocks": []
+  },
   "subtopics": [],
   "diagram": null,
   "code": [],
@@ -35,263 +37,714 @@
   ],
   "sources": [
     {
+      "id": "s1",
+      "title": "Elasticsearch reference: Suggesters (completion suggester: in-memory structures, costly to build)",
+      "url": "https://www.elastic.co/docs/reference/elasticsearch/rest-apis/search-suggesters",
       "kind": "doc",
-      "title": "Elasticsearch reference: Suggesters (completion suggester)",
-      "url": "https://www.elastic.co/docs/reference/elasticsearch/rest-apis/search-suggesters"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "completion suggester is optimized for speed"
+      }
     },
     {
-      "kind": "blog",
-      "title": "antirez: Autocomplete with Redis",
-      "url": "https://oldblog.antirez.com/post/autocomplete-with-redis.html"
+      "id": "s2",
+      "title": "antirez: Autocomplete with Redis (sorted sets, lexicographic order, ZRANK)",
+      "url": "https://oldblog.antirez.com/post/autocomplete-with-redis.html",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "ZRANK"
+      }
     },
     {
+      "id": "s3",
+      "title": "Wikipedia: Trie (prefix tree)",
+      "url": "https://en.wikipedia.org/wiki/Trie",
       "kind": "doc",
-      "title": "Wikipedia: Trie",
-      "url": "https://en.wikipedia.org/wiki/Trie"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "prefix tree"
+      }
     },
     {
-      "kind": "blog",
-      "title": "Discord: How Discord indexes billions of messages",
-      "url": "https://discord.com/blog/how-discord-indexes-billions-of-messages"
+      "id": "s4",
+      "title": "Discord Engineering: How Discord indexes billions of messages (2017-03-16)",
+      "url": "https://discord.com/blog/how-discord-indexes-billions-of-messages",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Lazily Indexed"
+      }
     },
     {
+      "id": "s5",
+      "title": "Latency Numbers Every Programmer Should Know (jboner gist, maintained)",
+      "url": "https://gist.github.com/jboner/2841832",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Round trip within same datacenter"
+      }
+    },
+    {
+      "id": "s6",
+      "title": "RFC 9111: HTTP Caching (June 2022): the no-store and max-age directives",
+      "url": "https://www.rfc-editor.org/rfc/rfc9111.html",
       "kind": "doc",
-      "title": "Latency numbers every programmer should know",
-      "url": "https://gist.github.com/jboner/2841832"
-    },
-    {
-      "kind": "spec",
-      "title": "RFC 9111: HTTP Caching",
-      "url": "https://www.rfc-editor.org/rfc/rfc9111.html"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "The no-store response directive"
+      }
     }
   ],
   "practice": null,
   "exercise": {
     "prompt": "Design the search box suggestions for a large consumer site: as the user types, show the ten most likely completions within the time it takes to type the next character. Suggestions should reflect what people are searching for now, not last year.",
-    "constraints": [
-      {
-        "heading": "Functional",
-        "body": "Return the top 10 completions for a prefix of 1 to 20 characters; rank by popularity with recency; exclude blocked terms; optionally re-rank by the user's own recent queries; update suggestions from the query log within an hour."
-      },
-      {
-        "heading": "Scale (assumption)",
-        "body": "100 million searches per day; each search session sends about 5 prefix requests, so 500 million autocomplete requests per day; peak 10x the daily average; a vocabulary of the top 10 million distinct queries worth suggesting. Chosen for the exercise; derive the request rate, the index size and the memory per shard yourself."
-      },
-      {
-        "heading": "Targets (assumption)",
-        "body": "p99 under 100 ms end to end at the client, which leaves about 20 ms inside the service after network time (assumption); 99.9 percent availability; the box must never block search itself."
-      },
-      {
-        "heading": "Non-goals",
-        "body": "Full search, spell correction beyond a fallback, query understanding, ads in suggestions."
-      }
-    ],
+    "constraints": {
+      "type": "table",
+      "caption": "Constraints and numbers.",
+      "columns": [
+        "kind",
+        "constraint",
+        "note"
+      ],
+      "rows": [
+        [
+          "Functional",
+          "Return the top 10 completions for a prefix of 1 to 20 characters; rank by popularity with recency; exclude blocked terms.",
+          ""
+        ],
+        [
+          "Functional",
+          "Optionally re-rank by the user's own recent queries; update suggestions from the query log within an hour.",
+          ""
+        ],
+        [
+          "Scale (assumption)",
+          "100 million searches per day; each search session sends about 5 prefix requests, so 500 million autocomplete requests per day.",
+          "chosen for the exercise"
+        ],
+        [
+          "Scale (assumption)",
+          "Peak 10 times the daily average; a vocabulary of the top 10 million distinct queries worth suggesting.",
+          "derive the request rate, the index size and the memory per shard yourself"
+        ],
+        [
+          "Targets (assumption)",
+          "p99 under 100 ms end to end at the client, which leaves about 20 ms inside the service after network time (assumption).",
+          ""
+        ],
+        [
+          "Targets (assumption)",
+          "99.9 percent availability; the box must never block search itself.",
+          ""
+        ],
+        [
+          "Non-goals",
+          "Full search, spell correction beyond a fallback, query understanding, ads in suggestions.",
+          ""
+        ]
+      ]
+    },
     "clarifying_questions": [
       {
-        "question": "Are suggestions whole queries or next words?",
-        "answer": "Whole queries that start with the prefix; mid-word matches are out of scope."
+        "q": "Are suggestions whole queries or next words?",
+        "a": "Whole queries that start with the prefix; mid-word matches are out of scope."
       },
       {
-        "question": "How fresh is fresh?",
-        "answer": "A query trending now should appear within an hour; a query that stopped being popular should fade over days, not vanish at once."
+        "q": "How fresh is fresh?",
+        "a": "A query trending now should appear within an hour; a query that stopped being popular should fade over days, not vanish at once."
       },
       {
-        "question": "Personalised?",
-        "answer": "Lightly: the user's own recent queries are boosted among the global candidates; no per-user index."
+        "q": "Personalised?",
+        "a": "Lightly: the user's own recent queries are boosted among the global candidates; no per-user index."
       },
       {
-        "question": "Case and language?",
-        "answer": "Case-folded; one language per site locale, each with its own index; typo tolerance only as a fallback when the prefix has no completions."
+        "q": "Case and language?",
+        "a": "Case-folded; one language per site locale, each with its own index; typo tolerance only as a fallback when the prefix has no completions."
       },
       {
-        "question": "Is exactness of popularity counts needed?",
-        "answer": "No; approximate counts with hourly refresh are fine."
+        "q": "Is exactness of popularity counts needed?",
+        "a": "No; approximate counts with hourly refresh are fine."
       },
       {
-        "question": "What must never be suggested?",
-        "answer": "Blocked terms (a curated list), personal data that appears in queries, and anything seen fewer than a minimum number of times (assumption: 10 in the window)."
+        "q": "What must never be suggested?",
+        "a": "Blocked terms (a curated list), personal data that appears in queries, and anything seen fewer than a minimum number of times (assumption: 10 in the window)."
       }
     ],
     "reference_answer": [
       {
         "id": "requirements-and-estimates",
         "title": "Requirements and estimates",
-        "body": [
+        "blocks": [
           {
-            "heading": "Derived numbers",
-            "body": "500 million requests per day is about 5,800 per second average and 58,000 at peak. Client debouncing (wait about 100 ms after a keystroke before sending) removes most intermediate prefixes and is the single cheapest optimisation; the numbers above assume it. The index: 10 million queries of about 20 characters produce about 10 distinct prefixes each (assumption; short prefixes are shared between queries), 100 million prefixes; storing the top 10 completions per prefix as references to a query table (10 ids times 4 bytes plus the key) is about 100 bytes per prefix, so about 10 GB; as a trie with top-10 lists at every node it is of the same order. One memory lookup is 100 ns and a trie walk of 20 characters a few microseconds, so the service time is dominated by serialisation and the network, not the lookup."
+            "type": "p",
+            "text": "Every number below follows from the stated assumptions: 100 million searches a day with about five prefix requests each, a peak at ten times the average, and a vocabulary of 10 million queries. The tables carry the arithmetic; the paragraphs carry the assumptions."
           },
           {
-            "heading": "Shard arithmetic",
-            "body": "A sharded index by the first one or two characters is unbalanced: common first letters carry far more prefixes and far more traffic. 58,000 requests per second with the busiest letter at 10 percent (assumption) is 5,800 per second on one shard, which one in-memory node serves easily; the imbalance is handled with replicas per shard, not with finer sharding."
+            "type": "table",
+            "caption": "Rates and daily volumes derived from the assumptions.",
+            "columns": [
+              "quantity",
+              "per day",
+              "average per second",
+              "peak per second",
+              "note"
+            ],
+            "rows": [
+              [
+                "Autocomplete requests",
+                "500 million",
+                "5,800",
+                "58,000",
+                "after client debouncing (below); peak is 10 times the average (assumption)"
+              ],
+              [
+                "Searches (the query log's input)",
+                "100 million",
+                "1,160",
+                "11,600",
+                "written by the search service, read hourly by the build"
+              ],
+              [
+                "Requests to the busiest shard",
+                "50 million",
+                "580",
+                "5,800",
+                "the busiest first letter at 10 percent of traffic (assumption); one in-memory node serves it easily"
+              ],
+              [
+                "Prefix entries recomputed per build",
+                "2.4 billion",
+                "",
+                "",
+                "100 million prefixes every hour; the build, not the serving path, is the bottleneck"
+              ]
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Client debouncing, waiting about 100 ms after a keystroke before sending, removes most intermediate prefixes and is the single cheapest optimisation; the request numbers above assume it."
+          },
+          {
+            "type": "table",
+            "caption": "Sizes: the vocabulary, the prefix index and the per-user recents.",
+            "columns": [
+              "quantity",
+              "size",
+              "derived from"
+            ],
+            "rows": [
+              [
+                "Vocabulary",
+                "10 million queries",
+                "the top distinct queries worth suggesting, about 20 characters each"
+              ],
+              [
+                "Distinct prefixes",
+                "100 million",
+                "about 10 per query (assumption; short prefixes are shared between queries)"
+              ],
+              [
+                "Prefix entry",
+                "about 100 bytes",
+                "the top 10 completions as references to a query table: 10 ids of 4 bytes plus the key"
+              ],
+              [
+                "Prefix index",
+                "about 10 GB",
+                "100 million prefixes times 100 bytes; as a trie with top-10 lists at every node it is of the same order"
+              ],
+              [
+                "Recent queries per user",
+                "50 entries, 30-day TTL",
+                "assumption; the only per-user state"
+              ]
+            ]
+          },
+          {
+            "type": "table",
+            "caption": "The latency budget.",
+            "columns": [
+              "step",
+              "time",
+              "note"
+            ],
+            "rows": [
+              [
+                "One memory lookup",
+                "100 ns",
+                "the latency reference numbers"
+              ],
+              [
+                "A trie walk of 20 characters",
+                "a few microseconds",
+                "the lookup is never the cost; serialisation and the network are"
+              ],
+              [
+                "Service budget",
+                "20 ms",
+                "what is left of the client target after network time"
+              ],
+              [
+                "Client target",
+                "100 ms at p99",
+                "end to end"
+              ],
+              [
+                "Fallback suggester deadline",
+                "10 ms",
+                "taken only when the prefix has no entry"
+              ],
+              [
+                "Edge cache TTL",
+                "60 s",
+                "the same prefixes repeat constantly"
+              ]
+            ],
+            "cites": [
+              "s5"
+            ]
+          },
+          {
+            "type": "table",
+            "caption": "Cost per month. The unit prices are assumptions chosen to make the arithmetic concrete; the version 2 answer carried no cost figure.",
+            "columns": [
+              "cost line",
+              "unit price (assumption)",
+              "quantity per month",
+              "monthly cost",
+              "note"
+            ],
+            "rows": [
+              [
+                "Edge cache requests",
+                "$0.01 per 10,000 requests",
+                "15 billion",
+                "about $15,000",
+                "every request reaches the edge; the hit ratio decides what reaches the service"
+              ],
+              [
+                "Replicated index memory",
+                "$10 per GB-month",
+                "30 GB",
+                "about $300",
+                "10 GB in three replicas across the shards"
+              ],
+              [
+                "Hourly builds",
+                "$0.50 per node-hour",
+                "720 node-hours",
+                "about $360",
+                "one node-hour per build (assumption), 24 builds a day"
+              ],
+              [
+                "Total",
+                "",
+                "",
+                "about $15,700",
+                "the edge is the bill, which is the point: the serving path is a cache in front of a lookup"
+              ]
+            ]
           }
         ]
       },
       {
         "id": "high-level-design",
         "title": "High-level design",
-        "body": [
+        "blocks": [
           {
-            "heading": "Container view",
-            "body": "Two halves. Serving: an edge cache keyed by prefix (the same prefixes repeat constantly, so a short TTL cache absorbs most traffic), an autocomplete service that reads a precomputed top-10 list for the prefix from an in-memory shard and optionally re-ranks it with the user's recent queries. Build: an hourly aggregation of the query log into decayed counts, filtering, and a versioned rebuild of the per-prefix top-10 lists that shards load atomically. The serving side never computes popularity; it only looks up."
+            "type": "p",
+            "text": "Two halves. Serving: an edge cache keyed by prefix (the same prefixes repeat constantly, so a short TTL cache absorbs most traffic), an autocomplete service that reads a precomputed top-10 list for the prefix from an in-memory shard and optionally re-ranks it with the user's recent queries. Build: an hourly aggregation of the query log into decayed counts, filtering, and a versioned rebuild of the per-prefix top-10 lists that shards load atomically. The serving side never computes popularity; it only looks up."
+          },
+          {
+            "type": "diagram",
+            "mermaid": "flowchart TB\n  subgraph Serving\n    U[Clients, debounced keystrokes] --> E[Edge cache: prefix to top-10, 60 s TTL]\n    E --> AS[Autocomplete service]\n    AS --> SH[(Prefix index shards, in memory, by first letters)]\n    AS --> PR[Personalisation re-rank]\n    PR --> UH[(Recent queries per user)]\n    AS -.->|no entry for the prefix| FB[Fallback suggester: term or phrase, 10 ms deadline]\n  end\n  subgraph Build\n    QL[[query log]] --> AG[Aggregator: counts with decay, every hour]\n    AG --> FL[Filter: block list, min count, dedupe]\n    FL --> BU[Index builder: top-10 per prefix, versioned]\n    BU --> OS[(Index versions: object storage)]\n    OS -->|load and switch| SH\n  end",
+            "legend": "Boxes are containers; the two frames are the serving and build halves; cylinders are stores; double brackets are logs; the dotted edge is the fallback path taken only when the prefix has no entry."
+          },
+          {
+            "type": "p",
+            "text": "The edge cache works because the response carries Cache-Control: public, max-age=60, which RFC 9111 defines as the directive that lets shared caches and browsers reuse the response for that long; a blocked term can therefore linger for up to a minute unless its prefix keys are purged, which the failure table covers.",
+            "cites": [
+              "s6"
+            ]
           }
-        ],
-        "diagram": {
-          "source": "flowchart TB\n  subgraph Serving\n    U[Clients, debounced keystrokes] --> E[Edge cache: prefix to top-10, 60 s TTL]\n    E --> AS[Autocomplete service]\n    AS --> SH[(Prefix index shards, in memory, by first letters)]\n    AS --> PR[Personalisation re-rank]\n    PR --> UH[(Recent queries per user)]\n    AS -.->|no entry for the prefix| FB[Fallback suggester: term or phrase, 10 ms deadline]\n  end\n  subgraph Build\n    QL[[query log]] --> AG[Aggregator: counts with decay, every hour]\n    AG --> FL[Filter: block list, min count, dedupe]\n    FL --> BU[Index builder: top-10 per prefix, versioned]\n    BU --> OS[(Index versions: object storage)]\n    OS -->|load and switch| SH\n  end",
-          "legend": "Boxes are containers; the two frames are the serving and build halves; cylinders are stores; double brackets are logs; the dotted edge is the fallback path taken only when the prefix has no entry."
-        }
+        ]
       },
       {
         "id": "data-model",
         "title": "The data model",
-        "body": [
+        "blocks": [
           {
-            "heading": "Entities",
-            "body": "Query {query_id, text (case-folded), locale, score (decayed count), first_seen, blocked}. PrefixEntry {prefix, locale, top[] of (query_id, score)} capped at 10. UserRecent {user_id, queries[] of (text, time)} capped at 50 with a 30-day TTL (assumption). IndexVersion {locale, version, built_at, shard files}."
+            "type": "table",
+            "caption": "Entities.",
+            "columns": [
+              "entity",
+              "fields",
+              "key or partition",
+              "notes"
+            ],
+            "rows": [
+              [
+                "Query",
+                "query_id, text (case-folded), locale, score (decayed count), first_seen, blocked",
+                "query_id",
+                "the vocabulary; one row per distinct query per locale"
+              ],
+              [
+                "PrefixEntry",
+                "prefix, locale, top[] of (query_id, score)",
+                "(prefix, locale), sharded by first letters",
+                "capped at 10; rebuilt every hour, never written by the serving path"
+              ],
+              [
+                "UserRecent",
+                "user_id, queries[] of (text, time)",
+                "user_id",
+                "capped at 50 with a 30-day TTL (assumption); never shown to another user"
+              ],
+              [
+                "IndexVersion",
+                "locale, version, built_at, shard files",
+                "(locale, version)",
+                "shards load a version beside the old one and switch pointers"
+              ]
+            ]
           },
           {
-            "heading": "Index structures",
-            "body": "Three ways to hold PrefixEntry, all cited for comparison. A trie: one node per character, each node carrying its top-10 list; lookup cost is proportional to the prefix length. Sorted sets with lexicographic ranges, the minimal in-memory approach antirez describes: every prefix of every query is a member, and a range query from the prefix returns completions, with a score for ranking. A completion suggester, which Elasticsearch documents as optimised for speed: data structures that give fast prefix lookups, are held in memory and are costly to build, which fits a rebuild-and-swap model (the structure underneath is a finite state transducer, FST). The answer precomputes top-10 lists per prefix into a hash map per shard (the trie's data without the trie's pointers), because the lists are small and the build is offline."
+            "type": "table",
+            "caption": "Three ways to hold a PrefixEntry, and the one the answer takes.",
+            "columns": [
+              "structure",
+              "how it works",
+              "cost",
+              "verdict"
+            ],
+            "rows": [
+              [
+                "Trie",
+                "one node per character, each node carrying its top-10 list; lookup cost is proportional to the prefix length",
+                "pointers per node; the lists are the bulk of the memory",
+                "not needed when the lists are precomputed"
+              ],
+              [
+                "Sorted sets with lexicographic ranges",
+                "every prefix of every query is a member; a range query from the prefix returns completions, with a score for ranking; the minimal in-memory approach antirez describes",
+                "one member per prefix per query",
+                "fine for a small vocabulary; the ranking is done at query time"
+              ],
+              [
+                "Completion suggester (an FST under the hood)",
+                "data structures that give fast prefix lookups, are held in memory and are costly to build, which Elasticsearch documents as the reason the suggester is optimised for speed",
+                "a rebuild per change; fits a rebuild-and-swap model",
+                "a sound managed option"
+              ],
+              [
+                "Hash map of top-10 lists per prefix",
+                "the trie's data without the trie's pointers: one lookup per prefix",
+                "about 100 bytes per prefix",
+                "chosen: the lists are small and the build is offline"
+              ]
+            ],
+            "cites": [
+              "s3",
+              "s2",
+              "s1"
+            ]
           },
           {
-            "heading": "API",
-            "body": "GET /suggest?q=prefix&locale=en&limit=10 returns {suggestions[] of (text, score)}; the response carries Cache-Control: public, max-age=60 so edge and browser caches share it. POST /blocklist is an operator endpoint. The query log is written by the search service, not by this one."
+            "type": "table",
+            "caption": "The API.",
+            "columns": [
+              "method",
+              "path",
+              "request",
+              "response",
+              "notes"
+            ],
+            "rows": [
+              [
+                "GET",
+                "/suggest?q=prefix&locale=en&limit=10",
+                "the prefix, the locale, an optional user",
+                "{suggestions[] of (text, score)}",
+                "Cache-Control: public, max-age=60 so edge and browser caches share it"
+              ],
+              [
+                "POST",
+                "/blocklist",
+                "{term, locale}",
+                "204",
+                "an operator endpoint; removes the term from serving within minutes without a rebuild"
+              ]
+            ]
+          },
+          {
+            "type": "p",
+            "text": "The query log is written by the search service, not by this one: autocomplete reads it, never produces it, which is what keeps the box from blocking search."
           }
         ]
       },
       {
         "id": "core-flow",
         "title": "The core flow, step by step",
-        "body": [
+        "blocks": [
           {
-            "body": "One keystroke, and one hourly build."
+            "type": "p",
+            "text": "One keystroke, and one hourly build."
+          },
+          {
+            "type": "steps",
+            "title": "Debounce, look up, re-rank, fall back, rebuild",
+            "items": [
+              "The client waits 100 ms after the keystroke, then requests the prefix; the edge cache answers if it has seen the prefix within 60 s (for the top few thousand prefixes this is nearly always).",
+              "On a miss, the service hashes the prefix's first characters to a shard, reads the PrefixEntry from the shard's in-memory map (replicas chosen round robin), and gets up to 10 query ids with scores.",
+              "If the user is known, the service merges the user's recent queries that start with the prefix, boosting them ahead of global results; it never shows another user's queries.",
+              "If the prefix has no entry (a rare or misspelled prefix), the service falls back to a term or phrase suggester over the query vocabulary for a correction, bounded by a 10 ms deadline, else returns an empty list.",
+              "Build, every hour: the aggregator reads the last hour of the query log, adds counts to a decayed score (yesterday's count weighs half, assumption), drops queries below the minimum count or on the block list, recomputes the top 10 for every affected prefix, writes a new index version to object storage, and tells shards to load it. Shards load the new version beside the old and switch pointers, so no request sees a partial index."
+            ],
+            "cites": [
+              "s1"
+            ]
           }
-        ],
-        "steps": [
-          "The client waits 100 ms after the keystroke, then requests the prefix; the edge cache answers if it has seen the prefix within 60 s (for the top few thousand prefixes this is nearly always).",
-          "On a miss, the service hashes the prefix's first characters to a shard, reads the PrefixEntry from the shard's in-memory map (replicas chosen round robin), and gets up to 10 query ids with scores.",
-          "If the user is known, the service merges the user's recent queries that start with the prefix, boosting them ahead of global results; it never shows another user's queries.",
-          "If the prefix has no entry (a rare or misspelled prefix), the service falls back to a term or phrase suggester over the query vocabulary for a correction, bounded by a 10 ms deadline, else returns an empty list.",
-          "Build, every hour: the aggregator reads the last hour of the query log, adds counts to a decayed score (yesterday's count weighs half, assumption), drops queries below the minimum count or on the block list, recomputes the top 10 for every affected prefix, writes a new index version to object storage, and tells shards to load it. Shards load the new version beside the old and switch pointers, so no request sees a partial index."
         ]
       },
       {
         "id": "scaling-and-the-bottleneck",
         "title": "Scaling and the bottleneck",
-        "body": [
+        "blocks": [
           {
-            "heading": "Freshness versus build cost",
-            "body": "The serving path is a cache in front of a memory lookup; it scales by replicas, and its only risk is a cold start after a deploy, which is why shards load the index from a prebuilt file rather than computing it. The real bottleneck is the build: recomputing top-10 for 100 million prefixes every hour is a batch job over the query log, parallel by prefix range, and its runtime bounds freshness. A trending query reaches suggestions within one build interval plus the edge TTL, which meets the one-hour target; a faster lane for the top few thousand trending queries (a streaming count with a five-minute window merged at serve time) is the usual next step when product asks for minutes."
+            "type": "p",
+            "text": "The serving path is a cache in front of a memory lookup; it scales by replicas, and its only risk is a cold start after a deploy, which is why shards load the index from a prebuilt file rather than computing it. The real bottleneck is the build: recomputing top-10 for 100 million prefixes every hour is a batch job over the query log, parallel by prefix range, and its runtime bounds freshness."
           },
           {
-            "heading": "Hot prefixes and replicas",
-            "body": "Hot shards (common first letters) get more replicas than cold ones, assigned from measured traffic per shard rather than evenly; the edge cache already removes most of the skew because popular prefixes are exactly the cached ones. Discord's message search write-up is the reference for the opposite shape, sharding a search index by owning entity and indexing lazily on first use; it does not fit here because autocomplete has one global vocabulary per locale, but the lesson that index layout follows the query pattern does."
+            "type": "table",
+            "caption": "Freshness lanes and what each costs.",
+            "columns": [
+              "lane",
+              "freshness",
+              "cost",
+              "when"
+            ],
+            "rows": [
+              [
+                "Hourly build",
+                "one build interval plus the edge TTL",
+                "one batch job an hour over the whole log",
+                "the default; meets the one-hour target"
+              ],
+              [
+                "Trending lane",
+                "about five minutes",
+                "a streaming count over a five-minute window for the top few thousand queries, merged at serve time",
+                "the usual next step when product asks for minutes"
+              ],
+              [
+                "Block list removal",
+                "minutes",
+                "an operator endpoint plus a purge of the prefix keys at the edge",
+                "always on; never waits for a build"
+              ]
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Hot shards (common first letters) get more replicas than cold ones, assigned from measured traffic per shard rather than evenly; the edge cache already removes most of the skew because popular prefixes are exactly the cached ones. Discord's message search write-up is the reference for the opposite shape, sharding a search index by owning entity and indexing lazily on first use; it does not fit here because autocomplete has one global vocabulary per locale, but the lesson that index layout follows the query pattern does.",
+            "cites": [
+              "s4"
+            ]
           }
         ]
       },
       {
         "id": "failure-modes",
         "title": "Failure modes and what degrades",
-        "body": [
+        "blocks": [
           {
-            "body": "Each row names the failure, what the user sees, and the mitigation."
-          }
-        ],
-        "table": {
-          "columns": [
-            "Failure",
-            "Effect",
-            "Mitigation"
-          ],
-          "rows": [
-            [
-              "Shard replica down",
-              "misses for its letters go to other replicas",
-              "at least three replicas per shard; health checks remove a replica from rotation"
+            "type": "p",
+            "text": "Each row names the failure, what the user sees, and the mitigation."
+          },
+          {
+            "type": "table",
+            "caption": "Failure modes.",
+            "columns": [
+              "Failure",
+              "Effect",
+              "Mitigation"
             ],
-            [
-              "Build job fails",
-              "suggestions go stale",
-              "shards keep serving the last good version; alert on index age over 2 hours"
-            ],
-            [
-              "Bad build (empty or tiny index)",
-              "no suggestions",
-              "the builder refuses a version whose size drops more than 20 percent from the previous (assumption); operators can pin a version"
-            ],
-            [
-              "Blocked term slips through",
-              "an offensive suggestion",
-              "block list applied at build and again at serve time; an operator endpoint removes a term within minutes without a rebuild"
-            ],
-            [
-              "Edge cache serves a stale list after a block",
-              "the term shows for up to 60 s",
-              "short TTL; purge the prefix keys of a blocked term on removal"
-            ],
-            [
-              "Service slow (deadline exceeded)",
-              "the box shows nothing",
-              "the client never waits more than 150 ms (assumption); search itself is unaffected by design"
+            "rows": [
+              [
+                "Shard replica down",
+                "misses for its letters go to other replicas",
+                "at least three replicas per shard; health checks remove a replica from rotation"
+              ],
+              [
+                "Build job fails",
+                "suggestions go stale",
+                "shards keep serving the last good version; alert on index age over 2 hours"
+              ],
+              [
+                "Bad build (empty or tiny index)",
+                "no suggestions",
+                "the builder refuses a version whose size drops more than 20 percent from the previous (assumption); operators can pin a version"
+              ],
+              [
+                "Blocked term slips through",
+                "an offensive suggestion",
+                "block list applied at build and again at serve time; an operator endpoint removes a term within minutes without a rebuild"
+              ],
+              [
+                "Edge cache serves a stale list after a block",
+                "the term shows for up to 60 s",
+                "short TTL; purge the prefix keys of a blocked term on removal"
+              ],
+              [
+                "Service slow (deadline exceeded)",
+                "the box shows nothing",
+                "the client never waits more than 150 ms (assumption); search itself is unaffected by design"
+              ]
             ]
-          ]
-        }
+          }
+        ]
       },
       {
         "id": "trade-offs",
         "title": "Trade-offs and the alternative not taken",
-        "body": [
+        "blocks": [
           {
-            "body": "The decisions a reviewer reads first."
-          }
-        ],
-        "table": {
-          "columns": [
-            "Decision",
-            "Options",
-            "Chosen",
-            "Why"
-          ],
-          "rows": [
-            [
-              "Compute",
-              "rank at request time from counts versus precomputed top-10 per prefix",
-              "precomputed offline, looked up online",
-              "the 20 ms budget and 58,000 requests per second; freshness of one hour is acceptable"
+            "type": "p",
+            "text": "The decisions a reviewer reads first."
+          },
+          {
+            "type": "table",
+            "caption": "Trade-offs.",
+            "columns": [
+              "Decision",
+              "Options",
+              "Chosen",
+              "Why"
             ],
-            [
-              "Index structure",
-              "trie, sorted sets with lexicographic ranges, FST completion suggester, hash map of lists",
-              "hash map of top-10 per prefix, built offline",
-              "smallest serving code; the structure's cleverness is not needed when lists are precomputed"
+            "rows": [
+              [
+                "Compute",
+                "rank at request time from counts versus precomputed top-10 per prefix",
+                "precomputed offline, looked up online",
+                "the 20 ms budget and 58,000 requests per second; freshness of one hour is acceptable"
+              ],
+              [
+                "Index structure",
+                "trie, sorted sets with lexicographic ranges, FST completion suggester, hash map of lists",
+                "hash map of top-10 per prefix, built offline",
+                "smallest serving code; the structure's cleverness is not needed when lists are precomputed"
+              ],
+              [
+                "Sharding",
+                "by prefix hash versus by first letters",
+                "by first letters with replicas sized to traffic",
+                "a prefix walk stays on one shard; skew is handled by replica count"
+              ],
+              [
+                "Personalisation",
+                "per-user index versus re-rank of global candidates",
+                "re-rank",
+                "no per-user build cost; privacy boundary is simple"
+              ],
+              [
+                "Typo tolerance",
+                "fuzzy prefix search always versus fallback only",
+                "fallback only, with a deadline",
+                "fuzzy matching costs latency on every request and rarely helps a prefix that already has completions"
+              ]
             ],
-            [
-              "Sharding",
-              "by prefix hash versus by first letters",
-              "by first letters with replicas sized to traffic",
-              "a prefix walk stays on one shard; skew is handled by replica count"
-            ],
-            [
-              "Personalisation",
-              "per-user index versus re-rank of global candidates",
-              "re-rank",
-              "no per-user build cost; privacy boundary is simple"
-            ],
-            [
-              "Typo tolerance",
-              "fuzzy prefix search always versus fallback only",
-              "fallback only, with a deadline",
-              "fuzzy matching costs latency on every request and rarely helps a prefix that already has completions"
+            "cites": [
+              "s3",
+              "s2",
+              "s1"
             ]
-          ]
-        }
+          }
+        ]
       },
       {
         "id": "at-10x",
         "title": "What changes at 10x",
-        "body": [
+        "blocks": [
           {
-            "body": "At 5 billion requests per day the edge cache is the system and the service is its origin; the index moves closer to users (regional replicas of the versioned files). The vocabulary grows to 100 million queries and the hourly build becomes incremental: only prefixes whose counts changed are recomputed, with a streaming lane for trending terms. Multilingual sites get an index per locale with locale-specific folding and tokenisation; mixed-script prefixes are the hard case and get a product decision rather than an engineering one. Abuse becomes a feed: coordinated query spam to plant a suggestion is countered by per-source rate limits on the log and anomaly checks in the aggregator, and the block list gets an owner."
+            "type": "table",
+            "caption": "The numbers at 10x.",
+            "columns": [
+              "quantity",
+              "at 500 million requests a day",
+              "at 5 billion requests a day",
+              "note"
+            ],
+            "rows": [
+              [
+                "Where requests are served",
+                "the edge cache in front of the service",
+                "the edge cache is the system and the service is its origin",
+                "the index moves closer to users: regional replicas of the versioned files"
+              ],
+              [
+                "Vocabulary",
+                "10 million queries",
+                "100 million queries",
+                "the hourly build becomes incremental: only prefixes whose counts changed are recomputed, with a streaming lane for trending terms"
+              ],
+              [
+                "Locales",
+                "one index per locale",
+                "an index per locale with locale-specific folding and tokenisation",
+                "mixed-script prefixes are the hard case and get a product decision rather than an engineering one"
+              ],
+              [
+                "Abuse",
+                "a block list with an owner",
+                "a feed: coordinated query spam to plant a suggestion is countered by per-source rate limits on the log and anomaly checks in the aggregator",
+                "the block list keeps its owner"
+              ]
+            ]
+          },
+          {
+            "type": "table",
+            "caption": "Cost at 10x, at the same assumed unit prices.",
+            "columns": [
+              "cost line",
+              "at 500 million requests a day",
+              "at 5 billion requests a day",
+              "note"
+            ],
+            "rows": [
+              [
+                "Edge cache requests",
+                "about $15,000 per month",
+                "about $150,000 per month",
+                "15 and 150 billion requests at $0.01 per 10,000"
+              ],
+              [
+                "Replicated index memory",
+                "about $300 per month",
+                "about $3,000 per month",
+                "30 GB and 300 GB at $10 per GB-month, for the tenfold vocabulary"
+              ],
+              [
+                "Builds",
+                "about $360 per month",
+                "about $1,000 per month (assumption)",
+                "incremental builds cost less than tenfold"
+              ],
+              [
+                "Total",
+                "about $15,700 per month",
+                "about $154,000 per month",
+                "the edge stays about 95 percent of the bill; the freshness-versus-cost dial is the build lane, not the serving path"
+              ]
+            ]
           }
         ]
       }
@@ -314,54 +767,29 @@
         "Multilingual and mixed-script trade-offs stated as product decisions with engineering consequences."
       ]
     },
-    "interview_frame": [
-      {
-        "time": "0:00 to 0:05",
-        "text": "Requirements: whole-query completions, freshness within an hour, light personalisation, case folding and locales, what must never be suggested. Say the numbers aloud: 58,000 requests per second at peak after debouncing, 100 million prefixes, about 10 GB of index, a 20 ms service budget inside a 100 ms client target."
-      },
-      {
-        "time": "0:05 to 0:10",
-        "text": "Entities and API: Query with a decayed score, PrefixEntry with a top-10 list, UserRecent, IndexVersion; the suggest endpoint with public caching headers."
-      },
-      {
-        "time": "0:10 to 0:20",
-        "text": "High-level design with the diagram: the serving half (edge cache, service, in-memory shards, re-rank) and the build half (log, aggregator, filter, versioned builder). Name the three index structures and why precomputed lists make the choice unimportant."
-      },
-      {
-        "time": "0:20 to 0:40",
-        "text": "Two deep dives: the build pipeline (decay, minimum counts, block list, atomic version swap, freshness bound), then serving under skew (sharding by first letters, replicas by traffic, the edge cache removing the hot prefixes, the fallback deadline)."
-      },
-      {
-        "time": "0:40 to 0:45",
-        "text": "Failure modes from the table, the 10x plan (regional index files, incremental builds, trending lane, abuse controls), and the L3 sentence: the serving path is trivial on purpose; the design is the build pipeline and its freshness-versus-cost dial."
-      }
-    ],
-    "design_doc_frame": [
-      {
-        "section": "Context and scope",
-        "text": "The search product, the existing query log and its retention, the locales served, and the latency complaints or stale suggestions that motivate the work."
-      },
-      {
-        "section": "Goals and non-goals",
-        "text": "Top-10 completions under 100 ms at p99, freshness within an hour, light personalisation; no full search, no spell correction beyond a fallback, no ads."
-      },
-      {
-        "section": "Design",
-        "text": "This answer fills it: the serving path, the index layout, the hourly build with versioned swap, the fallback."
-      },
-      {
-        "section": "Alternatives considered",
-        "text": "Ranking at request time, trie versus sorted sets versus FST suggester, prefix-hash sharding, a per-user index, with the trade-off table."
-      },
-      {
-        "section": "Cross-cutting concerns",
-        "text": "Privacy (no personal data in suggestions, per-user recents with a TTL and never shared), abuse (block list ownership, log rate limits), observability (edge hit ratio, index age, empty-result rate, fallback rate), cost (memory per replica, build compute per hour), rollout by locale with the index version pinned."
-      },
-      {
-        "section": "Review questions the doc must answer",
-        "text": "How a blocked term is removed from every cache within minutes, and what the service returns when the index is older than its freshness target."
-      }
-    ],
+    "interview_frame": {
+      "type": "steps",
+      "title": "A 45-minute interview",
+      "items": [
+        "0:00 to 0:05: Requirements: whole-query completions, freshness within an hour, light personalisation, case folding and locales, what must never be suggested. Say the numbers aloud: 58,000 requests per second at peak after debouncing, 100 million prefixes, about 10 GB of index, a 20 ms service budget inside a 100 ms client target.",
+        "0:05 to 0:10: Entities and API: Query with a decayed score, PrefixEntry with a top-10 list, UserRecent, IndexVersion; the suggest endpoint with public caching headers.",
+        "0:10 to 0:20: High-level design with the diagram: the serving half (edge cache, service, in-memory shards, re-rank) and the build half (log, aggregator, filter, versioned builder). Name the three index structures and why precomputed lists make the choice unimportant.",
+        "0:20 to 0:40: Two deep dives: the build pipeline (decay, minimum counts, block list, atomic version swap, freshness bound), then serving under skew (sharding by first letters, replicas by traffic, the edge cache removing the hot prefixes, the fallback deadline).",
+        "0:40 to 0:45: Failure modes from the table, the 10x plan (regional index files, incremental builds, trending lane, abuse controls), and the L3 sentence: the serving path is trivial on purpose; the design is the build pipeline and its freshness-versus-cost dial."
+      ]
+    },
+    "design_doc_frame": {
+      "type": "list",
+      "items": [
+        "Context and scope: The search product, the existing query log and its retention, the locales served, and the latency complaints or stale suggestions that motivate the work.",
+        "Goals and non-goals: Top-10 completions under 100 ms at p99, freshness within an hour, light personalisation; no full search, no spell correction beyond a fallback, no ads.",
+        "Design: This answer fills it: the serving path, the index layout, the hourly build with versioned swap, the fallback.",
+        "Alternatives considered: Ranking at request time, trie versus sorted sets versus FST suggester, prefix-hash sharding, a per-user index, with the trade-off table.",
+        "Cross-cutting concerns: Privacy (no personal data in suggestions, per-user recents with a TTL and never shared), abuse (block list ownership, log rate limits), observability (edge hit ratio, index age, empty-result rate, fallback rate), cost (memory per replica, build compute per hour), rollout by locale with the index version pinned.",
+        "Review questions the doc must answer: How a blocked term is removed from every cache within minutes, and what the service returns when the index is older than its freshness target."
+      ],
+      "ordered": true
+    },
     "depth_notes": {
       "L1": "A prefix index served from memory with top-k per prefix.",
       "L2": "Offline aggregation of query logs, prefix sharding, personalisation as a re-rank, p99 under 100 ms.",
@@ -369,10 +797,10 @@
     }
   },
   "provenance": {
-    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center M4a",
+    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center M4a; format v2 restructure by hand, Claude (Fable 5.1), Scout learning center F2-E1",
     "generated_on": "2026-10-12",
-    "reviewed_by": "a second reader (Claude Fable 5.1), Scout learning center M4b",
-    "reviewed_on": "2026-10-12"
+    "reviewed_by": null,
+    "reviewed_on": null
   },
   "changelog": [
     {
@@ -384,6 +812,11 @@
       "version": 2,
       "date": "2026-10-12",
       "change": "writer follow-up on the second reader's items (M4c)"
+    },
+    {
+      "version": 3,
+      "date": "2026-10-15",
+      "change": "format v2 restructure (batch E1): rates, sizes, the latency budget, cost, entities, the three index structures, API, freshness lanes, failure modes, trade-offs and the 10x numbers as tables, the core flow as steps; sources with ids and cites on every claim about a real system (the Elasticsearch suggester, antirez's sorted sets, the trie, Discord's search, RFC 9111); one addition of substance: a cost table with stated unit-price assumptions, where version 2 carried no cost figure; no Building it on AWS section (held by the operator's decision); reviewed_by cleared for a second read"
     }
   ]
 }
