@@ -1,7 +1,7 @@
 {
-  "schema_version": "learning-center-lesson:1",
+  "schema_version": "learning-center-lesson:2",
   "id": "sd-reliability-slos",
-  "version": 1,
+  "version": 2,
   "status": "published",
   "superseded_by": null,
   "title": "Reliability, SLOs and failure modes",
@@ -18,86 +18,795 @@
     "sre",
     "monitoring"
   ],
-  "summary": "Reliability becomes an engineering quantity once it is defined from the user's point of view and measured. Service level indicators measure what users experience, objectives set a target for them, and the error budget that results governs how much risk the team can take. Alerting is then built on the rate at which that budget is being spent, and design reviews enumerate failure modes against it.",
+  "summary": "Reliability becomes an engineering quantity once it is defined from the user's side and measured. This lesson defines indicators, objectives and agreements with the SLI menu per system type, shows how a target is set from cost rather than aspiration, turns the target into an error budget and a written policy, derives burn-rate alerts with the multiwindow table, implements them with alerting rules and Alertmanager, covers failure domains and recovery targets, failure mode analysis, canaries and chaos experiments, and works one checkout service from SLO to alert thresholds.",
   "detail": [],
-  "in_practice": "A team writes down two or three SLIs per user-facing service, agrees the targets and an error budget policy with product owners, and encodes them as recording rules for the error ratio over each window. Multiwindow burn rate alerts route through Alertmanager, with fast burns paging the on-call engineer and slow burns filing tickets. Every page links to a runbook. A dashboard shows remaining budget, and a regular review looks at where budget went, which feeds postmortems and prioritization. Design reviews include a failure mode table per dependency, and failover paths are exercised on a schedule so the recovery time assumed in the SLO is a measured number.",
+  "in_practice": {
+    "blocks": [
+      {
+        "type": "p",
+        "text": "Google's lock service Chubby is the SRE book's example of a service that was too reliable. True outages of the global instance were so rare that service owners added dependencies on it as if it never went down, and when it did, their services failed. The response is a policy: in any quarter in which a real failure has not used the budget, SRE takes Chubby down deliberately, which flushes out unreasonable dependencies soon after they appear.",
+        "cites": [
+          "s1"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "The embracing risk chapter records two of Google's target-setting decisions. For Google Apps for Work, whose users are enterprises for whom an outage is their own outage, the external quarterly target was 99.9 percent, backed by a stronger internal target and a contract with penalties. For Bigtable, the infrastructure was split into low-latency clusters with slack capacity and throughput clusters run hot with less redundancy, the latter at perhaps 10 to 50 percent of the cost, so that clients choose the cheapest level of service that meets their need.",
+        "cites": [
+          "s2"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "The workbook's starter-SLO example: measure, then round down.",
+        "columns": [
+          "measured over four weeks",
+          "value",
+          "proposed objective"
+        ],
+        "rows": [
+          [
+            "Total requests",
+            "3,663,253",
+            ""
+          ],
+          [
+            "Successful requests",
+            "3,557,865, or 97.123 percent",
+            "97 percent availability"
+          ],
+          [
+            "90th percentile latency",
+            "432 ms",
+            "90 percent of requests under 450 ms"
+          ],
+          [
+            "99th percentile latency",
+            "891 ms",
+            "99 percent of requests under 900 ms"
+          ]
+        ],
+        "cites": [
+          "s3"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Slack's cellular migration began with a zone failure that its multi-zone deployment did not survive: on 30 June 2021 a faulty network link in one Availability Zone produced a gray failure in which servers in different zones held different views of which backends were healthy. The team's design goals for the fix are stated against its budget: a 99.99 percent SLA allows under an hour a year, so a drain must remove traffic from a zone within five minutes, must not itself cause user-visible errors, must be incremental down to 1 percent of traffic on undrain, and must not depend on resources in the zone being drained. The mechanism is siloing, so that each service talks only within its own zone and a zone is emptied by steering users away.",
+        "cites": [
+          "s12"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "The canarying chapter's own measured example is a release configured to fail 20 percent of requests. Deployed everywhere it would have risked 20 percent of all requests; on a 5 percent canary population it produced a 1 percent overall error rate, and the deployment tooling was tuned to compare the canary's error rate with the control's and roll back when they diverge.",
+        "cites": [
+          "s10"
+        ]
+      }
+    ]
+  },
   "subtopics": [
     {
-      "body": [
+      "id": "indicators-objectives-agreements",
+      "title": "Indicators, objectives and agreements",
+      "blocks": [
         {
-          "body": "A service level indicator is a measured quantity describing service behaviour, best expressed as a ratio of good events to valid events: requests answered successfully, requests faster than a threshold, records processed within a freshness bound. A service level objective is a target for an SLI over a window, such as 99.9 percent of requests succeeding over 30 days. A service level agreement is a contract with consequences for missing it, and is normally looser than the internal SLO so there is margin before penalties apply.",
-          "heading": "Three distinct things"
+          "type": "p",
+          "text": "The SRE book defines the three terms. A service level indicator is a carefully defined quantitative measure of some aspect of the service: request latency, the error rate as a fraction of requests, throughput, availability as the fraction of well-formed requests that succeed, and for storage durability. A service level objective is a target value or range for an indicator, such as the average search latency being under a bound. A service level agreement is a contract with consequences for meeting or missing the objectives it contains; the test is to ask what happens if the objective is missed, and if nothing explicit does, it is an objective rather than an agreement.",
+          "cites": [
+            "s1"
+          ]
         },
         {
-          "body": "Pick a small number of indicators tied to what users care about, by system type. Serving systems track availability, latency and throughput. Storage systems track latency, availability and durability. Pipelines track freshness and correctness. Measure latency as a distribution with percentiles, not averages, because an average hides the slow tail that users notice. Measure as close to the user as practical: load balancer metrics capture failures that server-side metrics miss when the server never saw the request. Do not target 100 percent. It is unreachable, users cannot perceive it through their own less reliable networks, and it leaves no room for change.",
-          "heading": "Choosing good indicators"
-        }
-      ],
-      "id": "sli-slo-sla",
-      "title": "SLIs, SLOs and SLAs"
-    },
-    {
-      "body": [
-        {
-          "body": "The error budget is one minus the SLO. A 99.9 percent availability target over 30 days allows 0.1 percent of requests to fail, or roughly 43 minutes of full downtime. The budget turns reliability into a shared, spendable resource. Releases, experiments, migrations and planned maintenance all consume it, as do incidents. While budget remains, the team ships at full speed. When it is exhausted, an error budget policy agreed in advance takes effect, typically shifting effort to reliability work and slowing risky changes until the service is back within target.",
-          "heading": "From target to budget"
+          "type": "p",
+          "text": "The workbook adds the form an indicator should take: the ratio of good events to the total number of events, so that it runs from zero to one and every indicator reads the same way. It also separates the SLI specification, what to measure, from the SLI implementation, how to measure it, because one specification has several implementations that differ in quality, coverage and cost, and the right one is as close to the user as the team can afford.",
+          "cites": [
+            "s3"
+          ]
         },
         {
-          "body": "Start from current measured performance and user expectations, not from an aspiration. Publish a target somewhat looser than what the system achieves so there is headroom. Remember that a service cannot be more reliable than its hard dependencies combined, so targets must be consistent along the call chain. Systems that greatly exceed their target teach users to depend on the higher level, so either tighten the target or accept that the margin is not a promise. Review objectives periodically with product owners and adjust when they are neither driving decisions nor matching user happiness.",
-          "heading": "Setting and revising targets"
-        }
-      ],
-      "id": "error-budgets",
-      "title": "Error budgets and what they decide"
-    },
-    {
-      "body": [
-        {
-          "body": "Alerting on raw error rate thresholds is either noisy or slow. Burn rate is how fast the budget is being consumed relative to the rate that would exactly exhaust it at the end of the window. A burn rate of 1 uses the whole budget in 30 days, and 14.4 uses 2 percent of it in one hour. Alerting on burn rate ties each page to a concrete threat to the objective, and scales severity naturally: fast burns page a human, slow burns open a ticket.",
-          "heading": "Alert on budget consumption"
+          "type": "table",
+          "caption": "The indicator menu by type of component, from the workbook, with the system types of the SRE book.",
+          "columns": [
+            "type of service",
+            "indicator",
+            "what it is the proportion of"
+          ],
+          "rows": [
+            [
+              "Request-driven",
+              "availability",
+              "requests that got a successful response"
+            ],
+            [
+              "Request-driven",
+              "latency",
+              "requests faster than a threshold"
+            ],
+            [
+              "Request-driven",
+              "quality",
+              "responses served undegraded, where the service degrades gracefully"
+            ],
+            [
+              "Pipeline",
+              "freshness",
+              "data updated more recently than a threshold, ideally weighted by how often users read it"
+            ],
+            [
+              "Pipeline",
+              "correctness",
+              "records in that produced the correct value out"
+            ],
+            [
+              "Pipeline",
+              "coverage",
+              "jobs or records processed within the window"
+            ],
+            [
+              "Storage",
+              "durability",
+              "records written that can be read back; the user's data, not the bulk"
+            ]
+          ],
+          "cites": [
+            "s3",
+            "s1"
+          ]
         },
         {
-          "body": "The recommended scheme combines several burn rates, each checked over a long and a short window. For a 30 day objective, a typical set pages at 14.4 over one hour and at 6 over six hours, and tickets at 1 over three days. Each condition also requires the same burn rate over a short window of about one twelfth the length, such as five minutes for the one hour alert. The long window gives significance and the short one makes the alert reset quickly once the problem stops. Low-traffic services need care, since a few failed requests can look like a huge burn.",
-          "heading": "Multiple windows and burn rates"
-        }
-      ],
-      "id": "burn-rate-alerting",
-      "title": "Burn rate alerting"
-    },
-    {
-      "body": [
-        {
-          "body": "Recording rules precompute expensive expressions on a schedule and store the result as a new time series. For SLOs, this means recording the error ratio per service over each window needed, such as five minutes, one hour and six hours, so dashboards and alerts query cheap precomputed series. Alerting rules evaluate an expression and fire when it returns results. A for clause requires the condition to hold for a duration before firing, moving the alert from pending to firing. Labels carry severity and routing information, and annotations carry human-readable summaries and runbook links.",
-          "heading": "Recording and alerting rules"
+          "type": "p",
+          "text": "The book's rules for choosing indicators follow from what users notice. A handful of representative indicators is enough; too many dilute attention. Aggregate with care: an average request rate hides bursts, and an average latency hides the tail, so indicators use percentiles, a high one for the plausible worst case and the median for the typical case. Some indicators must be collected on the client, because a backend that is fast does not help a page whose JavaScript is slow; the workbook's example chooses load balancer metrics as the compromise, closer to the user than server logs and already available.",
+          "cites": [
+            "s1",
+            "s3"
+          ]
         },
         {
-          "body": "The metrics server only decides that an alert is firing. Alertmanager decides who hears about it. It deduplicates alerts and groups related ones into a single notification, so a failure across a hundred instances pages once, not a hundred times. Inhibition suppresses downstream alerts when a broader one is already firing, for example muting per-service alerts while a whole cluster is unreachable. Silences mute matching alerts for a time window during maintenance. A routing tree matches on labels to send notifications to the right receiver, such as a paging service for critical severity and a chat channel for tickets.",
-          "heading": "Alertmanager"
+          "type": "callout",
+          "kind": "rule",
+          "text": "Write every indicator as good events over valid events, measured as close to the user as you can, and keep only the few that a user would recognise.",
+          "cites": [
+            "s3",
+            "s1"
+          ]
         }
-      ],
-      "id": "prometheus-rules-alertmanager",
-      "title": "Implementing SLOs with recording rules, alerting rules and Alertmanager"
+      ]
     },
     {
-      "body": [
+      "id": "setting-the-target",
+      "title": "Setting the target from cost and users, not from aspiration",
+      "blocks": [
         {
-          "body": "For each component and dependency in a design, ask what happens when it is down, slow, returning errors, returning wrong data, or partitioned from its peers. Slow is usually worse than down, because it holds resources and evades simple health checks. Classify dependencies as hard, where the request cannot succeed without them, or soft, where the service can degrade by serving stale data, defaults or a reduced feature. Look for correlated failure: shared zones, shared config pushes, shared credentials and certificates that expire together. Then check each mode against the SLO: how it is detected, how long mitigation takes, and how much budget it would consume. Redundancy across zones, staged rollouts with automatic rollback and tested failover are the standard mitigations.",
-          "heading": "Enumerate, then bound the blast radius"
+          "type": "p",
+          "text": "The embracing risk chapter argues that past a point more reliability makes a service worse: it slows feature delivery, raises cost, and users cannot tell the difference, because a user on a smartphone that is 99 percent reliable cannot distinguish a service at four nines from one at five. Cost does not rise linearly; an incremental improvement may cost a hundred times the previous one, in redundant resources and in engineers not building features. So the target is a minimum and a maximum: the team aims to exceed it, but not by much.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The chapter's revenue arithmetic for one more nine, where every request has equal value.",
+          "columns": [
+            "quantity",
+            "value"
+          ],
+          "rows": [
+            [
+              "Proposed improvement",
+              "99.9 to 99.99 percent"
+            ],
+            [
+              "Increase in availability",
+              "0.09 percent"
+            ],
+            [
+              "Service revenue",
+              "$1 million"
+            ],
+            [
+              "Value of the improvement",
+              "$900; worth it only if the nine costs less than that"
+            ]
+          ],
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Where revenue does not translate directly, the chapter offers the background error rate of the internet as a floor: once a service's errors, measured from the user's side, fall below the errors of the user's own connection, they vanish into the noise. The workbook's method for a first objective is to measure the current indicators over a few weeks and round down, so that the starting target is met by construction and tightened later; its example API's measurements and proposed objectives are in the in-practice table below.",
+          "cites": [
+            "s2",
+            "s3"
+          ]
+        },
+        {
+          "type": "list",
+          "items": [
+            "Keep it simple: complicated aggregations obscure changes and are hard to reason about.",
+            "Avoid absolutes: a system that is always available and scales without limit is unrealistic and unnecessarily better than users need.",
+            "Have as few objectives as possible: keep only the ones you can win a priority argument with.",
+            "Perfection can wait: start loose and tighten, rather than relax an unattainable target later.",
+            "Keep a safety margin: a tighter internal objective than the published one leaves room to act before users notice.",
+            "Do not overachieve: users build on what you deliver, not what you promise, so Chubby introduced planned outages when it was too reliable."
+          ],
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The window matters as much as the number. The workbook recommends a rolling window of an integral number of weeks, four as a general-purpose choice, because a rolling window matches how users remember an outage, an integral number of weeks keeps the weekends constant, and a longer calendar window suits quarterly project decisions.",
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Set the first target from measured performance rounded down and from what the business would pay for the next nine. Tighten it on evidence, and keep an internal margin inside the published number.",
+          "cites": [
+            "s2",
+            "s3"
+          ]
         }
-      ],
-      "id": "failure-mode-analysis",
-      "title": "Reasoning about failure modes in a design"
+      ]
+    },
+    {
+      "id": "error-budgets-and-policy",
+      "title": "Error budgets and the policy that spends them",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The error budget is one minus the objective, expressed as the failures the service may have in the window. The embracing risk chapter gives both forms, time-based and request-based, and says Google prefers the request form because a globally distributed service is almost never fully down. The budget makes reliability a shared, spendable resource: releases, experiments, migrations and incidents all draw on it, and while budget remains, releases continue.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "What a target allows, from the two SRE books.",
+          "columns": [
+            "objective",
+            "budget as time",
+            "budget as requests",
+            "source example"
+          ],
+          "rows": [
+            [
+              "99.9 percent over 30 days",
+              "43 minutes of total outage",
+              "0.1 percent of requests",
+              "the workbook's burn-rate reference"
+            ],
+            [
+              "99.99 percent over a year",
+              "52.56 minutes",
+              "1 in 10,000",
+              "the chapter's time-based example"
+            ],
+            [
+              "99.99 percent per day",
+              "8.6 seconds",
+              "250 of 2.5 million",
+              "the chapter's aggregate example"
+            ],
+            [
+              "99.999 percent per quarter",
+              "about 13 minutes",
+              "0.001 percent; an incident failing 0.0002 percent spends a fifth",
+              "the chapter's budget example"
+            ]
+          ],
+          "cites": [
+            "s2",
+            "s4"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "A budget only works with a written policy saying what happens when it is gone. The workbook lists the usual actions: the development team gives top priority to reliability bugs from the past four weeks, or works only on reliability until the service is back within objective, or a production freeze halts certain changes until budget returns. Getting the policy approved by the product manager, the developers and the SREs is the test of whether the objective is right: if SREs cannot defend it without toil, or developers would lose too much velocity, the objective is too tight; if users would suffer before the policy triggered, it is too loose.",
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "list",
+          "items": [
+            "Authors, reviewers and approvers, with the approval date and the next review date.",
+            "The objectives, the indicator implementations, and how the budget is calculated and consumed.",
+            "The rationale for the numbers and whether they came from measurement or were ad hoc.",
+            "The actions on exhaustion, who takes them, and the escalation path when stakeholders disagree."
+          ],
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "A budget nobody is allowed to spend is a target in disguise, and a budget with no policy is a number on a dashboard. Both leave the release decision to whoever argues loudest.",
+          "cites": [
+            "s3",
+            "s2"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "alerting-on-burn-rate",
+      "title": "Alerting on burn rate",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The workbook judges an alerting rule on four properties: precision, the share of alerts that were significant; recall, the share of significant events that alerted; detection time; and reset time, how long the alert keeps firing after the problem stops. It walks through the failures of the obvious rules. A raw error-rate threshold over ten minutes pages for an event that spends 0.02 percent of the monthly budget. A 36-hour window fixes precision but fires for 36 hours after a short outage. A duration clause makes a total outage wait as long as a tiny one, by which time it has spent 140 percent of the month's budget.",
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Burn rate is the fix: how fast the service consumes its budget relative to the rate that would exhaust it exactly at the end of the window. A burn rate of one spends the budget in the full window; higher rates spend it proportionally sooner, so the alert threshold is a burn rate and the page is tied to a definite fraction of the budget.",
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Burn rates for a 99.9 percent objective over 30 days (the workbook's Table 5-4).",
+          "columns": [
+            "burn rate",
+            "error rate",
+            "time to exhaust the budget"
+          ],
+          "rows": [
+            [
+              "1",
+              "0.1 percent",
+              "30 days"
+            ],
+            [
+              "2",
+              "0.2 percent",
+              "15 days"
+            ],
+            [
+              "10",
+              "1 percent",
+              "3 days"
+            ],
+            [
+              "1,000",
+              "100 percent",
+              "43 minutes"
+            ]
+          ],
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The recommended multiwindow, multi-burn-rate configuration (the workbook's Table 5-6), each long window paired with a short window of about one twelfth so that the alert resets quickly.",
+          "columns": [
+            "budget consumed",
+            "long window",
+            "short window",
+            "burn rate",
+            "notification"
+          ],
+          "rows": [
+            [
+              "2 percent",
+              "1 hour",
+              "5 minutes",
+              "14.4",
+              "page"
+            ],
+            [
+              "5 percent",
+              "6 hours",
+              "30 minutes",
+              "6",
+              "page"
+            ],
+            [
+              "10 percent",
+              "3 days",
+              "6 hours",
+              "1",
+              "ticket"
+            ]
+          ],
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Two cases need adjustment. A low-traffic service has no signal: the workbook's example is a service receiving 10 requests an hour, where one failure is a thousandfold burn that pages immediately, so it suggests generating artificial traffic, combining small services into one for monitoring, or loosening the objective. At the other extreme, a total outage of a service at five nines exhausts its monthly budget in 26 seconds, less than many collection intervals, so no alert can save it and the protection must be structural.",
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Page on a burn rate over a long and a short window together, with the thresholds from the table scaled to your objective. Ticket the slow burns. Never page on a raw threshold or a duration clause.",
+          "cites": [
+            "s4"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "rules-and-alertmanager",
+      "title": "Implementing it: rules and Alertmanager",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "In Prometheus the burn-rate conditions are alerting rules over precomputed error ratios. The workbook's examples read series named for the job, the ratio and the window, produced by recording rules so that the dashboards and the alerts query cheap series rather than rate expressions over hours of raw counters. An alerting rule has an expression, an optional for clause that holds the condition for a duration before firing, during which the element is pending, an optional keep_firing_for that holds it after the condition clears, labels that carry severity and routing, and annotations for the summary and the runbook link.",
+          "cites": [
+            "s4",
+            "s5"
+          ]
+        },
+        {
+          "type": "diagram",
+          "mermaid": "flowchart LR\n    S[Services expose request and error counters] --> P[Prometheus scrape]\n    P --> RR[Recording rules: error ratio per window]\n    RR --> AR[Alerting rules: multiwindow burn rate]\n    RR --> D[Dashboard: remaining error budget]\n    AR --> AM[Alertmanager: group, inhibit, silence, route]\n    AM -->|fast burn| PG[Page on-call]\n    AM -->|slow burn| T[Ticket queue]\n    D --> BR[Budget review and policy decisions]",
+          "legend": "From counters to pages: recording rules compute the ratios, alerting rules compare them with the burn-rate thresholds, Alertmanager decides who hears (s4, s5, s6)."
+        },
+        {
+          "type": "p",
+          "text": "Prometheus decides that an alert is firing; Alertmanager decides what to do about it. Its documentation names the mechanisms: deduplication, grouping of similar alerts into one notification so that a failure across a hundred instances pages once, inhibition that suppresses alerts when a broader one is already firing, silences that mute matching alerts for a time window, and a routing tree that matches labels to receivers such as a paging service or a chat channel. It clusters for high availability, and it can limit the number of alerts per name so that receivers are not flooded.",
+          "cites": [
+            "s6"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Alertmanager's mechanisms and what each is for.",
+          "columns": [
+            "mechanism",
+            "what it does",
+            "when it matters"
+          ],
+          "rows": [
+            [
+              "Grouping",
+              "folds alerts of similar nature into one notification",
+              "a cluster-wide failure must page once, not per instance"
+            ],
+            [
+              "Inhibition",
+              "suppresses alerts when a related broader alert fires",
+              "a datacenter is drained or unreachable; per-service pages are noise"
+            ],
+            [
+              "Silences",
+              "mute alerts matching labels for a window",
+              "planned maintenance"
+            ],
+            [
+              "Routing tree",
+              "matches labels to receivers",
+              "severity page to the on-call, severity ticket to the queue"
+            ],
+            [
+              "Deduplication and clustering",
+              "one notification across several Alertmanager instances",
+              "the alerting path must survive its own failures"
+            ]
+          ],
+          "cites": [
+            "s6"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "One design consequence: the burn-rate pair for each objective is two rules, a page and a ticket, and the diagram's dashboard of remaining budget is read from the same recording rules, so the on-call, the review and the policy all see one number."
+        },
+        {
+          "type": "callout",
+          "kind": "tip",
+          "text": "Give every alert a severity label that the routing tree understands and a runbook annotation. The for clause belongs on infrastructure alerts, not on burn-rate alerts, whose short window already supplies the reset behaviour.",
+          "cites": [
+            "s5",
+            "s4"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "failure-domains-and-recovery-targets",
+      "title": "Failure domains, redundancy and recovery targets",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Google Cloud's reliability guide defines a failure domain as a resource or group of resources that can fail independently of others. A single machine is one; a zone and a region are failure domains made of groups of resources; and resources are classified by the domain they live in: zonal resources are affected by a zone failure and must be made redundant across zones, regional resources are deployed redundantly across the zones of a region and survive a zone, and global resources span regions. Zones are designed to minimise correlated failure, which is the property a design is buying when it spreads across them.",
+          "cites": [
+            "s8"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Failure domains and what spreading across them survives.",
+          "columns": [
+            "domain",
+            "an example",
+            "what a design placed across several of them survives",
+            "what it does not"
+          ],
+          "rows": [
+            [
+              "Process or host",
+              "one machine",
+              "a crash, a bad host",
+              "a rack, a zone, a bad release pushed everywhere"
+            ],
+            [
+              "Zone",
+              "a zonal resource such as a VM",
+              "a zone impairment, if the other zones have capacity",
+              "a regional service outage, a region-wide configuration push"
+            ],
+            [
+              "Region",
+              "a regional resource",
+              "a region outage, with replication and failover in place",
+              "correlated failure in a shared global dependency"
+            ],
+            [
+              "Global",
+              "a global load balancer or control plane",
+              "regional loss",
+              "a defect in the global component itself"
+            ]
+          ],
+          "cites": [
+            "s8"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "How fast and how completely a design must come back is stated as two targets, which the disaster recovery guide defines. The recovery time objective is the maximum acceptable time the application can be offline; the recovery point objective is the maximum acceptable period during which data might be lost. Smaller values cost more and add complexity, and the guide's patterns, cold, warm and hot, name how prepared the system is: no spare, a spare that stops the journey to fit, or run-flat tyres that keep going.",
+          "cites": [
+            "s9"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Recovery patterns from the disaster recovery guide.",
+          "columns": [
+            "pattern",
+            "what is ready in advance",
+            "typical fit from the guide"
+          ],
+          "rows": [
+            [
+              "Cold",
+              "nothing beyond backups; recovery is built when needed",
+              "historical compliance data with a large RTO"
+            ],
+            [
+              "Warm",
+              "a standby that must be brought up or switched to",
+              "an email notification system that is not business critical"
+            ],
+            [
+              "Hot",
+              "a running replica that keeps serving, perhaps slower",
+              "an online service where both data and the user-facing path must return quickly"
+            ]
+          ],
+          "cites": [
+            "s9"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The targets tie back to the budget: a failover that takes two minutes spends two minutes of budget each time, so every hard dependency's recovery time must fit inside the objective of the service above it, which is the Azure guidance's point that strong dependencies' targets align with the application's own.",
+          "cites": [
+            "s7"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "State the failure domain each tier survives and the RTO and RPO of each stateful component in the design document, and check that the sum of recovery times fits the error budget.",
+          "cites": [
+            "s8",
+            "s9"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "failure-mode-analysis-canaries-chaos",
+      "title": "Failure mode analysis, canaries and chaos experiments",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The Azure Well-Architected guidance on failure mode analysis starts from one tenet: failures happen no matter how many layers of resiliency are applied. The method follows each critical flow step by step, lists the components and their dependencies, and asks how each is affected by each failure mode: a regional or zone outage, a platform service outage, an attack, misconfiguration, operator error, planned maintenance, overload. Read and write failures are considered separately. Dependencies are classified strong, where the application cannot function without them, or weak, where only a feature is lost, and modes are ranked by likelihood and effect so that effort goes where it pays.",
+          "cites": [
+            "s7"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Rows from the guidance's example table for an e-commerce site, in its own columns.",
+          "columns": [
+            "component",
+            "risk",
+            "likelihood",
+            "effect and mitigation",
+            "outage"
+          ],
+          "rows": [
+            [
+              "Identity provider",
+              "misconfiguration",
+              "medium",
+              "users cannot sign in; code catches authentication exceptions; help desk reports to the developers",
+              "external only"
+            ],
+            [
+              "Global front door",
+              "regional outage",
+              "very low",
+              "minimal; the global service routes through unaffected regions",
+              "none"
+            ],
+            [
+              "Global front door",
+              "DDoS attack",
+              "medium",
+              "platform handles L3 and L4; the web application firewall blocks most; risk from L7",
+              "potential partial"
+            ],
+            [
+              "Database",
+              "regional outage",
+              "very low",
+              "auto-failover to the secondary region; RTO and RPO to be determined by testing",
+              "potential full"
+            ]
+          ],
+          "cites": [
+            "s7"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Releases are the failure mode a team causes itself, and the workbook's canarying chapter treats them with the budget. A canary is a partial, time-limited deployment evaluated against the rest of the service as a control, in effect an A/B test. Its arithmetic is direct: a release that fails 20 percent of requests, deployed to a 5 percent canary population, produces a 1 percent overall error rate, so the budget spent is proportional to the population and the time before the evaluation rolls it back. Simple metrics such as success rate give a signal quickly; slower ones such as queue depth need more time or a larger population.",
+          "cites": [
+            "s10"
+          ]
+        },
+        {
+          "type": "steps",
+          "title": "A chaos experiment, from the Principles of Chaos Engineering",
+          "items": [
+            "Define the steady state as a measurable output of the system, such as throughput, error rate or latency percentiles, not an internal attribute.",
+            "Hypothesise that the steady state continues in both the control group and the experimental group.",
+            "Introduce variables that reflect real events: servers crash, disks fail, network connections are severed, traffic spikes.",
+            "Try to disprove the hypothesis by looking for a difference in steady state between the two groups; a weakness found is a target to fix before it manifests at large."
+          ],
+          "cites": [
+            "s11"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Run the experiments in production with the blast radius minimised and automated to run continuously, as the principles ask. A failure mode table that was never exercised is a hypothesis, not a design property.",
+          "cites": [
+            "s11",
+            "s7"
+          ]
+        }
+      ]
     }
   ],
-  "diagram": {
-    "source": "flowchart LR\n    S[Services expose request and error counters] --> P[Prometheus scrape]\n    P --> RR[Recording rules: error ratio per window]\n    RR --> AR[Alerting rules: multiwindow burn rate]\n    RR --> D[Dashboard: remaining error budget]\n    AR --> AM[Alertmanager: group, inhibit, silence, route]\n    AM -->|fast burn| PG[Page on-call]\n    AM -->|slow burn| T[Ticket queue]\n    D --> BR[Budget review and policy decisions]"
+  "worked_example": {
+    "title": "Worked example: an objective, a budget and the alerts for a checkout API",
+    "blocks": [
+      {
+        "type": "p",
+        "text": "A checkout API gets its first SLO, error budget and alert set. The traffic and latency figures are assumptions chosen to make the arithmetic concrete; the thresholds follow the workbook's tables, and the rules file after the steps encodes them."
+      },
+      {
+        "type": "steps",
+        "title": "From indicator to thresholds",
+        "items": [
+          "Indicator: the proportion of responses that are not 5xx, measured at the load balancer, with latency as the proportion of requests under a threshold (the workbook's implementation choice).",
+          "Traffic: 2,000 requests per second on average (assumption), so about 5.2 billion requests in a 30-day window.",
+          "Objective: 99.9 percent availability over a rolling 30 days, so the budget is 0.1 percent, about 5.2 million failed requests, or 43 minutes of total outage.",
+          "Latency objective: the measured p99 is 420 ms (assumption), rounded up to 99 percent of requests under 500 ms, the workbook's round-down-then-tighten method.",
+          "Fast burn page: burn rate 14.4 over 1 hour and 5 minutes, so an error ratio above 1.44 percent on both windows; it spends 2 percent of the budget in an hour.",
+          "Slow burn page: burn rate 6 over 6 hours and 30 minutes, so an error ratio above 0.6 percent; 5 percent of the budget in six hours.",
+          "Ticket: burn rate 1 over 3 days and 6 hours, so an error ratio above 0.1 percent; 10 percent of the budget in three days.",
+          "Detection time for a total outage with the fast-burn rule: the budget fraction times the window times the burn rate, 0.001 times 60 minutes times 14.4, about 52 seconds.",
+          "A zone loss: with three zones and health checks that shift traffic in 30 seconds (assumption), a third of requests fail for 30 seconds, worth 10 seconds of total outage, about 0.4 percent of the budget.",
+          "A database failover with a 2-minute RTO (assumption) spends 4.6 percent of the budget each time, so the window tolerates about 20 of them; one a week is fine, one a day is not.",
+          "A canary of 5 percent of traffic running a release that fails 20 percent of requests burns at ten times the sustainable rate; held for 10 minutes before rollback it spends about 0.2 percent of the budget.",
+          "The decider: the fast-burn page catches a total outage in under a minute, and the budget absorbs routine zone events and failovers, so the first reliability investment is the database's RTO, not more alerting."
+        ],
+        "cites": [
+          "s3",
+          "s4",
+          "s9"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "The SLO sheet as a reviewer should receive it.",
+        "columns": [
+          "quantity",
+          "value",
+          "derived from"
+        ],
+        "rows": [
+          [
+            "Requests per 30 days",
+            "about 5.2 billion",
+            "2,000 per second times 86,400 times 30"
+          ],
+          [
+            "Error budget",
+            "0.1 percent, about 5.2 million requests, 43 minutes",
+            "1 minus 99.9 percent"
+          ],
+          [
+            "Fast burn threshold",
+            "1.44 percent error ratio, 1 h and 5 m",
+            "14.4 times 0.001"
+          ],
+          [
+            "Slow burn threshold",
+            "0.6 percent, 6 h and 30 m",
+            "6 times 0.001"
+          ],
+          [
+            "Ticket threshold",
+            "0.1 percent, 3 d and 6 h",
+            "1 times 0.001"
+          ],
+          [
+            "Detection of a total outage",
+            "about 52 seconds",
+            "0.001 times 60 minutes times 14.4"
+          ],
+          [
+            "Cost of a 2-minute failover",
+            "4.6 percent of the budget",
+            "2 of 43 minutes"
+          ],
+          [
+            "Cost of a 10-minute bad canary at 5 percent",
+            "about 0.2 percent of the budget",
+            "1 percent error rate times 10 minutes over 0.1 percent times 43,200 minutes"
+          ]
+        ]
+      },
+      {
+        "type": "code",
+        "lang": "yaml",
+        "code": "groups:\n  - name: slo-checkout\n    rules:\n      # error ratios per window, precomputed so the alerts and the budget dashboard read cheap series\n      - record: job:slo_errors:ratio_rate5m\n        expr: sum(rate(http_requests_total{job=\"checkout\",code=~\"5..\"}[5m])) / sum(rate(http_requests_total{job=\"checkout\"}[5m]))\n      - record: job:slo_errors:ratio_rate30m\n        expr: sum(rate(http_requests_total{job=\"checkout\",code=~\"5..\"}[30m])) / sum(rate(http_requests_total{job=\"checkout\"}[30m]))\n      - record: job:slo_errors:ratio_rate1h\n        expr: sum(rate(http_requests_total{job=\"checkout\",code=~\"5..\"}[1h])) / sum(rate(http_requests_total{job=\"checkout\"}[1h]))\n      - record: job:slo_errors:ratio_rate6h\n        expr: sum(rate(http_requests_total{job=\"checkout\",code=~\"5..\"}[6h])) / sum(rate(http_requests_total{job=\"checkout\"}[6h]))\n      - record: job:slo_errors:ratio_rate3d\n        expr: sum(rate(http_requests_total{job=\"checkout\",code=~\"5..\"}[3d])) / sum(rate(http_requests_total{job=\"checkout\"}[3d]))\n\n      # 99.9 percent over 30 days: budget 0.001; thresholds are burn rate times budget\n      - alert: CheckoutBurnRatePage\n        expr: |\n          (job:slo_errors:ratio_rate1h > (14.4 * 0.001) and job:slo_errors:ratio_rate5m > (14.4 * 0.001))\n          or\n          (job:slo_errors:ratio_rate6h > (6 * 0.001) and job:slo_errors:ratio_rate30m > (6 * 0.001))\n        labels:\n          severity: page\n        annotations:\n          summary: Checkout is burning its error budget fast\n          runbook: https://runbooks.example.test/checkout-slo\n      - alert: CheckoutBurnRateTicket\n        expr: job:slo_errors:ratio_rate3d > (1 * 0.001) and job:slo_errors:ratio_rate6h > (1 * 0.001)\n        labels:\n          severity: ticket\n        annotations:\n          summary: Checkout will exhaust its error budget within the window at the current rate",
+        "caption": "The recording and alerting rules for the example: the three burn-rate pairs from the workbook's table, scaled to a 0.001 budget."
+      },
+      {
+        "type": "code",
+        "lang": "yaml",
+        "code": "route:\n  receiver: tickets\n  group_by: [alertname, job]\n  routes:\n    - matchers: [severity=\"page\"]\n      receiver: oncall-pager\n      group_wait: 30s\n      repeat_interval: 4h\nreceivers:\n  - name: oncall-pager\n    pagerduty_configs: [{service_key: REDACTED}]\n  - name: tickets\n    webhook_configs: [{url: https://tickets.example.test/hooks/alerts}]\ninhibit_rules:\n  - source_matchers: [alertname=\"ZoneDrained\"]\n    target_matchers: [job=\"checkout\"]\n    equal: [zone]",
+        "caption": "The Alertmanager route for the two severities, grouped by alert and job, with per-zone alerts inhibited while a zone is deliberately drained."
+      }
+    ]
   },
-  "code": [
-    {
-      "code": "groups:\n  - name: slo-checkout\n    rules:\n      - record: job:slo_errors:ratio_rate1h\n        expr: |\n          sum(rate(http_requests_total{job=\"checkout\",code=~\"5..\"}[1h]))\n          / sum(rate(http_requests_total{job=\"checkout\"}[1h]))\n      - record: job:slo_errors:ratio_rate5m\n        expr: |\n          sum(rate(http_requests_total{job=\"checkout\",code=~\"5..\"}[5m]))\n          / sum(rate(http_requests_total{job=\"checkout\"}[5m]))\n      - alert: CheckoutFastBurn\n        # 99.9 percent SLO: budget 0.001, burn rate 14.4\n        expr: |\n          job:slo_errors:ratio_rate1h > (14.4 * 0.001)\n          and job:slo_errors:ratio_rate5m > (14.4 * 0.001)\n        labels:\n          severity: page\n        annotations:\n          summary: Checkout is burning error budget at 14.4x",
-      "lang": "yaml"
-    }
-  ],
+  "diagram": null,
+  "code": [],
   "technologies": [
     "Prometheus",
     "Alertmanager",
@@ -120,35 +829,142 @@
   ],
   "sources": [
     {
-      "kind": "doc",
-      "title": "Prometheus recording rules",
-      "url": "https://prometheus.io/docs/prometheus/latest/configuration/recording_rules/"
-    },
-    {
-      "kind": "doc",
-      "title": "Prometheus alerting rules",
-      "url": "https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/"
-    },
-    {
-      "kind": "doc",
-      "title": "Prometheus alerting overview (Alertmanager)",
-      "url": "https://prometheus.io/docs/alerting/latest/overview/"
-    },
-    {
+      "id": "s1",
+      "title": "Site Reliability Engineering, chapter 4, Service Level Objectives (Google, 2016, free online): indicators, objectives and agreements, indicators per system type, percentiles, the practice rules, the Chubby planned outage",
+      "url": "https://sre.google/sre-book/service-level-objectives/",
       "kind": "book",
-      "title": "Service Level Objectives (SRE book)",
-      "url": "https://sre.google/sre-book/service-level-objectives/"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Have as few SLOs as possible"
+      }
     },
     {
+      "id": "s2",
+      "title": "Site Reliability Engineering, chapter 3, Embracing Risk (Google, 2016, free online): the cost of reliability, time-based and aggregate availability, the revenue arithmetic, error budgets",
+      "url": "https://sre.google/sre-book/embracing-risk/",
       "kind": "book",
-      "title": "Implementing SLOs (SRE workbook)",
-      "url": "https://sre.google/workbook/implementing-slos/"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "an incremental improvement in reliability may cost 100x more than the previous increment"
+      }
+    },
+    {
+      "id": "s3",
+      "title": "The Site Reliability Workbook, chapter 2, Implementing SLOs (Google, 2018, free online): the SLI menu by component type, specification against implementation, the starter-SLO method, the error budget policy",
+      "url": "https://sre.google/workbook/implementing-slos/",
+      "kind": "book",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Table 2-1. Potential SLIs for different types of components"
+      }
+    },
+    {
+      "id": "s4",
+      "title": "The Site Reliability Workbook, chapter 5, Alerting on SLOs (Google, 2018, free online): precision, recall, detection and reset time; burn rates; the multiwindow, multi-burn-rate recommendation; low-traffic and extreme-availability cases",
+      "url": "https://sre.google/workbook/alerting-on-slos/",
+      "kind": "book",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Burn rates and time to complete budget exhaustion"
+      }
+    },
+    {
+      "id": "s5",
+      "title": "Prometheus documentation, Alerting rules (maintained): expressions, the for clause and the pending state, keep_firing_for, labels and annotations",
+      "url": "https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Elements that are active, but not firing yet, are in the pending state."
+      }
+    },
+    {
+      "id": "s6",
+      "title": "Prometheus documentation, Alertmanager (maintained): deduplication, grouping, inhibition, silences, routing and high availability",
+      "url": "https://prometheus.io/docs/alerting/latest/alertmanager/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "It takes care of deduplicating, grouping, and routing"
+      }
+    },
+    {
+      "id": "s7",
+      "title": "Azure Well-Architected Framework, Architecture strategies for performing failure mode analysis (Microsoft, maintained): failure modes, blast radius, strong and weak dependencies, the example table",
+      "url": "https://learn.microsoft.com/en-us/azure/well-architected/reliability/failure-mode-analysis",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "A key tenet of FMA is that failures happen no matter how many layers of resiliency you apply."
+      }
+    },
+    {
+      "id": "s8",
+      "title": "Google Cloud Architecture Center, Building blocks of reliability in Google Cloud (maintained): failure domains, zonal, regional and global resources",
+      "url": "https://docs.cloud.google.com/architecture/infra-reliability-guide/building-blocks",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "A failure domain is a resource or a group of resources that can fail independently of other resources."
+      }
+    },
+    {
+      "id": "s9",
+      "title": "Google Cloud Architecture Center, Disaster recovery planning guide (maintained): RTO and RPO, the cost curve, cold, warm and hot patterns",
+      "url": "https://docs.cloud.google.com/architecture/dr-scenarios-planning-guide",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "DR patterns are considered to be cold, warm, or hot."
+      }
+    },
+    {
+      "id": "s10",
+      "title": "The Site Reliability Workbook, chapter 16, Canarying Releases (Google, 2018, free online): canary and control, the error-budget arithmetic of a canary population, choosing population and duration",
+      "url": "https://sre.google/workbook/canarying-releases/",
+      "kind": "book",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Canarying is effectively an A/B testing process."
+      }
+    },
+    {
+      "id": "s11",
+      "title": "Principles of Chaos Engineering (principlesofchaos.org, last updated March 2019): the definition, the four experimental steps and the advanced principles",
+      "url": "https://principlesofchaos.org/",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Chaos Engineering is the discipline of experimenting on a system in order to build confidence"
+      }
+    },
+    {
+      "id": "s12",
+      "title": "Slack Engineering, Slack's migration to a cellular architecture (2023-08-22): the 2021 zone failure, siloing services by Availability Zone, draining a zone within five minutes",
+      "url": "https://slack.engineering/slacks-migration-to-a-cellular-architecture/",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Remove as much traffic as possible from an AZ within 5 minutes."
+      }
     }
   ],
   "practice": "practice/sd-reliability-slos",
   "provenance": {
-    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
-    "generated_on": "2026-10-13",
+    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center, format v2",
+    "generated_on": "2026-10-15",
     "reviewed_by": null,
     "reviewed_on": null
   },
@@ -157,6 +973,11 @@
       "version": 1,
       "date": "2026-10-13",
       "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-15",
+      "change": "rewritten by hand at format v2 (version 2): indicators, objectives and agreements with the SLI menu table, setting the target from cost with the revenue table and the practice rules, error budgets with the allowance table and the policy contents, burn-rate alerting with the burn-rate and multiwindow tables, rules and Alertmanager with the diagram in its subtopic and the mechanism table, failure domains and recovery targets as tables, failure mode analysis with the example rows, canaries and the chaos steps, a worked checkout SLO with the rules file and the Alertmanager route after the teaching, cited in-practice blocks (Chubby, Google Apps and Bigtable, the workbook example, Slack, the canary example), 12 verified sources"
     }
   ]
 }
