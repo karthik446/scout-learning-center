@@ -1,7 +1,7 @@
 {
-  "schema_version": "learning-center-lesson:1",
+  "schema_version": "learning-center-lesson:2",
   "id": "sd-rate-limiting-overload",
-  "version": 1,
+  "version": 2,
   "status": "published",
   "superseded_by": null,
   "title": "Rate limiting, overload and resilience patterns",
@@ -18,86 +18,773 @@
     "scaling",
     "production-systems"
   ],
-  "summary": "Every service has a finite capacity, and demand will sometimes exceed it through traffic spikes, misbehaving clients or lost capacity. Rate limiting controls how much any one caller may send, while load shedding and circuit breaking protect the service as a whole when total demand is too high. The goal is graceful degradation: keep serving the most important requests at full quality and reject the rest cheaply and early.",
+  "summary": "Every service has a finite capacity and demand will sometimes exceed it. This lesson measures overload as lost goodput, limits each caller with token buckets, sliding windows and concurrency limits, places the limits locally, globally and per tenant, answers with 429, Retry-After and the RateLimit fields, sheds load by criticality on a utilisation signal, sizes queues and adapts concurrency limits, throttles in the client, isolates dependencies with bulkheads and proxy circuit breakers, and removes modes with static stability and constant work, ending with a decision table and a degradation ladder for one service's overload plan.",
   "detail": [],
-  "in_practice": "A typical setup layers the defenses. The edge gateway applies per-tenant rate and concurrency limits backed by a shared counter store. Sidecar proxies apply local token buckets and per-upstream circuit breaking limits. Services themselves shed load by criticality when utilization passes a threshold. Limits are rolled out in a shadow mode first, logging what would have been rejected, then enforced once the false positive rate is acceptable. Teams load test past saturation to confirm that goodput stays flat under overload, alert on rejection and overflow counters, and document for API consumers what a throttling response means and how to back off.",
+  "in_practice": {
+    "blocks": [
+      {
+        "type": "p",
+        "text": "Stripe runs four limiters in production: a per-user request rate limiter on token buckets in Redis that rejects millions of requests a month, mostly runaway test-mode scripts; a concurrent requests limiter that fixed contention on its most expensive endpoints; a fleet usage shedder that reserves a fraction of the fleet for critical methods and rejects non-critical requests beyond their share with a 503; and a worker utilisation shedder that drops test-mode traffic, then GETs, then other POSTs, slowly enough not to flap. Every limiter fails open and was dark-launched before it was enforced.",
+        "cites": [
+          "s1"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Cloudflare enforces per-domain rate limits inside each point of presence rather than globally, relying on anycast to bring a client to the same location, and approximates a sliding window from two fixed-window counters in a consistent-hashed memcached cluster; across 400 million requests the approximation misjudged 0.003 percent of them.",
+        "cites": [
+          "s2"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Google's RPC system carries a four-level criticality on every request, propagates it by default to the calls a request makes, sheds from the lowest level when a task's executor load average passes its processors, enforces per-customer quotas in CPU rather than queries, and throttles in the client once attempted requests exceed twice the accepted ones over a two-minute window.",
+        "cites": [
+          "s6"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Amazon's services measure goodput rather than throughput, prioritise once at the edge that receives the request, give in-quota requests priority over another client's burst, skip the remaining work when the client has already timed out, keep enough spare capacity to lose an Availability Zone without scaling, and load-test far beyond the breaking point so that goodput is seen to plateau rather than collapse.",
+        "cites": [
+          "s8",
+          "s9"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Netflix's services set their concurrency limits adaptively with the concurrency-limits library, treating the limit as a TCP congestion window: a delay-based Vegas or Gradient2 limiter on the server and a loss-based AIMD limiter in the client, so that a retry storm or a slow dependency lowers the admitted concurrency instead of filling the queues.",
+        "cites": [
+          "s11"
+        ]
+      }
+    ]
+  },
   "subtopics": [
     {
-      "body": [
+      "id": "overload-and-goodput",
+      "title": "Overload, goodput and why queries per second mislead",
+      "blocks": [
         {
-          "body": "The token bucket is the most common algorithm. Each caller has a bucket that refills at a steady rate up to a maximum size. A request takes a token, and if none are left it is rejected. The refill rate sets the sustained limit and the bucket size sets the allowed burst. Fixed window counters are simpler but allow double the limit across a window boundary. Sliding window logs or counters smooth that out at more memory or compute cost. Leaky bucket queues requests and drains them at a constant rate, which shapes traffic instead of rejecting it.",
-          "heading": "Token bucket and its relatives"
+          "type": "p",
+          "text": "Every service has a finite capacity and demand will sometimes exceed it: a traffic spike, one misbehaving client, a dependency that slows down, or capacity lost to a failure. The Builders' Library describes what overload looks like from the inside. Latency at high utilisation is higher than at low utilisation because thread contention, context switching, garbage collection and I/O contention grow with load, until the server reaches an inflection point past which it degrades faster than the load grows. The useful measure is goodput: the subset of the throughput that is handled without errors and fast enough for the client to use the response. Past the inflection point throughput keeps rising and goodput falls.",
+          "cites": [
+            "s8"
+          ]
         },
         {
-          "body": "A rate limit counts requests per unit of time, but requests differ widely in cost. A concurrent request limiter caps how many requests a caller may have in flight at once. It handles expensive, slow endpoints well: a client that sends few but heavy requests is contained, and clients that retry on timeout cannot stack up work. Rejections should carry a clear status such as HTTP 429, with enough information for a well-behaved client to back off.",
-          "heading": "Limiting concurrency, not just rate"
-        }
-      ],
-      "id": "rate-limit-algorithms",
-      "title": "Rate limiting algorithms"
-    },
-    {
-      "body": [
-        {
-          "body": "Local rate limiting is enforced inside each proxy or service instance using an in-memory token bucket. It is fast, has no external dependency and keeps working during partitions, but the limit applies per instance, so the effective fleet-wide limit scales with instance count. Global rate limiting enforces one shared limit across the fleet: each proxy calls a central rate limit service, which keeps counters in a shared store and answers allow or deny for a set of descriptors such as caller identity, route or header values.",
-          "heading": "Two enforcement points"
+          "type": "p",
+          "text": "The reason it falls to zero rather than to a plateau is a feedback loop. When a client times out, the server has usually still done the work, so the capacity was spent for nothing; the client retries, which adds load; and the service becomes modal, behaving one way under normal load and another, worse way under stress. The whole toolkit in this lesson exists to break that loop: reject early and cheaply, reject the least important work first, and stop the demand at its source before it reaches the network.",
+          "cites": [
+            "s8"
+          ]
         },
         {
-          "body": "The global service is on the request path, so it adds latency and becomes a dependency that needs its own failure policy: fail open and risk overload, or fail closed and reject traffic. A common design uses both layers. A coarse local limit absorbs large bursts and cuts load on the global service, and the global limit then applies precise per-tenant quotas. Quota-based variants cut round trips further by having the central service hand each proxy an allocation for a period of time instead of a decision per request.",
-          "heading": "Combining them"
-        }
-      ],
-      "id": "local-vs-global-limits",
-      "title": "Local and global rate limiting"
-    },
-    {
-      "body": [
-        {
-          "body": "Rate limits protect against individual callers. Load shedding protects against total demand exceeding capacity, even when every caller is within its limit. The server watches a utilization signal and, past a threshold, rejects requests before doing expensive work. Shedding should be ordered by importance. Requests are tagged with a criticality level, for example critical, sheddable and best-effort tiers, and the lowest tier is dropped first. One approach reserves a share of fleet capacity for critical traffic. Another sheds progressively as worker utilization rises: test traffic first, then non-critical methods, and critical ones last.",
-          "heading": "Shedding by priority"
+          "type": "p",
+          "text": "The SRE book adds a warning about the unit of capacity. Queries per second is a poor measure because queries differ wildly in cost, and the mix changes over time; Google learned to model capacity in resources, usually CPU, and to measure each request's cost as the CPU time it consumed. A limit expressed in requests per second is therefore a proxy, good for a single endpoint with uniform requests and misleading for a service whose expensive calls are a small fraction of its traffic.",
+          "cites": [
+            "s6"
+          ]
         },
         {
-          "body": "Requests per second is a poor capacity measure because request cost varies. Measuring capacity in resource terms, such as CPU consumed or in-flight requests, tracks real load better. Rejection must be much cheaper than serving. Otherwise a server that spends most of its time saying no still collapses. That means shedding as early as possible, before parsing large payloads or taking locks. Criticality should propagate through the call chain so backends make consistent decisions about the same user request. Bounded queues with short timeouts stop a server from spending effort on requests whose callers have already given up.",
-          "heading": "Choosing the signal and cost of rejection"
-        }
-      ],
-      "id": "load-shedding-criticality",
-      "title": "Load shedding and request criticality"
-    },
-    {
-      "body": [
-        {
-          "body": "When a backend is heavily overloaded, even cheap rejections consume capacity. Client-side throttling lets clients drop requests locally before they reach the network. In adaptive throttling, each client tracks, over a recent window, how many requests it attempted and how many the backend accepted. When attempts grow beyond a multiple K of accepts, the client starts rejecting new requests locally, with probability rising in proportion to the gap. A K of 2 means the client lets through about twice what the backend accepts, which wastes some backend effort but tracks recovery quickly. This pairs with retry budgets so that an overloaded backend sees shrinking demand, not growing demand.",
-          "heading": "Stopping load at the source"
-        }
-      ],
-      "id": "client-side-throttling",
-      "title": "Client-side adaptive throttling"
-    },
-    {
-      "body": [
-        {
-          "body": "In a mesh proxy, circuit breaking is a set of hard limits per upstream cluster. They cover maximum connections, maximum pending requests waiting for a connection, maximum in-flight requests and maximum concurrent retries. When a limit is hit, the proxy fails the request immediately instead of queueing it, and increments an overflow counter. This is a bulkhead: one slow upstream can consume only its own allotment of connections and queue slots, so it cannot starve calls to healthy upstreams. Limits can be set separately per routing priority, so high-priority traffic has its own pool.",
-          "heading": "Resource limits per upstream"
+          "type": "table",
+          "caption": "The defences in this lesson, in the order a request meets them, and what each one protects against.",
+          "columns": [
+            "defence",
+            "protects against",
+            "decides on"
+          ],
+          "rows": [
+            [
+              "per-caller rate limit",
+              "one client sending too much",
+              "the caller's identity and its quota"
+            ],
+            [
+              "concurrency limit",
+              "a few expensive or slow requests holding the workers",
+              "requests in flight per caller or per server"
+            ],
+            [
+              "load shedding by criticality",
+              "total demand above capacity, however well-behaved each caller is",
+              "a utilisation signal and the request's priority"
+            ],
+            [
+              "client-side adaptive throttling",
+              "an overloaded backend spending its capacity on rejections",
+              "the client's own recent accept ratio"
+            ],
+            [
+              "bulkheads and proxy circuit breakers",
+              "one slow dependency exhausting shared pools",
+              "connections, pending requests and retries per upstream"
+            ],
+            [
+              "static stability and constant work",
+              "the design itself behaving differently under stress",
+              "capacity provisioned ahead; work that does not scale with load"
+            ]
+          ],
+          "cites": [
+            "s8",
+            "s6",
+            "s1"
+          ]
         },
         {
-          "body": "Limits set too high never trip and offer no protection. Limits set too low reject healthy traffic at peak. Start from observed peak concurrency per upstream plus headroom, then watch overflow counters and adjust. The concurrent retry limit, or a retry budget expressed as a fraction of active requests, is the guard against retry storms at the mesh layer. Outlier detection complements these limits by ejecting individual unhealthy hosts from the load balancing pool, while circuit breaking bounds the load on the cluster as a whole.",
-          "heading": "Tuning"
+          "type": "callout",
+          "kind": "rule",
+          "text": "Measure goodput, not throughput, and load-test past the point where the service breaks. The Builders' Library's rule is that a service that has not been tested far beyond its breaking point will fail in the least desirable way.",
+          "cites": [
+            "s8"
+          ]
         }
-      ],
-      "id": "circuit-breaking-bulkheads",
-      "title": "Circuit breaking and bulkheads at the proxy"
+      ]
+    },
+    {
+      "id": "algorithms",
+      "title": "Rate limiting algorithms: buckets and windows",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The token bucket is the workhorse. Stripe describes it as a bucket per user into which tokens drip at a fixed rate; each request takes a token and is rejected when the bucket is empty. The drip rate is the sustained limit and the capacity is the burst a caller may spend at once, so one mechanism expresses both. A fixed window counts requests per calendar interval and resets, which is cheap but lets a caller spend two windows' worth across a boundary. A leaky bucket drains a counter at the allowed rate and caps it at the burst; Cloudflare notes it is what the stock NGINX module uses and that it needs operations that are hard to make atomic in a shared store.",
+          "cites": [
+            "s1",
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Cloudflare's limiter runs at every edge location against a shared memcached store whose only operations are get, set and atomic increment, so it needed an algorithm built from counters: a sliding window approximated from two fixed windows, the current window's count plus the previous window's count weighted by how much of it still falls inside the sliding interval. Against 400 million requests from 270,000 sources the approximation wrongly allowed or limited 0.003 percent of requests, with an average difference of 6 percent between the real and the approximated rate.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "steps",
+          "title": "Cloudflare's sliding window approximation, with the post's numbers.",
+          "items": [
+            "The limit on the endpoint is 50 requests per minute.",
+            "The previous minute saw 42 requests.",
+            "The current minute started 15 seconds ago and has seen 18 requests.",
+            "The previous minute still covers 45 of the sliding 60 seconds, so its weight is 45 / 60 = 0.75.",
+            "The approximate rate is 42 × 0.75 + 18 = 49.5 requests, so the next request is the one that trips the limit."
+          ],
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The algorithms compared.",
+          "columns": [
+            "algorithm",
+            "state per key",
+            "burst",
+            "boundary behaviour",
+            "fits"
+          ],
+          "rows": [
+            [
+              "token bucket",
+              "a count and a timestamp",
+              "the capacity, then the drip rate",
+              "exact",
+              "per-caller limits with a burst allowance"
+            ],
+            [
+              "fixed window",
+              "one counter",
+              "the whole limit at once",
+              "up to twice the limit at a boundary",
+              "coarse quotas (per hour, per day)"
+            ],
+            [
+              "sliding window (two counters)",
+              "two counters",
+              "smoothed",
+              "approximate, within a few percent",
+              "shared stores with only increment"
+            ],
+            [
+              "sliding log",
+              "a timestamp per request",
+              "exact",
+              "exact",
+              "low volumes where exactness matters"
+            ],
+            [
+              "leaky bucket",
+              "a level and a drain time",
+              "the capacity",
+              "exact",
+              "shaping: requests queued, not rejected"
+            ],
+            [
+              "concurrency limit",
+              "an in-flight count",
+              "none",
+              "not time-based",
+              "expensive endpoints, retry stacking"
+            ]
+          ],
+          "cites": [
+            "s1",
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Stripe's second limiter shows why a rate is not always the right quantity. Instead of a thousand requests per second it says a caller may have 20 requests in progress at once. That contains callers who send few but heavy requests and those who retry on timeout and stack up work, and it solved the contention on Stripe's most expensive endpoints; the cost is a worker-pool programming model for callers instead of send and back off.",
+          "cites": [
+            "s1"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "where-the-limits-live",
+      "title": "Where the limits live: local, global and per tenant",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "A limit enforced inside each instance from an in-memory bucket is fast, has no dependency and keeps working through a partition, but it is a limit per instance, so the effective fleet-wide limit grows with the instance count and a caller whose traffic is balanced across the fleet is bounded only loosely. A global limit keeps the counters in a shared store and answers allow or deny per request or per connection for a set of descriptors such as the caller, the route or a header value; it is precise and it puts a round trip to a store on the request path.",
+          "cites": [
+            "s1",
+            "s2"
+          ]
+        },
+        {
+          "type": "diagram",
+          "mermaid": "flowchart LR\n    C[Clients] --> G[Edge gateway]\n    G -->|descriptors| R[Global rate limit service]\n    R --> K[(Shared counter store)]\n    G --> P[Sidecar proxy: local token bucket]\n    P --> B{Circuit breaker limits ok?}\n    B -->|no| F[Fail fast with overflow]\n    B -->|yes| S[Service]\n    S --> L{Utilization high?}\n    L -->|yes, low criticality| X[Shed request]\n    L -->|no or critical| W[Do the work]",
+          "legend": "The layered defence: a global per-tenant limit at the gateway backed by a shared counter store, a local token bucket and per-upstream circuit-breaker limits in the proxy, and utilisation-based shedding by criticality inside the service. The pieces follow Stripe's limiters, Envoy's circuit breaking and the SRE book's shedding (s1, s12, s6)."
+        },
+        {
+          "type": "p",
+          "text": "Both Stripe and Cloudflare put the shared counters close to the request. Stripe runs its buckets in Redis behind the API and hooks the limiters into the middleware so that an exception in the limiting code or a Redis outage fails open and the API keeps serving. Cloudflare could not centralise counters across its anycast network, so it counts inside each point of presence: anycast delivers a given client address to the same location under normal conditions, and a consistent-hashed memcached cluster inside that location shares the counters among its servers. The limit is therefore enforced per location, which is precise enough because the client's traffic lands there.",
+          "cites": [
+            "s1",
+            "s2"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Google's per-customer limits as the SRE book illustrates them: a backend with 10,000 CPUs worldwide hands out quotas by customer, and the quotas add up to more than the capacity because customers do not peak together.",
+          "columns": [
+            "customer",
+            "quota (CPU seconds per second)"
+          ],
+          "rows": [
+            [
+              "Gmail",
+              "4,000"
+            ],
+            [
+              "Calendar",
+              "4,000"
+            ],
+            [
+              "Android",
+              "3,000"
+            ],
+            [
+              "Google+",
+              "2,000"
+            ],
+            [
+              "every other user",
+              "500"
+            ]
+          ],
+          "cites": [
+            "s6"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Per-tenant limits are the edge's main job in a shared service. The SRE book's version provisions the backend from negotiated usage, defines a quota per customer in CPU rather than requests, aggregates global usage from every task in real time and pushes effective limits back to the tasks, so that in a global overload only the customers over their quota see errors. The common design uses both layers: a coarse local limit absorbs bursts and protects the counter store, and the global limit applies the precise per-tenant quota.",
+          "cites": [
+            "s6"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "telling-the-client",
+      "title": "429, Retry-After and the rate-limit headers",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "A rejected request must be cheap for the server and informative for the client. The status code is 429 Too Many Requests, which RFC 6585 defines as the user having sent too many requests in a given amount of time; the response should include details explaining the condition and may carry a Retry-After header saying how long to wait. The RFC deliberately does not say how the server identifies the user or counts the requests, so per key, per address, per resource or across a set of servers are all conformant.",
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "What the client could not know from a bare 429 is the policy: how big the quota is, over what window, and how much is left. The IETF HTTPAPI working group's draft standardises two response fields for that. RateLimit-Policy advertises the quota policies the server applies, each with a quota, a window in seconds and optionally a partition key and a quota unit; RateLimit reports the quota currently available under a named policy. A client that reads them can pace itself before it is throttled instead of discovering the limit by hitting it.",
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "What a throttling response carries, and the source of each element.",
+          "columns": [
+            "element",
+            "example",
+            "meaning",
+            "defined by"
+          ],
+          "rows": [
+            [
+              "status",
+              "429 Too Many Requests",
+              "rate limited; not a server fault",
+              "RFC 6585"
+            ],
+            [
+              "Retry-After",
+              "Retry-After: 3",
+              "seconds (or a date) before the next attempt",
+              "RFC 6585"
+            ],
+            [
+              "RateLimit-Policy",
+              "\"permin\";q=50;w=60",
+              "a quota of 50 per 60-second window",
+              "the RateLimit draft"
+            ],
+            [
+              "RateLimit",
+              "\"permin\";r=0;t=12",
+              "nothing remaining; the window resets in 12 seconds",
+              "the RateLimit draft"
+            ],
+            [
+              "body",
+              "a problem document with a documentation link",
+              "which limit was hit and what to do",
+              "the API's error shape"
+            ]
+          ],
+          "cites": [
+            "s3",
+            "s4"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Two operational rules come with the headers. First, fail open: Stripe catches exceptions at every level of its limiting code so that a bug or a store outage never turns the limiter into the outage, which means a limit that protects something that must not be exceeded needs an explicit fail-closed flag. Second, dark-launch every new limiter: run it in a mode that only logs what it would have rejected, inspect that traffic, tune the thresholds and talk to the callers whose patterns would break before enforcing it. Alerts and metrics on how often each limiter fires come with the launch, not after it.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "A 429 without Retry-After or the RateLimit fields trains clients to retry immediately, which turns the limiter into a source of load. Say when to come back, and make the limiter's rejection far cheaper than the work it refuses.",
+          "cites": [
+            "s3",
+            "s1"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "shedding-by-criticality",
+      "title": "Load shedding by criticality",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Rate limits protect against individual callers; load shedding protects against total demand exceeding capacity when every caller is inside its limit. The SRE book makes criticality a first-class property of every request in Google's RPC system, with four values, and uses it in every control: when a customer runs out of quota a backend rejects a criticality only once it is already rejecting all lower ones, an overloaded task rejects lower criticalities sooner, and the criticality is propagated by default from a request to the calls it makes, so a deep dependency sheds consistently with the frontend's decision. The practice is to set it as close to the user as possible, typically in the HTTP frontends.",
+          "cites": [
+            "s6"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Two criticality ladders in production: Google's four values and Stripe's four shedding categories, each dropped from the bottom up.",
+          "columns": [
+            "tier",
+            "Google SRE book",
+            "Stripe worker-utilisation shedder"
+          ],
+          "rows": [
+            [
+              "1 (last to shed)",
+              "CRITICAL_PLUS: serious user-visible impact if it fails",
+              "critical methods, such as creating a charge"
+            ],
+            [
+              "2",
+              "CRITICAL: the default for production jobs; user-visible impact",
+              "other POSTs"
+            ],
+            [
+              "3",
+              "SHEDDABLE_PLUS: partial unavailability expected; the default for batch jobs",
+              "GETs"
+            ],
+            [
+              "4 (first to shed)",
+              "SHEDDABLE: frequent partial and occasional full unavailability expected",
+              "test-mode traffic"
+            ]
+          ],
+          "cites": [
+            "s6",
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The signal that triggers shedding is utilisation, and Google's most useful one is the executor load average: the number of threads running or ready to run, smoothed with exponential decay, with rejection beginning as it grows past the processors available to the task. The smoothing swallows a brief fan-out spike and reacts to sustained load. Stripe watches the number of workers with spare capacity and sheds slowly from the bottom tier up, bringing traffic back just as slowly, because shedding and restoring quickly makes the system flap between healthy and awful.",
+          "cites": [
+            "s6",
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Stripe runs a second shedder ahead of utilisation: a fleet usage shedder that reserves a fraction of the fleet for critical requests, counted in Redis, so that when the reservation is 20 percent any non-critical request beyond the other 80 percent is rejected with a 503 before the workers are busy. The Builders' Library adds two rules about where to decide: make the prioritisation decision once, at the edge that receives the client's request, rather than with conflicting heuristics deep in the stack; and let a client burst above its quota only at a lower priority than other clients' within-quota requests.",
+          "cites": [
+            "s1",
+            "s8"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Rejection must be much cheaper than service, so shed before parsing a large body or taking a lock, and check the clock: a server that notices the client has already timed out skips the rest of the work.",
+          "cites": [
+            "s8"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "queues-and-adaptive-limits",
+      "title": "Queues, adaptive concurrency limits and client-side throttling",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Most servers put a queue in front of a pool of workers, and the queue is where overload hides. The SRE book's arithmetic: if the queue holds ten times the thread count and a request takes 100 milliseconds on a thread, a request that finds the queue full takes 1.1 seconds, almost all of it queueing, and its caller has often given up. For steady traffic the advice is a queue of at most half the pool size, so the server rejects early; a last-in-first-out or controlled-delay queue sheds the requests whose callers have most likely abandoned them.",
+          "cites": [
+            "s7"
+          ]
+        },
+        {
+          "type": "steps",
+          "title": "Sizing the queue from the SRE book's figures.",
+          "items": [
+            "A server has 64 worker threads and a service time of 100 ms per request.",
+            "At the book's example ratio of a queue ten times the threads, the queue holds 640 requests and a request at the back waits 640 / 64 × 100 ms = 1 second before its 100 ms of work.",
+            "At the recommended ratio of half the pool, the queue holds 32 requests and the worst queueing delay is 32 / 64 × 100 ms = 50 ms.",
+            "Beyond that, the server returns 503 at once, which the cascading-failures chapter gives as the simplest per-task shedding rule: reject when more than a set number of requests are in flight."
+          ],
+          "cites": [
+            "s7"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The right in-flight limit is hard to set by hand because it depends on the hardware and moves as the fleet scales. Netflix's concurrency-limits library derives it from Little's law, limit = average rate × average latency, and estimates it the way TCP estimates a congestion window. The Vegas limit estimates the queue as L × (1 - minRTT / sampleRTT), raising the limit by one per window while the estimated queue is under a small alpha and lowering it when over a slightly larger beta; Gradient2 compares a short and a long exponential average of latency to detect a queueing trend; a loss-based AIMD limit on the client backs off on timeouts and rejections. The README recommends a delay-based limiter on the server and a loss-based or combined one on the client.",
+          "cites": [
+            "s11"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Client-side adaptive throttling closes the loop from the other end. Each Google client task keeps two counts over the last two minutes, requests attempted and requests accepted, and once requests exceed K times accepts it rejects new requests locally with a probability that grows with the gap. The usual K is 2: the backend still sees about twice what it accepts, which wastes some capacity but lets clients notice recovery quickly; a K of 1.1 wastes less and recovers more slowly. The decision uses only local information, so it adds no dependency and no latency.",
+          "cites": [
+            "s6"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "tip",
+          "text": "Pair a small queue with a measured concurrency limit on the server and adaptive throttling in the client library. Together they mean an overloaded backend sees shrinking demand, not growing demand.",
+          "cites": [
+            "s6",
+            "s7",
+            "s11"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "bulkheads-and-static-stability",
+      "title": "Bulkheads, proxy circuit breakers, static stability and constant work",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "A bulkhead, named for the sealed compartments of a ship's hull, isolates resources so that one consumer or one dependency cannot sink the rest. The Azure pattern partitions service instances into groups by consumer load and availability requirements, and has consumers partition their own resources, such as connection pools, per dependency, so that a slow service exhausts only its own allotment.",
+          "cites": [
+            "s5"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Envoy's per-upstream circuit breaking limits, which are bulkheads at the proxy: each is tracked per upstream cluster and per routing priority, and each overflow increments a counter.",
+          "columns": [
+            "limit",
+            "bounds",
+            "on overflow"
+          ],
+          "rows": [
+            [
+              "maximum connections",
+              "connections Envoy opens to all hosts of the cluster, active or draining",
+              "the connection overflow counter rises; a selected host still gets at least one connection"
+            ],
+            [
+              "maximum pending requests",
+              "requests queued while waiting for a connection",
+              "the request is failed immediately rather than queued"
+            ],
+            [
+              "maximum requests",
+              "requests outstanding to the cluster at once",
+              "fail fast; the limit that caps in-flight work"
+            ],
+            [
+              "maximum active retries",
+              "retries outstanding to the cluster at once",
+              "the retry is dropped; the documentation recommends retry budgets instead of a static count, and aggressive breaking if static"
+            ]
+          ],
+          "cites": [
+            "s12"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Because the limits are per priority, a high-priority route gets its own pool and a flood on a low-priority route cannot starve it; and because they are observable as statistics, including the resources remaining before each one opens, they are tuned from data: start from the observed peak concurrency per upstream plus headroom, watch the overflow counters and adjust. The active-retries limit, or the retry budget Envoy recommends in its place, is the mesh-layer guard against the retry storms the idempotency lesson describes.",
+          "cites": [
+            "s12"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Two Amazon patterns remove the modes rather than manage them. Static stability means the system keeps working when a dependency is impaired, because the capacity was provisioned before the failure rather than launched in reaction to it: across three Availability Zones Amazon overprovisions by 50 percent, so each zone runs at two thirds of its tested load and the loss of a whole zone requires no action beyond health checks removing its instances. Constant work means doing the same amount of work regardless of load or stress: Route 53's health-check aggregators push a fixed-size table of every check's status to the DNS servers every few seconds whether anything changed or not, so a wave of failures costs no more than a quiet day. The article's three features of such designs are that they do not scale with load, have no modes, and if anything do less work under stress.",
+          "cites": [
+            "s9",
+            "s10"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Prefer a design whose cost does not depend on the failure. Pre-provision for the loss you expect, push fixed-size state on a fixed cadence, and give every dependency its own pool so that a bad day for one is not a bad day for all.",
+          "cites": [
+            "s9",
+            "s10",
+            "s5"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "the-overload-plan",
+      "title": "Writing the overload plan for one service",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "An overload plan says, for one service, which limits apply to whom, in what order load is shed, what degraded modes exist, and what the client is told at each step. The decision block chooses the primary protection per situation; most services end up with several.",
+          "cites": [
+            "s6",
+            "s8"
+          ]
+        },
+        {
+          "type": "decision",
+          "caption": "Choosing the protection for one service.",
+          "rows": [
+            {
+              "option": "per-caller rate limit (token bucket) at the gateway",
+              "pick_when": "callers can space their requests without changing the outcome, one caller's spike must not affect the rest, and quotas are part of the product",
+              "avoid_when": "the caller cannot space requests (real-time events), or request costs vary so much that a count means little",
+              "example": "a public API with per-key quotas; the first limiter to build"
+            },
+            {
+              "option": "concurrency limit per caller or per server",
+              "pick_when": "a few expensive or slow requests dominate, callers retry on timeout and stack up work, or in-flight work is measurable where the right rate is not",
+              "avoid_when": "requests are uniform and short, where a rate is simpler to explain",
+              "example": "export endpoints; the server-side adaptive limit"
+            },
+            {
+              "option": "load shedding by criticality on a utilisation signal",
+              "pick_when": "total demand can exceed capacity with every caller in quota, and requests have a usable importance order",
+              "avoid_when": "every request is equally critical and the only honest answer is more capacity",
+              "example": "a shared backend serving interactive and batch callers"
+            },
+            {
+              "option": "client-side adaptive throttling in the client library",
+              "pick_when": "many client tasks share a backend, rejections cost nearly as much as service, and clients send steadily enough to learn",
+              "avoid_when": "clients call sporadically and cannot build a local view",
+              "example": "internal RPC clients of a storage service"
+            },
+            {
+              "option": "static over-provisioning and constant work",
+              "pick_when": "the dependency is a zone, a region or a control plane, and reacting after the failure is too slow",
+              "avoid_when": "capacity is too expensive to hold idle and the failure is tolerable",
+              "example": "a data plane that must survive a zone loss without a scale-up"
+            }
+          ],
+          "cites": [
+            "s1",
+            "s6",
+            "s8",
+            "s9",
+            "s11"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "A degradation ladder, from the SRE book's degraded responses and the shedding tiers above: each rung costs the user something and saves the service more.",
+          "columns": [
+            "rung",
+            "what changes",
+            "who notices"
+          ],
+          "rows": [
+            [
+              "1",
+              "test, crawler and batch traffic is shed or shifted off peak",
+              "nobody interactive"
+            ],
+            [
+              "2",
+              "reads are served from a local, possibly stale copy instead of the canonical store",
+              "users see slightly old data"
+            ],
+            [
+              "3",
+              "expensive features are reduced: a search runs over a fraction of the corpus, a page drops its recommendations",
+              "users see less"
+            ],
+            [
+              "4",
+              "non-critical writes and low-tier callers get 429 or 503 with Retry-After",
+              "the affected callers, with a reason and a time"
+            ],
+            [
+              "5",
+              "only critical-plus traffic is served; everything else is rejected cheaply",
+              "most users, briefly, instead of everyone for longer"
+            ]
+          ],
+          "cites": [
+            "s6",
+            "s7",
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The plan is tested, not assumed. Load tests run far past saturation, checking that goodput stays flat while offered throughput rises; a variant drives steady load at a shrinking fleet; and every limiter and shedder is dark-launched first and watched through its metrics. The plan also states what the client is told at each rung, because a degraded mode the client cannot tell from a failure will be retried as one.",
+          "cites": [
+            "s8",
+            "s1"
+          ]
+        }
+      ]
     }
   ],
-  "diagram": {
-    "source": "flowchart LR\n    C[Clients] --> G[Edge gateway]\n    G -->|descriptors| R[Global rate limit service]\n    R --> K[(Shared counter store)]\n    G --> P[Sidecar proxy: local token bucket]\n    P --> B{Circuit breaker limits ok?}\n    B -->|no| F[Fail fast with overflow]\n    B -->|yes| S[Service]\n    S --> L{Utilization high?}\n    L -->|yes, low criticality| X[Shed request]\n    L -->|no or critical| W[Do the work]"
+  "worked_example": {
+    "title": "Worked example: the overload plan for a search API behind a gateway",
+    "blocks": [
+      {
+        "type": "p",
+        "text": "A search API serves interactive users, a few partners with batch scripts and an internal crawler, from a fleet behind a gateway. The example sets the per-tenant limits, the concurrency and queue settings, the shedding order and the provisioning, using the figures the sources give where they give them and stated assumptions elsewhere."
+      },
+      {
+        "type": "steps",
+        "title": "Writing the plan",
+        "items": [
+          "Capacity in the SRE book's units: the fleet has 100 tasks that each handle 500 requests per second at the tested load, so the balancer admits at most 50,000 requests per second to the datacenter and the plan works in CPU seconds below that.",
+          "Per-tenant quotas at the gateway: interactive users share a pool and each partner key gets a token bucket of 200 requests per second with a burst of 400, dark-launched for a week and then enforced with a 429 that carries Retry-After and the RateLimit fields.",
+          "Concurrency for the heavy endpoint: the export endpoint allows 10 requests in progress per key, following Stripe's second limiter, because a single export holds a worker for seconds.",
+          "Queue per task: 64 workers and a 100 ms service time give a queue of 32 (half the pool), so the worst queueing delay is 50 ms and the task returns 503 beyond 96 requests in flight.",
+          "Criticality: requests are tagged at the gateway as critical (interactive search), sheddable-plus (partner batch) or sheddable (the crawler), and the tag is propagated to the index and ranking services.",
+          "Shedding: when the executor load average of a task exceeds its 8 cores, it rejects sheddable traffic first, then sheddable-plus, and critical only when both are gone; the crawler is also shifted to the off-peak window.",
+          "Client-side throttling: the internal client library tracks requests against accepts over 2 minutes and rejects locally once requests exceed 2 × accepts.",
+          "Static stability: the fleet is spread over 3 zones and overprovisioned by 50 percent, so 150 tasks are deployed and a zone loss leaves 100 tasks, the full tested capacity, with no scale-up.",
+          "Test: a load test drives offered load to 3 times the capacity and checks that goodput for critical traffic stays at the full 50,000 requests per second while the rejection counters, not the latency, absorb the excess."
+        ],
+        "cites": [
+          "s6",
+          "s1",
+          "s7",
+          "s9",
+          "s8",
+          "s3",
+          "s4"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "The numbers of the example and where each comes from.",
+        "columns": [
+          "quantity",
+          "value",
+          "source or assumption"
+        ],
+        "rows": [
+          [
+            "tasks and capacity per task",
+            "100 tasks, 500 requests per second",
+            "the SRE book's balancing example (s6)"
+          ],
+          [
+            "datacenter admission limit",
+            "50,000 requests per second",
+            "100 × 500, as in s6"
+          ],
+          [
+            "partner bucket",
+            "200 per second, burst 400",
+            "assumption; the token bucket per s1"
+          ],
+          [
+            "export concurrency",
+            "10 in progress per key",
+            "assumption; the concurrent requests limiter per s1"
+          ],
+          [
+            "workers, queue, queueing delay",
+            "64, 32, 50 ms",
+            "half-the-pool rule and the 100 ms service time from s7"
+          ],
+          [
+            "adaptive throttling window and K",
+            "2 minutes, K = 2",
+            "the SRE book (s6)"
+          ],
+          [
+            "zones and overprovisioning",
+            "3 zones, 50 percent, 150 tasks",
+            "the Builders' Library rule (s9); 100 × 1.5"
+          ],
+          [
+            "load test multiple",
+            "3 times capacity",
+            "assumption; testing past the breaking point per s8"
+          ]
+        ]
+      },
+      {
+        "type": "code",
+        "lang": "python",
+        "code": "import time\n\nclass SlidingWindowLimiter:\n    \"\"\"Cloudflare's approximation: the current window's count plus the previous\n    window's count weighted by how much of it is still inside the sliding interval.\n    Only increments and reads are needed, so it works on a shared counter store.\"\"\"\n\n    def __init__(self, limit, window_s=60):\n        self.limit, self.window = limit, window_s\n        self.counts = {}            # (key, window_index) -> count\n\n    def allow(self, key, now=None):\n        now = time.time() if now is None else now\n        idx = int(now // self.window)\n        elapsed = now - idx * self.window\n        current = self.counts.get((key, idx), 0)\n        previous = self.counts.get((key, idx - 1), 0)\n        weight = (self.window - elapsed) / self.window\n        rate = previous * weight + current\n        if rate >= self.limit:\n            return False, max(0.0, self.window - elapsed)   # denied, seconds until the window turns\n        self.counts[(key, idx)] = current + 1\n        return True, 0.0\n\n\nlimiter = SlidingWindowLimiter(limit=50, window_s=60)\n# the post's example: 42 in the previous minute, 18 so far, 15 s into the minute\nlimiter.counts[(\"k\", 100)] = 42\nlimiter.counts[(\"k\", 101)] = 18\nprint(limiter.allow(\"k\", now=101 * 60 + 15))   # (True, 0.0): 42 * 0.75 + 18 = 49.5 < 50\nprint(limiter.allow(\"k\", now=101 * 60 + 16))   # (False, 44.0): the 50th request is refused",
+        "caption": "The sliding window approximation from the Cloudflare post as a per-key limiter; the second return value is what to send as Retry-After."
+      }
+    ]
   },
-  "code": [
-    {
-      "code": "import time\n\nclass TokenBucket:\n    def __init__(self, rate_per_s, burst):\n        self.rate, self.burst = rate_per_s, burst\n        self.tokens, self.last = burst, time.monotonic()\n\n    def allow(self, cost=1):\n        now = time.monotonic()\n        self.tokens = min(self.burst, self.tokens + (now - self.last) * self.rate)\n        self.last = now\n        if self.tokens >= cost:\n            self.tokens -= cost\n            return True\n        return False  # caller responds 429\n\nbucket = TokenBucket(rate_per_s=100, burst=200)\nprint(bucket.allow())",
-      "lang": "python"
-    }
-  ],
+  "diagram": null,
+  "code": [],
   "technologies": [
     "Envoy",
     "Envoy ratelimit service",
@@ -120,35 +807,142 @@
   ],
   "sources": [
     {
-      "kind": "doc",
-      "title": "Envoy global rate limiting",
-      "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/other_features/global_rate_limiting"
-    },
-    {
-      "kind": "doc",
-      "title": "Envoy local rate limiting",
-      "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/other_features/local_rate_limiting"
-    },
-    {
-      "kind": "doc",
-      "title": "Envoy circuit breaking",
-      "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/circuit_breaking"
-    },
-    {
+      "id": "s1",
+      "title": "Stripe engineering blog, Scaling your API with rate limiters (Paul Tarjan, 2017-03-30): the request rate limiter, the concurrent requests limiter, the fleet usage and worker utilization load shedders, token buckets in Redis, fail open, dark launches",
+      "url": "https://stripe.com/blog/rate-limiters",
       "kind": "article",
-      "title": "Scaling your API with rate limiters (Stripe)",
-      "url": "https://stripe.com/blog/rate-limiters"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "We use the token bucket algorithm to do rate limiting"
+      }
     },
     {
+      "id": "s2",
+      "title": "Cloudflare blog, How we built rate limiting capable of scaling to millions of domains (Julien Desgats, 2017): per-PoP counters behind anycast, the sliding window approximated from two fixed windows, measured accuracy",
+      "url": "https://blog.cloudflare.com/counting-things-a-lot-of-different-things/",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "0.003% of requests have been wrongly allowed or rate limited"
+      }
+    },
+    {
+      "id": "s3",
+      "title": "RFC 6585, Additional HTTP Status Codes (April 2012), section 4: 429 Too Many Requests and the optional Retry-After",
+      "url": "https://www.rfc-editor.org/rfc/rfc6585.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "The 429 status code indicates that the user has sent too many requests in a given amount of time"
+      }
+    },
+    {
+      "id": "s4",
+      "title": "IETF HTTPAPI working group, RateLimit header fields for HTTP (Internet-Draft): the RateLimit-Policy and RateLimit fields, quota, window and partition-key parameters",
+      "url": "https://datatracker.ietf.org/doc/html/draft-ietf-httpapi-ratelimit-headers",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "This document defines the RateLimit-Policy and RateLimit HTTP header fields"
+      }
+    },
+    {
+      "id": "s5",
+      "title": "Azure Architecture Center, Bulkhead pattern: isolating consumers and resource pools so that one failure does not take the rest",
+      "url": "https://learn.microsoft.com/en-us/azure/architecture/patterns/bulkhead",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Partition service instances into different groups based on consumer load and availability requirements"
+      }
+    },
+    {
+      "id": "s6",
+      "title": "Google SRE book, chapter 21, Handling Overload: capacity in CPU not queries, per-customer limits, client-side adaptive throttling, criticality, utilization signals, handling overload errors",
+      "url": "https://sre.google/sre-book/handling-overload/",
       "kind": "book",
-      "title": "Handling overload (SRE book)",
-      "url": "https://sre.google/sre-book/handling-overload/"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Clients can continue to issue requests to the backend until requests is K times as large as accepts"
+      }
+    },
+    {
+      "id": "s7",
+      "title": "Google SRE book, chapter 22, Addressing Cascading Failures: load shedding and graceful degradation, queue management, where rate limiting can be implemented",
+      "url": "https://sre.google/sre-book/addressing-cascading-failures/",
+      "kind": "book",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "it is usually better to have small queue lengths relative to the thread pool size"
+      }
+    },
+    {
+      "id": "s8",
+      "title": "Amazon Builders' Library, Using load shedding to avoid overload (David Yanacek, 2019-12-05): goodput against throughput, the feedback loop, prioritisation at the edge, watching the clock, load testing past the breaking point",
+      "url": "https://builder.aws.com/content/3Eun1EEyX6p2e3VYNyRLSJzLuMV/using-load-shedding-to-avoid-overload",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Goodput is the subset of the throughput that is handled without errors"
+      }
+    },
+    {
+      "id": "s9",
+      "title": "Amazon Builders' Library, Static stability using Availability Zones (Becky Weiss and Mike Furr, 2019-12-05): keep working when a dependency is impaired, overprovisioning across zones",
+      "url": "https://builder.aws.com/content/3K9SiqiJ369TGkkGzqPM95BuYWI/static-stability-using-availability-zones",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "when we use three Availability Zones, we overprovision by 50 percent"
+      }
+    },
+    {
+      "id": "s10",
+      "title": "Amazon Builders' Library, Reliability, constant work, and a good cup of coffee (Colm MacCárthaigh, 2021-02-18): work that does not scale with load or stress, no modes, the Route 53 health-check table",
+      "url": "https://builder.aws.com/content/3F05oqNtNUWxHJ5r6L6I2HrH4rI/reliability-constant-work-and-a-good-cup-of-coffee",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "the health check aggregators send a fixed-size table of health check statuses to the Route 53 DNS servers"
+      }
+    },
+    {
+      "id": "s11",
+      "title": "Netflix concurrency-limits README (GitHub): concurrency as the limit to enforce, Little's law, TCP congestion control as the model, the Vegas, Gradient2 and AIMD limit algorithms",
+      "url": "https://raw.githubusercontent.com/Netflix/concurrency-limits/master/README.md",
+      "kind": "repo",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Little's Law where `Limit = Average RPS * Average Latency`"
+      }
+    },
+    {
+      "id": "s12",
+      "title": "Envoy proxy documentation, Circuit breaking: the per-cluster limits on connections, pending requests, requests and active retries, per-priority limits, retry budgets, overflow counters",
+      "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/circuit_breaking",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "In general we recommend using retry budgets"
+      }
     }
   ],
   "practice": "practice/sd-rate-limiting-overload",
   "provenance": {
-    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
-    "generated_on": "2026-10-13",
+    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center, format v2",
+    "generated_on": "2026-10-15",
     "reviewed_by": null,
     "reviewed_on": null
   },
@@ -157,6 +951,11 @@
       "version": 1,
       "date": "2026-10-13",
       "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-15",
+      "change": "rewritten by hand from primary sources at format v2 (learning-center-lesson:2): 8 subtopics with the defence table, the algorithm table and Cloudflare's sliding window as steps, the layered-defence flowchart in its subtopic and Google's per-customer quota table, the throttling-response table from RFC 6585 and the RateLimit draft, the criticality ladder table (Google and Stripe), the queue sizing as steps with Netflix's adaptive limits and Google's adaptive throttling, Envoy's circuit-breaking limit table with static stability and constant work, a decision block over the protections and a degradation ladder, a worked search-API overload plan with the sliding-window code after the teaching, 5 cited in-practice blocks (Stripe, Cloudflare, Google, Amazon, Netflix), 12 verified sources with ids; the :1 sim block is kept"
     }
   ],
   "sim": {
