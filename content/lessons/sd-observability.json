@@ -1,7 +1,7 @@
 {
-  "schema_version": "learning-center-lesson:1",
+  "schema_version": "learning-center-lesson:2",
   "id": "sd-observability",
-  "version": 1,
+  "version": 2,
   "status": "published",
   "superseded_by": null,
   "title": "Observability for designers",
@@ -18,86 +18,872 @@
     "telemetry",
     "monitoring"
   ],
-  "summary": "Observability is the ability to understand what a system is doing internally from the telemetry it emits, without shipping new code to ask a new question. A designer decides up front which signals each component emits, how request context travels across service boundaries, and how telemetry is collected and stored. Those choices determine whether an incident is diagnosed in minutes or in hours.",
+  "summary": "Observability is what lets a team ask a new question of a running system without shipping new code to answer it. This lesson gives the four golden signals and the symptoms-against-causes rule as tables, explains what traces, metrics and logs each record and how a trace id joins them, states what each kind of component must emit, sets a cardinality budget for metric labels, describes one structured log entry per unit of work, head and tail sampling of traces, and the collector pipeline, then sizes the telemetry of one service from its request rate.",
   "detail": [],
-  "in_practice": "A platform team publishes a small instrumentation library and a collector configuration, so every service gets request metrics, trace propagation and structured logs with trace ids by default. Services export OTLP to a node-local collector, which forwards to a gateway pool that samples traces and fans out to a metrics store, a trace store and a log store. Design reviews include a telemetry section: key metrics per component, label sets checked for cardinality, the SLO alerts, and the dashboards that exist before launch. After incidents the team asks which question could not be answered from telemetry and adds that signal.",
+  "in_practice": {
+    "blocks": [
+      {
+        "type": "p",
+        "text": "Google's SRE book states the cost of doing this well: even with shared infrastructure for collection, display and alerting, an SRE team of 10 to 12 people typically has one or two members whose primary job is the service's monitoring. Its Bigtable case shows the alternative. The service's SLO was based on a synthetic client's mean performance, which a slow tail dominated, so email and paging alerts fired voluminously and the team missed the problems that affected users. The remedy was to dial the SLO back temporarily to the 75th percentile latency and disable the email alerts, which bought the time to fix the storage stack underneath.",
+        "cites": [
+          "s1"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Amazon's service teams log one structured entry per unit of work and derive their metrics from the log afterwards. The guidance gives DynamoDB as the limit case: serving over 20 million requests per second of internal traffic at peak, it still logs every request, for troubleshooting and for audit. The same article describes how the teams make that affordable, including rotating log files every minute and running load tests for hours to prove that the log-shipping agents keep up at maximum throughput.",
+        "cites": [
+          "s2"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "Dapper in production at Google, from the paper.",
+        "columns": [
+          "measure",
+          "value"
+        ],
+        "rows": [
+          [
+            "Default sampling in the first production version",
+            "1 trace in 1,024"
+          ],
+          [
+            "Sampled trace data generated per day",
+            "more than 1 TB"
+          ],
+          [
+            "Retention users asked for",
+            "at least two weeks"
+          ],
+          [
+            "Median collection latency from binary to repository",
+            "under 15 seconds"
+          ],
+          [
+            "Spans with at least one application annotation",
+            "70 percent"
+          ]
+        ],
+        "cites": [
+          "s10"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "Uber's metrics platform M3, from Uber's engineering post: the cardinality budget at fleet scale, with longer retention opt-in per metric by tag matching and downsampling at ingestion rather than by rewriting stored data.",
+        "columns": [
+          "measure",
+          "value"
+        ],
+        "rows": [
+          [
+            "Time series held",
+            "over 6.6 billion"
+          ],
+          [
+            "Metrics aggregated",
+            "500 million per second"
+          ],
+          [
+            "Metrics persisted to storage",
+            "20 million per second"
+          ],
+          [
+            "Replication",
+            "three replicas per region, written by quorum"
+          ],
+          [
+            "Default retention",
+            "raw for two days; downsampled to one minute for 30 days"
+          ]
+        ],
+        "cites": [
+          "s12"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "OpenTelemetry's own gateway documentation records the pattern teams converge on when tail sampling is needed: a first collector tier whose load-balancing exporter routes by trace id to a second tier running the tail sampling processor, so that every span of a trace reaches the one collector that decides its fate.",
+        "cites": [
+          "s7"
+        ]
+      }
+    ]
+  },
   "subtopics": [
     {
-      "body": [
+      "id": "symptoms-causes-and-golden-signals",
+      "title": "What observability is for: symptoms, causes and the golden signals",
+      "blocks": [
         {
-          "body": "A metric is a numeric measurement aggregated over time, cheap to store and ideal for dashboards and alerts: request rate, error rate, latency distribution, queue depth. A log is a timestamped record of a discrete event, best for the detail of one occurrence. A trace records the path of one request through many services as a tree of spans, each with a start time, a duration and attributes. Metrics tell you that something is wrong, traces tell you where, and logs tell you why. OpenTelemetry treats these as separate signals that share a common resource description and a common context, plus baggage for passing key-value pairs along a request.",
-          "heading": "What each signal answers"
+          "type": "p",
+          "text": "The OpenTelemetry primer defines observability as the ability to understand a system from the outside by asking questions about it without knowing its inner workings, including questions nobody thought to ask before the incident. The test it proposes is practical: an application is properly instrumented when developers do not need to add more instrumentation to troubleshoot an issue. Google's SRE book uses the older word, monitoring, for the collection, processing, aggregation and display of real-time quantitative data, and separates white-box monitoring, which reads the internals of the system through its own instrumentation, from black-box monitoring, which tests externally visible behaviour as a user would see it.",
+          "cites": [
+            "s3",
+            "s1"
+          ]
         },
         {
-          "body": "The signals are most useful when joined. Put the trace id and span id into every structured log line so a slow span leads straight to its logs. Use the same service name, version and environment attributes on all three signals so that a dashboard panel, a trace search and a log query can be filtered identically. Decide these naming conventions once, in a shared library or collector configuration, because fixing inconsistent attribute names across fifty services later is expensive.",
-          "heading": "Correlating signals"
-        }
-      ],
-      "id": "signals-traces-metrics-logs",
-      "title": "The signals: traces, metrics and logs"
-    },
-    {
-      "body": [
-        {
-          "body": "Prometheus offers counters (only go up, queried as a rate), gauges (go up and down, such as in-flight requests), and histograms (observations counted into buckets, from which quantiles are estimated on the server). For online serving systems, instrument request count, error count and latency per endpoint. For offline or batch systems, track items in, items out, time of last success and the age of the oldest unprocessed item. For queues and pools, track size, saturation and wait time. Measure latency with histograms rather than averages, since averages hide the tail that users actually feel.",
-          "heading": "Metric types and what to measure"
+          "type": "p",
+          "text": "The same chapter gives the distinction that organises everything else: a monitoring system answers two questions, what is broken and why. The first is a symptom and the second a cause, and the chapter's examples show that a cause is often several layers below the symptom a user sees.",
+          "cites": [
+            "s1"
+          ]
         },
         {
-          "body": "Every unique combination of label values is a separate time series that the server must hold in memory and on disk. A label for HTTP method or status code is safe; a label for user id, request id or raw URL path creates unbounded series and can take the monitoring system down. Keep label values to a small, bounded set, use route templates instead of raw paths, and send high-cardinality detail to traces or logs instead. Prometheus scrapes targets over HTTP on an interval, so each instance exposes its current values and the server computes rates and aggregations with PromQL.",
-          "heading": "Cardinality is the cost driver"
-        }
-      ],
-      "id": "metric-design-and-cardinality",
-      "title": "Designing metrics: types, labels and cardinality"
-    },
-    {
-      "body": [
-        {
-          "body": "A trace only works if every hop forwards the context. On an outgoing call the client injects the trace id, the parent span id and sampling flags into request headers, and the server extracts them and starts a child span. The same must happen through message queues, where context goes into message headers, and across thread pools and async tasks inside a process. One service that drops the headers splits a trace in two, so propagation is a platform requirement, usually met with auto-instrumentation libraries and a shared middleware.",
-          "heading": "Propagation across boundaries"
+          "type": "table",
+          "caption": "Symptoms and causes from the SRE book's own table.",
+          "columns": [
+            "symptom (what is broken)",
+            "cause (why)"
+          ],
+          "rows": [
+            [
+              "Serving HTTP 500s or 404s",
+              "database servers are refusing connections"
+            ],
+            [
+              "Responses are slow",
+              "CPUs overloaded by a bad sort, or a crimped cable showing as partial packet loss"
+            ],
+            [
+              "Users in one region are not receiving content",
+              "the CDN blocklisted some client IPs"
+            ],
+            [
+              "Private content is world-readable",
+              "a software push caused ACLs to be forgotten"
+            ]
+          ],
+          "cites": [
+            "s1"
+          ]
         },
         {
-          "body": "Recording every span at high request rates is too expensive, so systems sample. Head sampling decides at the start of the request, for example keep one percent, and is cheap but blind to the outcome. Tail sampling buffers the spans of a trace and decides after it completes, so all errors and slow requests can be kept while most fast successes are dropped. Tail sampling needs all spans of a trace to reach the same collector instance, which shapes the collection topology.",
-          "heading": "Sampling"
-        }
-      ],
-      "id": "trace-context-and-sampling",
-      "title": "Trace context propagation and sampling"
-    },
-    {
-      "body": [
-        {
-          "body": "The OpenTelemetry Collector is a vendor-neutral process that receives, processes and exports telemetry. Receivers accept data in formats such as OTLP or scrape Prometheus endpoints. Processors batch, filter, sample, redact sensitive attributes and add resource metadata. Exporters send the result to one or more backends. Putting a collector between applications and backends means services export one protocol and never need redeploying when the backend changes, and that retries, batching and credentials live in one place.",
-          "heading": "Receivers, processors, exporters"
+          "type": "p",
+          "text": "For a user-facing system the chapter names four signals that must be measured whatever else is: latency, traffic, errors and saturation. It adds two refinements that instrumentation often gets wrong. The latency of failed requests must be tracked separately from the latency of successful ones, because a fast error is still a failure and a slow error is worse. And errors include implicit failures, such as a success status with the wrong content, and policy failures, such as any request slower than a committed bound.",
+          "cites": [
+            "s1"
+          ]
         },
         {
-          "body": "Two patterns are common and often combined. An agent runs next to the workload, as a sidecar or one per node, receives telemetry over the local network and enriches it with host and orchestrator metadata. A gateway is a horizontally scaled pool of collectors per cluster or region that handles heavier work such as tail sampling and fan-out to several backends. Size the pipeline like any other data path: it needs memory limits, back-pressure handling and its own monitoring, or it will fail during the very incident it is meant to explain.",
-          "heading": "Deployment patterns"
+          "type": "table",
+          "caption": "The four golden signals.",
+          "columns": [
+            "signal",
+            "what it measures",
+            "note from the chapter"
+          ],
+          "rows": [
+            [
+              "Latency",
+              "time to service a request",
+              "keep success and error latency apart; p99 over a short window is an early sign of saturation"
+            ],
+            [
+              "Traffic",
+              "demand, in a system-specific unit",
+              "requests per second for a web service; sessions or I/O rate for streaming; transactions per second for a store"
+            ],
+            [
+              "Errors",
+              "the rate of failed requests",
+              "explicit (500s), implicit (wrong content with a 200), by policy (slower than the bound)"
+            ],
+            [
+              "Saturation",
+              "how full the service is",
+              "measure the most constrained resource; many systems degrade before 100 percent, so set a utilisation target"
+            ]
+          ],
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Instrument so that the four golden signals exist for every user-facing service, and page on them. Cause-level signals belong on dashboards for diagnosis, not on the pager.",
+          "cites": [
+            "s1"
+          ]
         }
-      ],
-      "id": "collector-pipeline",
-      "title": "The telemetry pipeline and the OpenTelemetry Collector"
+      ]
     },
     {
-      "body": [
+      "id": "the-three-signals",
+      "title": "Traces, metrics and logs, and how a trace id joins them",
+      "blocks": [
         {
-          "body": "Page a human for user-visible symptoms: error ratio above the objective, latency above the objective, or work not completing. Cause-level signals such as CPU, disk or one replica restarting belong on dashboards and tickets unless they predict an imminent outage, such as a disk filling. For each component in the design, write down the handful of metrics that prove it is healthy, the alert that fires when it is not, and the first query an on-call engineer runs. If that list cannot be written, the component is not yet observable enough to ship.",
-          "heading": "Alert on symptoms, diagnose with causes"
+          "type": "p",
+          "text": "The OpenTelemetry primer describes three signals. A metric is an aggregation over a period of numeric data about infrastructure or an application, such as an error rate or a request rate. A log is a timestamped message that is not necessarily associated with any particular request. A span represents a single unit of work with a name, timing data, structured messages and attributes, and a trace is the tree of spans for one request, starting at a root span. The primer's own observation is that logs are far more useful once they are correlated with a trace and a span.",
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "What each signal records and what it is good for.",
+          "columns": [
+            "signal",
+            "one record is",
+            "cost grows with",
+            "the question it answers best"
+          ],
+          "rows": [
+            [
+              "Metric",
+              "a number per label set per scrape interval",
+              "the number of label combinations, not the request rate",
+              "is something wrong, and since when"
+            ],
+            [
+              "Trace",
+              "a tree of spans for one request, each with a start, a duration and attributes",
+              "the request rate times spans per request, so it is sampled",
+              "where in the call tree the time or the error is"
+            ],
+            [
+              "Log",
+              "a structured entry for one unit of work, or a free-form line",
+              "the request rate times bytes per entry",
+              "why this particular request failed"
+            ]
+          ],
+          "cites": [
+            "s3",
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The join between the signals is an identifier. Amazon's engineering guidance describes a trace id as a meta request id stamped on a distributed unit of work by the front-door service and propagated to every dependency, so that the log entries of many services can be lined up for one request. OpenTelemetry's SDKs do the same join automatically by injecting the trace id and span id into each log record, which lets a reader move from a slow span to the log lines written inside it, and lets metrics be aggregated by the calling context rather than only by endpoint.",
+          "cites": [
+            "s2",
+            "s4"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Two consequences follow for a design. First, every service in a request path must forward the context, because one hop that drops it splits the trace into unrelated pieces; Amazon's teams found framework-level propagation unreliable in multi-threaded code and pass the trace id and a metrics object explicitly in method signatures. Second, the attributes that name a service, its version and its environment must be spelled the same way on all three signals, or a dashboard panel, a trace search and a log query cannot be filtered to the same set of instances.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "tip",
+          "text": "Decide the naming of services, versions, environments and routes once, in a shared library or collector configuration, before fifty services each invent their own.",
+          "cites": [
+            "s2"
+          ]
         }
-      ],
-      "id": "alerting-on-symptoms",
-      "title": "Alerting and dashboards that follow the design"
+      ]
+    },
+    {
+      "id": "what-each-component-must-emit",
+      "title": "What each kind of component must emit",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The Prometheus instrumentation guidance sorts services into three types and names the metrics that matter for each. An online-serving system, where a human or another system waits for the reply, needs its query count, errors and latency, and ideally the count of requests in progress; it should be measured on both the client and the server side, because a disagreement between the two sides is itself diagnostic. Offline processing, where nobody is waiting, needs per stage the items in, in progress and out, and the last time the stage processed anything. A batch job needs the time it last succeeded, pushed rather than scraped because the job is not running when the scraper calls.",
+          "cites": [
+            "s8"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The three types of system and what each must expose.",
+          "columns": [
+            "type",
+            "key metrics",
+            "how a stall shows",
+            "note"
+          ],
+          "rows": [
+            [
+              "Online serving",
+              "query count, errors, latency, in-progress requests",
+              "latency and error rate rise",
+              "count queries when they end, so counts line up with latency and errors"
+            ],
+            [
+              "Offline processing",
+              "per stage: items in, in progress, out; last processed time",
+              "a heartbeat item's timestamp stops advancing",
+              "send a dummy item through the pipeline to measure propagation time"
+            ],
+            [
+              "Batch job",
+              "last success time, stage durations, total runtime",
+              "the last-success timestamp ages",
+              "push to a gateway; a job that runs more often than every 15 minutes should become a daemon"
+            ]
+          ],
+          "cites": [
+            "s8"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Two mnemonics cover the request path and the machines under it. RED, from Tom Wilkie, records for every service the request rate, the error count and the duration distribution, so that every service looks the same and people can be on call for code they did not write. USE, from Brendan Gregg, records for every resource its utilisation, saturation and errors. The Grafana write-up calls them two views of one system, users and machines, and notes that the golden signals are RED plus saturation.",
+          "cites": [
+            "s11"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Below the service level, the Prometheus guidance wants metrics from every library that touches an outside resource, every thread pool and every cache. Amazon's list comes from operating services and is the one to copy into a design review.",
+          "cites": [
+            "s8",
+            "s2"
+          ]
+        },
+        {
+          "type": "list",
+          "items": [
+            "The availability and latency of every dependency, per call, per resource and per status code, so a retry storm or a throttled table is visible as such.",
+            "The depth of every queue the request touches, and the time each item waited in it, which needs an enqueue timestamp on the message.",
+            "A counter per error reason, grouped at least into the client's fault and the server's fault.",
+            "A separate latency timer for successful responses, so that fast errors do not make latency look good.",
+            "Enough metadata to know who called and what for, with sensitive fields left out on an opt-in basis."
+          ],
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "A design review names, per component, the type it belongs to and the metrics above. A component for which that list cannot be written is not ready to ship.",
+          "cites": [
+            "s8",
+            "s2"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "metric-types-labels-and-cardinality",
+      "title": "Metric types, labels and the cardinality budget",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The Prometheus guidance gives one rule for the first choice: if the value can go down, it is a gauge; otherwise it is a counter, queried through a rate because a raw counter is rarely useful. For distributions there are two approaches, and the histograms document is explicit about the difference. A summary has the instrumented program compute fixed quantiles over a fixed window, which is accurate but cannot be recomputed for another window and, most importantly, cannot be aggregated across replicas. A histogram counts observations into buckets, which can be summed across instances and queried for any quantile later; the document's advice is to use native histograms where the library and server support them and classic histograms otherwise.",
+          "cites": [
+            "s8",
+            "s9"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The four metric types and what each is for.",
+          "columns": [
+            "type",
+            "value",
+            "use for",
+            "how it is read"
+          ],
+          "rows": [
+            [
+              "Counter",
+              "only goes up, resets on restart",
+              "requests, errors, bytes",
+              "rate() over a window"
+            ],
+            [
+              "Gauge",
+              "goes up and down",
+              "in-progress requests, queue depth, free memory, a last-success timestamp",
+              "the current value; never rate() it"
+            ],
+            [
+              "Histogram",
+              "counts per bucket plus a sum and a count",
+              "latency and sizes that must be aggregated across replicas",
+              "histogram_quantile() after summing buckets; each classic bucket is its own series"
+            ],
+            [
+              "Summary",
+              "quantiles computed in the process",
+              "a single instance where the quantile cannot be recomputed later",
+              "read directly; cannot be aggregated"
+            ]
+          ],
+          "cites": [
+            "s8",
+            "s9"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Labels are what make one metric answer many questions: one http_responses_total with a code label rather than a metric per status code, so a rule or a graph can treat the whole as one. The cost is that every distinct label set is a separate time series with its own memory, CPU, disk and network, and the guidance is to keep the cardinality of a metric below ten, to limit the few that exceed it to a handful across the whole system, and to treat a metric with over a hundred label values, or the potential to grow that large, as a sign that the analysis belongs in a general processing system rather than in monitoring.",
+          "cites": [
+            "s8"
+          ]
+        },
+        {
+          "type": "steps",
+          "title": "The cardinality arithmetic from the Prometheus guidance",
+          "items": [
+            "A node exporter exposes a filesystem metric for every mounted filesystem, in the tens of series per node.",
+            "Across 10,000 nodes that is roughly 100,000 series for that one metric, which the guidance calls fine for Prometheus to handle.",
+            "Add a per-user quota label with 10,000 users on the same nodes and the count becomes a double-digit number of millions of series.",
+            "The guidance calls that too much for the current implementation, and notes the opportunity cost: those series displace other, more useful metrics on the same server."
+          ],
+          "cites": [
+            "s8"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "User ids, request ids and raw URL paths are unbounded label values. Route templates and status classes are bounded. Send the unbounded detail to traces or logs, where one record costs one record rather than one series for ever.",
+          "cites": [
+            "s8"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "logs-one-entry-per-unit-of-work",
+      "title": "Logs: one structured entry per unit of work",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Amazon's instrumentation guidance describes two kinds of log. The request log holds one structured entry per unit of work, a request received or a message pulled from a queue, carrying properties about the request and its caller, counters of how often things happened and timers of how long they took; it serves as an audit log and as a trace of everything that happened in the service. The application log holds unstructured debug lines. The structured log is the source of the metrics: Amazon's services log first and compute aggregates afterwards, so one approach yields both the dashboards and the per-request detail.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Amazon's request log practices and the reason for each.",
+          "columns": [
+            "practice",
+            "why"
+          ],
+          "rows": [
+            [
+              "Emit exactly one entry per unit of work, serialised after all stages complete",
+              "one place to look for a failed request; several entries per request multiply the cost"
+            ],
+            [
+              "Record the request's details before validation or throttling can reject it, sanitised and truncated",
+              "a rejected request is the one you need to see; a caller must not be able to inject into the log"
+            ],
+            [
+              "Log the availability and latency of every dependency, per call and per resource",
+              "otherwise explaining a slow request means comparing graphs and guessing"
+            ],
+            [
+              "Emit a 1 for success and a 0 for failure",
+              "the mean is the availability, and a process that stops emitting 0s has broken"
+            ],
+            [
+              "Keep a separate timer for successful responses",
+              "fast errors and throttling otherwise make latency look better than it is"
+            ],
+            [
+              "Log a trace id and pass it to every dependency",
+              "lines from many services can be lined up for one request"
+            ],
+            [
+              "Leave out sensitive fields on an opt-in basis; protect the log with access control and encryption",
+              "a sensitive parameter added later is not logged by default"
+            ]
+          ],
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The guidance is candid that this is expensive and worth it, and gives the measures that make it affordable at high throughput: sample entries with each kept entry recording how many were skipped; move serialisation and flushing to a separate thread; rotate files every minute so the shipping agent reads from the page cache; and load test for hours to prove the shipper keeps up, because a disk that fills with logs takes the service down.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The Prometheus guidance adds the link back to metrics: for every line of logging code there should be a counter, so that an interesting message can be asked how often it has been happening and for how long.",
+          "cites": [
+            "s8"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "An application log that grows into the request path, with a line per stage and a stack trace per error, is the most expensive form of telemetry. Rate-limit error spam, keep debug levels off in production, and put the per-request facts in the one structured entry.",
+          "cites": [
+            "s2"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tracing-propagation-and-sampling",
+      "title": "Tracing: context propagation and sampling",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Google's Dapper paper set the model that OpenTelemetry follows. A trace is a tree of spans; each span has a name, a span id and a parent id, a span without a parent is a root span, and every span of one request carries the same trace id. Instrumentation lives in the shared RPC and threading libraries, so most applications are traced without changes, and collection is out of band, so the traced request never waits on the tracing system.",
+          "cites": [
+            "s10"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Propagation is the part a designer must get right at every boundary. The context carries the trace id and the span id; when service A calls service B, B creates a span in the same trace with A's span as its parent. A propagator serialises the context into the call, by default as the W3C traceparent header: a version, the trace id, the parent span id and trace flags. Libraries do this for HTTP and RPC; a design must make the same happen through message headers on a queue and across thread pools, because any hop that drops the context ends the trace. The page also warns against trusting context from outside callers, who can forge headers.",
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "OpenTelemetry's guidance is to sample once a system produces about a thousand traces a second and most describe healthy traffic, and not at tens of traces a second or where regulation forbids dropping data. The two mechanisms differ in what they know when they decide.",
+          "cites": [
+            "s5"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Head sampling against tail sampling.",
+          "columns": [
+            "",
+            "head sampling",
+            "tail sampling"
+          ],
+          "rows": [
+            [
+              "Decision made",
+              "at the start, from the trace id and a target percentage",
+              "after the trace completes, from its spans"
+            ],
+            [
+              "Guarantees",
+              "whole traces at a consistent rate",
+              "every trace with an error or over a latency bound is kept"
+            ],
+            [
+              "Cost",
+              "cheap; runs anywhere in the pipeline",
+              "a stateful tier that buffers spans and must itself be monitored"
+            ],
+            [
+              "Limitation",
+              "cannot keep all errors; the outcome is unknown at the start",
+              "every span of a trace must reach the same node, which shapes the topology"
+            ]
+          ],
+          "cites": [
+            "s5",
+            "s7"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Dapper's measured cost of tracing a web search cluster.",
+          "columns": [
+            "fraction of requests traced",
+            "change in average latency",
+            "change in throughput"
+          ],
+          "rows": [
+            [
+              "all of them",
+              "16.3 percent slower",
+              "1.48 percent lower"
+            ],
+            [
+              "1 in 16",
+              "2.12 percent slower",
+              "0.08 percent lower"
+            ],
+            [
+              "1 in 1,024",
+              "within measurement error",
+              "within measurement error"
+            ]
+          ],
+          "cites": [
+            "s10"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Dapper's first production version sampled one trace in 1,024 uniformly, enough for high-throughput services because a pattern that occurs once will occur thousands of times, while a service handling dozens of requests a second can trace all of them. Hence adaptive sampling: a target number of sampled traces per unit time rather than a fixed probability, with the probability used recorded on each trace so that analyses can weight it.",
+          "cites": [
+            "s10"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Propagate context through every boundary, queues and thread pools included. Set the sampling rate from the trace volume, keep every error with tail sampling if you can afford the tier, and record the probability with the trace.",
+          "cites": [
+            "s4",
+            "s5",
+            "s10"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "the-telemetry-pipeline",
+      "title": "The telemetry pipeline: collectors, agents and gateways",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Between the instrumented services and the stores sits a pipeline, and OpenTelemetry's Collector is the common shape of it. Its configuration names receivers, which accept data in a protocol such as OTLP; processors, which change or drop data as it passes; exporters, which send it on; and connectors, which join pipelines. The processors are where policy lives: the documented examples insert an environment attribute, delete a db.statement attribute, hash an email attribute, filter spans and log records by expression, sample traces by probability, and the memory limiter refuses data once the process nears its limit so that the pipeline sheds load instead of dying.",
+          "cites": [
+            "s6"
+          ]
+        },
+        {
+          "type": "diagram",
+          "mermaid": "flowchart LR\n  A[Service A with SDK] -->|OTLP| AG[Node agent collector]\n  B[Service B with SDK] -->|OTLP| AG\n  AG --> GW[Gateway collector pool]\n  GW -->|metrics| M[Metrics store]\n  GW -->|sampled traces| T[Trace store]\n  GW -->|logs| L[Log store]\n  M --> D[Dashboards and alerts]\n  T --> D\n  L --> D",
+          "legend": "Services export OTLP to a collector next to them; the agents forward to a gateway pool per cluster or region, which samples traces and fans out to one store per signal (s7)."
+        },
+        {
+          "type": "p",
+          "text": "The gateway pattern is a single OTLP endpoint per cluster, data centre or region, served by a pool of collectors behind an ordinary load balancer, with applications or other collectors sending to it. Its documented benefits are centrally managed credentials and one place for policy such as filtering and sampling; its documented costs are one more thing to maintain and that can fail, added latency when collectors are cascaded, and more total resources. Where a decision needs every span of a trace, the pattern becomes two tiers: the first tier runs a load-balancing exporter that routes by trace id, so that all spans of a trace reach the same second-tier collector, where the tail sampling policy is applied.",
+          "cites": [
+            "s7"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Where each stage of the pipeline runs and what it is for.",
+          "columns": [
+            "stage",
+            "runs",
+            "does",
+            "what it costs"
+          ],
+          "rows": [
+            [
+              "Agent",
+              "next to the workload, as a sidecar or one per node",
+              "receives over the local network, adds host and orchestrator attributes, batches and retries",
+              "memory on every node; configuration pushed everywhere"
+            ],
+            [
+              "Gateway tier",
+              "a pool per cluster or region behind a load balancer",
+              "credentials, filtering, redaction, sampling, fan-out to stores",
+              "a service to run and monitor; cascade latency"
+            ],
+            [
+              "Second tier by trace id",
+              "a pool fed by the load-balancing exporter",
+              "tail sampling and span-based metrics, which need all spans of a trace or a service in one place",
+              "stateful buffering; the single-writer rule for metrics"
+            ]
+          ],
+          "cites": [
+            "s7",
+            "s5"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "One rule from the gateway documentation catches a subtle fault: every metric stream must have a single writer with a globally unique identity. Two collectors reporting the same series produce gaps, jumps and out-of-order samples in the store, and the page shows the error a Prometheus backend prints when that happens.",
+          "cites": [
+            "s7"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "The pipeline is a data path with the same failure modes as the system it observes. Give it memory limits, back-pressure and its own golden signals, or it will fall over during the incident it exists to explain.",
+          "cites": [
+            "s6",
+            "s5"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "alerts-and-dashboards-from-the-design",
+      "title": "Alerts and dashboards that follow from the design",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The SRE chapter's rule for paging is to alert on symptoms, and to reserve cause-oriented rules for dashboards and for the few causes that are very definite and very imminent, such as a disk that will fill in four hours. Its reasoning is cost: a page interrupts someone's work or sleep, and when pages come too often people skim or ignore them, including the real one. The chapter offers five questions to ask of any proposed rule.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "list",
+          "items": [
+            "Does this rule detect an otherwise undetected condition that is urgent, actionable, and actively or imminently user-visible?",
+            "Will I ever be able to ignore this alert knowing it is benign, and if so, how do I filter that case out?",
+            "Does this alert definitely indicate that users are being negatively affected? Are there cases, such as drained traffic or test deployments, that should be excluded?",
+            "Can I act on it, is the action urgent, could it be automated, and is it a fix or a workaround?",
+            "Is someone else already being paged for the same issue?"
+          ],
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "From those questions the chapter draws a philosophy: every page should be actionable, should require intelligence rather than a rote response, and should be about a novel problem. It also sets expectations for resolution and simplicity. For a service targeting about nine hours of downtime a year, probing for success more than once or twice a minute is unnecessary; rules that catch real incidents should be as simple and predictable as possible; and a signal that no dashboard shows and no alert uses is a candidate for removal.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The design deliverable is therefore a short table per component, written before launch and read during incidents: what proves the component healthy, what pages, and the first query an on-call engineer runs. The burn-rate alerts that page on an objective belong in the reliability lesson; what matters here is that every row rests on a signal the component actually emits."
+        },
+        {
+          "type": "table",
+          "caption": "A telemetry sheet for one design, one row per component.",
+          "columns": [
+            "component",
+            "proves it is healthy",
+            "pages when",
+            "first query"
+          ],
+          "rows": [
+            [
+              "API service",
+              "success rate and p99 latency per route",
+              "the error or latency objective is at risk",
+              "errors by route and reason, last 15 minutes"
+            ],
+            [
+              "Worker pool",
+              "items in, out and in progress; oldest item age",
+              "oldest item age exceeds the freshness bound",
+              "queue depth and dependency latency per call"
+            ],
+            [
+              "Database",
+              "latency as clients see it and as it sees itself",
+              "the constrained resource saturates",
+              "slow statements with their trace ids"
+            ],
+            [
+              "Collector pipeline",
+              "received, dropped and exported counts; memory",
+              "drops rise or the memory limiter engages",
+              "exporter errors by backend"
+            ]
+          ],
+          "cites": [
+            "s1",
+            "s8"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Page on symptoms the user feels. Put causes on dashboards. Keep the rules that page simplest of all, and remove signals and rules that nothing uses.",
+          "cites": [
+            "s1"
+          ]
+        }
+      ]
     }
   ],
-  "diagram": {
-    "source": "flowchart LR\n  A[Service A with SDK] -->|OTLP| AG[Node agent collector]\n  B[Service B with SDK] -->|OTLP| AG\n  AG --> GW[Gateway collector pool]\n  GW -->|metrics| M[Metrics store]\n  GW -->|sampled traces| T[Trace store]\n  GW -->|logs| L[Log store]\n  M --> D[Dashboards and alerts]\n  T --> D\n  L --> D"
+  "worked_example": {
+    "title": "Worked example: sizing the telemetry of an order service at 2,000 requests per second",
+    "blocks": [
+      {
+        "type": "p",
+        "text": "An order service wants its metrics, logs and traces designed before launch. Every input below is an assumption chosen to make the arithmetic concrete; the rules applied to them are the ones from the teaching, and the script at the end recomputes the sizes when an assumption changes."
+      },
+      {
+        "type": "steps",
+        "title": "From request rate to telemetry volume",
+        "items": [
+          "Peak load: 2,000 requests per second across the service (assumption), served by 30 instances (assumption).",
+          "Routes: the API has 20 route templates (assumption); status is labelled by class, 5 values, never by raw path or customer id.",
+          "Request counter: 20 routes times 5 status classes is 100 series per instance.",
+          "Latency histogram: a classic histogram with 12 buckets plus its sum and count is 14 series per route, so 280 series per instance.",
+          "Per instance that is 380 series; across 30 instances, 11,400 series for the service, well inside what the Prometheus guidance calls fine.",
+          "The tempting mistake: a customer label with 50,000 customers (assumption) would multiply the 11,400 by 50,000, into the hundreds of millions of series, which the guidance refuses.",
+          "Logs: one structured entry per request at 1 kB (assumption) is 2 MB per second, or about 173 GB per day.",
+          "Log retention of 30 days (assumption) is about 5.2 TB before compression, so the entry size and the retention are the two numbers to negotiate.",
+          "Traces: 6 spans per request at 400 bytes each (assumption) is 2.4 kB per trace; tracing everything would be 4.8 MB per second, about 415 GB per day.",
+          "At 2,000 traces per second the volume is above OpenTelemetry's threshold of about 1,000 per second, so sampling applies.",
+          "Head-sample 5 percent by trace id: about 21 GB of traces per day, whole traces, no missing spans.",
+          "Tail sampling in a second collector tier keeps every error: at a 0.5 percent error rate (assumption) that is 10 error traces per second, about 2 GB per day, on top of the sampled healthy traffic.",
+          "The decider: logs at 173 GB per day dominate traces at about 23 GB and metrics at a few thousand series. The structured log entry's size and retention are the cost decisions; the metric label set is the correctness decision."
+        ],
+        "cites": [
+          "s8",
+          "s9",
+          "s5"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "The telemetry estimate as a reviewer should receive it.",
+        "columns": [
+          "quantity",
+          "value",
+          "derived from"
+        ],
+        "rows": [
+          [
+            "Metric series per instance",
+            "380",
+            "20 routes times 5 classes, plus 20 times 14 histogram series"
+          ],
+          [
+            "Metric series for the service",
+            "11,400",
+            "380 times 30 instances"
+          ],
+          [
+            "Log volume per day",
+            "about 173 GB",
+            "2,000 per second times 1 kB times 86,400"
+          ],
+          [
+            "Log retention at 30 days",
+            "about 5.2 TB",
+            "173 GB times 30, uncompressed"
+          ],
+          [
+            "Trace volume per day, unsampled",
+            "about 415 GB",
+            "2,000 per second times 2.4 kB times 86,400"
+          ],
+          [
+            "Head-sampled traces per day",
+            "about 21 GB",
+            "415 GB times 5 percent"
+          ],
+          [
+            "Error traces kept by tail sampling",
+            "about 2 GB per day",
+            "10 per second times 2.4 kB times 86,400"
+          ]
+        ]
+      },
+      {
+        "type": "code",
+        "lang": "python",
+        "code": "import logging, time\nfrom prometheus_client import Counter, Histogram, start_http_server\nfrom opentelemetry import trace\n\n# bounded labels only: a route template and a status class, never a user id or a raw path\nREQS = Counter(\"http_requests_total\", \"Requests\", [\"route\", \"code_class\"])\nLAT = Histogram(\"http_request_duration_seconds\", \"Latency of successful requests\", [\"route\"])\nlog = logging.getLogger(\"request\")\n\ndef handle(route, work):\n    span = trace.get_current_span().get_span_context()   # set by the server instrumentation\n    start = time.perf_counter()\n    code_class, error_reason = \"2xx\", None\n    try:\n        return work()\n    except Exception as e:\n        code_class, error_reason = \"5xx\", type(e).__name__\n        raise\n    finally:\n        elapsed = time.perf_counter() - start\n        REQS.labels(route, code_class).inc()\n        if code_class == \"2xx\":\n            LAT.labels(route).observe(elapsed)            # a separate timer for successes\n        log.info(\"request\", extra={                     # one structured entry per unit of work\n            \"route\": route, \"code_class\": code_class, \"error_reason\": error_reason,\n            \"duration_ms\": round(elapsed * 1000, 1),\n            \"trace_id\": format(span.trace_id, \"032x\"), \"span_id\": format(span.span_id, \"016x\"),\n        })\n\nstart_http_server(8000)   # exposes /metrics for scraping",
+        "caption": "The instrumentation the estimate assumes: bounded labels, a histogram for successful latency only, and one structured log entry per request carrying the trace id."
+      },
+      {
+        "type": "code",
+        "lang": "yaml",
+        "code": "receivers:\n  otlp:\n    protocols:\n      grpc:\n        endpoint: 0.0.0.0:4317\nprocessors:\n  memory_limiter:\n    check_interval: 5s\n    limit_mib: 4000\n    spike_limit_mib: 500\n  attributes:\n    actions:\n      - key: db.statement\n        action: delete\n      - key: email\n        action: hash\n  probabilistic_sampler:\n    sampling_percentage: 5\n  batch: {}\nexporters:\n  otlp:\n    endpoint: trace-store.example.com:4317\nservice:\n  pipelines:\n    traces:\n      receivers: [otlp]\n      processors: [memory_limiter, attributes, probabilistic_sampler, batch]\n      exporters: [otlp]",
+        "caption": "A gateway collector pipeline for the traces in the estimate: memory limit first, redaction, the 5 percent head sample, then batching to the store."
+      }
+    ]
   },
-  "code": [
-    {
-      "code": "import time\nfrom prometheus_client import Counter, Histogram, start_http_server\n\nREQS = Counter(\"http_requests_total\", \"Requests\", [\"route\", \"code\"])\nLAT = Histogram(\"http_request_duration_seconds\", \"Latency\", [\"route\"])\n\ndef handle(route, work):\n    start = time.perf_counter()\n    code = \"200\"\n    try:\n        return work()\n    except Exception:\n        code = \"500\"\n        raise\n    finally:\n        REQS.labels(route, code).inc()\n        LAT.labels(route).observe(time.perf_counter() - start)\n\nstart_http_server(8000)  # exposes /metrics for scraping",
-      "lang": "python"
-    }
-  ],
+  "diagram": null,
+  "code": [],
   "technologies": [
     "OpenTelemetry",
     "OpenTelemetry Collector",
@@ -118,35 +904,142 @@
   ],
   "sources": [
     {
-      "kind": "doc",
-      "title": "OpenTelemetry signals",
-      "url": "https://opentelemetry.io/docs/concepts/signals/"
+      "id": "s1",
+      "title": "Site Reliability Engineering, chapter 6, Monitoring Distributed Systems (Rob Ewaschuk; Google, 2016, free online): the four golden signals, symptoms against causes, the paging questions, the Bigtable over-alerting case",
+      "url": "https://sre.google/sre-book/monitoring-distributed-systems/",
+      "kind": "book",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "The four golden signals of monitoring are latency, traffic, errors, and saturation"
+      }
     },
     {
-      "kind": "doc",
-      "title": "OpenTelemetry observability primer",
-      "url": "https://opentelemetry.io/docs/concepts/observability-primer/"
+      "id": "s2",
+      "title": "Amazon Builders' Library, Instrumenting distributed systems for operational visibility (David Yanacek, 2019-12-05): one structured log entry per unit of work, what Amazon logs, trace ids, high-throughput logging",
+      "url": "https://builder.aws.com/content/3EuxPBdIiiUhB5IK47p3O3fxhy7/instrumenting-distributed-systems-for-operational-visibility",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Emit one request log entry for every unit of work"
+      }
     },
     {
+      "id": "s3",
+      "title": "OpenTelemetry documentation, Observability primer (maintained): what observability is, logs, spans, attributes and distributed traces",
+      "url": "https://opentelemetry.io/docs/concepts/observability-primer/",
       "kind": "doc",
-      "title": "OpenTelemetry Collector",
-      "url": "https://opentelemetry.io/docs/collector/"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Observability lets you understand a system from the outside"
+      }
     },
     {
+      "id": "s4",
+      "title": "OpenTelemetry documentation, Context propagation (last modified 2026-08-10): context, propagators, the W3C traceparent header, trace ids in log records",
+      "url": "https://opentelemetry.io/docs/concepts/context-propagation/",
       "kind": "doc",
-      "title": "Prometheus overview",
-      "url": "https://prometheus.io/docs/introduction/overview/"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "The default propagator uses the headers specified by the W3C TraceContext specification"
+      }
     },
     {
+      "id": "s5",
+      "title": "OpenTelemetry documentation, Sampling (last modified 2025-10-16): when to sample, head sampling, tail sampling and its operating cost",
+      "url": "https://opentelemetry.io/docs/concepts/sampling/",
       "kind": "doc",
-      "title": "Prometheus instrumentation practices",
-      "url": "https://prometheus.io/docs/practices/instrumentation/"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "You generate 1000 or more traces per second"
+      }
+    },
+    {
+      "id": "s6",
+      "title": "OpenTelemetry documentation, Collector configuration (maintained): receivers, processors, exporters and connectors, with the attributes, filter, memory_limiter and probabilistic_sampler processors",
+      "url": "https://opentelemetry.io/docs/collector/configuration/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "memory_limiter"
+      }
+    },
+    {
+      "id": "s7",
+      "title": "OpenTelemetry documentation, Gateway deployment pattern (last modified 2026-09-10): the single OTLP endpoint per cluster or region, the two-tier setup with the load-balancing exporter for tail sampling, the single-writer principle",
+      "url": "https://opentelemetry.io/docs/collector/deployment/gateway/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "so all spans for a given trace reach the same Collector instance"
+      }
+    },
+    {
+      "id": "s8",
+      "title": "Prometheus documentation, Instrumentation best practices (maintained): the three types of services, what to instrument, counters against gauges, the label cardinality guideline",
+      "url": "https://prometheus.io/docs/practices/instrumentation/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "try to keep the cardinality of your metrics below 10"
+      }
+    },
+    {
+      "id": "s9",
+      "title": "Prometheus documentation, Histograms and summaries (maintained): why summaries cannot be aggregated, classic and native histograms, the le label, histogram_quantile",
+      "url": "https://prometheus.io/docs/practices/histograms/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "you cannot aggregate quantiles"
+      }
+    },
+    {
+      "id": "s10",
+      "title": "Sigelman et al., Dapper, a Large-Scale Distributed Systems Tracing Infrastructure (Google technical report, 2010, PDF): trees, spans and annotations, out-of-band collection, the overhead measurements and sampling",
+      "url": "https://static.googleusercontent.com/media/research.google.com/en//archive/papers/dapper-2010-1.pdf",
+      "kind": "paper",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "averaging one sampled trace for every 1024 candidates"
+      }
+    },
+    {
+      "id": "s11",
+      "title": "Grafana Labs blog, The RED Method: How to Instrument Your Services (Tom Wilkie's talk, written up 2018-08-03): RED for services, USE for resources, the golden signals as RED plus saturation",
+      "url": "https://grafana.com/blog/the-red-method-how-to-instrument-your-services/",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Rate (the number of requests per second)"
+      }
+    },
+    {
+      "id": "s12",
+      "title": "Uber Engineering, M3: Uber's Open Source, Large-scale Metrics Platform for Prometheus (2018): the scale of Uber's metrics store, replication, retention and downsampling policies",
+      "url": "https://www.uber.com/us/en/blog/m3/",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "M3 now houses over 6.6 billion time series"
+      }
     }
   ],
   "practice": "practice/sd-observability",
   "provenance": {
-    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
-    "generated_on": "2026-10-13",
+    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center, format v2",
+    "generated_on": "2026-10-15",
     "reviewed_by": null,
     "reviewed_on": null
   },
@@ -155,6 +1048,11 @@
       "version": 1,
       "date": "2026-10-13",
       "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-15",
+      "change": "rewritten by hand at format v2 (version 2): symptoms, causes and the golden signals as tables, the three signals and how a trace id joins them, what each kind of component must emit (the Prometheus three types, RED and USE, Amazon's list), metric types with the cardinality arithmetic as steps, one structured log entry per unit of work as a practice table, tracing with the head-against-tail table and Dapper's overhead table, the collector pipeline with the :1 diagram in its subtopic, alerts from the SRE questions with a telemetry sheet, a worked telemetry sizing with the instrumentation and collector config after the teaching, cited in-practice blocks (Google SRE, Amazon, Dapper, Uber M3, OpenTelemetry), 12 verified sources"
     }
   ]
 }
