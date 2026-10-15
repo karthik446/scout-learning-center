@@ -1,7 +1,7 @@
 {
-  "schema_version": "learning-center-lesson:1",
+  "schema_version": "learning-center-lesson:2",
   "id": "sd-storage-engines",
-  "version": 1,
+  "version": 2,
   "status": "published",
   "superseded_by": null,
   "title": "Storage engines and indexes",
@@ -18,64 +18,697 @@
     "data-systems",
     "postgres"
   ],
-  "summary": "A database's behaviour under load is decided by how it arranges data on disk and how it finds rows again. This lesson contrasts the two dominant engine families, explains how indexes and multiversion concurrency work, and shows how to verify what the engine actually does with a query.",
+  "summary": "A database's behaviour under load is decided by how it arranges data on disk and how it finds rows again. This lesson gives the amplification vocabulary, contrasts B-tree engines that update pages in place with LSM engines that append and merge, puts the two row layouts, the column layout and the object store into one decision table, explains index types and their write cost, shows what multiversion concurrency costs in dead rows, and reads a query plan, with a worked comparison of the two engine families for an event log.",
   "detail": [],
-  "in_practice": "Teams pick the engine with the database: a relational B-tree store for transactional data, an LSM-based store where ingest volume dominates, and object storage for large immutable blobs. Indexes are added through reviewed migrations, built concurrently to avoid blocking writes, and justified with an EXPLAIN ANALYZE plan from production-like data. Slow query logs and statement statistics drive the tuning queue, while autovacuum behaviour, bloat and long-running transactions are watched as routine health signals.",
+  "in_practice": {
+    "blocks": [
+      {
+        "type": "p",
+        "text": "Google's Bigtable, the design most LSM engines descend from, stores a tablet as a commit log plus an in-memory memtable and a sequence of immutable SSTables on GFS. A read merges the memtable and all SSTables; minor compactions flush the memtable, merging compactions bound the number of files, and a major compaction periodically rewrites a tablet into one SSTable with no deletion markers. Clients can ask for a Bloom filter per SSTable in a locality group, which the paper reports drastically reduces disk seeks for reads of rows that do not exist.",
+        "cites": [
+          "s5"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "The RocksDB team's tuning guide tells operators to find the bottleneck resource first and then move the amplification trade-off with compaction. Write amplification is measured as the disk write bandwidth from iostat divided by the database write rate; leveled compaction is the default and is chosen when space and reads matter, universal when ingest must be cheap; compaction is triggered when level 0 reaches four files; and Bloom filters default to about 10 bits per key.",
+        "cites": [
+          "s3",
+          "s2",
+          "s4"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "Bits per key against the share of misses a Bloom filter catches, from the RocksDB wiki.",
+        "columns": [
+          "bits per key",
+          "false-positive rate",
+          "effectiveness relative to 100 bits per key"
+        ],
+        "rows": [
+          [
+            "1.5",
+            "50 percent",
+            "50 percent"
+          ],
+          [
+            "2.9",
+            "25 percent",
+            "75 percent"
+          ],
+          [
+            "4.9",
+            "10 percent",
+            "90 percent"
+          ],
+          [
+            "9.9",
+            "1 percent",
+            "99 percent"
+          ],
+          [
+            "15.5",
+            "0.1 percent",
+            "99.9 percent"
+          ]
+        ],
+        "cites": [
+          "s4"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Amazon S3 is built on millions of hard disks, and its engineering, as Werner Vogels describes it, is about heat as much as capacity. Objects are erasure coded rather than fully replicated so that durability does not cost a full copy per replica; each object is encoded across tens of drives, and different objects are deliberately placed on different sets of drives so that one customer's accesses spread over a very large number of disks. The post notes that a burst from thousands of parallel functions can be served by over a million individual disks, and that individual workloads are bursty while the aggregate is smooth.",
+        "cites": [
+          "s12"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "PostgreSQL's own documentation prescribes the operational routine for a B-tree engine under MVCC: vacuum every table regularly to reclaim dead row versions, refresh planner statistics and the visibility map, and freeze old transaction ids before wraparound; build indexes concurrently on live tables; and read EXPLAIN ANALYZE with BUFFERS before and after any index change.",
+        "cites": [
+          "s9",
+          "s11",
+          "s10"
+        ]
+      }
+    ]
+  },
   "subtopics": [
     {
-      "body": [
+      "id": "what-an-engine-decides",
+      "title": "What a storage engine decides",
+      "blocks": [
         {
-          "body": "A B-tree engine keeps sorted fixed-size pages and updates them in place, protected by a write-ahead log. Reads are predictable, needing a few page visits per lookup, while random writes dirty pages scattered across the disk. An LSM-tree engine such as RocksDB appends each write to a log and an in-memory memtable, flushes full memtables as immutable sorted files, and merges those files in background compaction. Writes become sequential and cheap, and compression is effective, but a read may consult several files, which bloom filters and block caches mitigate. The tradeoff is among write amplification, read amplification and space amplification, and compaction can compete with foreground traffic. Choose by workload: write-heavy ingestion favours LSM, read-heavy transactional work favours B-trees.",
-          "heading": "Update in place versus append and merge"
-        }
-      ],
-      "id": "btree-vs-lsm",
-      "title": "B-tree and LSM-tree engines"
-    },
-    {
-      "body": [
-        {
-          "body": "PostgreSQL offers several index types. B-tree is the default and supports equality, range and sorted retrieval. Hash supports equality only. GIN suits values containing many elements, such as arrays, JSON documents and full-text search. GiST supports geometric and nearest-neighbour queries. BRIN stores summaries per block range and is tiny for very large tables whose physical order tracks the column, such as timestamps.",
-          "heading": "Picking the right structure"
+          "type": "p",
+          "text": "A storage engine has two jobs: make a write durable and find a row again. Everything else about a database's behaviour under load follows from how it does those two things on a disk, where sequential writes are cheap, random writes are expensive and a page is the unit of transfer. The engine chooses how data is arranged, when it rewrites it in the background and what it reads to answer a lookup. This lesson gives the vocabulary for that trade-off, the two dominant engine families, the indexes built on them and the tools that show what an engine does with a query."
         },
         {
-          "body": "In a multicolumn B-tree, column order matters: the index is most effective when leading columns have equality conditions. Partial indexes cover only rows matching a predicate, and expression indexes cover computed values. An index that contains every column a query needs enables an index-only scan that avoids the table. Every index slows writes and consumes memory and disk, so add them for measured query patterns and remove unused ones.",
-          "heading": "Shaping indexes to queries"
+          "type": "p",
+          "text": "The RocksDB tuning guide gives the vocabulary as three amplification factors, each a ratio between what the application asked for and what the hardware did. Write amplification is bytes written to storage divided by bytes written to the database. Read amplification is the number of disk reads needed to answer one query. Space amplification is the size of the database files divided by the size of the data. Compaction, the background rewriting an engine does, is the knob that trades one against another.",
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The three amplification factors, with the tuning guide's own examples.",
+          "columns": [
+            "factor",
+            "definition",
+            "example from the guide",
+            "what it limits"
+          ],
+          "rows": [
+            [
+              "write amplification",
+              "bytes written to disk per byte written to the database",
+              "writing 10 MB/s to the database and seeing 30 MB/s on disk is a write amplification of 3",
+              "sustained write rate: at a factor of 50 on a 500 MB/s disk the database can take 10 MB/s"
+            ],
+            [
+              "read amplification",
+              "disk reads per query",
+              "a query that needs 5 pages has read amplification 5",
+              "latency and IOPS per query; cache hits are logical reads and still cost CPU"
+            ],
+            [
+              "space amplification",
+              "bytes on disk per byte of data",
+              "10 MB of data taking 100 MB on disk is a space amplification of 10",
+              "how much data fits on a host; set a hard limit so the disk does not fill"
+            ]
+          ],
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "No engine wins all three. A B-tree reads a row in a handful of page visits but rewrites a page for every row it changes; a log-structured engine writes each row sequentially and again at every compaction, and consults several files to find it; old versions and sparse pages cost space in either. The LSM paper states the motivating case: for a table that only receives inserts, such as a transaction history, maintaining a B-tree index in real time effectively doubles the I/O cost of each transaction, so its design defers and batches the index changes instead.",
+          "cites": [
+            "s1",
+            "s3"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Name the workload before the engine. Write down the ratio of writes to reads, whether reads are point lookups, short ranges or scans, how large the working set is next to memory, and how fast the data grows. Each engine family answers a different mix; none answers all of them.",
+          "cites": [
+            "s1",
+            "s3"
+          ]
         }
-      ],
-      "id": "index-design",
-      "title": "Index types and index design"
+      ]
     },
     {
-      "body": [
+      "id": "b-trees",
+      "title": "B-trees: sorted pages updated in place",
+      "blocks": [
         {
-          "body": "Under multiversion concurrency control, each statement or transaction sees a snapshot of the data as of some point in time, so reading never blocks writing and writing never blocks reading. In PostgreSQL an update creates a new row version and leaves the old one for transactions that can still see it. The default isolation level is Read Committed, where each statement sees data committed before it began; Repeatable Read and Serializable hold one snapshot for the transaction and may fail with serialization errors that the application must retry. The cost is garbage: dead row versions accumulate until vacuum reclaims them, and a long-running transaction prevents cleanup, causing table and index bloat. Keep transactions short and monitor the oldest open one.",
-          "heading": "Snapshots instead of read locks"
+          "type": "p",
+          "text": "A B-tree keeps rows, or index entries, in fixed-size pages sorted by key, with a tree of branch pages above them that points the search to the right leaf. The tree is balanced, so every leaf is the same number of levels below the root, and its depth grows logarithmically with the data: an index over millions of rows is typically four or five levels deep, and six is rare. A lookup therefore touches a known small number of pages, and the leaves are chained in order so that a range scan walks sideways once it has found its start.",
+          "cites": [
+            "s7"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Writes go to the page where the key belongs. The engine reads the page, changes it and writes it back, splitting it when it is full. Random keys mean random pages, so a stream of inserts with unordered keys dirties pages all over the file, and each dirtied page is eventually rewritten whole even if one row changed. To make this safe the engine first appends a record of the change to a write-ahead log, which is sequential and cheap; the data pages can then be written later and in batches, and a crash is repaired by replaying the log.",
+          "cites": [
+            "s7",
+            "s1"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "What a B-tree engine does well and where it pays.",
+          "columns": [
+            "",
+            "B-tree engine"
+          ],
+          "rows": [
+            [
+              "point lookup",
+              "a few page reads, predictable; the top levels stay in cache"
+            ],
+            [
+              "range scan",
+              "efficient; leaves are linked in key order"
+            ],
+            [
+              "random inserts and updates",
+              "a page read and a page write per change, scattered across the file; the log absorbs the burst, the pages still have to be written"
+            ],
+            [
+              "space",
+              "pages run partly empty after splits and deletes, so the file is larger than the data"
+            ],
+            [
+              "typical engines",
+              "InnoDB, PostgreSQL's heap plus B-tree indexes, SQLite, most embedded key-value stores built for reads"
+            ]
+          ],
+          "cites": [
+            "s7",
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The B-tree is the default for a reason: reads dominate most transactional workloads, and a design that gives every lookup a short, predictable path with sorted ranges for free is hard to beat. Its weakness shows when writes dominate and keys are random, which is exactly the history-table case the LSM paper opens with, or when the working set outgrows memory and each random write becomes a real disk operation.",
+          "cites": [
+            "s1",
+            "s7"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "tip",
+          "text": "Sequential keys turn B-tree writes into appends. A time-ordered or monotonically increasing primary key keeps inserts on the rightmost leaf, so the hot page stays in cache; a random UUID key spreads them over the whole tree.",
+          "cites": [
+            "s7"
+          ]
         }
-      ],
-      "id": "mvcc",
-      "title": "MVCC and its costs"
+      ]
     },
     {
-      "body": [
+      "id": "lsm-trees",
+      "title": "LSM trees: append, flush and merge",
+      "blocks": [
         {
-          "body": "EXPLAIN shows the plan tree the planner chose: scan nodes at the leaves, such as sequential, index, bitmap or index-only scans, and join or sort nodes above them. Each node carries an estimated startup cost, total cost, row count and row width. EXPLAIN ANALYZE executes the query and adds actual times, row counts and loop counts; the BUFFERS option adds pages hit and read. Read the plan from the innermost node outward and compare estimated to actual rows. A large mismatch points to stale statistics or correlated columns and usually explains a bad join choice. A sequential scan is not automatically wrong: for a query returning a large share of a table it is cheaper than an index. ANALYZE really runs the statement, so wrap data-modifying queries in a transaction and roll back.",
-          "heading": "EXPLAIN as the source of truth"
+          "type": "p",
+          "text": "A log-structured merge engine never updates a page in place. A write goes to an append-only log for durability and into a sorted in-memory table, the memtable. When the memtable fills it is frozen and written out as an immutable sorted file; Bigtable called these SSTables and the flush a minor compaction. A read checks the memtable and then the sorted files, newest first, and merges what it finds. Left alone, the files pile up and every read has to consult more of them, so a background merging compaction reads several files and writes one, and a major compaction rewrites everything into a single file with no deletion markers left.",
+          "cites": [
+            "s5"
+          ]
+        },
+        {
+          "type": "diagram",
+          "mermaid": "flowchart TD\n  W[Write] --> L[Write-ahead log]\n  W --> M[Memtable in memory]\n  M -->|flush when full| S0[Level 0 sorted files]\n  S0 -->|compaction| S1[Level 1 sorted files]\n  S1 -->|compaction| S2[Deeper levels]\n  R[Read] --> M\n  R --> B[Bloom filters and block cache]\n  B --> S0\n  B --> S1\n  B --> S2",
+          "legend": "Writes append to the log and the memtable; flushes create level 0 files; compaction merges them downwards. Reads consult the memtable, then the Bloom filters and block cache, then the files."
+        },
+        {
+          "type": "p",
+          "text": "Compaction is where the trade-off lives, and the RocksDB wiki names the two classic strategies. Leveled compaction, from the LSM paper, keeps each level as one sorted run about ten times larger than the one above and merges a level into the next when it overflows; it minimises space amplification at the cost of read and write amplification, because in the worst case every level rewrites each byte once more. Tiered compaction, called universal in RocksDB, keeps several sorted runs per level and merges runs of similar size; it minimises write amplification at the cost of read and space amplification.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Leveled against tiered compaction, as the RocksDB wiki describes them.",
+          "columns": [
+            "",
+            "leveled (RocksDB default)",
+            "tiered (RocksDB universal)"
+          ],
+          "rows": [
+            [
+              "sorted runs per level",
+              "one; a level is one run, range-partitioned into files",
+              "several of similar size"
+            ],
+            [
+              "write amplification",
+              "higher: up to the fanout per level, less in practice",
+              "lower: a byte is rewritten once per size doubling"
+            ],
+            [
+              "read amplification",
+              "lower: one run per level to check",
+              "higher: every run in every level may hold the key"
+            ],
+            [
+              "space amplification",
+              "lowest; old versions are merged away quickly",
+              "higher, and briefly about double during a merge of the largest run"
+            ],
+            [
+              "pick it for",
+              "read-heavy and space-constrained stores",
+              "ingest-heavy stores that can spend disk and cache"
+            ]
+          ],
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Two structures keep reads tolerable. Each sorted file carries an index of its blocks, so a lookup inside a file costs about one disk seek, and a Bloom filter per file answers whether the file might contain the key, so most files are skipped without a read. The filter is a memory-for-I/O trade with sharply diminishing returns: the RocksDB wiki's table runs from a half of all misses caught at 1.5 bits per key to a false-positive rate of one percent at about 10 bits and a tenth of a percent at 15.5 bits, and 10 bits per key is its default.",
+          "cites": [
+            "s5",
+            "s4"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "Compaction debt is a failure mode. If writes arrive faster than compaction can merge, level 0 fills, reads slow down because they consult more files, and the engine finally stalls writes to catch up. Watch the pending compaction bytes and the level 0 file count as first-class health signals.",
+          "cites": [
+            "s2",
+            "s3"
+          ]
         }
-      ],
+      ]
+    },
+    {
+      "id": "choosing-the-engine",
+      "title": "Choosing the engine for an access pattern",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The engine is chosen with the database, so the question in a design review is which family the data store you are about to pick belongs to, and whether its position on the amplification triangle matches the workload. The decision below covers the four layouts a designer meets: the two row-oriented engine families, the column layout used by analytical stores, and the object store that holds large immutable blobs. The lesson on choosing a data store takes the next step, from engine family to product."
+        },
+        {
+          "type": "decision",
+          "caption": "Which layout for which workload. Products are examples of the mechanism, not recommendations.",
+          "rows": [
+            {
+              "option": "B-tree engine (row store, update in place)",
+              "pick_when": "reads dominate, lookups are by key or short range, rows are updated in place, and transactions span several rows",
+              "avoid_when": "the workload is a firehose of inserts with random keys, or the dataset is far larger than memory and mostly written",
+              "example": "PostgreSQL, MySQL InnoDB, SQLite"
+            },
+            {
+              "option": "LSM engine (row store, append and merge)",
+              "pick_when": "writes dominate, keys arrive in any order, and reads are point lookups or recent ranges that Bloom filters and caches serve",
+              "avoid_when": "reads are scattered across old data and latency must be flat, or disk write bandwidth is already the bottleneck for compaction",
+              "example": "RocksDB, Apache Cassandra, Bigtable and its descendants"
+            },
+            {
+              "option": "Column layout (analytical)",
+              "pick_when": "queries scan a few columns of many rows, aggregate, and tolerate batch ingestion; compression of same-typed values matters",
+              "avoid_when": "the access is single-row reads and writes, or rows must be updated in place at high rate",
+              "example": "ClickHouse, data warehouses, Parquet files on object storage"
+            },
+            {
+              "option": "Object store (immutable blobs)",
+              "pick_when": "objects are large, written once and read whole or by range, and durability per byte must be cheap",
+              "avoid_when": "the application needs small random updates, listing by secondary attributes, or transactions across objects",
+              "example": "Amazon S3 and other object stores, with metadata in a database beside them"
+            }
+          ],
+          "cites": [
+            "s1",
+            "s2",
+            "s12"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Pick the engine family from the dominant access path and let the second path pay. A read-heavy table with occasional writes belongs on a B-tree; an ingest firehose belongs on an LSM; a scan-and-aggregate workload belongs on columns; blobs belong in an object store with their metadata elsewhere. When one table has two dominant paths, that is the signal for two stores, and the next lesson prices it.",
+          "cites": [
+            "s1",
+            "s2"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "columns-and-objects",
+      "title": "Column layouts and object stores",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "A column layout stores each column's values together instead of each row's, so a query that touches three columns of a billion-row table reads three streams and skips the rest, and values of one type compress well because they sit side by side. The price is that reading or changing one whole row touches every column file, which is why these stores ingest in batches and serve analytics, not transactions. Many of them are log-structured underneath: inserts create immutable parts that a background merge combines, the same append-and-merge shape as an LSM tree applied to column files."
+        },
+        {
+          "type": "table",
+          "caption": "Row and column layouts for the same table.",
+          "columns": [
+            "",
+            "row layout",
+            "column layout"
+          ],
+          "rows": [
+            [
+              "one row by key",
+              "one page read",
+              "one read per column file"
+            ],
+            [
+              "sum of one column over all rows",
+              "reads every page of the table",
+              "reads one column's stream, compressed"
+            ],
+            [
+              "insert or update one row",
+              "one page write",
+              "a write to every column file, so inserts are batched into parts"
+            ],
+            [
+              "compression",
+              "modest; mixed types per page",
+              "strong; same-typed values side by side"
+            ],
+            [
+              "fits",
+              "transactions and point access",
+              "analytics, reporting, scans and aggregates"
+            ]
+          ]
+        },
+        {
+          "type": "p",
+          "text": "An object store is the database when the data is blobs: images, logs, backups, model weights, data-lake files. Its contract is a key, an immutable object, a range read and very high durability per byte at low cost; it offers no secondary indexes, no in-place updates and no transactions across objects, so the design pairs it with a small metadata store that holds the keys and attributes. The S3 post below describes the mechanism that makes this cheap at scale: erasure coding instead of full replication, and spreading each customer's objects over a very large number of disks so that bursts are served in parallel.",
+          "cites": [
+            "s12"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "tip",
+          "text": "Analytical and blob workloads leave the transactional engine. Copy events into a column store for reporting and put files in an object store with their metadata in the relational database; the lesson on choosing a data store prices what the second store costs.",
+          "cites": [
+            "s12"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "indexes",
+      "title": "Indexes and what they cost",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "An index is a second structure that finds rows by something other than their position, and in PostgreSQL every index is secondary: the table is a heap, and each index maps key values to row locations. The default is a B-tree, which serves equality, range and ordered retrieval. The other types exist because some questions are not about ordering: GIN is an inverted index for values that contain many elements, such as arrays, JSON documents and full-text tokens, and BRIN stores a summary per range of physical blocks and stays tiny on very large tables whose physical order follows the indexed column.",
+          "cites": [
+            "s6"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "PostgreSQL's index types and the question each answers.",
+          "columns": [
+            "type",
+            "answers",
+            "size and write cost",
+            "typical column"
+          ],
+          "rows": [
+            [
+              "B-tree",
+              "equality, range, ORDER BY",
+              "one entry per row; a page write per insert",
+              "ids, timestamps, names"
+            ],
+            [
+              "Hash",
+              "equality only",
+              "like B-tree, no ordering",
+              "long opaque keys compared for equality"
+            ],
+            [
+              "GiST / SP-GiST",
+              "overlap, containment, nearest neighbour",
+              "depends on the operator class",
+              "geometry, ranges, points"
+            ],
+            [
+              "GIN",
+              "contains, full-text match",
+              "one entry per element; slower to update",
+              "arrays, JSONB, tsvector"
+            ],
+            [
+              "BRIN",
+              "range on a physically ordered column",
+              "a summary per block range; very small",
+              "append-only event time"
+            ]
+          ],
+          "cites": [
+            "s6"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Shape matters as much as type. In a multicolumn B-tree the leading columns decide how much of the index a query can skip: equality conditions on the leading columns, plus a range on the first column without one, narrow the scan, while a condition only on a trailing column scans the whole index. A partial index covers only the rows that match a predicate, which keeps a hot subset small and avoids indexing values too common for the planner to use. An index that holds every column a query needs allows an index-only scan that skips the table, when the visibility map says the page's rows are visible to everyone.",
+          "cites": [
+            "s6"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Every index is paid for on every write. An insert adds an entry to each index, an update that changes an indexed column removes one and adds another, and each is a page read and a page write somewhere in a tree. A table with eight indexes does nine writes per insert and holds nine structures in cache. The discipline is to add an index for a measured query, name the query in the migration, and remove indexes that no plan uses.",
+          "cites": [
+            "s6"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Building an index on a live table is itself a decision. A standard build locks out writes until it finishes, which on a large table is an outage; a concurrent build blocks no inserts, updates or deletes, at the cost of two scans of the table and a longer run, and if it fails it leaves an invalid index to drop and retry.",
+          "cites": [
+            "s11"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "One index per measured query shape, built concurrently, justified by the plan before and after. An index nobody can name the query for is write cost with no reader.",
+          "cites": [
+            "s6",
+            "s11"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mvcc-and-its-costs",
+      "title": "MVCC and what it costs",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Multiversion concurrency control is how a relational engine lets readers and writers work at once. Each statement sees a snapshot of the data as of some moment, regardless of what other transactions are doing, and the locks taken for reading do not conflict with the locks taken for writing, so in PostgreSQL's words reading never blocks writing and writing never blocks reading. The engine achieves this by keeping versions: an update creates a new row version and leaves the old one in place for any transaction whose snapshot can still see it.",
+          "cites": [
+            "s8"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The versions are the cost. An update or delete does not remove the old row; it becomes a dead version once no transaction can see it, and the space it occupies is reclaimed only when VACUUM runs over the table and its indexes. If vacuum falls behind the write rate, tables and indexes bloat, scans read dead rows, and the visibility map that index-only scans depend on goes stale. Vacuum also has a second duty the documentation treats as critical: transaction ids are a finite counter, and old row versions must be frozen before the counter wraps, or the database refuses new writes to protect the data.",
+          "cites": [
+            "s9"
+          ]
+        },
+        {
+          "type": "steps",
+          "title": "How one long transaction bloats a table",
+          "items": [
+            "A reporting transaction opens and takes a snapshot at 09:00 (assumption).",
+            "A hot table receives 500 updates per second (assumption); each creates a new row version and leaves the old one.",
+            "After one hour the table holds 1.8 million dead versions that vacuum cannot remove, because the report's snapshot might still need them.",
+            "At 200 bytes per version (assumption) that is about 360 MB of dead space in the table alone, plus an entry per version in every index.",
+            "Every scan of the table now reads the dead versions too, and index-only scans fall back to heap visits because the pages are no longer all-visible.",
+            "The report commits; the next vacuum removes the versions but the table file does not shrink, so the space is reused rather than returned."
+          ],
+          "cites": [
+            "s9",
+            "s8"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The design consequences follow. Keep transactions short, especially read-only ones that hold a snapshot, and give long analytical reads a replica. Watch the oldest transaction age and the dead-tuple counts as operational signals. And when a table is updated far more often than it is read, remember that every update is a new version plus an index entry per index: under MVCC the B-tree's update in place is an insert and a mark, with a cleanup debt.",
+          "cites": [
+            "s9",
+            "s8"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "A long-running transaction is a vacuum stop. One idle session that opened a transaction hours ago pins every version written since, in every table, until it commits or is killed. Find them by the age of the oldest open transaction and end them.",
+          "cites": [
+            "s9"
+          ]
+        }
+      ]
+    },
+    {
       "id": "reading-query-plans",
-      "title": "Reading query plans"
+      "title": "Reading a query plan",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The plan is the only honest account of what the engine does with a query, and EXPLAIN prints it. The planner devises a tree of nodes: scans at the leaves, such as a sequential scan, an index scan, a bitmap scan that collects matching row locations from an index first, or an index-only scan; and joins, sorts and aggregates above them. Each node carries an estimated start-up cost, total cost, row count and row width. The costs are in arbitrary units set by the planner's cost parameters, with a sequential page fetch as the traditional unit, so they compare plans against each other, not against a clock.",
+          "cites": [
+            "s10"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "EXPLAIN ANALYZE runs the query and adds the actual time, the actual row count and the loop count to each node, and the BUFFERS option adds the pages hit in cache and read from disk. The gap between estimated and actual rows is the first thing to read: a node that expected a hundred rows and saw a million explains the bad join strategy above it, and usually points at stale statistics or a predicate the planner cannot estimate. Read the plan from the innermost node outwards, following the data as it flows up.",
+          "cites": [
+            "s10"
+          ]
+        },
+        {
+          "type": "steps",
+          "title": "Reading a plan, in order",
+          "items": [
+            "Find the node with the largest actual time that is not just the sum of its children; that is where the time goes.",
+            "Compare its estimated rows with its actual rows. A factor of 10 or more means the planner was working from wrong information.",
+            "Check the scan type at the leaves: a sequential scan on a large table with a selective predicate wants an index; an index scan returning most of the table wants to be a sequential scan.",
+            "Look at the buffers: pages read from disk, rather than hit in cache, are the physical I/O the query paid.",
+            "Check whether a sort or a hash spilled to disk, which shows as a disk sort method or batches above one.",
+            "Only then change something: an index, a rewritten predicate, fresher statistics. Re-run and compare the two plans side by side."
+          ],
+          "cites": [
+            "s10"
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "sql",
+          "code": "EXPLAIN (ANALYZE, BUFFERS)\nSELECT o.id, o.total\nFROM orders o\nWHERE o.customer_id = 4821\n  AND o.created_at >= now() - interval '30 days'\nORDER BY o.created_at DESC\nLIMIT 20;\n\n-- a multicolumn index that matches the predicate and the order:\n-- equality on the leading column, a range on the next, and the sort for free\nCREATE INDEX CONCURRENTLY orders_customer_created_idx\n  ON orders (customer_id, created_at DESC);",
+          "caption": "The plan before and after the index is the evidence that justifies it. The index is built concurrently so the table keeps taking writes."
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Never add an index without the plan that needed it, and never trust an estimate that EXPLAIN ANALYZE has not confirmed on production-sized data. The planner's costs are relative units; the actual times and buffer counts are the measurement.",
+          "cites": [
+            "s10"
+          ]
+        }
+      ]
     }
   ],
-  "diagram": {
-    "source": "flowchart TD\n  W[Write] --> L[Write-ahead log]\n  W --> M[Memtable in memory]\n  M -->|flush when full| S0[Level 0 sorted files]\n  S0 -->|compaction| S1[Level 1 sorted files]\n  S1 -->|compaction| S2[Deeper levels]\n  R[Read] --> M\n  R --> B[Bloom filters and block cache]\n  B --> S0\n  B --> S1\n  B --> S2"
+  "worked_example": {
+    "title": "Worked example: an event log at 50,000 inserts per second, B-tree against LSM",
+    "blocks": [
+      {
+        "type": "p",
+        "text": "A product records user events: 50,000 inserts per second of about 200 bytes each, keyed by a random event id, read mostly as recent per-user ranges. The team must choose between a B-tree engine and an LSM engine on a host with one SSD. Every input is an assumption chosen to make the arithmetic concrete; the amplification definitions are the RocksDB tuning guide's.",
+        "cites": [
+          "s3"
+        ]
+      },
+      {
+        "type": "steps",
+        "title": "From the insert rate to disk bandwidth and memory",
+        "items": [
+          "Logical write rate: 50,000 events per second times 200 bytes is 10 MB/s (assumption).",
+          "Disk budget: one SSD sustaining about 500 MB/s of writes (assumption from the device sheet).",
+          "B-tree, random keys: each insert dirties at least one page of 8 kB somewhere in the tree, and in the worst case each dirty page is written back once per insert, a write amplification of about 40 (8,192 divided by 200).",
+          "B-tree disk writes in that worst case: 10 MB/s times 40 is 400 MB/s, four fifths of the disk, before the write-ahead log and the indexes on other columns.",
+          "LSM, leveled compaction: a fanout of 10 and about 4 levels on disk give a worst-case write amplification near 40 as well, but the RocksDB wiki notes the per-level factor is usually well under the fanout, so take 20 as the planning value.",
+          "LSM disk writes: 10 MB/s times 20 is 200 MB/s, two fifths of the disk, all of it sequential.",
+          "Tiered compaction instead: a byte is rewritten about once per size doubling, so a write amplification near 5 gives 50 MB/s, at the price of more files per read and up to double the space during a merge of the largest run.",
+          "Read side: with 2 billion events stored (assumption: about 5 days of retention), Bloom filters at 10 bits per key cost 2.5 GB of memory and let a point lookup skip almost every file, a false-positive rate of about one percent.",
+          "Space: leveled keeps space amplification near 1.1, so 2 billion events times 200 bytes is 400 GB of data and about 440 GB on disk before compression; tiered needs headroom for the transient doubling.",
+          "The decider: write bandwidth. The B-tree spends most of the disk on page rewrites for a workload that reads recent ranges; a leveled LSM halves the disk writes and keeps reads cheap with 2.5 GB of filters, and tiered compaction is the fallback if ingest grows another fivefold."
+        ],
+        "cites": [
+          "s3",
+          "s2",
+          "s4"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "The estimate as a reviewer should receive it: one row per quantity, with its formula or source.",
+        "columns": [
+          "quantity",
+          "value",
+          "derived from"
+        ],
+        "rows": [
+          [
+            "Logical write rate",
+            "10 MB/s",
+            "50,000 per second times 200 bytes"
+          ],
+          [
+            "B-tree worst-case disk writes",
+            "400 MB/s",
+            "10 MB/s times a write amplification of 40 (8 kB page per 200-byte row)"
+          ],
+          [
+            "LSM leveled disk writes",
+            "200 MB/s",
+            "10 MB/s times a planning write amplification of 20 (fanout 10, under the worst case)"
+          ],
+          [
+            "LSM tiered disk writes",
+            "50 MB/s",
+            "10 MB/s times about 5"
+          ],
+          [
+            "Bloom filter memory",
+            "2.5 GB",
+            "2 billion keys times 10 bits"
+          ],
+          [
+            "Data on disk, leveled",
+            "about 440 GB",
+            "400 GB times a space amplification near 1.1"
+          ]
+        ],
+        "cites": [
+          "s3",
+          "s2",
+          "s4"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "The B-tree figure is a worst case: a real engine writes a dirty page once per checkpoint interval, not once per row, so the amplification falls as the hot pages absorb several inserts between writes. It falls furthest when keys are sequential, which is why the first question to the team is whether the event id can be time-ordered. If it can, the B-tree's hot pages are the rightmost leaves and the comparison changes; if it must be random, the arithmetic above stands.",
+        "cites": [
+          "s7",
+          "s1"
+        ]
+      }
+    ]
   },
-  "code": [
-    {
-      "code": "CREATE INDEX CONCURRENTLY orders_customer_created_idx\n    ON orders (customer_id, created_at DESC);\n\nCREATE INDEX CONCURRENTLY orders_pending_idx\n    ON orders (created_at)\n    WHERE status = 'pending';\n\nEXPLAIN (ANALYZE, BUFFERS)\nSELECT id, total\nFROM orders\nWHERE customer_id = 42\nORDER BY created_at DESC\nLIMIT 20;",
-      "lang": "sql"
-    }
-  ],
+  "diagram": null,
+  "code": [],
   "technologies": [
     "PostgreSQL",
     "RocksDB",
@@ -94,35 +727,142 @@
   ],
   "sources": [
     {
-      "kind": "doc",
-      "title": "PostgreSQL indexes",
-      "url": "https://www.postgresql.org/docs/current/indexes.html"
+      "id": "s1",
+      "title": "Patrick O'Neil, Edward Cheng, Dieter Gawlick and Elizabeth O'Neil, The Log-Structured Merge-Tree (LSM-Tree), Acta Informatica 1996 (author's copy, PDF): deferred and batched index changes, why a B-tree doubles the I/O cost of an insert-heavy history table",
+      "url": "https://www.cs.umb.edu/~poneil/lsmtree.pdf",
+      "kind": "paper",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "defers and batches index changes"
+      }
     },
     {
-      "kind": "doc",
-      "title": "PostgreSQL MVCC and concurrency control",
-      "url": "https://www.postgresql.org/docs/current/mvcc.html"
+      "id": "s2",
+      "title": "RocksDB wiki, Compaction (maintained by the RocksDB team): leveled, tiered (universal) and FIFO compaction and what each minimises; per-level write amplification and the fanout",
+      "url": "https://github.com/facebook/rocksdb/wiki/Compaction",
+      "kind": "repo",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "minimizes space amplification at the cost of read and write amplification"
+      }
     },
     {
-      "kind": "doc",
-      "title": "PostgreSQL using EXPLAIN",
-      "url": "https://www.postgresql.org/docs/current/using-explain.html"
+      "id": "s3",
+      "title": "RocksDB wiki, RocksDB Tuning Guide: the definitions of write, read and space amplification with worked numbers, and how to measure each",
+      "url": "https://github.com/facebook/rocksdb/wiki/RocksDB-Tuning-Guide",
+      "kind": "repo",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Write amplification is the ratio of bytes written to storage versus bytes written to the database"
+      }
     },
     {
-      "kind": "doc",
-      "title": "RocksDB wiki (LSM-tree internals)",
-      "url": "https://github.com/facebook/rocksdb/wiki"
+      "id": "s4",
+      "title": "RocksDB wiki, RocksDB Bloom Filter: bits per key against false-positive rate",
+      "url": "https://github.com/facebook/rocksdb/wiki/RocksDB-Bloom-Filter",
+      "kind": "repo",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "9.9 bits per key (1% false positive rate)"
+      }
     },
     {
+      "id": "s5",
+      "title": "Fay Chang et al., Bigtable: A Distributed Storage System for Structured Data, OSDI 2006 (PDF): memtable, SSTables, minor, merging and major compactions, Bloom filters",
+      "url": "https://static.googleusercontent.com/media/research.google.com/en//archive/bigtable-osdi06.pdf",
+      "kind": "paper",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "A merging compaction that rewrites all SSTables into exactly one SSTable is called a major compaction"
+      }
+    },
+    {
+      "id": "s6",
+      "title": "PostgreSQL 18 documentation, chapter 11, Indexes: index types (11.2), multicolumn indexes (11.3), partial indexes (11.8), index-only scans and covering indexes (11.9)",
+      "url": "https://www.postgresql.org/docs/current/indexes.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Index-Only Scans and Covering Indexes"
+      }
+    },
+    {
+      "id": "s7",
+      "title": "Markus Winand, Use The Index, Luke: The Search Tree (B-Tree) Makes the Index Fast (free online book): the balanced tree, the doubly linked leaf nodes and the depth of real indexes",
+      "url": "https://use-the-index-luke.com/sql/anatomy/the-tree",
+      "kind": "book",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Real world indexes with millions of records have a tree depth of four or five"
+      }
+    },
+    {
+      "id": "s8",
+      "title": "PostgreSQL 18 documentation, 13.1, Introduction to concurrency control: multiversion concurrency control, snapshots, reading never blocks writing",
+      "url": "https://www.postgresql.org/docs/current/mvcc-intro.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "reading never blocks writing and writing never blocks reading"
+      }
+    },
+    {
+      "id": "s9",
+      "title": "PostgreSQL 18 documentation, 24.1, Routine Vacuuming: dead row versions, recovering disk space, the visibility map, transaction ID wraparound and long-running transactions",
+      "url": "https://www.postgresql.org/docs/current/routine-vacuuming.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "an UPDATE or DELETE of a row does not immediately remove the old version of the row"
+      }
+    },
+    {
+      "id": "s10",
+      "title": "PostgreSQL 18 documentation, 14.1, Using EXPLAIN: plan nodes, cost units, EXPLAIN ANALYZE and its caveats",
+      "url": "https://www.postgresql.org/docs/current/using-explain.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "The costs are measured in arbitrary units determined by the planner's cost parameters"
+      }
+    },
+    {
+      "id": "s11",
+      "title": "PostgreSQL 18 documentation, CREATE INDEX: the CONCURRENTLY option, what a standard build locks and what a concurrent build costs",
+      "url": "https://www.postgresql.org/docs/current/sql-createindex.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "a standard index build locks out writes (but not reads) on the table until it's done"
+      }
+    },
+    {
+      "id": "s12",
+      "title": "Werner Vogels, Building and operating a pretty big storage system called S3 (All Things Distributed, July 2023): millions of disks, erasure coding, spreading heat across the fleet",
+      "url": "https://www.allthingsdistributed.com/2023/07/building-and-operating-a-pretty-big-storage-system.html",
       "kind": "article",
-      "title": "Building and operating a pretty big storage system (S3)",
-      "url": "https://www.allthingsdistributed.com/2023/07/building-and-operating-a-pretty-big-storage-system.html"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "we intentionally put different objects onto different sets of drives"
+      }
     }
   ],
   "practice": "practice/sd-storage-engines",
   "provenance": {
-    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
-    "generated_on": "2026-10-13",
+    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center, format v2",
+    "generated_on": "2026-10-15",
     "reviewed_by": null,
     "reviewed_on": null
   },
@@ -131,6 +871,11 @@
       "version": 1,
       "date": "2026-10-13",
       "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-15",
+      "change": "rewritten by hand from primary sources at format v2 (learning-center-lesson:2): 8 subtopics with the amplification, B-tree, leveled-versus-tiered and index-type tables, a decision block over B-tree, LSM, column and object layouts plus a row-versus-column table, the LSM diagram in its subtopic, MVCC bloat and plan reading as steps, an event-log engine comparison as the worked example with the EXPLAIN and CREATE INDEX CONCURRENTLY code after the teaching, cited in-practice blocks (Bigtable, RocksDB, S3, PostgreSQL), 12 verified sources with ids"
     }
   ]
 }
