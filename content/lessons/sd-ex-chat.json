@@ -1,8 +1,8 @@
 {
-  "schema_version": "learning-center-lesson:1",
+  "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-chat",
-  "version": 2,
+  "version": 3,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: chat and presence",
@@ -19,280 +19,1630 @@
     "distributed-systems",
     "data-stores"
   ],
-  "summary": "A classic design exercise: real-time messaging with groups, history, receipts and presence at millions of concurrent connections. The reference answer separates connection gateways from conversation ownership, orders each conversation through a single owner chosen by consistent hashing, partitions history by conversation and time bucket, batches fan-out per gateway, and keeps presence best effort and off the message path.",
+  "summary": "A classic design exercise: real-time messaging with groups, history, receipts and presence at millions of concurrent connections. The reference answer separates connection gateways from conversation ownership, orders each conversation through a single owner chosen by consistent hashing, partitions history by conversation and time bucket, batches fan-out per gateway, keeps presence best effort and off the message path, and then takes the design down to AWS: one service per box, the message store, event log and compute forks priced at this design's numbers, and a review against the six Well-Architected pillars.",
   "detail": [],
-  "in_practice": "",
+  "in_practice": {
+    "blocks": []
+  },
   "subtopics": [],
   "diagram": null,
   "code": [],
-  "technologies": [],
+  "technologies": [
+    "Amazon ECS",
+    "AWS Fargate",
+    "Network Load Balancer",
+    "Amazon DynamoDB",
+    "Amazon ElastiCache",
+    "Amazon Kinesis Data Streams",
+    "AWS Lambda",
+    "Amazon SNS",
+    "Amazon OpenSearch Service",
+    "Amazon S3",
+    "Amazon CloudFront"
+  ],
   "related": [
     "sd-networking",
     "sd-fan-out",
     "sd-data-modelling",
     "sd-consistency-consensus",
-    "sd-replication-partitioning"
+    "sd-replication-partitioning",
+    "sd-aws-well-architected"
   ],
   "sources": [
     {
-      "kind": "spec",
-      "title": "RFC 6455: The WebSocket Protocol",
-      "url": "https://www.rfc-editor.org/rfc/rfc6455.html"
-    },
-    {
-      "kind": "blog",
-      "title": "Slack Engineering: Real-time messaging",
-      "url": "https://slack.engineering/real-time-messaging/"
-    },
-    {
-      "kind": "blog",
-      "title": "Discord: How Discord stores trillions of messages",
-      "url": "https://discord.com/blog/how-discord-stores-trillions-of-messages"
-    },
-    {
-      "kind": "blog",
-      "title": "Discord: How Discord stores billions of messages",
-      "url": "https://discord.com/blog/how-discord-stores-billions-of-messages"
-    },
-    {
-      "kind": "blog",
-      "title": "Discord: How Discord scaled Elixir to 5,000,000 concurrent users",
-      "url": "https://discord.com/blog/how-discord-scaled-elixir-to-5-000-000-concurrent-users"
-    },
-    {
+      "id": "s1",
+      "title": "RFC 6455: The WebSocket Protocol (December 2011): opening handshake, framing, ping and pong, close",
+      "url": "https://www.rfc-editor.org/rfc/rfc6455.html",
       "kind": "doc",
-      "title": "Latency numbers every programmer should know",
-      "url": "https://gist.github.com/jboner/2841832"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "opening handshake"
+      }
+    },
+    {
+      "id": "s2",
+      "title": "Slack Engineering: Real-time messaging (2023-04-11): channel servers, gateway servers, presence servers, consistent hashing",
+      "url": "https://slack.engineering/real-time-messaging/",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "consistent hashing"
+      }
+    },
+    {
+      "id": "s3",
+      "title": "Discord Engineering: How Discord stores trillions of messages (Bo Ingram, 2023-03-06)",
+      "url": "https://discord.com/blog/how-discord-stores-trillions-of-messages",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "request coalescing"
+      }
+    },
+    {
+      "id": "s4",
+      "title": "Discord Engineering: How Discord stores billions of messages (2017-01-13)",
+      "url": "https://discord.com/blog/how-discord-stores-billions-of-messages",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "10 days"
+      }
+    },
+    {
+      "id": "s5",
+      "title": "Discord Engineering: How Discord scaled Elixir to 5,000,000 concurrent users (2017-07-06)",
+      "url": "https://discord.com/blog/how-discord-scaled-elixir-to-5-000-000-concurrent-users",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Manifold"
+      }
+    },
+    {
+      "id": "s6",
+      "title": "Latency Numbers Every Programmer Should Know (jboner gist, maintained)",
+      "url": "https://gist.github.com/jboner/2841832",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Round trip within same datacenter"
+      }
+    },
+    {
+      "id": "s7",
+      "title": "AWS decision guide: Choosing an AWS database service (last updated June 2, 2026)",
+      "url": "https://docs.aws.amazon.com/decision-guides/latest/decision-guides/databases-on-aws-how-to-choose.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Relational databases support complex queries through joins"
+      }
+    },
+    {
+      "id": "s8",
+      "title": "AWS decision guide: Amazon SQS, Amazon SNS, or Amazon EventBridge? (last updated November 2025)",
+      "url": "https://docs.aws.amazon.com/decision-guides/latest/decision-guides/sns-or-sqs-or-eventbridge.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Messages persist until consumed or expired"
+      }
+    },
+    {
+      "id": "s9",
+      "title": "AWS decision guide: Choosing an AWS application integration service, including Kinesis Data Streams and Amazon MSK (last updated April 16, 2025)",
+      "url": "https://docs.aws.amazon.com/decision-guides/latest/decision-guides/application-integration-on-aws-how-to-choose.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Use streaming services such as Amazon Kinesis Data Streams"
+      }
+    },
+    {
+      "id": "s10",
+      "title": "AWS decision guide: AWS Fargate or AWS Lambda? (last updated August 21, 2026)",
+      "url": "https://docs.aws.amazon.com/decision-guides/latest/decision-guides/fargate-or-lambda.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "more economical for sustained, high-throughput workloads"
+      }
+    },
+    {
+      "id": "s11",
+      "title": "AWS decision guide: Choosing an AWS container service (last updated May 16, 2025)",
+      "url": "https://docs.aws.amazon.com/decision-guides/latest/decision-guides/choosing-aws-container-service.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Kubernetes has three major releases a year"
+      }
+    },
+    {
+      "id": "s12",
+      "title": "AWS decision guide: Choosing a networking and content delivery service (last updated January 16, 2025)",
+      "url": "https://docs.aws.amazon.com/decision-guides/latest/decision-guides/choosing-networking-and-content-delivery-service.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "lowest latency possible"
+      }
+    },
+    {
+      "id": "s13",
+      "title": "AWS decision guide: Choosing an AWS storage service (last updated October 5, 2026)",
+      "url": "https://docs.aws.amazon.com/decision-guides/latest/decision-guides/choosing-aws-storage-service.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Read-heavy workloads such as content distribution"
+      }
+    },
+    {
+      "id": "s14",
+      "title": "AWS Well-Architected Framework, the whitepaper (PDF, publication date November 6, 2024): the six pillars and their design principles",
+      "url": "https://docs.aws.amazon.com/pdfs/wellarchitected/latest/framework/wellarchitected-framework.pdf",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Organize teams around business outcomes"
+      }
+    },
+    {
+      "id": "s15",
+      "title": "Serverless Applications Lens, AWS Well-Architected Framework: general design principles",
+      "url": "https://docs.aws.amazon.com/wellarchitected/latest/serverless-applications-lens/general-design-principles.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Design for failures and duplicates"
+      }
+    },
+    {
+      "id": "s16",
+      "title": "Serverless Applications Lens: DynamoDB on-demand and provisioned capacity",
+      "url": "https://docs.aws.amazon.com/wellarchitected/latest/serverless-applications-lens/capacity.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "On-demand mode is the default and recommended throughput option"
+      }
+    },
+    {
+      "id": "s17",
+      "title": "Amazon Keyspaces (for Apache Cassandra) Developer Guide: What is Amazon Keyspaces?",
+      "url": "https://docs.aws.amazon.com/keyspaces/latest/devguide/what-is-keyspaces.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Amazon Keyspaces is serverless"
+      }
+    },
+    {
+      "id": "s18",
+      "title": "Amazon Kinesis Data Streams Developer Guide: Key concepts (shards, sequence numbers, the 24-hour default retention)",
+      "url": "https://docs.aws.amazon.com/streams/latest/dev/key-concepts.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "retention period is set to a default of 24 hours"
+      }
+    },
+    {
+      "id": "s19",
+      "title": "Elastic Load Balancing User Guide: Listeners for your Network Load Balancers (TCP, TLS, UDP, QUIC; WebSockets on TCP and TLS listeners)",
+      "url": "https://docs.aws.amazon.com/elasticloadbalancing/latest/network/load-balancer-listeners.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "WebSockets is supported only on TCP, TLS, TCP_UDP, and TCP_QUIC listeners"
+      }
+    },
+    {
+      "id": "s20",
+      "title": "Elastic Load Balancing User Guide: Listeners for your Application Load Balancers (native WebSocket and HTTP/2 support)",
+      "url": "https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-listeners.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "native support for WebSockets"
+      }
+    },
+    {
+      "id": "s21",
+      "title": "Amazon API Gateway Developer Guide: API Gateway WebSocket APIs",
+      "url": "https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-websocket-api.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "collection of WebSocket routes"
+      }
+    },
+    {
+      "id": "s22",
+      "title": "Amazon DynamoDB Developer Guide: Using time to live (TTL)",
+      "url": "https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/TTL.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "without consuming write throughput"
+      }
+    },
+    {
+      "id": "s23",
+      "title": "Amazon SNS Developer Guide: Mobile push notifications (APNs, FCM and other platform applications, device tokens)",
+      "url": "https://docs.aws.amazon.com/sns/latest/dg/sns-mobile-application-as-subscriber.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "device token"
+      }
+    },
+    {
+      "id": "s24",
+      "title": "Amazon OpenSearch Service Developer Guide: What is Amazon OpenSearch Service?",
+      "url": "https://docs.aws.amazon.com/opensearch-service/latest/developerguide/what-is.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "OpenSearch Serverless"
+      }
+    },
+    {
+      "id": "s25",
+      "title": "Amazon ElastiCache User Guide: What is Amazon ElastiCache? (Valkey, Memcached and Redis OSS; serverless and node-based)",
+      "url": "https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/WhatIs.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Valkey, Memcached, and Redis OSS engines"
+      }
+    },
+    {
+      "id": "s26",
+      "title": "Amazon DynamoDB pricing (on-demand request units and storage, US East (N. Virginia) examples), read 2026-10-15",
+      "url": "https://aws.amazon.com/dynamodb/pricing/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "$0.6250 per million writes"
+      }
+    },
+    {
+      "id": "s27",
+      "title": "Amazon Aurora pricing (Aurora Serverless v2 per ACU-hour and storage, US East (N. Virginia) examples), read 2026-10-15",
+      "url": "https://aws.amazon.com/rds/aurora/pricing/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "$0.12 per ACU-hour"
+      }
+    },
+    {
+      "id": "s28",
+      "title": "AWS Price List Bulk API, AmazonRDS offer file for us-east-1 (Aurora Serverless v2 ACU-hour, storage and I/O prices; publication date 2026-10-06), read 2026-10-15",
+      "url": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/us-east-1/index.json",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "$0.20 per 1 million I/O requests (Aurora)"
+      }
+    },
+    {
+      "id": "s29",
+      "title": "Amazon Keyspaces (for Apache Cassandra) pricing (on-demand read and write request units; the figures render from the price list), read 2026-10-15",
+      "url": "https://aws.amazon.com/keyspaces/pricing/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "write request units"
+      }
+    },
+    {
+      "id": "s30",
+      "title": "AWS Price List Bulk API, AmazonMCS (Amazon Keyspaces) offer file for us-east-1 (on-demand write and read request units, storage; publication date 2026-09-14), read 2026-10-15",
+      "url": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonMCS/current/us-east-1/index.json",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "$0.6250 per million write request units in US East (N. Virginia)"
+      }
+    },
+    {
+      "id": "s31",
+      "title": "AWS Fargate pricing (per vCPU-second and GB-second, Linux/x86 US East (N. Virginia) example), read 2026-10-15",
+      "url": "https://aws.amazon.com/fargate/pricing/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "$0.000011244 per vCPU second"
+      }
+    },
+    {
+      "id": "s32",
+      "title": "AWS Price List Bulk API, AmazonECS offer file for us-east-1 (AWS Fargate Linux/x86 and Linux/ARM per vCPU-hour and per GB-hour; publication date 2026-09-11), read 2026-10-15",
+      "url": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonECS/current/us-east-1/index.json",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "AWS Fargate - ARM - vCPU - US East (N. Virginia)"
+      }
+    },
+    {
+      "id": "s33",
+      "title": "Amazon EKS pricing (per cluster per hour), read 2026-10-15",
+      "url": "https://aws.amazon.com/eks/pricing/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "$0.10 per cluster per hour"
+      }
+    },
+    {
+      "id": "s34",
+      "title": "AWS Price List Bulk API, AmazonApiGateway offer file for us-east-1 (HTTP API requests, WebSocket messages and connection minutes; publication date 2026-10-13), read 2026-10-15",
+      "url": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonApiGateway/current/us-east-1/index.json",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "$0.25/million connection minutes"
+      }
+    },
+    {
+      "id": "s35",
+      "title": "Amazon API Gateway pricing (REST API calls at $3.50 per million in the page example; the WebSocket and HTTP API tables render from the price list), read 2026-10-15",
+      "url": "https://aws.amazon.com/api-gateway/pricing/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "$3.50"
+      }
+    },
+    {
+      "id": "s36",
+      "title": "AWS Lambda pricing (per request and per GB-second, US East (N. Virginia) examples), read 2026-10-15",
+      "url": "https://aws.amazon.com/lambda/pricing/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "$0.0000166667 per GB-s"
+      }
+    },
+    {
+      "id": "s37",
+      "title": "AWS Price List Bulk API, AWSLambda offer file for us-east-1 (requests at $0.20 per million, x86 and Arm GB-seconds; publication date 2026-10-14), read 2026-10-15",
+      "url": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSLambda/current/us-east-1/index.json",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "AWS Lambda - Total Requests - US East (Northern Virginia)"
+      }
+    },
+    {
+      "id": "s38",
+      "title": "Amazon Kinesis Data Streams pricing (on-demand and provisioned; the page's US East examples: $0.015 per shard-hour, $0.08 per GB written on-demand), read 2026-10-15",
+      "url": "https://aws.amazon.com/kinesis/data-streams/pricing/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "One shard costs $0.015 per hour"
+      }
+    },
+    {
+      "id": "s39",
+      "title": "AWS Price List Bulk API, AmazonKinesis offer file for us-east-1 (on-demand stream-hours, data in and out, provisioned shard-hours and PUT payload units; publication date 2026-09-11), read 2026-10-15",
+      "url": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonKinesis/current/us-east-1/index.json",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "0.04 per Stream Hour Used"
+      }
+    },
+    {
+      "id": "s40",
+      "title": "Amazon MSK pricing (serverless cluster-hours and partition-hours, US East example), read 2026-10-15",
+      "url": "https://aws.amazon.com/msk/pricing/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "$0.75/cluster-hr"
+      }
+    },
+    {
+      "id": "s41",
+      "title": "AWS Price List Bulk API, AmazonMSK offer file for us-east-1 (serverless cluster-hours, partition-hours, data in and out; broker hours; publication date 2026-10-14), read 2026-10-15",
+      "url": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonMSK/current/us-east-1/index.json",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "$0.0015 per partition-hour"
+      }
+    },
+    {
+      "id": "s42",
+      "title": "Amazon SQS pricing (the free tier; the per-Region table renders from the price list), read 2026-10-15",
+      "url": "https://aws.amazon.com/sqs/pricing/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "All customers can make 1 million Amazon SQS requests for free each month"
+      }
+    },
+    {
+      "id": "s43",
+      "title": "AWS Price List Bulk API, AWSQueueService offer file for us-east-1 (standard and FIFO requests per million; publication date 2026-09-11), read 2026-10-15",
+      "url": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSQueueService/current/us-east-1/index.json",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "$0.40 per million Amazon SQS standard requests in Tier1 in US East (N Virginia)"
+      }
+    },
+    {
+      "id": "s44",
+      "title": "AWS Price List Bulk API, AmazonSNS offer file for us-east-1 (mobile push notifications and API requests per million; publication date 2026-09-15), read 2026-10-15",
+      "url": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonSNS/current/us-east-1/index.json",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "$0.50 per 1,000,000 Mobile Push Notifications per month thereafter"
+      }
+    },
+    {
+      "id": "s45",
+      "title": "Amazon ElastiCache pricing (node-based and serverless; the page's Valkey examples price cache.r7g.xlarge at $0.3496 and cache.r7g.large at $0.1752 an hour, serverless data storage at $0.084 per GB-hour), read 2026-10-15",
+      "url": "https://aws.amazon.com/elasticache/pricing/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Cache.r7g.xlarge = $0.3496"
+      }
+    },
+    {
+      "id": "s46",
+      "title": "AWS Price List Bulk API, AmazonElastiCache offer file for us-east-1 (Valkey node-hours and serverless ECPU and GB-hour prices; publication date 2026-10-14), read 2026-10-15",
+      "url": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonElastiCache/current/us-east-1/index.json",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "$0.1752 per Memory optimized r7g.large node hour running Valkey"
+      }
+    },
+    {
+      "id": "s47",
+      "title": "Elastic Load Balancing pricing (Application and Network Load Balancer hourly and capacity-unit prices, US East example), read 2026-10-15",
+      "url": "https://aws.amazon.com/elasticloadbalancing/pricing/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "$0.0225"
+      }
+    },
+    {
+      "id": "s48",
+      "title": "AWS Price List Bulk API, AWSELB offer file for us-east-1 (Application and Network Load Balancer hours and capacity units; publication date 2026-09-11), read 2026-10-15",
+      "url": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSELB/current/us-east-1/index.json",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "$0.006 per used Network load balancer capacity unit-hour"
+      }
     }
   ],
   "practice": null,
   "exercise": {
     "prompt": "Design a messaging service: one-to-one and group conversations, delivered in real time to connected devices, with history that users can scroll back through, delivery and read receipts, and a presence indicator that shows who is online.",
-    "constraints": [
-      {
-        "heading": "Functional",
-        "body": "Send a message to a conversation (up to 1,000 members, assumption); deliver it to every connected member in order; store history forever; page through history; delivered and read receipts; online, away and offline presence."
-      },
-      {
-        "heading": "Scale (assumption)",
-        "body": "50 million daily active users; 5 million concurrent connections at peak; 1 billion messages per day; an average message of 200 bytes of text, about 500 bytes stored with metadata; a user reads about 20 messages for every one sent. All chosen for the exercise; derive the per-second rates, the connection count per gateway and the storage growth yourself."
-      },
-      {
-        "heading": "Targets (assumption)",
-        "body": "Delivery to a connected member within 500 ms at p99 inside one region; history page under 100 ms at p99; 99.95 percent availability for sending and delivery; messages are never lost once the sender sees the acknowledgement."
-      },
-      {
-        "heading": "Non-goals",
-        "body": "End-to-end encryption, voice and video, media storage (a media reference is a URL to an object store), spam and abuse detection, search ranking."
-      }
-    ],
+    "constraints": {
+      "type": "table",
+      "caption": "Constraints and numbers.",
+      "columns": [
+        "kind",
+        "constraint",
+        "note"
+      ],
+      "rows": [
+        [
+          "Functional",
+          "Send a message to a conversation (up to 1,000 members, assumption); deliver it to every connected member in order; store history forever; page through history.",
+          ""
+        ],
+        [
+          "Functional",
+          "Delivered and read receipts; online, away and offline presence.",
+          ""
+        ],
+        [
+          "Scale (assumption)",
+          "50 million daily active users; 5 million concurrent connections at peak; 1 billion messages per day.",
+          "chosen for the exercise"
+        ],
+        [
+          "Scale (assumption)",
+          "An average message of 200 bytes of text, about 500 bytes stored with metadata; a user reads about 20 messages for every one sent.",
+          "derive the per-second rates, the connection count per gateway and the storage growth yourself"
+        ],
+        [
+          "Targets (assumption)",
+          "Delivery to a connected member within 500 ms at p99 inside one region; history page under 100 ms at p99.",
+          ""
+        ],
+        [
+          "Targets (assumption)",
+          "99.95 percent availability for sending and delivery; messages are never lost once the sender sees the acknowledgement.",
+          ""
+        ],
+        [
+          "Non-goals",
+          "End-to-end encryption, voice and video, media storage (a media reference is a URL to an object store), spam and abuse detection, search ranking.",
+          ""
+        ]
+      ]
+    },
     "clarifying_questions": [
       {
-        "question": "What ordering is required?",
-        "answer": "A total order per conversation: every member sees the same sequence. No ordering across conversations."
+        "q": "What ordering is required?",
+        "a": "A total order per conversation: every member sees the same sequence. No ordering across conversations."
       },
       {
-        "question": "Delivery guarantee?",
-        "answer": "At least once to the device, deduplicated by message id on the client; the server acknowledges to the sender only after the message is durable."
+        "q": "Delivery guarantee?",
+        "a": "At least once to the device, deduplicated by message id on the client; the server acknowledges to the sender only after the message is durable."
       },
       {
-        "question": "How large do groups get?",
-        "answer": "Up to 1,000 members. Larger broadcast channels are a different product and out of scope."
+        "q": "How large do groups get?",
+        "a": "Up to 1,000 members. Larger broadcast channels are a different product and out of scope."
       },
       {
-        "question": "Multi-device?",
-        "answer": "Yes: a user may have several sessions; each gets every message, and read receipts are per user, not per device."
+        "q": "Multi-device?",
+        "a": "Yes: a user may have several sessions; each gets every message, and read receipts are per user, not per device."
       },
       {
-        "question": "How fresh must presence be?",
-        "answer": "Online within a few seconds of connecting; offline within 60 s of the last heartbeat (assumption); away is reported by the client when the user is idle, not inferred from heartbeats. Presence is best effort and never blocks a message."
+        "q": "How fresh must presence be?",
+        "a": "Online within a few seconds of connecting; offline within 60 s of the last heartbeat (assumption); away is reported by the client when the user is idle, not inferred from heartbeats. Presence is best effort and never blocks a message."
       },
       {
-        "question": "Multi-region?",
-        "answer": "One region per user's home; cross-region conversations route through the conversation's home region. The reference answer is single-region."
+        "q": "Multi-region?",
+        "a": "One region per user's home; cross-region conversations route through the conversation's home region. The reference answer is single-region."
       }
     ],
     "reference_answer": [
       {
         "id": "requirements-and-estimates",
         "title": "Requirements and estimates",
-        "body": [
+        "blocks": [
           {
-            "heading": "Derived numbers: messages, delivery, storage",
-            "body": "Messages: 1 billion per day is about 11,600 per second average; with a 3x daily peak (assumption) 35,000 per second. Each message in a group of average 5 members (assumption) fans out to 5 devices, so delivery is about 175,000 pushes per second at peak. Storage: 1 billion times 500 bytes is 500 GB per day, about 180 TB per year, which rules out one database node and makes partitioning the first decision. Reads: 20 reads per send means 700,000 message reads per second at peak, mostly of the newest messages of a conversation, which is what the partition layout must serve cheaply."
+            "type": "p",
+            "text": "Every number below follows from the stated assumptions: 50 million daily active users, 5 million concurrent connections, a billion messages a day of 500 stored bytes each, and a peak at three times the daily average. The tables carry the arithmetic; the paragraphs carry the assumptions."
           },
           {
-            "heading": "Derived numbers: connections and latency",
-            "body": "5 million concurrent WebSocket connections at 50,000 per gateway node (assumption; a connection costs tens of kilobytes of memory and a heartbeat every 30 s) is 100 gateway nodes, plus headroom for a zone loss: 150 nodes in three zones. Heartbeats alone are 5 million per 30 s, about 170,000 small frames per second. A delivery inside one region is a handful of datacenter round trips at 500 us each (the latency reference numbers), so the 500 ms p99 target is generous for the happy path and exists to absorb queueing under load."
+            "type": "table",
+            "caption": "Rates and daily volumes derived from the assumptions.",
+            "columns": [
+              "quantity",
+              "per day",
+              "average per second",
+              "peak per second",
+              "note"
+            ],
+            "rows": [
+              [
+                "Messages sent",
+                "1 billion",
+                "11,600",
+                "35,000",
+                "peak is 3 times the average (assumption)"
+              ],
+              [
+                "Deliveries (pushes to devices)",
+                "5 billion",
+                "58,000",
+                "175,000",
+                "an average group of 5 members (assumption), so each message fans out to 5 devices"
+              ],
+              [
+                "Message reads",
+                "20 billion",
+                "232,000",
+                "700,000",
+                "20 reads per send; mostly the newest messages of a conversation, which is what the partition layout must serve cheaply"
+              ],
+              [
+                "Heartbeats",
+                "14.4 billion",
+                "170,000",
+                "170,000",
+                "5 million connections, one small frame every 30 s each (assumption)"
+              ]
+            ]
+          },
+          {
+            "type": "table",
+            "caption": "Sizes: the message store and the gateway fleet.",
+            "columns": [
+              "quantity",
+              "size",
+              "derived from"
+            ],
+            "rows": [
+              [
+                "Message store growth",
+                "500 GB per day",
+                "1 billion messages times 500 bytes"
+              ],
+              [
+                "Message store after a year",
+                "about 180 TB",
+                "500 GB times 365; rules out one database node and makes partitioning the first decision"
+              ],
+              [
+                "Connections per gateway node",
+                "50,000",
+                "assumption; a connection costs tens of kilobytes of memory and a heartbeat every 30 s"
+              ],
+              [
+                "Gateway nodes",
+                "100, run as 150",
+                "5 million connections divided by 50,000, plus headroom for a zone loss: 150 nodes in three zones"
+              ],
+              [
+                "Delivery latency, happy path",
+                "a few round trips of 500 microseconds",
+                "the latency reference numbers; the 500 ms p99 target is generous and exists to absorb queueing under load"
+              ]
+            ],
+            "cites": [
+              "s6"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Two of these numbers decide the shape of the design. The storage growth says history must be partitioned from day one, and partitioned so that a page of recent messages is one bounded read. The delivery rate says fan-out must be batched: a message to a thousand members cannot cost a thousand network sends."
           }
         ]
       },
       {
         "id": "high-level-design",
         "title": "High-level design",
-        "body": [
+        "blocks": [
           {
-            "heading": "Container view",
-            "body": "Clients hold one WebSocket (RFC 6455: upgrade handshake, framing, ping and pong, close) to a stateless-enough gateway that knows only which sessions it holds. Conversations are owned by conversation servers chosen by consistent hashing of the conversation id, so one server orders all writes of a conversation; Slack describes the same split into gateway servers holding connections and channel servers mapped by consistent hashing, with presence servers beside them. The conversation server persists the message, assigns its position, and fans it out to the gateways that hold the members' sessions. Offline members get a push notification from an event consumer; a search indexer consumes the same events."
+            "type": "p",
+            "text": "Clients hold one WebSocket (RFC 6455: upgrade handshake, framing, ping and pong, close) to a stateless-enough gateway that knows only which sessions it holds. Conversations are owned by conversation servers chosen by consistent hashing of the conversation id, so one server orders all writes of a conversation. The conversation server persists the message, assigns its position, and fans it out to the gateways that hold the members' sessions. Offline members get a push notification from an event consumer; a search indexer consumes the same events.",
+            "cites": [
+              "s1"
+            ]
+          },
+          {
+            "type": "diagram",
+            "mermaid": "flowchart LR\n  C[Clients, WebSocket] --> LB[L4 balancer]\n  LB --> GW[Gateway nodes: one connection per session]\n  GW -->|publish| CS[Conversation servers, consistent hashing by conversation id]\n  CS --> MS[(Message store: partitioned by conversation and time bucket)]\n  CS -->|fan-out to members' gateways| GW\n  GW --> PR[(Presence: user to status, TTL)]\n  GW --> SS[(Session registry: user to gateway)]\n  CS --> Q[[message events]]\n  Q --> PN[Push notification service, offline members]\n  Q --> IX[Search indexer]",
+            "legend": "Boxes are containers; cylinders are stores; double brackets are logs. Gateways hold connections, conversation servers hold order."
+          },
+          {
+            "type": "p",
+            "text": "Slack's public write-up describes the same split: gateway servers hold the connections, channel servers are stateful and in memory and each one is mapped to a subset of channels by consistent hashing, and presence servers stand beside them. This answer keeps that shape and adds the bucketed message store that Discord's write-ups describe.",
+            "cites": [
+              "s2",
+              "s4"
+            ]
           }
-        ],
-        "diagram": {
-          "source": "flowchart LR\n  C[Clients, WebSocket] --> LB[L4 balancer]\n  LB --> GW[Gateway nodes: one connection per session]\n  GW -->|publish| CS[Conversation servers, consistent hashing by conversation id]\n  CS --> MS[(Message store: partitioned by conversation and time bucket)]\n  CS -->|fan-out to members' gateways| GW\n  GW --> PR[(Presence: user to status, TTL)]\n  GW --> SS[(Session registry: user to gateway)]\n  CS --> Q[[message events]]\n  Q --> PN[Push notification service, offline members]\n  Q --> IX[Search indexer]",
-          "legend": "Boxes are containers; cylinders are stores; double brackets are logs. Gateways hold connections, conversation servers hold order."
-        }
+        ]
+      },
+      {
+        "id": "building-it-on-aws",
+        "title": "Building it on AWS",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "The design above names roles; this section names an AWS service for every box in the diagram, prices the three forks of this design (the message store, the event log, and the compute that holds five million connections) with the numbers in the estimates table, and reviews the result against the six Well-Architected pillars. Prices are list prices for US East (N. Virginia) read from the AWS pricing pages and the AWS Price List API on 2026-10-15; they change, so every price carries its date and its source."
+          },
+          {
+            "type": "table",
+            "caption": "One AWS service per component of the diagram, with the alternative and when it wins.",
+            "columns": [
+              "component",
+              "AWS pick",
+              "the alternative",
+              "pick the alternative when",
+              "cites"
+            ],
+            "rows": [
+              [
+                "L4 balancer",
+                "a Network Load Balancer with TLS listeners (WebSockets are supported on TCP and TLS listeners), one connection per client held for hours",
+                "an Application Load Balancer, which supports WebSockets natively at layer 7",
+                "the gateways want HTTP-level routing, header inspection or TLS termination with the request-level features of a layer 7 balancer",
+                "s19, s20, s12"
+              ],
+              [
+                "Gateway nodes (one connection per session)",
+                "containers on Amazon ECS with AWS Fargate, Arm (Graviton), 2 vCPU and 8 GB per task holding 50,000 connections, 150 tasks across three zones",
+                "an API Gateway WebSocket API with Lambda handlers, which keeps the connections for you",
+                "connections are few and bursty; at 5 million concurrent connections the per-minute and per-message fees are about fifteen times the tasks (priced below)",
+                "s10, s21"
+              ],
+              [
+                "Conversation servers (order, in-memory tail)",
+                "an ECS service on Fargate, 2 vCPU and 8 GB per task, 50 tasks, membership of the hash ring kept in a small DynamoDB table",
+                "none that fits: a single owner with an in-memory tail is container-shaped, so Lambda does not apply",
+                "never for this role; a function cannot hold the tail or the ownership",
+                "s10"
+              ],
+              [
+                "Message store (by conversation and time bucket)",
+                "Amazon DynamoDB, Standard-IA table class, partition key conversation_id and bucket, sort key message_id",
+                "Amazon Keyspaces (for Apache Cassandra), which keeps Discord's layout and CQL verbatim; or Aurora PostgreSQL sharded by conversation hash",
+                "the team already runs Cassandra and wants the data model unchanged (Keyspaces); or history needs joins and ad hoc queries at a lower storage price per GB with compute and I/O lines added (Aurora)",
+                "s7, s17, s16"
+              ],
+              [
+                "Presence (user to status, TTL) and session registry (user to gateway)",
+                "Amazon ElastiCache for Valkey, node-based, two shards with a replica each; keys with TTL, heartbeats refresh them",
+                "Amazon DynamoDB with a TTL attribute",
+                "presence must survive a cache loss and the heartbeat rate is small; at 170,000 heartbeat writes a second DynamoDB would cost about $276,000 a month in write units, so heartbeats belong in memory",
+                "s25, s22, s26"
+              ],
+              [
+                "Message events (the log)",
+                "Amazon Kinesis Data Streams, provisioned, partition key conversation_id, two consumers (push, search)",
+                "Amazon MSK for a Kafka team; Amazon SQS with an SNS topic in front for queue semantics per consumer",
+                "the organisation runs Kafka and its tooling (MSK); or consumers want per-message retries and dead-letter queues rather than an ordered, replayable log (SNS plus SQS)",
+                "s9, s8, s18"
+              ],
+              [
+                "Push notification service (offline members)",
+                "Amazon SNS mobile push to APNs and FCM platform endpoints, from a Lambda consumer of the stream that collapses pushes per conversation",
+                "the provider APIs called directly from a Fargate consumer",
+                "the product needs provider features SNS does not expose (collapse identifiers, per-notification priority)",
+                "s23, s44"
+              ],
+              [
+                "Search indexer",
+                "Amazon OpenSearch Service, indexed from the stream by a Lambda consumer, one index per conversation shard",
+                "no indexer at all",
+                "end-to-end encryption is adopted, which leaves the server with opaque bodies and moves search to the client",
+                "s24"
+              ],
+              [
+                "Media references",
+                "Amazon S3 behind CloudFront; the message carries the object key",
+                "serve from S3 without a CDN",
+                "readers are in one Region and media is tiny; otherwise the CDN is the cheaper and faster path",
+                "s13, s12"
+              ]
+            ]
+          },
+          {
+            "type": "p",
+            "text": "The three forks are not matters of taste once the estimates table is open. Each fork below gets a price table built from the exercise's own numbers and today's unit prices, with the arithmetic in the note column, then a verdict: the pick, why, and what would flip it."
+          },
+          {
+            "type": "table",
+            "caption": "Message store: DynamoDB (two table classes), Keyspaces and Aurora at this design's numbers: 30 billion messages a month, 180 TB after a year (US East (N. Virginia), prices as of 2026-10-15).",
+            "columns": [
+              "option",
+              "unit price, as of 2026-10-15",
+              "quantity per month",
+              "monthly cost",
+              "note",
+              "cites"
+            ],
+            "rows": [
+              [
+                "DynamoDB Standard: writes",
+                "$0.625 per million write units",
+                "30 billion messages",
+                "$18,750",
+                "one write unit per message of 1 kB or less",
+                "s26"
+              ],
+              [
+                "DynamoDB Standard: reads",
+                "$0.125 per million read units",
+                "8.4 billion read units",
+                "$1,050",
+                "a tenth of the 600 billion message reads miss the in-memory tail (assumption), in pages of 50 messages, 7 read units a page",
+                "s26"
+              ],
+              [
+                "DynamoDB Standard: storage",
+                "$0.25 per GB-month",
+                "180 TB after a year",
+                "$45,000",
+                "15 TB in the first month, so about $3,750 then; storage is the line that grows",
+                "s26"
+              ],
+              [
+                "DynamoDB Standard total",
+                "",
+                "",
+                "about $64,800 / month after a year; about $23,500 in the first month",
+                "storage is two thirds of the bill by the end of year one",
+                "s26"
+              ],
+              [
+                "DynamoDB Standard-IA: writes, reads, storage",
+                "$0.78 per million writes; $0.155 per million reads; $0.10 per GB-month",
+                "the same 30 billion writes, 8.4 billion read units, 180 TB",
+                "about $42,700 / month after a year",
+                "writes cost a quarter more and storage less than half: about $23,400 in writes, $1,300 in reads, $18,000 in storage",
+                "s26"
+              ],
+              [
+                "Amazon Keyspaces (for Apache Cassandra)",
+                "$0.625 per million write units; $0.125 per million read units; $0.25 per GB-month",
+                "the same writes, reads and storage",
+                "about $64,800 / month after a year",
+                "the same prices as DynamoDB Standard and the same shape; its value is the unchanged Cassandra data model, not the bill",
+                "s29, s30"
+              ],
+              [
+                "Aurora Serverless v2: compute",
+                "$0.12 per ACU-hour",
+                "256 ACU-hours per hour for 730 hours",
+                "about $22,400",
+                "four clusters sharded by conversation hash, each a 32-ACU writer and a 32-ACU reader (assumption)",
+                "s27"
+              ],
+              [
+                "Aurora Serverless v2: storage and I/O (Aurora Standard)",
+                "$0.10 per GB-month; $0.20 per million I/Os",
+                "180 TB after a year; 90 billion I/Os",
+                "about $36,000",
+                "$18,000 each: one I/O per write and per store read (assumption); the 128 TiB limit per cluster is why there are four",
+                "s27, s28"
+              ],
+              [
+                "Aurora total",
+                "",
+                "",
+                "about $58,400 / month after a year",
+                "cheaper storage, but the compute and I/O lines are paid at every scale",
+                "s27, s28"
+              ]
+            ]
+          },
+          {
+            "type": "callout",
+            "kind": "rule",
+            "text": "Pick: DynamoDB with the Standard-IA table class, about $42,700 a month after a year of history. Why: every read is a range inside one partition (conversation and bucket), the write rate is steady and enormous, and at this volume storage, not requests, is the bill in every option, so the class with the cheapest GB wins once the table is a few months old; the 10x plan then exports old buckets to S3, where a GB costs about a quarter of the IA price. What flips it: a team that already runs Cassandra and wants the data model untouched (Keyspaces, same prices as DynamoDB Standard), or history that needs joins and ad hoc queries (Aurora, sharded by conversation hash, about a third more).",
+            "cites": [
+              "s7",
+              "s17",
+              "s16",
+              "s26",
+              "s29",
+              "s30",
+              "s27",
+              "s28"
+            ]
+          },
+          {
+            "type": "table",
+            "caption": "Message events: Kinesis Data Streams against MSK and SQS at this design's numbers: 30 billion events of 500 bytes a month, 15 TB, two consumers (US East (N. Virginia), prices as of 2026-10-15).",
+            "columns": [
+              "option",
+              "unit price, as of 2026-10-15",
+              "quantity per month",
+              "monthly cost",
+              "note",
+              "cites"
+            ],
+            "rows": [
+              [
+                "Kinesis Data Streams, provisioned",
+                "$0.015 per shard-hour; $0.014 per million PUT payload units",
+                "35 shards for 730 hours; 30 billion payload units",
+                "about $805",
+                "35 shards carry 35,000 records a second at peak; $383 for shards, $420 for puts; both consumers share the read throughput",
+                "s38, s39, s18"
+              ],
+              [
+                "Kinesis Data Streams, on-demand",
+                "$0.04 per stream-hour; $0.08 per GB in; $0.04 per GB out",
+                "15 TB in; 30 TB out to two consumers",
+                "about $2,430",
+                "$1,200 in, $1,200 out, $29 for the stream; on-demand charges per byte and this design moves many bytes",
+                "s38, s39"
+              ],
+              [
+                "Amazon MSK Serverless",
+                "$0.75 per cluster-hour; $0.0015 per partition-hour; $0.10 per GB in; $0.05 per GB out",
+                "730 cluster-hours; 64 partitions; 15 TB in; 30 TB out",
+                "about $3,620",
+                "$547 for the cluster, $70 for partitions, $1,500 in and $1,500 out",
+                "s40, s41"
+              ],
+              [
+                "Amazon MSK provisioned",
+                "$0.204 per broker-hour (kafka.m7g.large); $0.10 per GB-month of storage",
+                "3 brokers for 730 hours; 7 days of events kept three times",
+                "about $1,500",
+                "$447 for brokers and about $1,050 for 10.5 TB of replicated retention; a Kafka team's choice, with the cluster to run",
+                "s41"
+              ],
+              [
+                "Amazon SQS standard, one queue per consumer behind an SNS topic",
+                "$0.40 per million requests",
+                "18 billion requests: two queues, three batched requests per ten messages each",
+                "about $7,200",
+                "$3,600 per queue; no ordering per conversation and no replay for the indexer",
+                "s42, s43"
+              ]
+            ]
+          },
+          {
+            "type": "callout",
+            "kind": "rule",
+            "text": "Pick: Kinesis Data Streams, provisioned, about $805 a month. Why: two consumers read the same ordered log, the push consumer wants order per conversation and the search indexer wants replay after a bad deploy, and 35 shards sized to the peak are cheaper than paying per byte. What flips it: an organisation that runs Kafka and its tooling (MSK provisioned, about twice the price plus the cluster to operate), or consumers that only want per-message retries and dead-letter queues (SNS with a queue per consumer, about nine times the price and no order).",
+            "cites": [
+              "s9",
+              "s8",
+              "s18",
+              "s38",
+              "s39",
+              "s40",
+              "s41",
+              "s42",
+              "s43"
+            ]
+          },
+          {
+            "type": "table",
+            "caption": "Compute: ECS on Fargate, EKS and an API Gateway WebSocket API for the gateways and conversation servers at this design's numbers (US East (N. Virginia), prices as of 2026-10-15; Fargate priced on Arm (Graviton) because the sustainability row picks it).",
+            "columns": [
+              "option",
+              "unit price, as of 2026-10-15",
+              "quantity per month",
+              "monthly cost",
+              "note",
+              "cites"
+            ],
+            "rows": [
+              [
+                "Gateways: ECS on Fargate, Arm",
+                "$0.03238 per vCPU-hour; $0.00356 per GB-hour",
+                "150 tasks of 2 vCPU and 8 GB for 730 hours",
+                "about $10,200",
+                "50,000 connections per task (assumption); $68.07 per task; the fleet holds the connections and the 170,000 heartbeats a second",
+                "s31, s32"
+              ],
+              [
+                "Gateways: EKS with Fargate pods",
+                "$0.10 per cluster-hour plus the x86 Fargate prices",
+                "one cluster plus the same 150 tasks",
+                "about $12,800",
+                "$73 for the cluster plus about $12,760 for x86 pods: Arm Fargate is ECS-only; a platform team would more likely run EKS node groups on Graviton EC2, which this table does not price",
+                "s33, s11, s32"
+              ],
+              [
+                "Gateways: API Gateway WebSocket API with Lambda",
+                "$0.25 per million connection-minutes; $1.00 per million messages (first billion, then $0.80)",
+                "110 billion connection-minutes; 180 billion messages",
+                "about $171,000",
+                "2.5 million connections on average (assumption) is about $27,400 in connection-minutes; the deliveries and sends are about $144,000 in messages, before the Lambda handlers",
+                "s34, s35, s21"
+              ],
+              [
+                "Conversation servers: ECS on Fargate, Arm",
+                "$0.03238 per vCPU-hour; $0.00356 per GB-hour",
+                "50 tasks of 2 vCPU and 8 GB for 730 hours",
+                "about $3,400",
+                "700 messages a second per task at the 35,000 peak with the in-memory tail of its conversations (assumption)",
+                "s31, s32"
+              ],
+              [
+                "Push and search consumers: Lambda on the stream",
+                "$0.20 per million requests; $0.0000166667 per GB-second",
+                "30 million invocations of 1,000 events; 15 million GB-seconds",
+                "about $256",
+                "batches of 1,000 records at 1 s and 512 MB (assumption); event-shaped, so functions fit here",
+                "s36, s37"
+              ]
+            ]
+          },
+          {
+            "type": "callout",
+            "kind": "rule",
+            "text": "Pick: ECS on Fargate, Arm tasks, for the gateways and the conversation servers; Lambda for the stream consumers. Why: five million open connections and a steady 35,000 messages a second are container-shaped, and the managed WebSocket API bills every connection-minute and every delivered message, about fifteen times the tasks. The consumers are event-shaped and idle between batches, which is what functions are for. What flips it: a chat product with thousands of connections rather than millions, where the WebSocket API's bill falls with the load and the team runs no fleet; or a platform team on EKS with Graviton node groups, which this table does not price.",
+            "cites": [
+              "s10",
+              "s11",
+              "s21",
+              "s31",
+              "s32",
+              "s33",
+              "s34",
+              "s36",
+              "s37"
+            ]
+          },
+          {
+            "type": "table",
+            "caption": "The design reviewed against the six Well-Architected pillars and the Serverless Applications Lens.",
+            "columns": [
+              "pillar",
+              "what it asks of this design",
+              "our choice",
+              "the risk we accept",
+              "cite"
+            ],
+            "rows": [
+              [
+                "Operational excellence",
+                "observability for actionable insights; frequent, small, reversible changes; anticipate failure",
+                "delivery latency per hop, fan-out batch size, hot-partition read latency and reconnect rate as the alarms; ECS rolling deployments that drain a gateway's connections before stopping it",
+                "a deploy of the gateway fleet reconnects five million clients over its duration; the backoff with jitter is what keeps that from being a storm",
+                "s14"
+              ],
+              [
+                "Security",
+                "a strong identity foundation; security at all layers; protect data in transit and at rest; keep people away from data",
+                "TLS on the balancer; one IAM task role per service; the store, cache and stream reachable only inside the VPC; message bodies encrypted at rest and never logged; membership checked on every send",
+                "none: the whitepaper does not trade security against the other pillars, and neither does this design",
+                "s14"
+              ],
+              [
+                "Reliability",
+                "automatically recover from failure; scale horizontally; stop guessing capacity",
+                "150 gateway tasks for 100 nodes' worth of connections so a zone loss launches nothing; a replica per cache shard; the hash ring reassigns a dead conversation server's conversations in seconds; DynamoDB absorbs the threefold peak without capacity planning",
+                "a conversation pauses for seconds when its owner dies; the target allows it and the clients retry with the same client message id",
+                "s14, s16"
+              ],
+              [
+                "Performance efficiency",
+                "consider mechanical sympathy; use serverless architectures where they fit",
+                "recent history served from the owner's in-memory tail with request coalescing; batched delivery per gateway; the steady core on Fargate, Lambda only on the event-shaped consumers",
+                "provisioned tasks and shards are paid at night as well as at peak",
+                "s14, s10"
+              ],
+              [
+                "Cost optimization",
+                "adopt a consumption model; measure overall efficiency; analyze and attribute expenditure",
+                "cost per daily active user on the dashboard beside the SLO; the message store is the largest line and its storage class the largest lever; Savings Plans on Fargate once the fleet is proven steady",
+                "the Standard-IA class is paid on every write; it wins only because storage grows without bound",
+                "s14, s26"
+              ],
+              [
+                "Sustainability",
+                "maximize utilization; use managed services; align to demand",
+                "Graviton (Arm) Fargate tasks and r7g cache nodes; presence keys expire by TTL instead of a sweeper; old buckets move to S3 at 10x instead of staying in the hot store",
+                "a returning cold conversation pays a slower first page",
+                "s14, s32"
+              ],
+              [
+                "Serverless Applications Lens",
+                "think concurrent requests, not totals; share nothing; design for failures and duplicates",
+                "the push consumer is idempotent on message id, so a replayed batch sends no second notification; the indexer keeps no state between invocations",
+                "at-least-once delivery means a duplicate event does reach the consumers; the dedupe check is the control",
+                "s15"
+              ]
+            ]
+          },
+          {
+            "type": "callout",
+            "kind": "rule",
+            "text": "Name the service for every box, price the forks with this design's numbers and today's prices, and write down the pillar each choice trades against. The neutral design decides what the system does; this section decides what it costs and who runs it.",
+            "cites": [
+              "s14"
+            ]
+          }
+        ]
       },
       {
         "id": "data-model",
         "title": "The data model",
-        "body": [
+        "blocks": [
           {
-            "heading": "Entities",
-            "body": "Conversation {conversation_id, type (direct or group), member_ids, created_at}. Message {conversation_id, bucket, message_id (time-ordered 64-bit), sender_id, body, media_ref, sent_at}. Receipt {conversation_id, user_id, last_delivered_id, last_read_id}: one row per member, not one per message, so receipts cost nothing per message. Session {user_id, device_id, gateway_id, connected_at}. Presence {user_id, status, last_seen, ttl}."
+            "type": "table",
+            "caption": "Entities.",
+            "columns": [
+              "entity",
+              "fields",
+              "key or partition",
+              "notes"
+            ],
+            "rows": [
+              [
+                "Conversation",
+                "conversation_id, type (direct or group), member_ids, created_at",
+                "conversation_id",
+                "membership is cached on the gateways for the send check"
+              ],
+              [
+                "Message",
+                "conversation_id, bucket, message_id (time-ordered 64-bit), sender_id, body, media_ref, sent_at",
+                "partition key (conversation_id, bucket); clustering key message_id",
+                "a bucket is a window of about 10 days (the partition layout below)"
+              ],
+              [
+                "Receipt",
+                "conversation_id, user_id, last_delivered_id, last_read_id",
+                "(conversation_id, user_id)",
+                "one row per member, not one per message, so receipts cost nothing per message"
+              ],
+              [
+                "Session",
+                "user_id, device_id, gateway_id, connected_at",
+                "user_id",
+                "the registry the conversation server reads to group deliveries by gateway; entries expire by TTL"
+              ],
+              [
+                "Presence",
+                "user_id, status, last_seen, ttl",
+                "user_id",
+                "best effort; refreshed by heartbeats, never read on the message path"
+              ]
+            ]
           },
           {
-            "heading": "Partition layout",
-            "body": "The message partition key is (conversation_id, bucket) with a time-ordered message id as the clustering key, where a bucket is a window of about 10 days: Discord's public write-up chose that window so that even the busiest conversations keep a partition under about 100 MB, and a page of recent history is a range scan inside one partition. Without the bucket, a years-old conversation becomes one unbounded hot partition."
+            "type": "steps",
+            "title": "The partition layout: why the bucket exists",
+            "items": [
+              "The partition key is (conversation_id, bucket) with a time-ordered message id as the clustering key, so a page of recent history is a range scan inside one partition.",
+              "Discord's public write-up chose a bucket of about 10 days so that even the busiest conversations keep a partition under about 100 MB.",
+              "Without the bucket, a years-old conversation becomes one unbounded hot partition, which is the failure Discord's write-up describes."
+            ],
+            "cites": [
+              "s4"
+            ]
           },
           {
-            "heading": "API",
-            "body": "Over WebSocket: send {client_msg_id, conversation_id, body} answered by ack {client_msg_id, message_id}; server frames message, receipt, presence. Over HTTP: GET /conversations/{id}/messages?before={message_id}&limit=50 for history; POST /conversations; PUT /conversations/{id}/read {last_read_id}."
+            "type": "table",
+            "caption": "The API: frames over the WebSocket and endpoints over HTTP.",
+            "columns": [
+              "method",
+              "path",
+              "request",
+              "response",
+              "notes"
+            ],
+            "rows": [
+              [
+                "WS",
+                "send frame",
+                "{client_msg_id, conversation_id, body}",
+                "ack {client_msg_id, message_id}",
+                "the ack comes only after the message is durable; a retried send with the same client_msg_id is idempotent"
+              ],
+              [
+                "WS",
+                "server frames",
+                "",
+                "message, receipt, presence",
+                "pushed by the gateway to every session of a member"
+              ],
+              [
+                "GET",
+                "/conversations/{id}/messages?before={message_id}&limit=50",
+                "",
+                "{messages[]}",
+                "a range scan inside the current bucket, then the previous bucket"
+              ],
+              [
+                "POST",
+                "/conversations",
+                "{type, member_ids}",
+                "{conversation_id}",
+                ""
+              ],
+              [
+                "PUT",
+                "/conversations/{id}/read",
+                "{last_read_id}",
+                "204",
+                "moves the member's cursor; read receipts are per user, not per device"
+              ]
+            ]
           }
         ]
       },
       {
         "id": "core-flow",
         "title": "The core flow, step by step",
-        "body": [
+        "blocks": [
           {
-            "body": "Sending one message to a group, from the sender's frame to the members' screens."
+            "type": "p",
+            "text": "Sending one message to a group, from the sender's frame to the members' screens."
+          },
+          {
+            "type": "steps",
+            "title": "Send, order, persist, fan out, deliver, resync",
+            "items": [
+              "The sender's gateway receives the send frame, checks membership (cached), and forwards it to the conversation server that owns the conversation (consistent hash lookup).",
+              "The conversation server assigns the next time-ordered message id (it is the single writer for this conversation, so ids are monotonic within it), writes the message to the store with quorum durability, and only then acknowledges to the sender's gateway. The client's client_msg_id makes a retried send idempotent.",
+              "The conversation server looks up the members' sessions in the session registry, groups them by gateway, and sends one batched delivery per gateway (Discord's Elixir write-up describes grouping recipients by node so a publish costs one send per node, not one per recipient).",
+              "Each gateway writes the message frame to its local sessions; a client acknowledges delivery, and the gateway updates last_delivered_id for that user asynchronously.",
+              "Members without a session are handed to the push notification consumer through the message event log; the message is already durable, so a slow push never blocks delivery.",
+              "A reconnecting client sends its last seen message id per conversation; the gateway serves the gap from the store (a range scan in the current bucket) before resuming live delivery, which is how at-least-once delivery survives a dropped connection."
+            ],
+            "cites": [
+              "s5"
+            ]
           }
-        ],
-        "steps": [
-          "The sender's gateway receives the send frame, checks membership (cached), and forwards it to the conversation server that owns the conversation (consistent hash lookup).",
-          "The conversation server assigns the next time-ordered message id (it is the single writer for this conversation, so ids are monotonic within it), writes the message to the store with quorum durability, and only then acknowledges to the sender's gateway. The client's client_msg_id makes a retried send idempotent.",
-          "The conversation server looks up the members' sessions in the session registry, groups them by gateway, and sends one batched delivery per gateway (Discord's Elixir write-up describes grouping recipients by node so a publish costs one send per node, not one per recipient).",
-          "Each gateway writes the message frame to its local sessions; a client acknowledges delivery, and the gateway updates last_delivered_id for that user asynchronously.",
-          "Members without a session are handed to the push notification consumer through the message event log; the message is already durable, so a slow push never blocks delivery.",
-          "A reconnecting client sends its last seen message id per conversation; the gateway serves the gap from the store (a range scan in the current bucket) before resuming live delivery, which is how at-least-once delivery survives a dropped connection."
         ]
       },
       {
         "id": "scaling-and-the-bottleneck",
         "title": "Scaling and the bottleneck",
-        "body": [
+        "blocks": [
           {
-            "heading": "Group fan-out and the hot partition",
-            "body": "The bottleneck is fan-out in large groups and the hot partition behind a busy conversation. For a 1,000-member group one message is up to 1,000 deliveries; batching by gateway turns that into at most 150 sends. The store sees one write per message regardless of members, but the reads of a popular conversation all land on one partition; Discord's trillions-of-messages write-up reports that hot partitions were their main source of latency, and that a data service layer with request coalescing (one database read for many identical concurrent requests, routed by conversation id with consistent hashing) was the fix, alongside the database move that took their historical-message p99 from 40 to 125 ms down to 15 ms. The answer adopts coalescing in the conversation server: it already owns the conversation, so it serves recent history from an in-memory tail of the last few hundred messages and hits the store only on a miss."
+            "type": "p",
+            "text": "The bottleneck is fan-out in large groups and the hot partition behind a busy conversation. The store sees one write per message regardless of members, but the reads of a popular conversation all land on one partition."
           },
           {
-            "heading": "Presence at scale",
-            "body": "Presence is the other volume problem: a user with 500 contacts coming online would notify 500 sessions, and heartbeats arrive at 170,000 per second. The design keeps presence best effort: status lives in a TTL store written by the gateway on connect, disconnect and every heartbeat; changes are fanned out only to contacts who are currently viewing that user (subscriptions held by the gateway), and status transitions are debounced so a flapping connection does not storm. A clean disconnect marks the user offline at once; 60 s without a heartbeat (two missed intervals) marks the user offline too, because the connection is presumed dead; away is a client-reported idle state and never a heartbeat verdict. Nothing on the message path waits for presence."
+            "type": "steps",
+            "title": "Fan-out in a 1,000-member group",
+            "items": [
+              "One message is up to 1,000 deliveries.",
+              "The members' sessions sit on at most 150 gateways, so batching by gateway turns the 1,000 deliveries into at most 150 sends.",
+              "Each gateway then writes the frame to its own sessions locally, which costs no network round trip."
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Discord's trillions-of-messages write-up reports that hot partitions were their main source of latency, and that a data service layer with request coalescing (one database read for many identical concurrent requests, routed by conversation id with consistent hashing) was the fix, alongside the database move that took their historical-message p99 from 40 to 125 ms down to 15 ms. The answer adopts coalescing in the conversation server: it already owns the conversation, so it serves recent history from an in-memory tail of the last few hundred messages and hits the store only on a miss.",
+            "cites": [
+              "s3"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Presence is the other volume problem: a user with 500 contacts coming online would notify 500 sessions, and heartbeats arrive at 170,000 per second. The design keeps presence best effort: status lives in a TTL store written by the gateway on connect, disconnect and every heartbeat; changes are fanned out only to contacts who are currently viewing that user (subscriptions held by the gateway), and status transitions are debounced so a flapping connection does not storm."
+          },
+          {
+            "type": "table",
+            "caption": "Presence transitions.",
+            "columns": [
+              "event",
+              "verdict",
+              "why"
+            ],
+            "rows": [
+              [
+                "Clean disconnect",
+                "offline at once",
+                "the gateway knows the connection closed"
+              ],
+              [
+                "60 s without a heartbeat (two missed intervals)",
+                "offline",
+                "the connection is presumed dead"
+              ],
+              [
+                "Client reports idle",
+                "away",
+                "a client-reported state, never a heartbeat verdict"
+              ],
+              [
+                "Anything on the message path",
+                "never waits for presence",
+                "presence is not worth a message's cost"
+              ]
+            ]
           }
         ]
       },
       {
         "id": "failure-modes",
         "title": "Failure modes and what degrades",
-        "body": [
+        "blocks": [
           {
-            "body": "Each row names the failure, what members see, and the mitigation."
-          }
-        ],
-        "table": {
-          "columns": [
-            "Failure",
-            "Effect",
-            "Mitigation"
-          ],
-          "rows": [
-            [
-              "Gateway node dies",
-              "its 50,000 sessions drop",
-              "clients reconnect with backoff and jitter to another gateway and resync from their last message id; session registry entries expire by TTL"
+            "type": "p",
+            "text": "Each row names the failure, what members see, and the mitigation."
+          },
+          {
+            "type": "table",
+            "caption": "Failure modes.",
+            "columns": [
+              "Failure",
+              "Effect",
+              "Mitigation"
             ],
-            [
-              "Conversation server dies",
-              "its conversations pause for seconds",
-              "the hash ring reassigns them; a new owner rebuilds its tail from the store; in-flight sends are retried by clients with the same client_msg_id"
-            ],
-            [
-              "Message store partition slow (hot conversation)",
-              "history pages slow for that conversation",
-              "in-memory tail and request coalescing on the owner; bucketed partitions keep scans bounded"
-            ],
-            [
-              "Store write fails after the id is assigned",
-              "the sender gets no ack",
-              "the client retries; the owner deduplicates by client_msg_id; ids may have gaps, which the client ignores"
-            ],
-            [
-              "Push provider slow",
-              "offline members notified late",
-              "push is consumed from the event log off the delivery path; backlog is visible as consumer lag"
-            ],
-            [
-              "Presence store down",
-              "everyone looks offline",
-              "presence is best effort; UI shows unknown; messages flow unchanged"
+            "rows": [
+              [
+                "Gateway node dies",
+                "its 50,000 sessions drop",
+                "clients reconnect with backoff and jitter to another gateway and resync from their last message id; session registry entries expire by TTL"
+              ],
+              [
+                "Conversation server dies",
+                "its conversations pause for seconds",
+                "the hash ring reassigns them; a new owner rebuilds its tail from the store; in-flight sends are retried by clients with the same client_msg_id"
+              ],
+              [
+                "Message store partition slow (hot conversation)",
+                "history pages slow for that conversation",
+                "in-memory tail and request coalescing on the owner; bucketed partitions keep scans bounded"
+              ],
+              [
+                "Store write fails after the id is assigned",
+                "the sender gets no ack",
+                "the client retries; the owner deduplicates by client_msg_id; ids may have gaps, which the client ignores"
+              ],
+              [
+                "Push provider slow",
+                "offline members notified late",
+                "push is consumed from the event log off the delivery path; backlog is visible as consumer lag"
+              ],
+              [
+                "Presence store down",
+                "everyone looks offline",
+                "presence is best effort; UI shows unknown; messages flow unchanged"
+              ]
             ]
-          ]
-        }
+          }
+        ]
       },
       {
         "id": "trade-offs",
         "title": "Trade-offs and the alternative not taken",
-        "body": [
+        "blocks": [
           {
-            "body": "The decisions a reviewer reads first."
-          }
-        ],
-        "table": {
-          "columns": [
-            "Decision",
-            "Options",
-            "Chosen",
-            "Why"
-          ],
-          "rows": [
-            [
-              "Where order is decided",
-              "the store's clock, a per-conversation owner, a consensus log per conversation",
-              "a single owner per conversation by consistent hashing",
-              "monotonic ids with one write, no cross-node coordination per message; failover costs seconds, which the target allows"
+            "type": "p",
+            "text": "The decisions a reviewer reads first."
+          },
+          {
+            "type": "table",
+            "caption": "Trade-offs.",
+            "columns": [
+              "Decision",
+              "Options",
+              "Chosen",
+              "Why"
             ],
-            [
-              "Connection handling",
-              "long polling, server-sent events, WebSocket",
-              "WebSocket",
-              "bidirectional, one connection per device, ping and pong for liveness"
+            "rows": [
+              [
+                "Where order is decided",
+                "the store's clock, a per-conversation owner, a consensus log per conversation",
+                "a single owner per conversation by consistent hashing",
+                "monotonic ids with one write, no cross-node coordination per message; failover costs seconds, which the target allows"
+              ],
+              [
+                "Connection handling",
+                "long polling, server-sent events, WebSocket",
+                "WebSocket",
+                "bidirectional, one connection per device, ping and pong for liveness"
+              ],
+              [
+                "History partitioning",
+                "by conversation only versus by conversation and time bucket",
+                "conversation plus 10-day bucket",
+                "bounded partitions for years-old busy conversations"
+              ],
+              [
+                "Receipts",
+                "one row per message per member versus one cursor per member",
+                "cursor per member",
+                "1,000-member groups would otherwise write 1,000 rows per message"
+              ],
+              [
+                "Presence delivery",
+                "broadcast every change to all contacts versus subscriptions",
+                "subscriptions with debounce",
+                "bounded fan-out; presence is not worth a message's cost"
+              ]
             ],
-            [
-              "History partitioning",
-              "by conversation only versus by conversation and time bucket",
-              "conversation plus 10-day bucket",
-              "bounded partitions for years-old busy conversations"
-            ],
-            [
-              "Receipts",
-              "one row per message per member versus one cursor per member",
-              "cursor per member",
-              "1,000-member groups would otherwise write 1,000 rows per message"
-            ],
-            [
-              "Presence delivery",
-              "broadcast every change to all contacts versus subscriptions",
-              "subscriptions with debounce",
-              "bounded fan-out; presence is not worth a message's cost"
+            "cites": [
+              "s1",
+              "s2",
+              "s4"
             ]
-          ]
-        }
+          }
+        ]
       },
       {
         "id": "at-10x",
         "title": "What changes at 10x",
-        "body": [
+        "blocks": [
           {
-            "body": "At 50 million concurrent connections and 10 billion messages per day, the single region becomes several, with a conversation's home region owning its order and remote members served through their local gateways (the geo distribution lesson); cross-region delivery adds one inter-region round trip of the order of 100 ms, which the 500 ms target still absorbs. Storage grows by 1.8 PB per year: old buckets move to cheaper storage tiers and the message store is split into cells by conversation id so a cell outage affects a bounded share of conversations. End-to-end encryption, if adopted, moves search to the client and leaves the server with opaque bodies, which is the point at which the search indexer in the diagram disappears. Backpressure to slow clients becomes explicit: a gateway drops a session whose outbound buffer exceeds a bound rather than letting one slow phone hold memory for everyone."
+            "type": "table",
+            "caption": "The numbers at 10x.",
+            "columns": [
+              "quantity",
+              "at 5 million connections",
+              "at 50 million connections",
+              "note"
+            ],
+            "rows": [
+              [
+                "Messages per day",
+                "1 billion",
+                "10 billion",
+                "35,000 and 350,000 per second at peak"
+              ],
+              [
+                "Regions",
+                "one",
+                "several: a conversation's home region owns its order, remote members are served through their local gateways",
+                "cross-region delivery adds one inter-region round trip of the order of 100 ms, which the 500 ms target still absorbs"
+              ],
+              [
+                "Storage growth",
+                "180 TB per year",
+                "1.8 PB per year",
+                "old buckets move to cheaper storage tiers"
+              ],
+              [
+                "Store layout",
+                "one partitioned store",
+                "cells by conversation id",
+                "a cell outage affects a bounded share of conversations"
+              ],
+              [
+                "Search",
+                "a server-side indexer",
+                "gone if end-to-end encryption is adopted",
+                "the server holds opaque bodies and search moves to the client"
+              ],
+              [
+                "Backpressure",
+                "implicit",
+                "explicit: a gateway drops a session whose outbound buffer exceeds a bound",
+                "one slow phone must not hold memory for everyone"
+              ]
+            ]
+          },
+          {
+            "type": "table",
+            "caption": "Cost at 10x, at assumed unit prices (the version 2 answer carried no cost figure; these unit prices are assumptions chosen to make the arithmetic concrete).",
+            "columns": [
+              "cost line",
+              "at 50 million daily active users",
+              "at 500 million daily active users",
+              "note"
+            ],
+            "rows": [
+              [
+                "Gateway fleet",
+                "$10,500 per month",
+                "$105,000 per month",
+                "150 and 1,500 nodes at $70 per node-month"
+              ],
+              [
+                "Message store after a year",
+                "$3,600 per month",
+                "$36,000 per month",
+                "180 TB and 1.8 PB at $20 per TB-month"
+              ],
+              [
+                "Total",
+                "about $14,100 per month",
+                "about $141,000 per month",
+                "about $0.0003 per daily active user per month at both scales; the per-user number is what the team is held to"
+              ]
+            ]
+          },
+          {
+            "type": "table",
+            "caption": "The same lines at AWS list prices for US East (N. Virginia) as of 2026-10-15, with the lines the neutral estimate left out (prices change; each line is cited to its pricing page or price list). The neutral table above keeps its assumed unit prices.",
+            "columns": [
+              "cost line",
+              "sizing assumption",
+              "unit price",
+              "at 5M connections",
+              "at 50M connections"
+            ],
+            "rows": [
+              [
+                "Gateways: ECS on Fargate, Arm",
+                "2 vCPU and 8 GB per task; 50,000 connections per task; a third of the fleet spare for a zone loss",
+                "$0.03238 per vCPU-hour, $0.00356 per GB-hour",
+                "about $10,200 (150 tasks)",
+                "about $102,000 (1,500 tasks)"
+              ],
+              [
+                "Conversation servers: ECS on Fargate, Arm",
+                "2 vCPU and 8 GB per task; 700 messages a second per task at peak",
+                "$0.03238 per vCPU-hour, $0.00356 per GB-hour",
+                "about $3,400 (50 tasks)",
+                "about $34,000 (500 tasks)"
+              ],
+              [
+                "Message store: DynamoDB Standard-IA",
+                "one write unit per message; a tenth of reads reach the store; a year of history kept in the table",
+                "$0.78 per million writes, $0.155 per million reads, $0.10 per GB-month",
+                "about $42,700",
+                "about $427,000, before old buckets are exported to S3"
+              ],
+              [
+                "Message events: Kinesis Data Streams provisioned",
+                "1,000 records a second per shard, sized for the peak; two consumers",
+                "$0.015 per shard-hour, $0.014 per million payload units",
+                "about $805 (35 shards)",
+                "about $8,050 (350 shards)"
+              ],
+              [
+                "Presence and sessions: ElastiCache for Valkey",
+                "two shards with a replica each on cache.r7g.large; 85,000 heartbeat writes a second per shard",
+                "$0.1752 per node-hour",
+                "about $510 (4 nodes)",
+                "about $5,100 (40 nodes)"
+              ],
+              [
+                "Push: SNS mobile push",
+                "4.5 billion notifications a month after collapsing pushes per conversation (assumption)",
+                "$0.50 per million notifications",
+                "about $2,250",
+                "about $22,500"
+              ],
+              [
+                "Network Load Balancer",
+                "5 million active connections; a capacity unit covers 100,000 of them",
+                "$0.0225 per hour, $0.006 per capacity-unit-hour",
+                "about $235",
+                "about $2,200"
+              ],
+              [
+                "Total on AWS",
+                "the seven lines above; search, media, data transfer and the stream consumers not priced",
+                "",
+                "about $60,100 / month, about $0.0012 per daily active user",
+                "about $601,000 / month, about $0.0012 per daily active user"
+              ]
+            ],
+            "cites": [
+              "s31",
+              "s32",
+              "s26",
+              "s38",
+              "s39",
+              "s45",
+              "s46",
+              "s44",
+              "s47",
+              "s48"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "The AWS table says what the neutral one could not: the message store is more than two thirds of the bill at both scales, so the storage class and the age at which a bucket leaves the hot store are the levers, and the gateway fleet is the next line, which is why backpressure and connection density per task are tuned before anything else."
           }
         ]
       }
@@ -315,54 +1665,29 @@
         "Explicit backpressure to slow clients, and the cell layout that bounds a store outage."
       ]
     },
-    "interview_frame": [
-      {
-        "time": "0:00 to 0:05",
-        "text": "Requirements: ordering, delivery guarantee, group size, multi-device, presence freshness, regions. Say the numbers aloud: 35,000 messages per second at peak, 175,000 deliveries per second, 5 million connections on about 100 gateways, 500 GB of history per day."
-      },
-      {
-        "time": "0:05 to 0:10",
-        "text": "Entities and API: Conversation, Message with the (conversation, bucket) partition key, Receipt as a cursor, Session, Presence; the send and ack frames; the history endpoint."
-      },
-      {
-        "time": "0:10 to 0:20",
-        "text": "High-level design with the diagram: gateways hold connections, conversation servers hold order by consistent hashing, the store is partitioned by conversation and time bucket, push and search consume an event log."
-      },
-      {
-        "time": "0:20 to 0:40",
-        "text": "Two deep dives: the send path (durable write before ack, single-owner ordering, batched fan-out per gateway, resync on reconnect), then hot conversations and presence (bucketed partitions, in-memory tail with coalescing, best-effort presence with subscriptions)."
-      },
-      {
-        "time": "0:40 to 0:45",
-        "text": "Failure modes from the table, the 10x plan (regions, cells, storage tiers, backpressure), and the L3 sentence: the hard part is not sending a message, it is deciding who owns the order and what happens to that owner when it dies."
-      }
-    ],
-    "design_doc_frame": [
-      {
-        "section": "Context and scope",
-        "text": "The current client platforms, the existing push and identity services, the ordering and loss incidents that motivate the design."
-      },
-      {
-        "section": "Goals and non-goals",
-        "text": "Total order per conversation, no loss after ack, 500 ms delivery p99, 100 ms history p99; encryption, media, voice and abuse detection out of scope."
-      },
-      {
-        "section": "Design",
-        "text": "This answer fills it: the gateway and conversation server split, the partition layout, the send path, presence."
-      },
-      {
-        "section": "Alternatives considered",
-        "text": "Order by store clock or by a consensus log per conversation, long polling instead of WebSocket, receipts per message, with the trade-off table."
-      },
-      {
-        "section": "Cross-cutting concerns",
-        "text": "Observability (delivery latency per hop, fan-out batch size, hot-partition read latency, reconnect rate), privacy of message bodies and retention, cost per connection and per stored message, rollout by conversation cohort."
-      },
-      {
-        "section": "Review questions the doc must answer",
-        "text": "What a member sees in the seconds after a conversation server dies, and how a client proves it has not missed a message after a reconnect."
-      }
-    ],
+    "interview_frame": {
+      "type": "steps",
+      "title": "A 45-minute interview",
+      "items": [
+        "0:00 to 0:05: Requirements: ordering, delivery guarantee, group size, multi-device, presence freshness, regions. Say the numbers aloud: 35,000 messages per second at peak, 175,000 deliveries per second, 5 million connections on about 100 gateways, 500 GB of history per day.",
+        "0:05 to 0:10: Entities and API: Conversation, Message with the (conversation, bucket) partition key, Receipt as a cursor, Session, Presence; the send and ack frames; the history endpoint.",
+        "0:10 to 0:20: High-level design with the diagram: gateways hold connections, conversation servers hold order by consistent hashing, the store is partitioned by conversation and time bucket, push and search consume an event log.",
+        "0:20 to 0:40: Two deep dives: the send path (durable write before ack, single-owner ordering, batched fan-out per gateway, resync on reconnect), then hot conversations and presence (bucketed partitions, in-memory tail with coalescing, best-effort presence with subscriptions).",
+        "0:40 to 0:45: Failure modes from the table, the 10x plan (regions, cells, storage tiers, backpressure), and the L3 sentence: the hard part is not sending a message, it is deciding who owns the order and what happens to that owner when it dies."
+      ]
+    },
+    "design_doc_frame": {
+      "type": "list",
+      "items": [
+        "Context and scope: The current client platforms, the existing push and identity services, the ordering and loss incidents that motivate the design.",
+        "Goals and non-goals: Total order per conversation, no loss after ack, 500 ms delivery p99, 100 ms history p99; encryption, media, voice and abuse detection out of scope.",
+        "Design: This answer fills it: the gateway and conversation server split, the partition layout, the send path, presence.",
+        "Alternatives considered: Order by store clock or by a consensus log per conversation, long polling instead of WebSocket, receipts per message, with the trade-off table.",
+        "Cross-cutting concerns: Observability (delivery latency per hop, fan-out batch size, hot-partition read latency, reconnect rate), privacy of message bodies and retention, cost per connection and per stored message, rollout by conversation cohort.",
+        "Review questions the doc must answer: What a member sees in the seconds after a conversation server dies, and how a client proves it has not missed a message after a reconnect."
+      ],
+      "ordered": true
+    },
     "depth_notes": {
       "L1": "Connection gateways, a message store partitioned by conversation, delivery receipts.",
       "L2": "Group fan-out, presence at scale, ordering per conversation, history pagination with hot partitions handled.",
@@ -370,10 +1695,10 @@
     }
   },
   "provenance": {
-    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center M4a",
+    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center M4a; format v2 restructure and AWS section by hand, Claude (Fable 5.1), Scout learning center F2-E1",
     "generated_on": "2026-10-12",
-    "reviewed_by": "a second reader (Claude Fable 5.1), Scout learning center M4b",
-    "reviewed_on": "2026-10-12"
+    "reviewed_by": null,
+    "reviewed_on": null
   },
   "changelog": [
     {
@@ -385,6 +1710,11 @@
       "version": 2,
       "date": "2026-10-12",
       "change": "writer follow-up on the second reader's items (M4c)"
+    },
+    {
+      "version": 3,
+      "date": "2026-10-15",
+      "change": "format v2 restructure (batch E1): rates, sizes, entities, API, presence transitions, failure modes, trade-offs and the 10x numbers as tables, the partition layout, the group fan-out and the core flow as steps; a Building it on AWS section after the high-level design (one service per box, the message store, message events and compute forks priced at this design's numbers as of 2026-10-15 with a verdict each, the six-pillar Well-Architected table with the Serverless Lens row, a separate AWS cost table at 10x); sources with ids and cites on every claim about a real system; one addition of substance: a neutral cost table at 10x with stated unit-price assumptions, where version 2 carried no cost figure; reviewed_by cleared for a second read"
     }
   ]
 }
