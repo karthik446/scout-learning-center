@@ -1,0 +1,346 @@
+{
+  "schema_version": "learning-center-practice:1",
+  "id": "practice/idi-m2m-api-auth",
+  "version": 1,
+  "lesson": "idi-m2m-api-auth",
+  "tool": "Keycloak and Python (requests, hmac)",
+  "tool_key": null,
+  "why_this_tool": "Keycloak gives a local authorization server for the client-credentials, introspection and revocation steps, and the standard library's hmac and http.server are enough to write a correct webhook receiver and attack it with a tampered and a stale delivery; nothing in the path needs a framework, so every byte that is signed and compared is visible.",
+  "alternatives": "node-oidc-provider for the OAuth steps without Docker; Mockoon or WireMock as a scriptable webhook receiver or a mock partner API with auth failures; the step CLI for a local CA, client certificates and 'step oauth' for client credentials from the shell; navikt/mock-oauth2-server as a second issuer for service-to-service tests.",
+  "setup": [
+    {
+      "do": "Have Keycloak 26.4 running on 127.0.0.1:18080 with the realm from the OAuth practice path and its confidential client m2m-batch (service accounts enabled, a generated secret you keep in an environment variable).",
+      "done_when": "A client-credentials token request for m2m-batch answers 200.",
+      "source": {
+        "title": "Keycloak: Getting started with Docker",
+        "url": "https://www.keycloak.org/getting-started/getting-started-docker",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Secure the first application"
+        }
+      },
+      "why": "The machine grant, introspection and revocation steps run against this client.",
+      "n": 1
+    },
+    {
+      "do": "Create a scratch Python virtual environment with requests and PyJWT (crypto extra); the webhook receiver needs only the standard library.",
+      "done_when": "python -c 'import requests, jwt, hmac, hashlib' exits 0.",
+      "source": {
+        "title": "GitHub Docs: Validating webhook deliveries",
+        "url": "https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Validating webhook deliveries"
+        }
+      },
+      "why": "Everything in this path is a few lines of Python; no framework is needed to see the mechanics.",
+      "n": 2
+    }
+  ],
+  "steps": [
+    {
+      "do": "Request a client-credentials token for m2m-batch with the client id and secret as HTTP Basic authentication; then repeat with a wrong secret.",
+      "done_when": "The first answers 200 with a Bearer token, expires_in and no refresh token; the second answers 401 with unauthorized_client or invalid_client.",
+      "source": {
+        "title": "RFC 6749 section 4.4: Client Credentials Grant",
+        "url": "https://datatracker.ietf.org/doc/html/rfc6749#section-4.4",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Client Credentials Grant"
+        }
+      },
+      "why": "The machine grant and its one negative case; both ran this way in the spike.",
+      "n": 1
+    },
+    {
+      "do": "Introspect the token at the introspection endpoint, revoke it at the revocation endpoint, and introspect it again.",
+      "done_when": "active true with client_id m2m-batch, then active false after revocation.",
+      "source": {
+        "title": "RFC 7009: OAuth 2.0 Token Revocation",
+        "url": "https://datatracker.ietf.org/doc/html/rfc7009",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Revocation Request"
+        }
+      },
+      "why": "Revocation is the only way to end a JWT access token before exp, and only resource servers that introspect notice; seeing the flip makes the limitation concrete.",
+      "n": 2
+    },
+    {
+      "do": "Decode the access token's payload without verifying and read azp, aud, typ, exp and preferred_username; compare with what a resource server would check.",
+      "done_when": "You can say which claim names the client, which names the audience, and why the subject is a service account rather than a person.",
+      "source": {
+        "title": "Okta Developer: Implement OAuth for Okta - Client Credentials flow",
+        "url": "https://developer.okta.com/docs/guides/implement-grant-type/clientcreds/main/",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Client Credentials"
+        }
+      },
+      "why": "A machine token's shape differs from a user's; reading one once prevents the audience mistake in the resource server.",
+      "n": 3
+    },
+    {
+      "do": "Write a webhook receiver on 127.0.0.1 (about 40 lines, standard library) that reads the raw body, rejects a missing or out-of-tolerance X-Webhook-Timestamp (five minutes), computes HMAC-SHA256 over timestamp.body with a secret from the environment, compares it in constant time with X-Webhook-Signature, and answers 200 or 400 with the reason.",
+      "done_when": "The receiver starts and answers 400 'stale or missing timestamp' to a bare POST.",
+      "source": {
+        "title": "GitHub Docs: Validating webhook deliveries",
+        "url": "https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Validating webhook deliveries"
+        }
+      },
+      "why": "This is the receiver every integration that accepts events needs; the GitHub page shows the same check in several languages.",
+      "n": 4
+    },
+    {
+      "do": "Send four deliveries from a small sender: a valid one, one whose body was changed after signing, one whose timestamp is six minutes old, and one signed with a different secret.",
+      "done_when": "200 ok, then 400 signature mismatch, 400 stale or missing timestamp, 400 signature mismatch; this path produced exactly those four answers.",
+      "source": {
+        "title": "Stripe: Receive Stripe events in your webhook endpoint",
+        "url": "https://docs.stripe.com/webhooks",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "signature"
+        }
+      },
+      "why": "The three negative cases are the test suite of a webhook receiver; Stripe's page explains the tolerance you just enforced.",
+      "n": 5
+    },
+    {
+      "do": "Read the Standard Webhooks specification and rewrite the sender's headers to its webhook-id, webhook-timestamp and webhook-signature (v1, base64 over id.timestamp.body) and the receiver to match; add a cache of recent webhook-ids so a replay inside the tolerance is also rejected.",
+      "done_when": "The valid delivery passes, the same delivery sent twice is rejected the second time, and the receiver would work with any Standard Webhooks sender library.",
+      "source": {
+        "title": "Standard Webhooks specification",
+        "url": "https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Signature"
+        }
+      },
+      "why": "Adopting the published scheme means the customer can use an existing library instead of reading your document.",
+      "n": 6
+    },
+    {
+      "do": "Switch the Keycloak client's authenticator to Signed JWT, register a public key (JWKS URL or certificate), and request a token with a client_assertion signed by the matching private key (RFC 7523) instead of the secret. (Read in the spike, not run.)",
+      "done_when": "The token endpoint answers 200 for a fresh assertion and 400 for one whose exp has passed or whose jti was already used.",
+      "source": {
+        "title": "RFC 7523: JWT Profile for OAuth 2.0 Client Authentication and Authorization Grants",
+        "url": "https://datatracker.ietf.org/doc/html/rfc7523",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Using JWTs for Client Authentication"
+        }
+      },
+      "why": "private_key_jwt is the client authentication to ask for first at any customer whose server supports it; one run shows how little the client changes.",
+      "n": 7
+    },
+    {
+      "do": "Read RFC 8705 and write down, for a customer who requires mutual TLS, the three questions (who issues the client certificates, where TLS terminates, whether the gateway forwards the certificate or the verification result) and what certificate-bound tokens add. (Read only.)",
+      "done_when": "A half-page note with the three questions and the cnf claim explained.",
+      "source": {
+        "title": "RFC 8705: OAuth 2.0 Mutual-TLS Client Authentication and Certificate-Bound Access Tokens",
+        "url": "https://datatracker.ietf.org/doc/html/rfc8705",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Mutual TLS for OAuth Client Authentication"
+        }
+      },
+      "why": "mTLS work is certificate lifecycle work; the questions decide its size before anyone writes code.",
+      "n": 8
+    },
+    {
+      "do": "Write the credential table for this integration: each secret or key, where it lives, who owns it, its rotation period, the rotation procedure with overlap, and the revocation procedure; check that none of them appears in a file you could commit.",
+      "done_when": "The table has one row per credential used in the steps above (client secret, webhook secret, private key) and git status shows no secret in the tree.",
+      "source": {
+        "title": "Stripe: API keys",
+        "url": "https://docs.stripe.com/keys",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Secret keys"
+        }
+      },
+      "why": "This is the table a customer's security review asks for; Stripe's key model is a good template for the columns.",
+      "n": 9
+    }
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Keycloak: Getting started with Docker",
+      "url": "https://www.keycloak.org/getting-started/getting-started-docker",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Secure the first application"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "GitHub Docs: Validating webhook deliveries",
+      "url": "https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Validating webhook deliveries"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 6749 section 4.4: Client Credentials Grant",
+      "url": "https://datatracker.ietf.org/doc/html/rfc6749#section-4.4",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Client Credentials Grant"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 7009: OAuth 2.0 Token Revocation",
+      "url": "https://datatracker.ietf.org/doc/html/rfc7009",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Revocation Request"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Okta Developer: Implement OAuth for Okta - Client Credentials flow",
+      "url": "https://developer.okta.com/docs/guides/implement-grant-type/clientcreds/main/",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Client Credentials"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Stripe: Receive Stripe events in your webhook endpoint",
+      "url": "https://docs.stripe.com/webhooks",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "signature"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "Standard Webhooks specification",
+      "url": "https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Signature"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 7523: JWT Profile for OAuth 2.0 Client Authentication and Authorization Grants",
+      "url": "https://datatracker.ietf.org/doc/html/rfc7523",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Using JWTs for Client Authentication"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 8705: OAuth 2.0 Mutual-TLS Client Authentication and Certificate-Bound Access Tokens",
+      "url": "https://datatracker.ietf.org/doc/html/rfc8705",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Mutual TLS for OAuth Client Authentication"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Stripe: API keys",
+      "url": "https://docs.stripe.com/keys",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Secret keys"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "standard-webhooks/standard-webhooks (Apache-2.0)",
+      "url": "https://github.com/standard-webhooks/standard-webhooks",
+      "why": "The signing specification and its reference libraries.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/standard-webhooks/standard-webhooks on 2026-10-14: last push 2026-10-10, not archived, 1,771 stars"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "smallstep/cli (Apache-2.0)",
+      "url": "https://github.com/smallstep/cli",
+      "why": "A local CA and client certificates for an mTLS rehearsal; step oauth for client credentials from the shell.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/smallstep/cli on 2026-10-14: last push 2026-10-13, not archived, 4,340 stars"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "mockoon/mockoon (MIT)",
+      "url": "https://github.com/mockoon/mockoon",
+      "why": "A local webhook receiver and mock API you can script.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/mockoon/mockoon on 2026-10-14: last push 2026-10-14, not archived, 8,443 stars"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "wiremock/wiremock (Apache-2.0)",
+      "url": "https://github.com/wiremock/wiremock",
+      "why": "Mock the partner API, including its auth failures.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/wiremock/wiremock on 2026-10-14: last push 2026-10-14, not archived, 7,401 stars"
+      }
+    }
+  ],
+  "verified": {
+    "checked": "2026-10-14",
+    "by": "identity spike, scripts/verify_sources.py (HTTP 200 and the section phrase found on the page)"
+  },
+  "provenance": {
+    "generated_by": "Claude (Fable 5.1) by hand from the identity and integration ops spike, Scout learning center",
+    "generated_on": "2026-10-14",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-14",
+      "change": "written by hand from the identity and integration ops spike; steps 1 to 3 run against Keycloak 26.4 in the spike, steps 4 and 5 run locally for this lesson (receiver answered 200, 400, 400, 400 as written), steps 6 to 9 read only"
+    }
+  ]
+}

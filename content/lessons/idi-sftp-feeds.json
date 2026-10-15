@@ -1,0 +1,331 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "idi-sftp-feeds",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "File feeds over SFTP",
+  "area": "software",
+  "primary_key": "sftp-file-feeds",
+  "secondary_keys": [
+    "apis",
+    "identity-and-access"
+  ],
+  "keys": [
+    "sftp-file-feeds",
+    "apis",
+    "identity-and-access"
+  ],
+  "summary": "The file feed predates APIs and will outlive them: a nightly CSV dropped on an SFTP server is still how payroll, claims, orders and reference data move between a great many enterprises and the products they buy. Done carelessly it is the integration that silently ingests half a file, double-counts a re-sent batch, or leaks a customer's data in a world-readable folder. This lesson is the whole pattern: key pairs and key-only accounts, a chrooted internal-sftp server, the drop-then-rename convention, manifests and control files, OpenPGP encryption with gpg, idempotent ingest keyed on content, archiving, the CSV contract (RFC 4180), and the managed endpoints customers put in front of their cloud storage. The practice is the identity spike's feed proof on atmoz/sftp: key-only login, chroot checks, two batches, a dead partial upload ignored, a duplicate skipped by content hash, and the two findings that became steps.",
+  "detail": [],
+  "in_practice": "A customer says 'we will drop a file every night at two'. The implementation engineer turns that sentence into a contract: who hosts the server (theirs, yours, or a managed endpoint in their cloud), the account and its key (ed25519, key-only, a chrooted home with inbox, outbox and archive), the file naming and the drop-then-rename rule, the manifest that travels with each batch (file names, sizes, SHA-256 of the bytes on the wire, row counts), whether files are encrypted to the product's public key, the CSV rules (header, delimiter, quoting, encoding, line endings, date and number formats), and what the consumer does on a re-sent batch, a missing manifest or a partial file. They write a consumer that ignores partial files, verifies the manifest, decrypts, counts rows, ingests once per content hash, archives with a unique name and alerts when the two o'clock file has not arrived by three. The schedule, the alert and the contract go in the runbook; the keys go in the secrets manager.",
+  "subtopics": [
+    {
+      "id": "when-a-file-feed",
+      "title": "When a file feed is the right integration",
+      "body": [
+        {
+          "heading": "The pattern and its trade-offs",
+          "body": "Enterprise Integration Patterns names File Transfer as the first integration style: each system produces files the other consumes, with no shared code and no live coupling. Its strengths are the reasons it survives: every platform can write and read a file, the format is a document anyone can inspect, large volumes move efficiently, and the two sides need only agree on a folder and a schedule. Its weaknesses are the lesson's content: timeliness (a batch is as fresh as its schedule), the absence of a transaction (half a file is a file), duplicate and ordering problems when a batch is re-sent, and the synchronisation of a format over time."
+        },
+        {
+          "heading": "Where it fits today",
+          "body": "A feed is the right answer when the source system can only export (many ERPs, payroll and claims systems, mainframe jobs), when the volume is large and the latency tolerance is hours, when the customer's security team will approve an SFTP account faster than an API integration, or when the counterparty is a bank or a partner whose integration catalogue is files. It is the wrong answer when the product needs the change within minutes (a webhook or an event stream), when records are updated one at a time, or when the consumer needs to ask questions (an API). Most products end up with both: an API for the live path and a feed for the bulk and the backfill."
+        }
+      ]
+    },
+    {
+      "id": "keys-and-accounts",
+      "title": "Keys and key-only accounts",
+      "body": [
+        {
+          "heading": "The key pair",
+          "body": "An SFTP account should authenticate with a key, not a password: ssh-keygen -t ed25519 generates the current recommended key type in one command, the private key stays with the producer (in a secrets manager or a locked-down file with a passphrase), and the public key goes to the server's authorized keys for that account. RSA keys of at least 3072 bits are the fallback for servers that do not support ed25519. One key per integration, named for it, so a compromised or rotated key affects one feed; rotation is a new pair plus an overlap during which both public keys are installed."
+        },
+        {
+          "heading": "The account",
+          "body": "One account per feed partner, with its own home directory, no shell, no password (the spike's atmoz/sftp user was created with an empty password field and a mounted public key, and a password login was refused with an authentication failure), and a known uid so file ownership is predictable. Ask the customer's server owner for the host key fingerprint out of band and pin it in the client (paramiko's host key policy, the known_hosts file for the CLI), so a changed host key is an alarm and not a silently accepted new server."
+        }
+      ]
+    },
+    {
+      "id": "server-side-lockdown",
+      "title": "The server side: chroot and internal-sftp",
+      "body": [
+        {
+          "heading": "The sshd_config lines",
+          "body": "A locked-down feed account on OpenSSH is three directives in a Match block for the user or group: ChrootDirectory (the account sees nothing above its home; the directory itself must be owned by root and not writable by the account, which is why the account can only write inside subfolders such as inbox and archive), ForceCommand internal-sftp (no shell, no scp, no port forwarding, only the SFTP subsystem), and the Subsystem sftp internal-sftp line that makes the in-process server available. The spike read these from the container's configuration: Subsystem sftp internal-sftp, ForceCommand internal-sftp, ChrootDirectory %h. Add AllowTcpForwarding no and X11Forwarding no in the same block."
+        },
+        {
+          "heading": "What the proof saw",
+          "body": "Connected with the key, the account listed its root as .ssh, inbox, outbox and archive; a write at the root was refused with permission denied (root owns the chroot directory); a look at /etc raised file not found (the chroot hides the host); a password login was refused. Those four checks are the first thing to run against any feed account a customer provisions, and the atmoz/sftp image builds exactly this layout from a one-line user specification (user, optional password, uid, and the subfolders to create)."
+        }
+      ]
+    },
+    {
+      "id": "drop-then-rename-and-partial-files",
+      "title": "Drop-then-rename and partial files",
+      "body": [
+        {
+          "heading": "The convention",
+          "body": "An SFTP upload is not atomic: a consumer that lists the inbox during an upload sees a file that exists and is incomplete. The convention that fixes it is drop-then-rename: the producer writes to a temporary name (orders-1.csv.pgp.part, or a dot-prefixed name, or a separate upload folder), and when the write has finished and been flushed, renames it to the final name. RENAME is a single operation on the server, so the consumer sees either no file or a complete file under the final name. The consumer's rule is the mirror image: never touch a .part file, however old; the spike left a dead partial upload in the inbox across two consumer runs and the consumer listed it as skipped both times."
+        },
+        {
+          "heading": "Which rename your client sends",
+          "body": "The SFTP protocol every server speaks is version 3 (the draft-ietf-secsh-filexfer-02 document), and its RENAME must fail if the target name already exists. OpenSSH adds a posix-rename@openssh.com extension that overwrites, documented in its PROTOCOL file, and some clients use it when the server advertises it. Know which one your client issues: paramiko's rename is the protocol one and raised 'Failure' in the spike when the archive already held a file of that name, which is why the archive step generates a unique name for a duplicate; paramiko's posix_rename is the overwriting one. A producer should never rely on overwriting a final name; a new batch gets a new name."
+        }
+      ]
+    },
+    {
+      "id": "manifests-and-control-files",
+      "title": "Manifests and control files",
+      "body": [
+        {
+          "heading": "What travels with the batch",
+          "body": "A manifest is a small file dropped after the data files that says what the batch contains: each file's name, its size in bytes and the SHA-256 of the bytes as uploaded, the row count, the batch id and date, and optionally the producer's version. A control file (a zero-length orders-1.done, or the manifest itself, dropped last) is the signal that the batch is complete, which handles the multi-file case that drop-then-rename alone does not. The consumer waits for the manifest, reads it, checks every listed file exists with the stated size and hash, and only then processes any of them. The spike's manifest carried, per file, the name, the sha256 of the ciphertext, the sha256 of the plaintext, the row count and the byte count."
+        },
+        {
+          "heading": "Why two hashes",
+          "body": "The hash of the bytes on the wire proves the transfer was complete and unaltered. It is not an identity for the content when files are encrypted, because OpenPGP output differs on every run (a fresh session key and random padding each time), so the same CSV encrypted twice has two different ciphertext hashes. The spike's first consumer keyed idempotency on the ciphertext hash and ingested a re-sent batch twice; the fix was a second field with the hash of the plaintext, which the consumer verifies after decryption and uses as the idempotency key. Put both in the contract."
+        }
+      ]
+    },
+    {
+      "id": "pgp-encrypt-and-decrypt",
+      "title": "OpenPGP encryption with gpg",
+      "body": [
+        {
+          "heading": "The exchange",
+          "body": "When the files hold personal or financial data, the customer will ask for encryption at rest on the server, and the long-standing answer is OpenPGP: the consumer generates a key pair and gives the producer the public key; the producer encrypts each file to it; only the consumer's private key decrypts. gpg is the tool: gpg --full-generate-key (or --quick-generate-key) makes the pair, gpg --export --armor exports the public key to hand over, gpg --import takes the partner's, gpg --encrypt --recipient consumer@example.test orders-1.csv writes orders-1.csv.gpg, and gpg --decrypt reads it back. The GNU Privacy Handbook's chapter on encrypting and decrypting documents is the reference; signing with --sign as well lets the consumer verify the producer. (The spike's proof used a pure-Python OpenPGP library because gpg was not installed on that machine; the library is no longer maintained and the lesson teaches gpg.)"
+        },
+        {
+          "heading": "Operational rules",
+          "body": "Keep the private key in the secrets manager and import it into the consumer's keyring at runtime, or run gpg with a dedicated home directory the job owns. Record the key's fingerprint and expiry; set an expiry and rotate with an overlap (the producer encrypts to both keys during it, or you accept both). Hash the plaintext after decryption for the idempotency key and verify the row count against the manifest, because a decryption that succeeds says nothing about whether the content is the batch you expected. Compressing before encrypting is what gpg does by default; do not double-compress."
+        }
+      ]
+    },
+    {
+      "id": "idempotent-ingest-and-archive",
+      "title": "Idempotent ingest and archiving",
+      "body": [
+        {
+          "heading": "Ingest once per content",
+          "body": "A producer will re-send a batch: their job retried, an operator re-ran it, the manifest was late. The consumer keeps a ledger of what it has ingested, keyed on the content hash (the plaintext hash from the manifest, verified after decryption), and a batch whose hash is in the ledger is skipped and archived with a note. The spike's second run dropped batch 1 again next to batch 2: the consumer reported batch 1 as already ingested and skipped it, ingested batch 2, and archived both. Inside the batch, make the row-level writes idempotent too (an upsert on the row's business key), so a crash halfway through a file can be retried without duplicates."
+        },
+        {
+          "heading": "Archive and retention",
+          "body": "After ingest, move the data file and the manifest out of the inbox to an archive folder with a rename (the same operation, so it is atomic), and because version-3 RENAME refuses an existing target, give a duplicate a unique archive name (the spike appended a timestamp and .dup). Keep the archive for the agreed retention, then delete; the contract says how long and whether the archive is on the server, in your object store, or both. Alert when the expected batch has not arrived by the deadline, when a manifest check fails, when a .part file is older than the longest plausible upload, and when the ledger skips a batch, because a skipped batch is sometimes a producer bug."
+        }
+      ]
+    },
+    {
+      "id": "csv-contract",
+      "title": "The CSV contract",
+      "body": [
+        {
+          "heading": "RFC 4180 and everything it does not say",
+          "body": "RFC 4180 is the only written definition of CSV: records separated by CRLF, fields separated by commas, an optional header line, fields containing commas, quotes or line breaks enclosed in double quotes with embedded quotes doubled. Quote it in the contract, then add what it leaves open: the character encoding (UTF-8, and whether a byte order mark is allowed), the line ending you will actually accept (CRLF or LF), the delimiter (comma, or the tab or semicolon the customer's export tool emits), the header's exact column names and order, which columns are required, the date and timestamp format (ISO 8601 with a time zone), the number format (no thousands separators, a period as the decimal mark), how null is written, the maximum line length, and the file name pattern."
+        },
+        {
+          "heading": "Validate at the boundary",
+          "body": "Parse with a real CSV reader (Python's csv module handles the quoting rules; a split on commas does not), validate every row against the contract before the first write, reject the whole batch on a header mismatch, and report row-level errors with the row number and the field. Keep a sample file with every edge case (an embedded comma, a quoted newline, an empty last field, a non-ASCII name) in the test suite and ask the producer to run it through their export. The spike's batches were five rows of order id, amount and currency; a real feed has forty columns and three of them will surprise you."
+        }
+      ]
+    },
+    {
+      "id": "managed-endpoints",
+      "title": "Managed endpoints: AWS Transfer Family and Azure Blob SFTP",
+      "body": [
+        {
+          "heading": "What the customer will hand you",
+          "body": "Customers on AWS put AWS Transfer Family in front of an S3 bucket: an SFTP endpoint with users (service-managed or from a directory), each mapped to a bucket prefix with an IAM role that decides what they may read and write, and the files land in S3 where the customer's pipelines pick them up. Azure's equivalent is SFTP support on Blob Storage with local users and container-level permissions. From the producer's side it is an SFTP server like any other (host, port 22, user, key); from the consumer's side the files may arrive through an S3 event or a blob trigger rather than a polling loop, and the drop-then-rename rule maps onto a final PUT of the whole object."
+        },
+        {
+          "heading": "Questions to ask",
+          "body": "Which identity does the account map to and what can it write; does the endpoint preserve the rename semantics the producer expects (an object store has no partial object, which simplifies things, but a multipart upload in progress is invisible rather than a .part file); where does the archive live; and who sees the server-side logs. A managed endpoint moves the server-side lockdown into IAM or role assignments, which is a different review but the same questions."
+        }
+      ]
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  P[\"Producer\"] -- \"1. write orders-1.csv.gpg.part\" --> I[\"inbox/ (chrooted SFTP, key-only)\"]\n  P -- \"2. rename to orders-1.csv.gpg\" --> I\n  P -- \"3. drop orders-1.manifest.json last\" --> I\n  I --> C[\"Consumer\"]\n  C -- \"ignore *.part; verify sizes and sha256 on the wire\" --> C\n  C -- \"gpg --decrypt; verify plaintext sha256 and row count\" --> C\n  C -- \"skip if plaintext hash in ledger\" --> Lg[\"ledger\"]\n  C -- \"ingest rows (upsert)\" --> DB[(\"store\")]\n  C -- \"rename to archive/ (unique name if it exists)\" --> A[\"archive/\"]"
+  },
+  "code": [
+    {
+      "lang": "sh",
+      "code": "# The server used in the practice: atmoz/sftp, key-only user 'feed' (uid 1001) with three folders, bound to 127.0.0.1\nssh-keygen -t ed25519 -f feed_ed25519 -N ''          # the producer's key pair; the public half goes to the server\ndocker run -d --name idspike-sftp -p 127.0.0.1:12222:22 \\\n  -v \"$PWD/feed_ed25519.pub:/home/feed/.ssh/keys/feed_ed25519.pub:ro\" \\\n  atmoz/sftp:alpine 'feed::1001::inbox,outbox,archive'\nsftp -P 12222 -i feed_ed25519 feed@127.0.0.1            # 'ls' shows .ssh inbox outbox archive; 'cd /etc' fails: chrooted\n\n# OpenPGP with gpg: the consumer's key pair, the producer encrypts to the public key\ngpg --quick-generate-key 'Feed Consumer <consumer@example.test>' ed25519 cert 2y   # consumer side\ngpg --export --armor consumer@example.test > consumer.pub.asc                     # hand this to the producer\ngpg --import consumer.pub.asc && gpg --encrypt --recipient consumer@example.test orders-1.csv   # producer side\ngpg --decrypt orders-1.csv.gpg > orders-1.csv                                     # consumer side\n"
+    },
+    {
+      "lang": "python",
+      "code": "# Producer: drop-then-rename, and a manifest with two hashes (bytes on the wire, and the plaintext for idempotency)\nimport hashlib, json, paramiko\nt = paramiko.Transport((\"127.0.0.1\", 12222)); t.connect(username=\"feed\", pkey=paramiko.Ed25519Key.from_private_key_file(KEY_PATH))\ns = paramiko.SFTPClient.from_transport(t)\nsha = lambda b: hashlib.sha256(b).hexdigest()\nmanifest = json.dumps({\"batch\": 1, \"files\": [{\"name\": \"orders-1.csv.gpg\", \"sha256\": sha(enc), \"plain_sha256\": sha(plain),\n                                               \"rows\": rows, \"bytes\": len(enc)}]}).encode()\nfor name, data in ((\"orders-1.csv.gpg\", enc), (\"orders-1.manifest.json\", manifest)):\n    with s.open(f\"inbox/{name}.part\", \"wb\") as f:\n        f.write(data)                                 # 1. write under a temporary name\n    s.rename(f\"inbox/{name}.part\", f\"inbox/{name}\")   # 2. atomic rename = \"complete\"; the manifest goes last\n\n# Consumer: ignore partial files, archive with a unique name because SFTP v3 RENAME refuses an existing target\nnames = [n for n in s.listdir(\"inbox\") if not n.endswith(\".part\")]\ndef archive(name):\n    target = f\"archive/{name}\"\n    if name in s.listdir(\"archive\"):\n        target += f\".{int(time.time())}.dup\"\n    s.rename(f\"inbox/{name}\", target)\n"
+    }
+  ],
+  "technologies": [
+    "SFTP",
+    "OpenSSH internal-sftp",
+    "ssh-keygen ed25519",
+    "atmoz/sftp",
+    "paramiko",
+    "AsyncSSH",
+    "gpg (OpenPGP)",
+    "CSV (RFC 4180)",
+    "AWS Transfer Family",
+    "Azure Blob Storage SFTP"
+  ],
+  "related": [
+    "idi-m2m-api-auth",
+    "idi-troubleshooting-runbook",
+    "idi-web-sessions",
+    "legacy-systems-migrations",
+    "python-for-integrations",
+    "sd-idempotency-retries"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "OpenSSH: ssh-keygen(1)",
+      "url": "https://man.openbsd.org/ssh-keygen",
+      "why": "Generating the key pair a feed partner will ask for, and the key types that are current.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "ed25519"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "OpenSSH: sftp(1)",
+      "url": "https://man.openbsd.org/sftp",
+      "why": "The client commands (put, get, rename, ls, -b batch files) used to test a feed by hand.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "INTERACTIVE COMMANDS"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "OpenSSH: sshd_config(5)",
+      "url": "https://man.openbsd.org/sshd_config",
+      "why": "ChrootDirectory, ForceCommand internal-sftp, Match blocks: the server side of a locked-down feed account.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "ChrootDirectory"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "atmoz/sftp README",
+      "url": "https://github.com/atmoz/sftp",
+      "why": "The container used in the practice round: users, key mounts, and the chroot layout it builds.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Logging in with SSH keys"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Paramiko: SFTP client API",
+      "url": "https://docs.paramiko.org/en/stable/api/sftp.html",
+      "why": "The Python client used in the practice round; open, put, rename and listdir are all you need for a feed.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "rename"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "AsyncSSH: SFTP client",
+      "url": "https://asyncssh.readthedocs.io/en/latest/",
+      "why": "A pure-Python SSH server and client; the in-process route when no container is allowed.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "SFTP"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "SSH File Transfer Protocol (draft-ietf-secsh-filexfer-02)",
+      "url": "https://datatracker.ietf.org/doc/html/draft-ietf-secsh-filexfer-02",
+      "why": "The version-3 protocol every server speaks; RENAME must fail if the target exists, which is why drop-then-rename works.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Removing and Renaming Files"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "OpenSSH PROTOCOL: posix-rename@openssh.com and other extensions",
+      "url": "https://github.com/openssh/openssh-portable/blob/master/PROTOCOL",
+      "why": "The extension that allows an overwriting rename; know which rename your client issues.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "posix-rename@openssh.com"
+      }
+    },
+    {
+      "kind": "guide",
+      "title": "The GNU Privacy Handbook",
+      "url": "https://www.gnupg.org/gph/en/manual.html",
+      "why": "Encrypting a feed file to a partner's public key and decrypting with your own, with gpg.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Encrypting and decrypting documents"
+      }
+    },
+    {
+      "kind": "guide",
+      "title": "Enterprise Integration Patterns: File Transfer",
+      "url": "https://www.enterpriseintegrationpatterns.com/patterns/messaging/FileTransferIntegration.html",
+      "why": "Why file feeds still exist, and their trade-offs against messaging and shared databases.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "File Transfer"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "AWS Transfer Family: What is AWS Transfer Family?",
+      "url": "https://docs.aws.amazon.com/transfer/latest/userguide/what-is-aws-transfer-family.html",
+      "why": "The managed SFTP endpoint customers on AWS will put in front of S3; read to recognise the setup you will be handed.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "SFTP"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 4180: Common Format and MIME Type for CSV Files",
+      "url": "https://datatracker.ietf.org/doc/html/rfc4180",
+      "why": "The only written CSV rules there are; quote them in the data contract.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Definition of the CSV Format"
+      }
+    }
+  ],
+  "practice": "practice/idi-sftp-feeds",
+  "provenance": {
+    "generated_by": "Claude (Fable 5.1) by hand from the identity and integration ops spike, Scout learning center",
+    "generated_on": "2026-10-14",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-14",
+      "change": "written by hand from the identity and integration ops spike (12 sources verified 2026-10-14; key-only login, chroot checks, drop-then-rename, manifest, idempotent ingest and archive run on atmoz/sftp with paramiko; gpg itself not run on the spike's machine, taught from the GNU Privacy Handbook instead of the stale PGPy library the proof used)"
+    }
+  ]
+}

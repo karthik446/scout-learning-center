@@ -1,0 +1,278 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "idi-tokens-jwt",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Tokens and JWT validation",
+  "area": "security",
+  "primary_key": "jwt",
+  "secondary_keys": [
+    "identity-and-access",
+    "threat-modeling"
+  ],
+  "keys": [
+    "jwt",
+    "identity-and-access",
+    "threat-modeling"
+  ],
+  "summary": "A token is the thing a client shows to prove a login or a permission already happened. Opaque tokens mean nothing until the issuer is asked about them; JSON Web Tokens carry their claims and a signature, so a resource server can validate them locally. This lesson is the three parts of a JWT, the claims that matter (iss, aud, sub, exp, nbf, iat, jti, nonce), the validation checklist every verifier has to run, how a verifier finds the signing key by kid in a JWKS and survives key rotation, where a client may keep a token, and the known attacks (alg none, key confusion, kid injection) that each check exists to stop. The practice breaks tokens on purpose until each check produces its named error.",
+  "detail": [],
+  "in_practice": "An integration engineer meets JWTs from three sides. As the relying party of a customer's identity provider, the app validates ID tokens: signature against the provider's JWKS, issuer, audience, expiry and nonce, with a library that does all of it in one call and a configuration that pins the algorithm. As the owner of an API, the service validates access tokens the same way and additionally checks the scope or roles claim before doing anything. As the person on the troubleshooting call, the engineer decodes a token from a HAR file with a one-liner, reads iss, aud, exp and kid, and compares them with the provider's discovery document to say in a minute whether the problem is a wrong audience, an expired token, or a key the cache has not refreshed. The library choice (PyJWT, jose, jsonwebtoken, jwx) matters less than reading its defaults once: which algorithms it accepts, whether it checks audience by default, and what leeway it gives the clock.",
+  "subtopics": [
+    {
+      "id": "opaque-vs-self-contained",
+      "title": "Opaque tokens and self-contained tokens",
+      "body": [
+        {
+          "heading": "Two ways to carry a fact",
+          "body": "An opaque token is a random string. The resource server that receives it learns nothing from it and has to ask the issuer, by token introspection (RFC 7662) or a session lookup, whether it is active and what it means. A self-contained token, almost always a JWT, carries its claims and a signature, so the resource server can check it with the issuer's public key and no round trip. Opaque tokens are easy to revoke (the issuer just stops answering yes) and leak nothing when logged; JWTs are fast to validate and work across services and data centres, but they are valid until they expire whatever the issuer does in the meantime, and anything in them is readable by anyone who holds them, because a signature is not encryption."
+        },
+        {
+          "heading": "What a practitioner chooses",
+          "body": "The usual split is a JWT for the access token sent to APIs (validated locally at every hop, short-lived), an opaque or JWT refresh token held only by the client and exchanged at the issuer, and an opaque session cookie for the browser. Providers differ: Keycloak and Entra issue JWT access tokens by default, Okta's org authorization server issues opaque access tokens that only Okta can introspect, and a customer's API gateway may translate between the two. Ask the provider's discovery document and read one token before writing the validator: a JWT has two dots and a base64url-decodable header; an opaque token has neither."
+        }
+      ]
+    },
+    {
+      "id": "jwt-structure-and-claims",
+      "title": "JWT structure and the claims that matter",
+      "body": [
+        {
+          "heading": "Three parts, two dots",
+          "body": "A JWT in compact serialization is header.payload.signature, each part base64url-encoded without padding. The header (a JOSE header, RFC 7515) names the algorithm (alg), the token type (typ, JWT or at+jwt for access tokens under RFC 9068) and usually the key id (kid). The payload is a JSON object of claims. The signature is computed over the first two parts exactly as encoded, so re-encoding the payload with a changed field breaks it. Decoding the header and payload needs no key and is the first move on any token: decode, read, then validate."
+        },
+        {
+          "heading": "The registered claims",
+          "body": "RFC 7519 registers seven: iss, the issuer, a URL that must equal the provider's issuer value exactly, trailing slash included; sub, the subject, a stable identifier of the user or client, never an email; aud, the audience, the client or API this token is for, one string or a list; exp, the expiry, seconds since the epoch; nbf, not before; iat, issued at; jti, a unique id that lets a server refuse a replay. OpenID Connect adds nonce (binds the ID token to one authorization request), auth_time, azp (the authorized party when aud has several entries) and the profile claims (email, name, preferred_username, groups when a mapper adds them). An access token under RFC 9068 adds client_id and scope. Everything else is provider-specific; the Entra claims reference is a good example of how long that list gets and which entries an app may rely on."
+        }
+      ]
+    },
+    {
+      "id": "validation-checklist",
+      "title": "The validation checklist",
+      "body": [
+        {
+          "heading": "Every verifier does all of this",
+          "body": "The order matters little; doing all of it matters completely. Parse the header and pin the algorithm: the verifier decides which algorithms it accepts (RS256 or ES256 for a provider's tokens) and refuses anything else, including none; the token's alg field is never allowed to choose. Find the key (next subtopic) and verify the signature over the exact encoded bytes. Check iss against the configured issuer. Check that aud contains this application's identifier; a token for another client is not yours even though the same provider signed it. Check exp and nbf against the clock with a small leeway (a minute or two at most) for skew. Check typ when the provider sets it, so an ID token is not accepted as an access token. For an ID token, check that nonce equals the one this session sent. Then, and only then, read the claims the application needs: sub to identify the user, scope or roles to authorize the call."
+        },
+        {
+          "heading": "In code",
+          "body": "Libraries do this in one call when configured; the defaults are the risk. PyJWT's decode takes algorithms, audience and issuer and a require list, and raises a distinct exception per failure (InvalidSignatureError, InvalidAudienceError, ExpiredSignatureError, ImmatureSignatureError, MissingRequiredClaimError). The identity spike's client validated an ID token that way against a local Keycloak and node-oidc-provider and then confirmed that a token with one payload byte changed fails on the signature and a token presented with the wrong audience fails on aud. A verifier that passes those two tests and refuses alg none has the three checks attackers test for first."
+        }
+      ]
+    },
+    {
+      "id": "jwks-and-key-rotation",
+      "title": "JWKS, kid lookup and key rotation",
+      "body": [
+        {
+          "heading": "Where the key comes from",
+          "body": "A provider publishes its public signing keys as a JSON Web Key Set (RFC 7517) at the jwks_uri named in its discovery document. Each key has a kid, a kty (RSA or EC), a use (sig) and the public parameters. The verifier reads the token's kid from the header, finds the matching key in the set, and verifies with it. The identity spike's run against Keycloak shows the shape: the ID token header named alg RS256 and a kid, and the JWKS held an RSA key with that kid; the Newman collection later asserted the same thing by fetching the JWKS and checking the kid was listed."
+        },
+        {
+          "heading": "Rotation without an outage",
+          "body": "Providers rotate signing keys, some on a schedule, some on demand. A rotation works because the JWKS can hold several keys at once: the provider adds the new key, starts signing with it, and keeps the old one published until every token signed with it has expired. The verifier's part is a cache with a refresh rule: cache the JWKS (minutes to hours), and when a token arrives with a kid that is not in the cache, fetch the JWKS once more before rejecting, with a rate limit so a flood of bad tokens cannot turn into a flood of fetches. A verifier that caches forever breaks on the first rotation, which is the 'SSO stopped working on a Tuesday and nobody changed anything' ticket. The matching failure on the provider side is a certificate or key that expired; the troubleshooting runbook lesson has the symptoms."
+        }
+      ]
+    },
+    {
+      "id": "token-storage-and-lifetime",
+      "title": "Token storage, lifetime and revocation",
+      "body": [
+        {
+          "heading": "Where a client may keep a token",
+          "body": "A browser app should keep tokens in memory and nowhere else: local storage and session storage are readable by any script that runs in the page, so a single XSS leaks every token in them, which is why the vendor storage guidance and the OWASP cheat sheet say the same thing. When a page reload must not log the user out, the current answer is a backend-for-frontend that holds the tokens server-side behind an HttpOnly cookie, or a refresh token in a cookie scoped to the token endpoint. A native or server application keeps secrets in the platform's keychain or a secrets manager, never in a config file in the repository. Logs are a storage place too: a bearer token in an access log is a credential in a file."
+        },
+        {
+          "heading": "Lifetimes and the limits of revocation",
+          "body": "Because a JWT validates locally, revoking it means waiting for exp. That is the argument for short access tokens (five to fifteen minutes is common; the spike's Keycloak realm used five) paired with a refresh token that the issuer can refuse, with refresh token rotation so a stolen refresh token is detected when both copies try to use it. When a customer needs immediate revocation (an employee leaves, a device is lost), the options are introspection on every call (back to opaque semantics, at the cost of a round trip), a short-lived cache of a revocation list, or back-channel logout, which the OpenID Connect lesson covers. Say which of these the integration does in the design doc; 'tokens are revoked at logout' is not true of a JWT unless one of them is in place."
+        }
+      ]
+    },
+    {
+      "id": "known-attacks",
+      "title": "The known attacks and the check that stops each",
+      "body": [
+        {
+          "heading": "The RFC 8725 list",
+          "body": "The JWT best current practice reads as a list of past incidents. alg none: a token with alg set to none and an empty signature was accepted by libraries that trusted the header; the fix is an allow-list of algorithms chosen by the verifier. Key confusion (RS256 to HS256): a verifier that accepts both an asymmetric and a symmetric algorithm can be given a token signed with HMAC using the public key as the secret, and it verifies; the fix is the same allow-list, one family per key. kid injection: a verifier that uses the kid as a file path or a database key can be made to read a key of the attacker's choosing; the fix is to look kids up only in the fetched JWKS. Embedded jwk or jku headers: a token that carries its own key or a URL to one must not be trusted to name the key that verifies it. Missing audience or issuer checks: a token for another app from the same provider passes the signature test. Unlimited leeway: a clock skew allowance of hours makes exp meaningless."
+        },
+        {
+          "heading": "Learn them by doing them",
+          "body": "The PortSwigger JWT labs let you perform each of these against a deliberately weak app: forge a token with alg none, swap a kid, inject a jwk header. The jwt_tool and step CLI repositories listed with the practice do the same from the shell against your own service. An hour of breaking tokens teaches the checklist better than a page of reading, and it is the quickest way to review a customer's hand-rolled validator: try the four forgeries and see which ones it accepts."
+        }
+      ]
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  T[\"Token: header.payload.signature\"] --> H[\"Read header: alg, kid, typ\"]\n  H --> P{\"alg in the verifier's allow-list?\"}\n  P -- no --> R[\"Reject\"]\n  P -- yes --> K[\"Find kid in the cached JWKS\"]\n  K -- unknown kid --> F[\"Refetch JWKS once, rate-limited\"] --> K\n  K --> V[\"Verify signature over the encoded bytes\"]\n  V --> C[\"iss equals issuer, aud contains me, exp and nbf with small leeway, nonce for an ID token\"]\n  C --> OK[\"Read sub, scope, roles\"]"
+  },
+  "code": [
+    {
+      "lang": "python",
+      "code": "# Validate an ID token against the provider's JWKS with PyJWT (the identity spike's check, trimmed)\nimport jwt, requests\nfrom jwt import PyJWKClient\n\ndisc = requests.get(ISSUER + \"/.well-known/openid-configuration\").json()\nhdr = jwt.get_unverified_header(id_token)              # {'alg': 'RS256', 'typ': 'JWT', 'kid': '...'}\nkey = PyJWKClient(disc[\"jwks_uri\"]).get_signing_key_from_jwt(id_token)   # kid lookup, cached\nclaims = jwt.decode(\n    id_token, key.key,\n    algorithms=[\"RS256\"],                               # the verifier pins the algorithm, never the token\n    audience=CLIENT_ID, issuer=disc[\"issuer\"],\n    options={\"require\": [\"exp\", \"iat\", \"iss\", \"aud\", \"sub\"]},\n)\nassert claims[\"nonce\"] == nonce_we_sent\n# a changed payload byte -> jwt.InvalidSignatureError; the wrong audience -> jwt.InvalidAudienceError\n"
+    },
+    {
+      "lang": "python",
+      "code": "# Decode without verifying, to read a token from a HAR file or a ticket (never trust what you read this way)\nimport base64, json\ndef part(tok, i):\n    seg = tok.split(\".\")[i]\n    return json.loads(base64.urlsafe_b64decode(seg + \"=\" * (-len(seg) % 4)))\nprint(part(token, 0))   # header: alg, kid, typ\nprint(part(token, 1))   # claims: iss, aud, sub, exp, iat, ...\n"
+    }
+  ],
+  "technologies": [
+    "JWT",
+    "JWS",
+    "JWK and JWKS",
+    "PyJWT",
+    "jose",
+    "RS256 and ES256",
+    "Token introspection",
+    "Keycloak",
+    "jwt.io debugger",
+    "jwt_tool"
+  ],
+  "related": [
+    "idi-web-sessions",
+    "idi-oauth2",
+    "idi-oidc",
+    "idi-m2m-api-auth",
+    "rest-apis-json-oauth",
+    "sd-security-basics"
+  ],
+  "sources": [
+    {
+      "kind": "guide",
+      "title": "jwt.io: Introduction to JSON Web Tokens",
+      "url": "https://jwt.io/introduction",
+      "why": "The shortest correct introduction to the three-part token and when to use one.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "What is JSON Web Token"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "PyJWT usage: validating tokens and fetching keys from a JWKS endpoint",
+      "url": "https://pyjwt.readthedocs.io/en/stable/usage.html",
+      "why": "The library used in the practice round; shows kid lookup, audience and issuer checks in a few lines.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Retrieve RSA signing keys from a JWKS endpoint"
+      }
+    },
+    {
+      "kind": "guide",
+      "title": "OWASP JSON Web Token Cheat Sheet",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_Cheat_Sheet.html",
+      "why": "The known JWT failure modes (alg none, key confusion, no revocation, token in local storage) with mitigations.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Key type confusion"
+      }
+    },
+    {
+      "kind": "guide",
+      "title": "Auth0: Token Storage",
+      "url": "https://auth0.com/docs/secure/security-guidance/data-security/token-storage",
+      "why": "Where a browser or native app should keep a token and why local storage is the wrong answer.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Browser in-memory scenarios"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Microsoft Entra: Secure applications and APIs by validating claims",
+      "url": "https://learn.microsoft.com/en-us/entra/identity-platform/claims-validation",
+      "why": "A vendor's own list of which claims to validate (iss, aud, exp, nbf, scp, roles) and which not to rely on.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Validate the audience"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 7519: JSON Web Token (JWT)",
+      "url": "https://datatracker.ietf.org/doc/html/rfc7519",
+      "why": "The normative definition of iss, sub, aud, exp, nbf, iat and jti.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Registered Claim Names"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 7515: JSON Web Signature (JWS)",
+      "url": "https://datatracker.ietf.org/doc/html/rfc7515",
+      "why": "How the signature over header and payload is built; the kid header lives here.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "JWS Compact Serialization"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 7517: JSON Web Key (JWK)",
+      "url": "https://datatracker.ietf.org/doc/html/rfc7517",
+      "why": "The JWKS document a provider publishes and how a verifier picks the key by kid.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "JWK Set Format"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 8725: JSON Web Token Best Current Practices",
+      "url": "https://datatracker.ietf.org/doc/html/rfc8725",
+      "why": "The IETF's list of what a JWT validator must do; the source for every 'alg confusion' warning.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Perform Algorithm Verification"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 9068: JSON Web Token Profile for OAuth 2.0 Access Tokens",
+      "url": "https://datatracker.ietf.org/doc/html/rfc9068",
+      "why": "What a JWT access token should carry (typ at+jwt, client_id, scope) so a resource server can validate it.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Data Structure"
+      }
+    },
+    {
+      "kind": "lab",
+      "title": "PortSwigger Web Security Academy: JWT attacks",
+      "url": "https://portswigger.net/web-security/jwt",
+      "why": "Free labs: forge a token with alg none, swap the kid, inject a jwk header; you learn validation by breaking it.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "What are JWTs"
+      }
+    }
+  ],
+  "practice": "practice/idi-tokens-jwt",
+  "provenance": {
+    "generated_by": "Claude (Fable 5.1) by hand from the identity and integration ops spike, Scout learning center",
+    "generated_on": "2026-10-14",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-14",
+      "change": "written by hand from the identity and integration ops spike (11 sources verified 2026-10-14; the OWASP cheat sheet title corrected to the generic JWT sheet; validation, tampered-token and wrong-audience steps run against Keycloak 26.4 with PyJWT)"
+    }
+  ]
+}

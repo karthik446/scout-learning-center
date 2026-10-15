@@ -1,0 +1,316 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "idi-saml",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "SAML 2.0 single sign-on",
+  "area": "security",
+  "primary_key": "sso-saml-oidc",
+  "secondary_keys": [
+    "identity-and-access",
+    "threat-modeling"
+  ],
+  "keys": [
+    "sso-saml-oidc",
+    "identity-and-access",
+    "threat-modeling"
+  ],
+  "summary": "SAML 2.0 is older than OAuth, XML all the way down, and still how most enterprise customers' identity providers talk to the products they buy. An implementation engineer has to be able to read its metadata, register a service provider in a customer's IdP, follow an SP-initiated login through the AuthnRequest and the Response, name what the service provider must validate (signatures, audience, time conditions, InResponseTo) and what breaks on a Tuesday (certificate rotation, clock skew). This lesson does that with the vocabulary first, then the two flows, the messages, NameID and attributes, the validation list from OWASP, replay and skew, rotation, and when to recommend SAML over OpenID Connect. The practice is the identity spike's SAML proof: Keycloak as the IdP, a 40-line node-saml service provider, a full login, a replayed response rejected and a tampered assertion rejected.",
+  "detail": [],
+  "in_practice": "A customer's IT team sends 'our SAML metadata' and asks for yours. The engineer reads theirs for the entity ID, the SSO URL and the signing certificate, sends back the product's entity ID, assertion consumer service URL and the NameID format and attributes it expects, and configures the service provider with the IdP's certificate. They run an SP-initiated login with the browser's SAML tracer open, decode the response, and check the Audience matches the entity ID, the NameID is the attribute agreed (usually email or a stable id), the attributes carry what the app maps (email, groups), and the signatures are where the SP expects them (assertion, response, or both). They write down the certificate's expiry date and who gets the reminder. When the customer later reports 'SSO broken for everyone since this morning', the engineer's first three checks are the IdP certificate, the clock on the SP, and whether someone changed the ACS URL.",
+  "subtopics": [
+    {
+      "id": "vocabulary-and-metadata",
+      "title": "Vocabulary and metadata",
+      "body": [
+        {
+          "heading": "The words on every SAML call",
+          "body": "The identity provider (IdP) authenticates the user and issues assertions: the customer's Okta, Entra ID, ADFS, Ping or Keycloak. The service provider (SP) is the application that consumes them: your product. Each side has an entity ID, a URI that names it (a convention is the SP's metadata URL; the spike's SP used that and Keycloak required the client id to equal it). The SP's assertion consumer service (ACS) is the URL the IdP posts the response to; the IdP's single sign-on URL is where the SP sends the AuthnRequest. A binding is how a message travels: HTTP-Redirect (deflated and base64 in a query string) for requests, HTTP-POST (base64 in a form the browser auto-submits) for responses. A profile is a use of all of it; the Web Browser SSO profile is the one that matters here."
+        },
+        {
+          "heading": "Metadata is the exchange",
+          "body": "Each side publishes an XML metadata document: entity ID, endpoints with bindings, the signing (and optionally encryption) certificates, the NameID formats it supports, and for the SP whether it wants assertions signed. Keycloak's IdP descriptor is one GET at the realm's protocol/saml/descriptor; node-saml generated the SP's from its configuration. Exchanging metadata is the integration: an IdP that imports the SP's metadata gets the ACS and entity ID right by construction, and an SP that imports the IdP's gets the certificate. When a customer cannot import metadata, the same values are typed into console fields, which the Okta and Entra lesson walks through."
+        }
+      ]
+    },
+    {
+      "id": "sp-vs-idp-initiated",
+      "title": "SP-initiated and IdP-initiated flows",
+      "body": [
+        {
+          "heading": "SP-initiated",
+          "body": "The user arrives at your app, the app redirects the browser to the IdP's SSO URL with an AuthnRequest (and an optional RelayState to remember where the user was going), the IdP authenticates and returns the browser to your ACS with a Response that answers that request by id, and the app creates a session. This is the flow the spike ran and the one to recommend: the SP knows it asked, can check InResponseTo, and controls the RelayState."
+        },
+        {
+          "heading": "IdP-initiated",
+          "body": "The user clicks the app's tile in the IdP's portal, and the IdP posts an unsolicited Response to the ACS with no AuthnRequest. Customers like it because the portal is how their users find apps. It is weaker: there is no request to bind the response to, so an attacker who captures a response can replay it anywhere the SP accepts unsolicited responses, and RelayState becomes an attacker-controllable deep link. OWASP's advice is to prefer SP-initiated, and when IdP-initiated is required, to keep the assertion lifetime short, validate everything else twice as carefully, and never use RelayState as a redirect target without validating it. node-saml's validateInResponseTo setting has an 'ifPresent' mode for exactly this trade-off."
+        }
+      ]
+    },
+    {
+      "id": "authnrequest-and-response",
+      "title": "The AuthnRequest and the Response",
+      "body": [
+        {
+          "heading": "The request",
+          "body": "An AuthnRequest is a small XML element: an ID, an IssueInstant, the Destination (the IdP's SSO URL), the AssertionConsumerServiceURL and ProtocolBinding the SP wants the answer on, the Issuer (the SP's entity ID), and optionally a NameIDPolicy (which format) and a RequestedAuthnContext (how strong a login). Over the HTTP-Redirect binding it is deflated, base64-encoded and URL-encoded into the SAMLRequest parameter; the spike's script inflated one from the redirect and read Issuer and RelayState out of it, which is what a tracer does for you. The Entra protocol page lists what Entra reads from each element and what it ignores."
+        },
+        {
+          "heading": "The response",
+          "body": "A Response carries a Status (urn:oasis:names:tc:SAML:2.0:status:Success or a failure code with a message), an InResponseTo that names the request ID, the Issuer (the IdP's entity ID), and one Assertion: its own Issuer, a Subject with the NameID and a SubjectConfirmation (bearer, with Recipient = the ACS, NotOnOrAfter and InResponseTo), Conditions (NotBefore, NotOnOrAfter and an AudienceRestriction naming the SP's entity ID), an AuthnStatement (when and how the user authenticated, with a SessionIndex for logout), and an AttributeStatement. It arrives base64-encoded in the SAMLResponse form field of an auto-submitting page; the spike's decoded response from Keycloak had Status Success, NameID alice@example.test, Audience equal to the SP's entity ID, three attributes (Role, email, groups) and six signature elements once the response, the assertion and their references were counted. The Entra claims reference prints a full sample assertion worth reading line by line."
+        }
+      ]
+    },
+    {
+      "id": "nameid-and-attributes",
+      "title": "NameID formats and attribute statements",
+      "body": [
+        {
+          "heading": "NameID",
+          "body": "The NameID is the subject identifier and its Format says what kind: emailAddress, persistent (an opaque stable id per SP, the best choice for keying users), transient (changes each login, for anonymous access), unspecified (whatever the IdP has) and a few legacy ones. The SP says which it wants in the AuthnRequest's NameIDPolicy and in its metadata; the IdP decides what it can supply, and the console fields for this are 'Name ID format' and 'Application username' in Okta, 'Name identifier format' and 'source attribute' in Entra. Keying a user on an email NameID means a renamed mailbox is a new user; persistent avoids that, and the spike's SP asked for emailAddress only because it is the easiest to read."
+        },
+        {
+          "heading": "Attributes",
+          "body": "Everything else about the user arrives as Attribute elements in the AttributeStatement, each with a Name, a NameFormat (basic, URI or unspecified) and one or more values. The agreement with the customer is a table: attribute name, source in their directory, format, required or optional. Common rows are email, first and last name, a display name, and groups (multi-valued, often filtered to the groups the app cares about). Keycloak mappers, Okta attribute statements and Entra claim customisation all produce the same statement; what differs is the naming convention of the Name, which is why the SP should read attributes by the exact Name agreed and not guess."
+        }
+      ]
+    },
+    {
+      "id": "signatures-encryption-and-what-to-validate",
+      "title": "Signatures, encryption and what the SP must validate",
+      "body": [
+        {
+          "heading": "XML signatures",
+          "body": "A SAML message is trusted because of XML Digital Signatures: the IdP signs the Assertion, the Response, or both, with its private key, and the SP verifies with the certificate from the IdP's metadata. The signature covers a referenced element by its ID with a canonicalisation, which is where the trouble lives: XML Signature Wrapping attacks move a signed assertion elsewhere in the document and put an unsigned one where the SP looks, so the SP has to verify that the element it reads is the element that was signed. Mature libraries (node-saml, python3-saml, the Java and .NET toolkits) do this; ruby-saml's 2024 CVEs were exactly this class and are the lesson's cautionary tale. Encryption (EncryptedAssertion with the SP's public key) is optional and worth turning on when the assertion carries sensitive attributes and the browser hop is a concern; it adds a certificate the SP must publish and rotate."
+        },
+        {
+          "heading": "The OWASP list",
+          "body": "What the SP validates, in the order the OWASP cheat sheet gives it: the Response and Assertion signatures against the configured certificate, using a safe XML parser (no external entities); the Issuer equals the expected IdP; the Status is Success; the Conditions' NotBefore and NotOnOrAfter against the clock with small skew; the AudienceRestriction names this SP's entity ID; the SubjectConfirmationData's Recipient is this ACS URL and its NotOnOrAfter holds; InResponseTo matches an outstanding request; the assertion ID has not been seen before (replay); and only then read the NameID and attributes. The spike's SP was configured to want both the assertion and the response signed and to validate InResponseTo always, and it rejected a response whose NameID had been edited inside the signed assertion with 'Invalid document signature'."
+        }
+      ]
+    },
+    {
+      "id": "inresponseto-replay-and-clock-skew",
+      "title": "InResponseTo, replay and clock skew",
+      "body": [
+        {
+          "heading": "Replay",
+          "body": "A SAML response is a bearer document for a few minutes. The SP's defences are the request binding (InResponseTo must name an AuthnRequest this SP issued and has not yet consumed) and a cache of assertion IDs seen within their validity window. The spike's SP, with validateInResponseTo set to always, accepted a genuine response once and rejected the identical POST a second later with 'InResponseTo is not valid'. The library forgets the request ID after any validation attempt, successful or not, which is why the tampered-assertion test in the practice needs a fresh login rather than a second edit of the same response."
+        },
+        {
+          "heading": "Clocks",
+          "body": "Conditions and SubjectConfirmation carry absolute times from the IdP's clock, so a service provider whose clock runs a few minutes fast rejects every assertion as 'not yet valid' and one that runs slow accepts stale ones. Libraries expose an accepted skew (node-saml's acceptedClockSkewMs; the spike used five seconds); a production value of a minute or two covers real drift, and a server that needs more has an NTP problem, not a SAML problem. 'Works for some users and not others' with time-shaped errors usually means several SP nodes with different clocks."
+        }
+      ]
+    },
+    {
+      "id": "certificate-rotation",
+      "title": "Certificate rotation",
+      "body": [
+        {
+          "heading": "The Tuesday outage",
+          "body": "The IdP's signing certificate expires. Entra's default is three years, Okta's are long-lived too, and the day one expires every assertion fails signature validation at every SP that still holds the old certificate, which reads as 'SSO is down for everyone and nobody changed anything'. The Entra certificate tutorial describes the rotation: create a new certificate (status inactive), give it to each application, make it active, and set notification email addresses for expiry. Okta's Sign On tab has the same under signing certificates. On the SP side the fix is to accept two certificates during the overlap, or to refresh the IdP metadata from its URL on a schedule so the new certificate arrives before it is used."
+        },
+        {
+          "heading": "What to write down",
+          "body": "For every SAML integration record the IdP certificate's expiry date, where the metadata URL is (if there is one), who at the customer gets the expiry reminder, and the steps to update the SP's trusted certificate. The practice's last step rotates Keycloak's realm key and shows the SP failing until its certificate is replaced; running that once makes the runbook entry real."
+        }
+      ]
+    },
+    {
+      "id": "saml-vs-oidc-when",
+      "title": "SAML or OpenID Connect: what to recommend",
+      "body": [
+        {
+          "heading": "Both, usually; here is the order",
+          "body": "A product sold to enterprises supports both, because the customer's IdP and policy decide. Recommend OpenID Connect when the customer's IdP supports it for the app type in question, the app is new, it is a single-page or mobile app, or an API needs tokens as well as a login: OIDC's JSON and JWTs are simpler to validate, the discovery document removes the metadata exchange, and PKCE and the token model fit modern apps. Recommend SAML when the customer's catalogue is SAML-only (many are, especially with older ADFS or on-premises IdPs), when their security team has a SAML review process and no OIDC one, or when IdP-initiated portal tiles are a requirement. Logout and group claims exist in both; attribute naming is the customer's convention in both."
+        },
+        {
+          "heading": "The conversation",
+          "body": "The question to ask is not 'SAML or OIDC' but 'which IdP, which app integration type does it offer for products like ours, and who on your side owns it'. The Okta and Entra lesson gives the console paths for both protocols; the answer comes from the customer's catalogue entry, and the engineer's job is to make either one work and to say clearly which validations the product performs."
+        }
+      ]
+    }
+  ],
+  "diagram": {
+    "source": "sequenceDiagram\n  participant B as Browser\n  participant SP as Service provider (your app)\n  participant IdP as Identity provider (customer)\n  B->>SP: GET /login\n  SP->>B: 302 IdP SSO URL ?SAMLRequest=deflate+base64(AuthnRequest)&RelayState\n  B->>IdP: GET SSO URL (HTTP-Redirect binding)\n  IdP->>B: login page, then an auto-submitting form\n  B->>SP: POST /saml/acs SAMLResponse=base64(Response), RelayState (HTTP-POST binding)\n  SP->>SP: verify signatures, Issuer, Status, Conditions, Audience, Recipient, InResponseTo, replay\n  SP->>B: Set-Cookie session; redirect to RelayState"
+  },
+  "code": [
+    {
+      "lang": "javascript",
+      "code": "// A minimal SAML service provider with @node-saml/node-saml (pure JS, no xmlsec1), trimmed from the proof\nconst { SAML } = require(\"@node-saml/node-saml\");\nconst SP = \"http://127.0.0.1:18082\";\nconst saml = new SAML({\n  callbackUrl: SP + \"/saml/acs\",                       // our ACS\n  entryPoint: \"http://127.0.0.1:18080/realms/idspike/protocol/saml\",   // the IdP's SSO URL\n  issuer: SP + \"/saml/metadata\",                       // our entityID (Keycloak: the client id must equal it)\n  idpCert: fs.readFileSync(process.env.IDP_CERT_PEM, \"utf8\"),          // from the IdP descriptor\n  audience: SP + \"/saml/metadata\",                     // the assertion's <Audience> must be us\n  wantAssertionsSigned: true, wantAuthnResponseSigned: true,\n  identifierFormat: \"urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress\",\n  acceptedClockSkewMs: 5000,\n  validateInResponseTo: \"always\",                      // a response must answer one of our requests, once\n});\napp.get(\"/saml/metadata\", (req, res) => res.type(\"application/xml\").send(saml.generateServiceProviderMetadata(null, null)));\napp.get(\"/login\", async (req, res) => res.redirect(await saml.getAuthorizeUrlAsync(\"relay-123\", undefined, {})));\napp.post(\"/saml/acs\", async (req, res) => {\n  try { const { profile } = await saml.validatePostResponseAsync(req.body);\n        res.json({ ok: true, nameID: profile.nameID, email: profile.email, groups: profile.groups }); }\n  catch (e) { res.status(400).json({ ok: false, error: String(e.message || e) }); }   // 'InResponseTo is not valid', 'Invalid document signature'\n});\n"
+    },
+    {
+      "lang": "python",
+      "code": "# Read an AuthnRequest off the HTTP-Redirect binding (what a SAML tracer does): base64, then inflate (raw deflate)\nimport base64, zlib, urllib.parse\nq = urllib.parse.parse_qs(urllib.parse.urlsplit(redirect_location).query)\nauthn_request_xml = zlib.decompress(base64.b64decode(q[\"SAMLRequest\"][0]), -15).decode()\n# A Response on the HTTP-POST binding is only base64:\nresponse_xml = base64.b64decode(form_fields[\"SAMLResponse\"]).decode()\n"
+    }
+  ],
+  "technologies": [
+    "SAML 2.0",
+    "XML Digital Signature",
+    "HTTP-Redirect and HTTP-POST bindings",
+    "SP metadata",
+    "Keycloak",
+    "node-saml",
+    "python3-saml",
+    "SAML-tracer",
+    "samltool.com"
+  ],
+  "related": [
+    "idi-oidc",
+    "idi-okta-entra-scim",
+    "idi-troubleshooting-runbook",
+    "idi-web-sessions",
+    "security-compliance-reviews",
+    "legacy-systems-migrations"
+  ],
+  "sources": [
+    {
+      "kind": "guide",
+      "title": "Okta: SAML concepts",
+      "url": "https://developer.okta.com/docs/concepts/saml/",
+      "why": "The IdP/SP vocabulary, the two flows and what an app has to implement, from a vendor that hosts thousands of SAML integrations.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Service Provider"
+      }
+    },
+    {
+      "kind": "guide",
+      "title": "Auth0: SAML",
+      "url": "https://auth0.com/docs/authenticate/protocols/saml",
+      "why": "A second vendor view, with Auth0 as either IdP or SP; useful for the 'which side are we' conversation.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "SAML"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Microsoft Entra: Single sign-on SAML protocol",
+      "url": "https://learn.microsoft.com/en-us/entra/identity-platform/single-sign-on-saml-protocol",
+      "why": "The AuthnRequest and Response elements Entra sends and expects, element by element.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "AuthnRequest"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Microsoft Entra: SAML token claims reference",
+      "url": "https://learn.microsoft.com/en-us/entra/identity-platform/reference-saml-tokens",
+      "why": "A full sample assertion with every claim annotated; the first SAML response most people read.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Sample SAML token"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "OASIS: Security Assertion Markup Language (SAML) V2.0 Technical Overview",
+      "url": "https://docs.oasis-open.org/security/saml/Post2.0/sstc-saml-tech-overview-2.0.html",
+      "why": "The readable overview from the standards body: profiles, bindings, metadata, and the SP- and IdP-initiated sequence diagrams.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Web Browser SSO Profile"
+      }
+    },
+    {
+      "kind": "guide",
+      "title": "OWASP SAML Security Cheat Sheet",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/SAML_Security_Cheat_Sheet.html",
+      "why": "The SP-side checklist: validate signatures, audience, time conditions, InResponseTo, and beware XML signature wrapping.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Validate Signatures"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Okta help: Create SAML app integrations",
+      "url": "https://help.okta.com/en-us/content/topics/apps/apps_app_integration_wizard_saml.htm",
+      "why": "The console steps to register an SP in Okta: SSO URL, audience URI, NameID format, attribute statements.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "SAML"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Microsoft Entra: Manage certificates for federated single sign-on",
+      "url": "https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/tutorial-manage-certificates-for-federated-single-sign-on",
+      "why": "Certificate rotation on the IdP side: create, activate, notify; the cause of most 'SSO stopped working on a Tuesday' tickets.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "certificate"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "node-saml README",
+      "url": "https://github.com/node-saml/node-saml",
+      "why": "The pure-JS SP library used in the practice round; its options list doubles as a checklist of what an SP validates.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "validateInResponseTo"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "python3-saml README",
+      "url": "https://github.com/SAML-Toolkits/python3-saml",
+      "why": "The Python SP toolkit (needs libxmlsec1); its settings.json shape is the same information Okta or Entra will ask for.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Settings"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Keycloak Server Administration Guide",
+      "url": "https://www.keycloak.org/docs/latest/server_admin/index.html",
+      "why": "Keycloak as the local SAML IdP: client settings, NameID format, signing and encryption switches, mappers.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "SAML clients"
+      }
+    },
+    {
+      "kind": "lab",
+      "title": "OneLogin SAML developer tools",
+      "url": "https://www.samltool.com/",
+      "why": "Free online decoders and encoders for SAML requests and responses, plus certificate and metadata tools.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "SAML"
+      }
+    }
+  ],
+  "practice": "practice/idi-saml",
+  "provenance": {
+    "generated_by": "Claude (Fable 5.1) by hand from the identity and integration ops spike, Scout learning center",
+    "generated_on": "2026-10-14",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-14",
+      "change": "written by hand from the identity and integration ops spike (12 sources verified 2026-10-14; the SP-initiated round trip, the replay rejection and the tampered-assertion rejection run with Keycloak 26.4 as IdP and node-saml 5 as SP; the signed-assertions-only variant and the key rotation read only)"
+    }
+  ]
+}

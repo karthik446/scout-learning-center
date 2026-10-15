@@ -1,0 +1,358 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "idi-okta-entra-scim",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Setting up SSO and provisioning with Okta and Entra ID",
+  "area": "security",
+  "primary_key": "okta",
+  "secondary_keys": [
+    "entra-id",
+    "scim-provisioning",
+    "sso-saml-oidc"
+  ],
+  "keys": [
+    "okta",
+    "entra-id",
+    "scim-provisioning",
+    "sso-saml-oidc"
+  ],
+  "summary": "The protocols are vendor-neutral; the job is not. Most customers' identity lives in Okta or Microsoft Entra ID, and an implementation engineer has to walk their administrator through the console, or do it in a shared screen, without guessing field names. This lesson is the console work: in Okta, an OIDC or SAML app integration, redirect URIs, client authentication, assignments, custom claims and group claims; in Entra, an app registration for OIDC or an enterprise application for SAML, identifier and reply URL, certificate download, NameID and claims customisation, optional group claims. Then provisioning: what SCIM is (RFC 7643 and 7644), what Okta and Entra send to a SCIM endpoint and what the endpoint must do, how just-in-time provisioning from the assertion differs, and what deprovisioning means in each. The steps are transcribed from the vendors' official pages; they need a free tenant, which the learning center did not create, so Keycloak is the local stand-in for everything that can be rehearsed without one.",
+  "detail": [],
+  "in_practice": "A new customer's IT administrator has 30 minutes for the SSO setup call. The engineer sends the product's values in advance (for OIDC: the redirect URIs and whether the client is confidential; for SAML: the entity ID, the ACS URL, the NameID format and the attribute table) and opens the vendor's own page for the integration type. On the call they read the console together: in Okta, Applications, Create App Integration, the sign-in method, then the settings page whose fields match the values sent; in Entra, App registrations for OIDC or Enterprise applications and Single sign-on for SAML. The administrator assigns a test user or group, the engineer runs one login with a tracer open, they fix the claim mapping together, and the engineer writes down the client id, the issuer or metadata URL, the certificate expiry and who gets the reminder. If the customer wants accounts created and removed automatically, the second call is provisioning: SCIM when the product has an endpoint, JIT from the assertion when it does not, and a clear sentence about what happens to a deprovisioned user's sessions and data.",
+  "subtopics": [
+    {
+      "id": "free-tenants",
+      "title": "Free tenants to rehearse in",
+      "body": [
+        {
+          "heading": "Okta",
+          "body": "The Okta Integrator Free Plan at developer.okta.com/signup is the free organisation for building and testing integrations; the sign-up page states that access expires after 90 consecutive days of inactivity, and that the separate Okta Platform trial lasts 30 days. It gives an admin console with applications, users, groups, authorization servers and the system log, which is everything in this lesson. The learning center did not create an account; the steps below are transcribed from Okta's help pages and marked 'needs a free account'."
+        },
+        {
+          "heading": "Entra ID",
+          "body": "A free Azure account comes with a default workforce tenant in Entra ID, and the tenant quickstart describes creating another: tenant type, organisation name, an initial domain under onmicrosoft.com and a country. Many developers already have a tenant through Microsoft 365 or Azure. The Entra admin center then offers app registrations, enterprise applications, users and groups, sign-in logs and provisioning. Again: needs a free account, not created by the learning center, and the steps are from the official quickstarts."
+        }
+      ]
+    },
+    {
+      "id": "okta-oidc-app",
+      "title": "Okta: an OIDC app integration",
+      "body": [
+        {
+          "heading": "The steps, from 'Create OIDC app integrations'",
+          "body": "In the Admin Console open Applications, then Create App Integration; choose OIDC - OpenID Connect as the sign-in method and the application type: Web Application (a confidential client with a secret), Single-Page Application (public, PKCE) or Native Application (public, PKCE). Set the grant types the app uses (Authorization Code, Refresh Token, and for machine clients Client Credentials; Device Authorization where needed; Implicit is still offered and should stay off). Enter the sign-in redirect URIs as absolute URLs (the page allows wildcards and warns against them), the sign-out redirect URIs, and Trusted Origins for CORS when a browser app calls Okta directly. Choose the assignments (everyone, selected groups, or none for now) and save."
+        },
+        {
+          "heading": "What you get and what to record",
+          "body": "The General tab shows the Client ID and the client authentication method: a client secret, or Public key / Private key for private_key_jwt, with the PKCE checkbox and a DPoP option. The issuer is the org URL (the org authorization server, whose access tokens are opaque) or a custom authorization server under it (JWT access tokens with custom claims). Record the client id, the issuer, the redirect URIs as registered, and who at the customer can rotate the secret. Okta's page notes that for orgs renewed after 2026-08-14 the Client Credentials grant depends on a subscription, which is worth checking before promising machine-to-machine access. The practice marks all of this 'needs a free account'; the Keycloak equivalent is a client with the matching switches."
+        }
+      ]
+    },
+    {
+      "id": "okta-saml-app",
+      "title": "Okta: a SAML app integration",
+      "body": [
+        {
+          "heading": "The steps, from 'Create SAML app integrations'",
+          "body": "Applications, Create App Integration, SAML 2.0, Next; general settings (name, logo), Next. On the SAML settings page: Single sign-on URL (your ACS; a checkbox uses it for the recipient and destination too), Audience URI (your SP entity ID), Default RelayState, Name ID format and Application username (which Okta attribute becomes the NameID), Attribute Statements (name, name format, value such as user.email) and Group Attribute Statements (name plus a filter on group names: starts with, equals, contains or a regex). 'Preview the SAML Assertion' shows the XML Okta will send, which is the moment to compare with what your SP expects. The feedback step ('I'm an Okta customer adding an internal app') leads to Finish."
+        },
+        {
+          "heading": "After saving",
+          "body": "The Sign On tab shows the SAML signing certificate and metadata for your SP (download the certificate or the metadata URL), and 'Manage signing certificates' is where rotation happens. Assign the app to users or groups on the Assignments tab: an unassigned user who tries to log in gets an error from Okta rather than reaching your SP, which is the first thing to ask about when 'it works for me but not for the customer's test user'."
+        }
+      ]
+    },
+    {
+      "id": "okta-claims-and-groups",
+      "title": "Okta: custom claims and group claims",
+      "body": [
+        {
+          "heading": "Custom claims",
+          "body": "Claims on Okta tokens are configured on an authorization server: Security, API, Authorization Servers, pick the server, Claims, Add Claim. A claim has a name, a token type (ID token or access token), a value type and a value expression in Okta's expression language (user.department, or a string literal), and a scope condition (always, or only with certain scopes). The custom-claims guide walks through this and shows how to test the claim with the token preview. The org authorization server supports fewer customisations than a custom one, which is why integrations that need claims in access tokens use a custom server."
+        },
+        {
+          "heading": "Group claims",
+          "body": "A groups claim is a claim whose value type is Groups with a filter (starts with, equals, contains, regex) over the user's group names; the guide warns that in the org authorization server it is only available with a filter and that large group lists belong behind a filter so the token stays small. For SAML apps the same thing is the Group Attribute Statement on the app. Agree with the customer which groups the app needs, filter to those, and map them to roles in the app rather than trusting group names as roles directly."
+        }
+      ]
+    },
+    {
+      "id": "entra-app-registration",
+      "title": "Entra ID: an app registration for OIDC",
+      "body": [
+        {
+          "heading": "The steps, from 'Register an application'",
+          "body": "In the Entra admin center, as at least an Application Developer, open Entra ID, App registrations, New registration. Give it a name and choose the supported account types: single tenant (accounts in this organisational directory only) is the recommended default; multitenant (any Entra ID tenant) is for a SaaS product that customers' own tenants sign in to. Register. The Overview shows the Application (client) ID and the Directory (tenant) ID, both of which the integration needs. Under Authentication add a platform (Web for a confidential client, Single-page application for a public one) with the redirect URIs; under Certificates and secrets create a client secret (record its expiry) or upload a certificate for private_key_jwt-style authentication; under API permissions add what the app calls and have an administrator grant admin consent where the permission requires it."
+        },
+        {
+          "heading": "The endpoints",
+          "body": "The discovery document is at login.microsoftonline.com under the tenant id (or 'common' and 'organizations' for multitenant apps) followed by v2.0/.well-known/openid-configuration; the OIDC protocol page shows the authorize, token and logout endpoints it names. The ID token claims reference lists what an Entra ID token carries (oid is the stable user id within the tenant, tid the tenant, preferred_username is not stable, and email is only present when requested and may be absent). Key users on tid plus oid, or on sub, never on preferred_username."
+        }
+      ]
+    },
+    {
+      "id": "entra-enterprise-app-saml",
+      "title": "Entra ID: an enterprise application for SAML",
+      "body": [
+        {
+          "heading": "The steps, from 'Enable single sign-on for an enterprise application'",
+          "body": "Entra ID, Enterprise apps, All applications; add your own (non-gallery) application or pick the product's gallery entry if it has one; then Manage, Single sign-on, SAML. In Basic SAML Configuration edit the Identifier (Entity ID), the Reply URL (Assertion Consumer Service URL) and optionally the Sign on URL, and save. The SAML Certificates section offers the Certificate (Raw or Base64) and the Federation Metadata XML to download, and shows the Login URL, the Microsoft Entra Identifier (the IdP entity ID) and the Logout URL that your SP needs. Under Users and groups assign who may sign in; SAML SSO is configurable on single-tenant and gallery applications. Step five on the page, Test single sign-on, opens the test flow that the debugging page builds on."
+        },
+        {
+          "heading": "Record and rotate",
+          "body": "Write down the three URLs, the certificate's expiry (Entra's default is three years) and the metadata URL (App Federation Metadata Url) so your SP can refresh the certificate automatically. The certificate tutorial describes rotation: SAML Certificates, Edit, New Certificate with an expiry date, Save (inactive, thumbprint shown), hand it to the application, Make certificate active, and add notification email addresses for expiry. This is the Tuesday outage from the SAML lesson, seen from the IdP's side."
+        }
+      ]
+    },
+    {
+      "id": "entra-claims-nameid-groups",
+      "title": "Entra ID: NameID, claims and group claims",
+      "body": [
+        {
+          "heading": "Attributes and Claims",
+          "body": "On the Single sign-on page, Attributes and Claims, Edit. The Name identifier value has a source attribute (user.userprincipalname by default; also mail, objectid, employeeid and extension attributes) and a Name identifier format (Default, Persistent, Email address, Unspecified, Windows domain qualified name; Transient exists but is not configurable). Additional claims are rows with a name, a namespace, a source attribute and optional transformations such as ExtractMailPrefix(), ToLower() and Join(). The claims customisation page is the reference for all of it, and the SAML token claims reference shows the resulting assertion."
+        },
+        {
+          "heading": "Group claims and the overage",
+          "body": "'Add a group claim' emits the user's groups: security groups, directory roles, all groups, or groups assigned to the application; as object IDs by default, or as names for groups synced from on-premises; with an optional filter. The optional-claims page explains the overage: when a user is in more groups than the token can carry (150 for SAML, 200 for JWT), the token holds a claim pointing at the Graph API instead of the list, and the app must call the directory. The practical rule is the same as Okta's: emit only the groups the app needs, by filter or by assignment, and map them to app roles."
+        }
+      ]
+    },
+    {
+      "id": "scim-provisioning",
+      "title": "SCIM provisioning: what the IdP sends and what the endpoint must do",
+      "body": [
+        {
+          "heading": "The protocol",
+          "body": "System for Cross-domain Identity Management is a REST and JSON protocol for creating, reading, updating and deleting users and groups in an application from an identity provider. RFC 7643 defines the resources: a User with userName, name, emails, active and the enterprise extension (department, manager), and a Group with members; RFC 7644 defines the HTTP operations: POST to /Users and /Groups to create, GET with a filter (userName eq \"alice@example.test\") to find, GET by id, PUT to replace, PATCH with add, remove and replace operations to change part of a resource, DELETE, and the discovery endpoints /ServiceProviderConfig, /ResourceTypes and /Schemas. The endpoint authenticates the IdP with a bearer token it issued to the customer at setup."
+        },
+        {
+          "heading": "Okta and Entra as SCIM clients",
+          "body": "Okta's SCIM concept page describes the mapping: when a user is assigned, Okta looks the user up by userName with a filter and creates them if absent; attribute changes become PUT or PATCH; unassignment or deactivation sets active to false, and Okta notes that a user it has set inactive is not pulled again. Entra's provisioning page lists what its service sends (/Users and /Groups, filters on userName and externalId, PATCH add, remove and replace, active for soft delete, DELETE for hard delete when configured) and the endpoint requirements it tests (filter support, PATCH semantics, the right 404 and 409 codes). Both vendors run a provisioning cycle on a schedule, log every call, and give the administrator a 'test connection' and a per-user provisioning log, which is where the engineer looks when 'the user was never created'. The parts most hand-written endpoints get wrong are PATCH semantics and filters, which is why the practice runs a compliance tester against a local endpoint."
+        }
+      ]
+    },
+    {
+      "id": "jit-vs-scim-and-deprovisioning",
+      "title": "JIT provisioning, SCIM, and what deprovisioning means",
+      "body": [
+        {
+          "heading": "Just-in-time",
+          "body": "JIT provisioning creates or updates the user record at login from the assertion's or ID token's claims: no account exists until the person signs in, and the attributes are as fresh as the last login. It needs no endpoint and no extra setup call, which is why most products start there. Its limits are the reason customers ask for SCIM: no account exists before the first login (so nothing can be shared with the user in advance), attribute changes wait for the next login, and removal is invisible to the app: a user removed from the IdP simply cannot log in again, while their sessions, API keys and data stay."
+        },
+        {
+          "heading": "Deprovisioning",
+          "body": "With SCIM, deactivation arrives as a PATCH or PUT with active false (and sometimes a DELETE), and the app can end sessions, revoke tokens and keys, reassign or archive data, and report the user as inactive to the customer's audit. Decide and document what the app does on active false, what it does on DELETE, and how long before a disabled user's data is removed. When the product has no SCIM endpoint, say so plainly, offer JIT with a documented offboarding runbook (manual deactivation in the app, a nightly reconciliation against a directory export, or back-channel logout for live sessions), and put the SCIM endpoint on the roadmap conversation."
+        }
+      ]
+    },
+    {
+      "id": "keycloak-as-the-stand-in",
+      "title": "Keycloak as the local stand-in",
+      "body": [
+        {
+          "heading": "What you can rehearse without a tenant",
+          "body": "Everything protocol-shaped: an OIDC client with the same switches as an Okta or Entra app (public or confidential, PKCE, exact redirect URIs, web origins, post-logout URIs), a SAML client with the same fields (entity ID, ACS, NameID format, signing choices), mappers that play the role of custom claims, attribute statements and group claims, key rotation, and the logs. The OIDC and SAML practice paths ran all of that against Keycloak 26.4 in Docker, and a reader who has done them can read the Okta and Entra pages as 'the same fields with different labels'."
+        },
+        {
+          "heading": "What you cannot",
+          "body": "The vendors' own experiences: assignments and the errors an unassigned user sees, admin consent in Entra, Okta's authorization server and token preview, the two vendors' provisioning engines and their logs, the sign-in logs and error catalogues the troubleshooting lesson uses, and the tenant policies (conditional access, MFA enforcement) that change what a login looks like. For the SCIM side the local stand-in is a SCIM server library (python-scim's scim2-server) with its client and compliance tester, which lets you build and test an endpoint before a vendor ever calls it. When a customer offers a sandbox tenant, take it; nothing replaces one login in the real console with a tracer open."
+        }
+      ]
+    }
+  ],
+  "diagram": {
+    "source": "flowchart TB\n  subgraph IdP [Customer's IdP: Okta or Entra ID]\n    A[\"App integration: OIDC client or SAML app\"]\n    C[\"Claims, NameID, group claims\"]\n    P[\"Provisioning: SCIM client or JIT\"]\n  end\n  subgraph You [Your product]\n    RP[\"Relying party / service provider\"]\n    U[\"User store: keyed on issuer + subject\"]\n    SCIM[\"SCIM endpoint: /Users, /Groups, filters, PATCH, active\"]\n  end\n  A -- \"login: ID token or assertion\" --> RP\n  C -- \"claims\" --> RP\n  RP -- \"JIT: create or update at login\" --> U\n  P -- \"SCIM: create, PATCH active=false, DELETE\" --> SCIM --> U"
+  },
+  "code": [
+    {
+      "lang": "http",
+      "code": "# What an IdP's provisioning engine sends to a SCIM endpoint (RFC 7644), with the bearer token it was given at setup\nGET /scim/v2/Users?filter=userName%20eq%20%22alice%40example.test%22 HTTP/1.1\nAuthorization: Bearer <provisioning token>\n\nPOST /scim/v2/Users HTTP/1.1\nContent-Type: application/scim+json\n{\"schemas\": [\"urn:ietf:params:scim:schemas:core:2.0:User\"],\n \"userName\": \"alice@example.test\", \"externalId\": \"00u-example\",\n \"name\": {\"givenName\": \"Alice\", \"familyName\": \"Example\"},\n \"emails\": [{\"value\": \"alice@example.test\", \"primary\": true}], \"active\": true}\n\nPATCH /scim/v2/Users/2819c223 HTTP/1.1\nContent-Type: application/scim+json\n{\"schemas\": [\"urn:ietf:params:scim:api:messages:2.0:PatchOp\"],\n \"Operations\": [{\"op\": \"replace\", \"path\": \"active\", \"value\": false}]}\n"
+    },
+    {
+      "lang": "sh",
+      "code": "# The local SCIM stand-in (scratch venv, no global install): a server, a client and a compliance tester from python-scim\npip install scim2-server scim2-cli scim2-tester\nscim2-server --port 8080 &                                   # a SCIM 2.0 endpoint on 127.0.0.1:8080\nscim2 --url http://127.0.0.1:8080 create user --user-name alice@example.test --active true\nscim2 --url http://127.0.0.1:8080 query user --filter 'userName eq \"alice@example.test\"'\nscim2 --url http://127.0.0.1:8080 test                       # the RFC checks an IdP's engine will exercise\n"
+    }
+  ],
+  "technologies": [
+    "Okta Admin Console",
+    "Okta Integrator Free Plan",
+    "Microsoft Entra admin center",
+    "App registrations",
+    "Enterprise applications",
+    "SCIM 2.0",
+    "JIT provisioning",
+    "Keycloak",
+    "scim2-server",
+    "scim2-tester"
+  ],
+  "related": [
+    "idi-oidc",
+    "idi-saml",
+    "idi-troubleshooting-runbook",
+    "idi-m2m-api-auth",
+    "security-identity-and-governance",
+    "security-compliance-reviews"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Okta Developer: Integrator Free Plan sign-up",
+      "url": "https://developer.okta.com/signup/",
+      "why": "The free Okta org for building and testing integrations (needs an account; not created by us).",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Integrator"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Okta help: Create OIDC app integrations",
+      "url": "https://help.okta.com/en-us/content/topics/apps/apps_app_integration_wizard_oidc.htm",
+      "why": "The console steps for an OIDC app: application type, sign-in redirect URIs, assignments, client credentials.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "OIDC"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Okta help: Create SAML app integrations",
+      "url": "https://help.okta.com/en-us/content/topics/apps/apps_app_integration_wizard_saml.htm",
+      "why": "The console steps for a SAML app: SSO URL, audience, NameID, attribute statements, group attribute statements.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "SAML"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Okta Developer: Customize tokens returned from Okta with a custom claim",
+      "url": "https://developer.okta.com/docs/guides/customize-tokens-returned-from-okta/main/",
+      "why": "Claim mapping on the Okta side: expression language, where the claim goes (ID vs access token), scopes.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "custom claim"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Okta Developer: SCIM",
+      "url": "https://developer.okta.com/docs/concepts/scim/",
+      "why": "What Okta provisioning expects from an app's SCIM endpoint and how JIT differs from SCIM.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "SCIM"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Microsoft Entra: Quickstart - create a new tenant",
+      "url": "https://learn.microsoft.com/en-us/entra/identity-platform/quickstart-create-new-tenant",
+      "why": "The free Entra tenant route (needs a Microsoft account; not created by us).",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Create a new tenant"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Microsoft Entra: Quickstart - register an application",
+      "url": "https://learn.microsoft.com/en-us/entra/identity-platform/quickstart-register-app",
+      "why": "App registration for OIDC: redirect URIs, client secret or certificate, the application (client) ID and tenant ID.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Register an application"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Microsoft Entra: Enable single sign-on for an enterprise application",
+      "url": "https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/add-application-portal-setup-sso",
+      "why": "Enterprise application SAML setup: identifier (entity ID), reply URL (ACS), sign-on URL, certificate download.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Enable single sign-on"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Microsoft Entra: Customize SAML token claims",
+      "url": "https://learn.microsoft.com/en-us/entra/identity-platform/saml-claims-customization",
+      "why": "Attribute mapping on the Entra side: NameID format and source, additional claims, transformations, group claims.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "NameID"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Microsoft Entra: Configure optional claims",
+      "url": "https://learn.microsoft.com/en-us/entra/identity-platform/optional-claims",
+      "why": "Adding groups and other optional claims to Entra tokens; the groups-overage limit is explained here.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "groups"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Microsoft Entra: Use SCIM to provision users and groups",
+      "url": "https://learn.microsoft.com/en-us/entra/identity/app-provisioning/use-scim-to-provision-users-and-groups",
+      "why": "What the Entra provisioning service sends to a SCIM endpoint and how to build and test one.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "SCIM"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 7643: SCIM Core Schema",
+      "url": "https://datatracker.ietf.org/doc/html/rfc7643",
+      "why": "The User and Group resources an IdP will POST, PATCH and DELETE; read next to the provisioning docs.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "\"User\" Resource Schema"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 7644: SCIM Protocol",
+      "url": "https://datatracker.ietf.org/doc/html/rfc7644",
+      "why": "The HTTP operations, filters and PATCH semantics; the part most hand-written SCIM endpoints get wrong.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Modifying with PATCH"
+      }
+    }
+  ],
+  "practice": "practice/idi-okta-entra-scim",
+  "provenance": {
+    "generated_by": "Claude (Fable 5.1) by hand from the identity and integration ops spike, Scout learning center",
+    "generated_on": "2026-10-14",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-14",
+      "change": "written by hand from the identity and integration ops spike (13 sources verified 2026-10-14; the Okta and Entra console steps transcribed from the official pages and marked 'needs a free account; not run by the learning center'; the Keycloak stand-in run in the OIDC and SAML paths; the SCIM stand-in read only)"
+    }
+  ]
+}

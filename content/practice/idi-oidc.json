@@ -1,0 +1,341 @@
+{
+  "schema_version": "learning-center-practice:1",
+  "id": "practice/idi-oidc",
+  "version": 1,
+  "lesson": "idi-oidc",
+  "tool": "Keycloak and a Python relying party",
+  "tool_key": null,
+  "why_this_tool": "Keycloak in Docker is a certified OpenID provider you can configure in five minutes and read the logs of, and a 60-line Python relying party with requests and PyJWT shows every request, token and validation step that a framework would hide. The spike ran this exact path and the step outcomes are its outputs; the no-Docker route (node-oidc-provider) ran the same login and is the alternative named in the setup.",
+  "alternatives": "node-oidc-provider in process with npm (no Docker; requires PKCE by default and sends the iss parameter); Authlib's client does discovery, PKCE, nonce and ID-token parsing for you once you have done it by hand; a cloud provider's free tenant (Okta Integrator Free Plan, an Entra tenant) for the real thing, covered in the Okta and Entra lesson.",
+  "setup": [
+    {
+      "do": "Start Keycloak 26.4 in Docker bound to 127.0.0.1:18080 with a 1 GiB memory cap and a bootstrap admin password of your choosing, and wait for the master realm's discovery document (about 30 to 60 seconds). No-Docker alternative: install oidc-provider with npm in a scratch folder and run the 20-line provider from the lesson's code on 127.0.0.1:19000.",
+      "done_when": "The discovery document of the provider answers 200 and names an issuer, a jwks_uri and a userinfo_endpoint.",
+      "source": {
+        "title": "Keycloak: Getting started with Docker",
+        "url": "https://www.keycloak.org/getting-started/getting-started-docker",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Secure the first application"
+        }
+      },
+      "why": "The practice is the proof the lesson was written from; both providers ran it and the steps below say where they differ.",
+      "n": 1
+    },
+    {
+      "do": "Create a realm (idspike or a name of yours) with a user alice (email alice@example.test, verified, a password you choose) in a group integration-engineers, and a public client web-pkce: standard flow on, direct access grants and implicit off, PKCE method S256, exact redirect URI http://127.0.0.1:18081/callback, web origin http://127.0.0.1:18081, and a valid post-logout redirect URI. The admin console does it by hand; the admin REST API does it in a short script.",
+      "done_when": "The realm's discovery document answers 200 and the client's settings page shows S256 under the PKCE method.",
+      "source": {
+        "title": "Keycloak: Getting started with Docker",
+        "url": "https://www.keycloak.org/getting-started/getting-started-docker",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Secure the first application"
+        }
+      },
+      "why": "A public client with PKCE required is what a single-page or mobile app at a customer will be; the realm takes five minutes by hand.",
+      "n": 2
+    },
+    {
+      "do": "Create a scratch Python virtual environment with requests and PyJWT (crypto extra). The flow can be driven from a browser (read the code off the URL bar) or by a script that submits the login form; the spike did the latter.",
+      "done_when": "Importing requests and jwt in the environment works.",
+      "source": {
+        "title": "PyJWT usage: validating tokens and fetching keys from a JWKS endpoint",
+        "url": "https://pyjwt.readthedocs.io/en/stable/usage.html",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Retrieve RSA signing keys from a JWKS endpoint"
+        }
+      },
+      "why": "The validation step needs a JWT library with a JWKS client; PyJWT has one.",
+      "n": 3
+    }
+  ],
+  "steps": [
+    {
+      "do": "Fetch the discovery document and note the issuer, authorization, token, userinfo, jwks and end-session endpoints, and code_challenge_methods_supported.",
+      "done_when": "You can name the six values without the console and S256 is listed.",
+      "source": {
+        "title": "OpenID Connect Discovery 1.0",
+        "url": "https://openid.net/specs/openid-connect-discovery-1_0.html",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Obtaining OpenID Provider Configuration Information"
+        }
+      },
+      "why": "A client needs only the issuer URL; the discovery document gives it everything else, which is the first thing to show a customer who sends you a list of endpoints by email.",
+      "n": 1
+    },
+    {
+      "do": "Build the authorization request for web-pkce with response_type=code, scope 'openid profile email', a random state, a random nonce, and an S256 code_challenge; open it and log in as alice.",
+      "done_when": "The browser lands on the callback URL with code and state; the state matches and the URL may also carry iss.",
+      "source": {
+        "title": "OpenID Connect Core 1.0",
+        "url": "https://openid.net/specs/openid-connect-core-1_0.html",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "ID Token Validation"
+        }
+      },
+      "why": "state, nonce and PKCE travel together; sending all three once by hand fixes which protects what.",
+      "n": 2
+    },
+    {
+      "do": "Exchange the code with the code_verifier and no secret; validate the ID token with PyJWT against the provider's JWKS (kid lookup), algorithms pinned, audience web-pkce, issuer from discovery, required claims exp, iat, iss, aud and sub, then compare nonce.",
+      "done_when": "Validation returns the claims with sub, email alice@example.test and the matching nonce; the spike printed 'id_token VALID' here.",
+      "source": {
+        "title": "OpenID Connect Core 1.0",
+        "url": "https://openid.net/specs/openid-connect-core-1_0.html",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "ID Token Validation"
+        }
+      },
+      "why": "This is the relying party's one duty; the checklist is section 3.1.3.7 of the Core specification.",
+      "n": 3
+    },
+    {
+      "do": "Call userinfo with the access token.",
+      "done_when": "200 with sub, email, preferred_username alice and (after the next step) groups.",
+      "source": {
+        "title": "Okta: OAuth 2.0 and OpenID Connect overview",
+        "url": "https://developer.okta.com/docs/concepts/oauth-openid/",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "OpenID Connect"
+        }
+      },
+      "why": "Userinfo is the 'protected resource' every later collection calls; seeing the JSON once makes claim mapping concrete.",
+      "n": 4
+    },
+    {
+      "do": "Add a group membership mapper to the client (claim name groups, in the ID token, access token and userinfo), log in again and read the ID token.",
+      "done_when": "groups contains integration-engineers in the ID token and in userinfo.",
+      "source": {
+        "title": "Keycloak: Getting started with Docker",
+        "url": "https://www.keycloak.org/getting-started/getting-started-docker",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Secure the first application"
+        }
+      },
+      "why": "Groups in the token is what most customers want for roles; the mapper is where the provider side of that lives, and the Okta and Entra lesson shows the equivalents.",
+      "n": 5
+    },
+    {
+      "do": "Request a client-credentials token for a confidential client without the openid scope (the OAuth practice path's m2m-batch) and call userinfo with it; then repeat with scope=openid in the token request.",
+      "done_when": "The first call answers 403 and the second 200, and you can state Keycloak's rule in one sentence.",
+      "source": {
+        "title": "Keycloak: Getting started with Docker",
+        "url": "https://www.keycloak.org/getting-started/getting-started-docker",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Secure the first application"
+        }
+      },
+      "why": "The identity spike's first Newman run lost an hour to this; it is the kind of provider rule a lesson should say out loud.",
+      "n": 6
+    },
+    {
+      "do": "Run RP-initiated logout: send the browser to the end_session_endpoint with id_token_hint and the registered post_logout_redirect_uri; then try to reuse the refresh token. (Read in the spike, not run.)",
+      "done_when": "The browser returns to the post-logout URI, the provider's session cookie is gone, and the refresh request answers 400 invalid_grant.",
+      "source": {
+        "title": "OpenID Connect RP-Initiated Logout 1.0",
+        "url": "https://openid.net/specs/openid-connect-rpinitiated-1_0.html",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "RP-Initiated Logout"
+        }
+      },
+      "why": "Sign-out that also ends the provider session is what customers mean by logout; the id_token_hint is what makes it silent.",
+      "n": 7
+    },
+    {
+      "do": "Start node-oidc-provider on 127.0.0.1:19000 with the lesson's configuration, fetch its discovery document and list three differences from Keycloak's (for example the iss parameter support, the device endpoint, the claims and algorithms listed). Optionally run steps 2 to 4 against it.",
+      "done_when": "Your note names three concrete differences with the field names, and you can say which features of the specification are optional.",
+      "source": {
+        "title": "node-oidc-provider documentation",
+        "url": "https://github.com/panva/node-oidc-provider/blob/main/docs/README.md",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "findAccount"
+        }
+      },
+      "why": "An integration that assumed the test provider's behaviour is the one that breaks at the customer; comparing two providers is the cheapest inoculation.",
+      "n": 8
+    },
+    {
+      "do": "Read the back-channel logout specification and write down what your app would need: the registered logout endpoint, storing sid with the session, validating the logout token (signature, iss, aud, iat, events claim, no nonce), and ending the session. (Read only.)",
+      "done_when": "Your note lists the five items and says which customers' request ('sign out everywhere', deprovisioning) it answers.",
+      "source": {
+        "title": "OpenID Connect Back-Channel Logout 1.0",
+        "url": "https://openid.net/specs/openid-connect-backchannel-1_0.html",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Logout Token"
+        }
+      },
+      "why": "Back-channel logout is the version that works without the browser; knowing its shape lets you quote the effort on the call.",
+      "n": 9
+    }
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Keycloak: Getting started with Docker",
+      "url": "https://www.keycloak.org/getting-started/getting-started-docker",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Secure the first application"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "PyJWT usage: validating tokens and fetching keys from a JWKS endpoint",
+      "url": "https://pyjwt.readthedocs.io/en/stable/usage.html",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Retrieve RSA signing keys from a JWKS endpoint"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "OpenID Connect Discovery 1.0",
+      "url": "https://openid.net/specs/openid-connect-discovery-1_0.html",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Obtaining OpenID Provider Configuration Information"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "OpenID Connect Core 1.0",
+      "url": "https://openid.net/specs/openid-connect-core-1_0.html",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "ID Token Validation"
+      }
+    },
+    {
+      "kind": "guide",
+      "title": "Okta: OAuth 2.0 and OpenID Connect overview",
+      "url": "https://developer.okta.com/docs/concepts/oauth-openid/",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "OpenID Connect"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "OpenID Connect RP-Initiated Logout 1.0",
+      "url": "https://openid.net/specs/openid-connect-rpinitiated-1_0.html",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "RP-Initiated Logout"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "node-oidc-provider documentation",
+      "url": "https://github.com/panva/node-oidc-provider/blob/main/docs/README.md",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "findAccount"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "OpenID Connect Back-Channel Logout 1.0",
+      "url": "https://openid.net/specs/openid-connect-backchannel-1_0.html",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Logout Token"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "keycloak/keycloak (Apache-2.0)",
+      "url": "https://github.com/keycloak/keycloak",
+      "why": "The provider used in the proofs; the OIDC protocol code under services is readable Java.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/keycloak/keycloak on 2026-10-14: last push 2026-10-15, not archived, 37,353 stars"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "panva/node-oidc-provider (MIT)",
+      "url": "https://github.com/panva/node-oidc-provider",
+      "why": "The no-Docker provider used in the proof.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/panva/node-oidc-provider on 2026-10-14: last push 2026-10-12, not archived, 3,833 stars"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "authlib/authlib (BSD-3-Clause)",
+      "url": "https://github.com/authlib/authlib",
+      "why": "Client-side discovery, nonce and ID token parsing in Python.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/authlib/authlib on 2026-10-14: last push 2026-10-14, not archived, 5,434 stars"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "zitadel/zitadel (AGPL-3.0)",
+      "url": "https://github.com/zitadel/zitadel",
+      "why": "A second open-source provider (Go) to compare discovery documents against.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/zitadel/zitadel on 2026-10-14: last push 2026-10-14, not archived, 15,316 stars"
+      }
+    }
+  ],
+  "verified": {
+    "checked": "2026-10-14",
+    "by": "identity spike, scripts/verify_sources.py (HTTP 200 and the section phrase found on the page)"
+  },
+  "provenance": {
+    "generated_by": "Claude (Fable 5.1) by hand from the identity and integration ops spike, Scout learning center",
+    "generated_on": "2026-10-14",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-14",
+      "change": "written by hand from the identity and integration ops spike; steps 1 to 6 run against Keycloak 26.4 (and 1 to 4 against node-oidc-provider 9), steps 7 to 9 read only"
+    }
+  ]
+}

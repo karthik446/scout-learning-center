@@ -1,0 +1,297 @@
+{
+  "schema_version": "learning-center-practice:1",
+  "id": "practice/idi-web-sessions",
+  "version": 1,
+  "lesson": "idi-web-sessions",
+  "tool": "Browser devtools and curl",
+  "tool_key": null,
+  "why_this_tool": "Every symptom in this lesson is visible in the browser's devtools (the Set-Cookie headers, the cookie store, the preflight, the console's CORS line) and reproducible with curl, which shows the raw headers and the TLS handshake lines without a browser's helpfulness getting in the way. Together they let you prove whether a bug is a cookie, a CORS, a CSRF or a certificate problem before touching any code.",
+  "alternatives": "Burp Suite Community or OWASP ZAP as an intercepting proxy show the same headers and let you edit requests, and the Web Security Academy labs run in Burp; HAR exports from the browser capture a whole login flow for later reading; the PortSwigger labs are optional and need a free account the learning center did not create.",
+  "setup": [
+    {
+      "do": "Start a local Keycloak in Docker on 127.0.0.1 only (the same container the OIDC and SAML practice paths use) and wait until the master realm's discovery document answers 200. The admin password is yours to choose; never reuse a real one.",
+      "done_when": "curl against the discovery URL prints 200 and a JSON document whose issuer names the realm.",
+      "source": {
+        "title": "Keycloak: Getting started with Docker",
+        "url": "https://www.keycloak.org/getting-started/getting-started-docker",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Secure the first application"
+        }
+      },
+      "why": "Every cookie and redirect in this path is read off a real login page, and Keycloak is the one you will meet most often at customers who self-host.",
+      "n": 1
+    },
+    {
+      "do": "Open the browser's devtools on the Network and Application tabs and keep them open for the rest of the path; disable the cache for the session. Optional: create a free Web Security Academy account for the two labs (the account is yours to create; the learning center did not).",
+      "done_when": "You can see request and response headers for any page load, and the cookie list of the site in the Application (or Storage) tab.",
+      "source": {
+        "title": "MDN: Using HTTP cookies",
+        "url": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Cookies",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Security"
+        }
+      },
+      "why": "The devtools are the tool of this path; the Academy labs are extras for readers who want to perform CSRF and XSS, not only read about them.",
+      "n": 2
+    }
+  ],
+  "steps": [
+    {
+      "do": "Open the Keycloak admin console login page (http://127.0.0.1:18080/admin/) in the browser and read every Set-Cookie header in the Network tab. Write down each cookie's name and its Secure, HttpOnly, SameSite, Path and expiry attributes.",
+      "done_when": "Your note lists at least two cookies with all five attributes filled in, and you can say which one would survive a cross-site POST and why.",
+      "source": {
+        "title": "MDN: Set-Cookie header",
+        "url": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Set-Cookie",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "SameSite"
+        }
+      },
+      "why": "Reading real attributes beats memorising the list; Keycloak sets SameSite=None together with Secure, which is the shape a cross-site callback cookie needs.",
+      "n": 1
+    },
+    {
+      "do": "Request the same login page with curl -si on plain http and compare: note that the cookies are set with the Secure flag even though the connection is http, then explain in two sentences why the browser sends them back on 127.0.0.1 and a Python requests session does not.",
+      "done_when": "Your explanation names 'secure context' and says what a scripted client has to do (clear the flag, or use https) to log in.",
+      "source": {
+        "title": "RFC 6265: HTTP State Management Mechanism",
+        "url": "https://datatracker.ietf.org/doc/html/rfc6265",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "The Secure Attribute"
+        }
+      },
+      "why": "The identity spike's first scripted login against Keycloak failed on exactly this, and it is the most common 'works in the browser, not in my script' puzzle.",
+      "n": 2
+    },
+    {
+      "do": "Send a CORS preflight to the realm's token endpoint with curl: an OPTIONS request with Origin: http://127.0.0.1:18081 and Access-Control-Request-Method: POST. Read every Access-Control header in the answer. Then read in the Keycloak client settings where Web Origins are configured and note that Keycloak answers the preflight for any origin and applies the Web Origins list to the actual response.",
+      "done_when": "You can name the five Access-Control headers Keycloak returned on the OPTIONS answer (Allow-Origin, Allow-Methods, Allow-Credentials, Allow-Headers, Max-Age) and say on which response a browser from an unregistered origin would miss the Allow-Origin header.",
+      "source": {
+        "title": "MDN: Cross-Origin Resource Sharing (CORS)",
+        "url": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CORS",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Preflighted requests"
+        }
+      },
+      "why": "Seeing a preflight by hand makes the browser's red CORS line readable: it is a missing header on a response, and which response depends on the provider; this step was run against Keycloak 26.4.",
+      "n": 3
+    },
+    {
+      "do": "Read the CSRF cheat sheet's defence order and the Academy's CSRF page, then (optional, needs the free account) complete the lab 'CSRF where token validation depends on request method'.",
+      "done_when": "You can explain in one sentence each what a synchronizer token, a double-submit cookie and SameSite each defend against, and why a GET must never change state.",
+      "source": {
+        "title": "OWASP Cross-Site Request Forgery Prevention Cheat Sheet",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Synchronizer Token Pattern"
+        }
+      },
+      "why": "The OAuth state parameter and SAML RelayState are the same defence applied to the login flow; knowing the plain version first makes them obvious.",
+      "n": 4
+    },
+    {
+      "do": "Read the XSS cheat sheet's output-encoding rules and (optional, needs the free account) complete one reflected XSS lab. Then write down, for a token in a cookie with HttpOnly, in local storage, and in a JavaScript variable, what an injected script can do with it.",
+      "done_when": "Your note has the three storage places with 'read it', 'use it from inside the page' or 'neither' against each.",
+      "source": {
+        "title": "OWASP Cross Site Scripting Prevention Cheat Sheet",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Output Encoding"
+        }
+      },
+      "why": "This is the argument you will have with a customer's front-end team about where the access token lives.",
+      "n": 5
+    },
+    {
+      "do": "Run curl -v against https://example.com and read the TLS lines: the protocol version, the cipher suite, the certificate subject, issuer and validity dates. Then run it against the local Keycloak's https port (or any self-signed endpoint) and read the verification error.",
+      "done_when": "You can name the TLS version and cipher of the first connection and quote the exact error text of the second, and say what -k would do and why it must not ship.",
+      "source": {
+        "title": "MDN: Transport Layer Security",
+        "url": "https://developer.mozilla.org/en-US/docs/Web/Security/Defenses/Transport_Layer_Security",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "TLS handshake"
+        }
+      },
+      "why": "Self-signed and internal-CA certificates are the first thing that breaks in a customer's environment; the curl output is how you prove which it is.",
+      "n": 6
+    },
+    {
+      "do": "Decide the cookie attributes for two cookies of an app you are integrating: the short-lived cookie that remembers the login attempt (state or request id) and the session cookie set after the callback. Consider both an OIDC code callback (a GET) and a SAML HTTP-POST callback.",
+      "done_when": "Your note gives Secure, HttpOnly, SameSite and a lifetime for each cookie in each case, and says why the SAML case needs SameSite=None on the first cookie but not on the second.",
+      "source": {
+        "title": "OWASP Session Management Cheat Sheet",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Cookies"
+        }
+      },
+      "why": "This is the decision that produces or prevents 'state mismatch' after a SAML login; writing it down once is the whole point of the lesson.",
+      "n": 7
+    },
+    {
+      "do": "Write a ten-line note for a colleague: which attributes the app's session cookie needs, how the session id is renewed after login, the idle and absolute timeouts, and what logout invalidates on the server. Check it against the session management cheat sheet.",
+      "done_when": "A colleague could set the cookie and the timeouts from the note alone, and every line maps to an item in the cheat sheet.",
+      "source": {
+        "title": "OWASP Session Management Cheat Sheet",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Cookies"
+        }
+      },
+      "why": "The note is the artifact that goes into the integration's security review.",
+      "n": 8
+    }
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Keycloak: Getting started with Docker",
+      "url": "https://www.keycloak.org/getting-started/getting-started-docker",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Secure the first application"
+      }
+    },
+    {
+      "kind": "guide",
+      "title": "MDN: Using HTTP cookies",
+      "url": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Cookies",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Security"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "MDN: Set-Cookie header",
+      "url": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Set-Cookie",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "SameSite"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 6265: HTTP State Management Mechanism",
+      "url": "https://datatracker.ietf.org/doc/html/rfc6265",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "The Secure Attribute"
+      }
+    },
+    {
+      "kind": "guide",
+      "title": "MDN: Cross-Origin Resource Sharing (CORS)",
+      "url": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CORS",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Preflighted requests"
+      }
+    },
+    {
+      "kind": "guide",
+      "title": "OWASP Cross-Site Request Forgery Prevention Cheat Sheet",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Synchronizer Token Pattern"
+      }
+    },
+    {
+      "kind": "guide",
+      "title": "OWASP Cross Site Scripting Prevention Cheat Sheet",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Output Encoding"
+      }
+    },
+    {
+      "kind": "guide",
+      "title": "MDN: Transport Layer Security",
+      "url": "https://developer.mozilla.org/en-US/docs/Web/Security/Defenses/Transport_Layer_Security",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "TLS handshake"
+      }
+    },
+    {
+      "kind": "guide",
+      "title": "OWASP Session Management Cheat Sheet",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Cookies"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "curl/curl (NOASSERTION)",
+      "url": "https://github.com/curl/curl",
+      "why": "The ground-truth client; read -v output for TLS lines, redirects and cookies.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/curl/curl on 2026-10-14: last push 2026-10-14, not archived, 43,114 stars"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "PortSwigger/jwt-editor (Apache-2.0)",
+      "url": "https://github.com/PortSwigger/jwt-editor",
+      "why": "The Burp extension used in the Academy's token labs, if you go on to run them.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/PortSwigger/jwt-editor on 2026-10-14: last push 2026-09-07, not archived, 53 stars"
+      }
+    }
+  ],
+  "verified": {
+    "checked": "2026-10-14",
+    "by": "identity spike, scripts/verify_sources.py (HTTP 200 and the section phrase found on the page)"
+  },
+  "provenance": {
+    "generated_by": "Claude (Fable 5.1) by hand from the identity and integration ops spike, Scout learning center",
+    "generated_on": "2026-10-14",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-14",
+      "change": "written by hand from the identity and integration ops spike; the Keycloak cookie, CORS preflight and curl TLS steps run against Keycloak 26.4, the two Academy labs are optional and were not run"
+    }
+  ]
+}

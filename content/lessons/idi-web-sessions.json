@@ -1,0 +1,289 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "idi-web-sessions",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Web sessions: cookies, CORS, CSRF and TLS",
+  "area": "software",
+  "primary_key": "http-and-transport-protocols",
+  "secondary_keys": [
+    "identity-and-access",
+    "threat-modeling"
+  ],
+  "keys": [
+    "http-and-transport-protocols",
+    "identity-and-access",
+    "threat-modeling"
+  ],
+  "summary": "Every single sign-on bug report arrives as a browser symptom: a cookie that was not sent, a redirect that lost the session, a request the browser refused to make, or a certificate the customer's laptop does not trust. This lesson is the browser-side mechanics every login flow rides on. A session is a cookie; a cross-site redirect either carries it or does not, and SameSite decides; a single-page app calling a token endpoint on another origin needs CORS; CSRF is why OAuth has a state parameter and SAML has RelayState; TLS is the assumption under all of it. Learn these six things once and half of the troubleshooting runbook becomes obvious.",
+  "detail": [],
+  "in_practice": "On the first day of an SSO integration an implementation engineer opens the customer's login page with the browser's devtools, reads the Set-Cookie headers, and writes down which cookie carries the session and which attributes it has. When the customer's identity provider redirects back and the app says 'no session', the engineer checks SameSite before anything else. When the customer's single-page app gets a red CORS line in the console, the engineer knows it is the preflight, not the token, and asks which origins the provider allows. When a scripted test client cannot log in to a local Keycloak while the browser can, the engineer remembers that browsers treat 127.0.0.1 as a secure context and plain-http scripts do not. Each of those is a five-minute fix once the vocabulary is in place, and a two-day ticket when it is not.",
+  "subtopics": [
+    {
+      "id": "sessions-and-cookies",
+      "title": "Sessions and cookies",
+      "body": [
+        {
+          "heading": "A session is a cookie",
+          "body": "HTTP has no memory. After a user logs in, the server has to recognise the next request as theirs, and the near-universal way is a session cookie: the server sets a random identifier in a Set-Cookie response header, the browser stores it and sends it back as a Cookie request header on every later request to that host. The identifier is the whole secret. Anyone who holds it is the user, which is why the OWASP session guidance starts with entropy (at least 64 bits of randomness), a new identifier after login (so a session fixed before authentication cannot be reused), an idle timeout and an absolute timeout, and server-side invalidation on logout."
+        },
+        {
+          "heading": "The attributes that matter",
+          "body": "The attributes on Set-Cookie decide where the cookie goes. Secure means the browser sends it only over HTTPS. HttpOnly means page scripts cannot read it, which takes the session out of reach of an XSS payload. SameSite (Strict, Lax or None) decides whether the cookie rides along on requests that start from another site, which is the whole SSO question and gets its own subtopic. Domain widens the cookie to subdomains (leave it off to scope it to the one host); Path narrows it. Expires or Max-Age make it persistent; without them it lives until the browser session ends. A practitioner reads these off the login response in the devtools Application tab or with curl, and a well-run app sets Secure, HttpOnly and SameSite=Lax on its session cookie and renews the identifier after login."
+        }
+      ]
+    },
+    {
+      "id": "cross-site-redirects",
+      "title": "Cross-site redirects and SameSite",
+      "body": [
+        {
+          "heading": "What SameSite does to a login flow",
+          "body": "A single sign-on flow is a chain of cross-site redirects: your app sends the browser to the identity provider, the provider authenticates and sends the browser back to your app with a code (OIDC) or a signed response (SAML). Whether your app's cookies arrive on that return trip depends on SameSite. Lax, the browser default since 2020, sends the cookie on top-level navigations that use a safe method, so a GET redirect back with a code carries it. It does not send the cookie on a cross-site POST, and the SAML HTTP-POST binding is exactly that: the provider's page auto-submits a form to your assertion consumer service. If the cookie your app uses to remember the login attempt (the OAuth state or the SAML request id) is SameSite=Lax, it is missing on the POST and the app reports 'state mismatch' or 'unsolicited response' even though the provider did everything right."
+        },
+        {
+          "heading": "The rules of thumb",
+          "body": "A cookie that must survive a cross-site POST callback needs SameSite=None, and the browser only honours None together with Secure, so the callback has to be HTTPS. Keep that cookie separate from the real session cookie, short-lived, and bound to the one request it tracks. The session cookie set after the callback can stay Lax. Two more browser facts a practitioner trips over: a redirect chain through more than one host counts as cross-site at each hop, and browsers treat localhost and 127.0.0.1 as secure contexts, so a Secure cookie is set and sent on plain http to 127.0.0.1 in a browser while a scripted client such as Python requests will not send it. The identity spike's first run against a local Keycloak hit exactly this: Keycloak sets its cookies Secure and SameSite=None, the browser logs in fine, and the script had to clear the Secure flag on its cookie jar to get past the login page."
+        }
+      ]
+    },
+    {
+      "id": "cors-and-preflight",
+      "title": "CORS and the preflight",
+      "body": [
+        {
+          "heading": "Origins and why the browser says no",
+          "body": "An origin is scheme, host and port. A page served from one origin may make requests to another, but the browser enforces the Same-Origin Policy on reading the response: unless the other server says so, the page gets an opaque failure and the console shows the familiar red CORS line. Cross-Origin Resource Sharing is the server's way of saying so, with Access-Control-Allow-Origin and friends on the response. A simple request (GET, HEAD, or a POST with a form content type and no custom headers) goes out and the browser checks the headers on the way back. Anything else, such as a JSON body, an Authorization header or a PUT, triggers a preflight: an OPTIONS request with Origin, Access-Control-Request-Method and Access-Control-Request-Headers that the server has to answer with matching Allow headers, and only then does the real request go."
+        },
+        {
+          "heading": "Where it bites an integration",
+          "body": "A single-page app that calls the identity provider's token endpoint or your API directly from the browser needs the provider or the API to list the app's exact origin. Wildcards do not work together with credentials: when a request carries cookies or an Authorization header, Access-Control-Allow-Credentials must be true and Allow-Origin must name the origin, not '*'. Every provider has a field for this (Okta calls it Trusted Origins, Keycloak calls it Web Origins), and a missing entry shows up as a CORS error in the console: on the preflight for some providers, on the actual response for others (Keycloak answers any preflight and applies Web Origins to the real response), and in both cases before the page ever sees a token. A scripted client or a server-side backend never sees CORS because CORS is enforced by the browser alone; that difference is the fastest way to tell a CORS problem from an authentication problem. The MDN guide has the error messages; the Fetch Standard has the normative rules."
+        }
+      ]
+    },
+    {
+      "id": "csrf-and-state",
+      "title": "CSRF, the synchronizer token, state and RelayState",
+      "body": [
+        {
+          "heading": "The attack and the defences",
+          "body": "Cross-site request forgery is the browser's own helpfulness used against the user: a page on an attacker's site makes the browser send a request to your app, and because the browser attaches the session cookie automatically, the request is authenticated. The OWASP cheat sheet orders the defences: a synchronizer token (a random value the server puts in each form and checks on submit, tied to the session), the double-submit cookie when the server is stateless, SameSite cookies as a layer, and never changing state on a GET. Modern frameworks ship the synchronizer token; the engineer's job is to not turn it off for the callback route."
+        },
+        {
+          "heading": "Why OAuth has state and SAML has RelayState",
+          "body": "The same idea protects the login flow itself. Without a check, an attacker could start a login with their own account, capture the redirect back, and get the victim's browser to complete it, logging the victim into the attacker's account (a login CSRF). OAuth's state parameter is a random value the app generates, stores in a cookie or the session, sends to the provider, and compares when the provider sends it back; a mismatch means the response was not an answer to a request this browser started. SAML's RelayState is the same slot, and an SP that validates InResponseTo is checking the same thing on the signed message. PKCE adds a second, stronger binding of the code to the client. When an app logs 'state mismatch', the usual causes are a cookie that did not survive the redirect (see SameSite) and a user with two login tabs open."
+        }
+      ]
+    },
+    {
+      "id": "xss-and-token-theft",
+      "title": "XSS and how a token leaves a browser",
+      "body": [
+        {
+          "heading": "The three ways a script gets in",
+          "body": "Cross-site scripting is attacker-supplied script running in your page with your origin's privileges. Reflected XSS bounces a payload off a query parameter into the page; stored XSS saves it in data other users will see; DOM XSS is the page's own script writing untrusted data into the document. Whatever the route, the script can read anything the page can: the document, local storage, in-memory variables and any cookie that is not HttpOnly, and it can make authenticated requests from inside the page."
+        },
+        {
+          "heading": "What that means for tokens",
+          "body": "This is why where a token lives matters. A session cookie with HttpOnly cannot be read by injected script (though the script can still use it by making requests). An access token in local storage can be read and exfiltrated in one line, which is why the token lesson says keep tokens in memory and short-lived, and why the backend-for-frontend pattern keeps them on the server behind an HttpOnly cookie. The defence against XSS itself is output encoding by context (HTML body, attribute, JavaScript, URL), a strict Content Security Policy, and frameworks that escape by default; the OWASP XSS cheat sheet lists the encoding rules and the PortSwigger labs let you perform each kind on a deliberately vulnerable app before you review someone else's."
+        }
+      ]
+    },
+    {
+      "id": "tls-in-one-page",
+      "title": "TLS in one page",
+      "body": [
+        {
+          "heading": "What the handshake gives you",
+          "body": "Every cookie, token and assertion in this module assumes the transport is private and authenticated, and that is TLS. In a TLS 1.3 handshake the client sends its supported versions and ciphers and a key share, the server answers with its choice, its certificate chain and its own key share, both sides derive the session keys, and the server proves it holds the private key for the certificate. The result is confidentiality (nobody on the path reads the token), integrity (nobody changes it) and server authentication (the client knows which server it is talking to, because a certificate authority the client trusts signed the certificate for that hostname). TLS 1.2 and 1.3 are current; anything older is a finding in a security review."
+        },
+        {
+          "heading": "What breaks in a dev setup and at a customer",
+          "body": "The failures a practitioner meets are about certificates, not ciphers. A self-signed certificate on a local identity provider makes every client refuse the connection until the certificate is trusted or verification is turned off for that one host (and turned back on before anything ships). A certificate for the wrong hostname fails the same way. An internal certificate authority at a customer means your container image needs their root certificate installed or every outbound call fails with a verification error. A TLS-terminating proxy or gateway means the app sees plain HTTP and has to be told it is behind TLS, or it will mark cookies insecure and build http redirect URLs that the provider rejects. Reading the TLS lines of curl -v (version, cipher, certificate subject and issuer) is the fastest check for all of these."
+        }
+      ]
+    }
+  ],
+  "diagram": {
+    "source": "sequenceDiagram\n  participant B as Browser\n  participant A as Your app\n  participant I as Identity provider\n  B->>A: GET /login\n  A-->>B: 302 to the provider, Set-Cookie state (Secure, SameSite)\n  B->>I: GET /authorize (cross-site navigation)\n  I-->>B: login page, then redirect or auto-post form\n  B->>A: GET or POST /callback with code or SAMLResponse\n  Note over B,A: Lax sends the cookie on the GET, not on the POST\n  A-->>B: Set-Cookie session (Secure, HttpOnly, SameSite=Lax)"
+  },
+  "code": [
+    {
+      "lang": "sh",
+      "code": "# Read the cookies a login page sets, without a browser\ncurl -si http://127.0.0.1:18080/realms/master/protocol/openid-connect/auth \\\n  -G --data-urlencode 'client_id=account-console' --data-urlencode 'response_type=code' \\\n  --data-urlencode 'redirect_uri=http://127.0.0.1:18080/realms/master/account/' \\\n  | grep -i '^set-cookie'\n# Set-Cookie: AUTH_SESSION_ID=...;Version=1;Path=/realms/master/;Secure;HttpOnly;SameSite=None\n# Set-Cookie: KC_RESTART=...;Version=1;Path=/realms/master/;Secure;HttpOnly;SameSite=None   (Keycloak 26.4, as run)\n\n# The TLS lines of a real connection: version, cipher, certificate subject and issuer\ncurl -sv https://example.com -o /dev/null 2>&1 | grep -E 'SSL connection|subject:|issuer:'\n"
+    },
+    {
+      "lang": "python",
+      "code": "# A scripted client on plain http never sends a Secure cookie; a browser treats 127.0.0.1 as a secure context.\n# The identity spike's test client had to clear the flag to get past a local Keycloak login page.\nimport requests\ns = requests.Session()\nr = s.get(\"http://127.0.0.1:18080/realms/idspike/protocol/openid-connect/auth\", params={...})\nfor c in s.cookies:\n    c.secure = False   # dev only, and only against 127.0.0.1\n"
+    }
+  ],
+  "technologies": [
+    "HTTP cookies",
+    "SameSite",
+    "CORS",
+    "CSRF tokens",
+    "Content Security Policy",
+    "TLS 1.3",
+    "Browser devtools",
+    "curl",
+    "Keycloak",
+    "PortSwigger Web Security Academy"
+  ],
+  "related": [
+    "idi-tokens-jwt",
+    "idi-oauth2",
+    "idi-troubleshooting-runbook",
+    "rest-apis-json-oauth",
+    "sd-security-basics",
+    "sd-networking"
+  ],
+  "sources": [
+    {
+      "kind": "guide",
+      "title": "MDN: Using HTTP cookies",
+      "url": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Cookies",
+      "why": "The plain-language start: what a cookie is, how a session cookie carries login state, and the Secure/HttpOnly/SameSite attributes.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Security"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "MDN: Set-Cookie header",
+      "url": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Set-Cookie",
+      "why": "The reference for every attribute an SSO callback or session cookie will set; SameSite values decide whether a cross-site IdP redirect carries the cookie.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "SameSite"
+      }
+    },
+    {
+      "kind": "guide",
+      "title": "MDN: Cross-Origin Resource Sharing (CORS)",
+      "url": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CORS",
+      "why": "Why a browser blocks a token call from another origin and what a preflight is; the first thing to check when a SPA cannot reach an API.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Preflighted requests"
+      }
+    },
+    {
+      "kind": "guide",
+      "title": "MDN: Transport Layer Security",
+      "url": "https://developer.mozilla.org/en-US/docs/Web/Security/Defenses/Transport_Layer_Security",
+      "why": "What TLS gives you (and does not), which versions are current, and why every token and cookie assumes it.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "TLS handshake"
+      }
+    },
+    {
+      "kind": "guide",
+      "title": "OWASP Session Management Cheat Sheet",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html",
+      "why": "The checklist for server-side sessions: id entropy, cookie attributes, renewal after login, expiry, logout.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Cookies"
+      }
+    },
+    {
+      "kind": "guide",
+      "title": "OWASP Cross-Site Request Forgery Prevention Cheat Sheet",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html",
+      "why": "CSRF defences in order of preference; the OAuth state parameter and SAML RelayState are the same idea.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Synchronizer Token Pattern"
+      }
+    },
+    {
+      "kind": "guide",
+      "title": "OWASP Cross Site Scripting Prevention Cheat Sheet",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html",
+      "why": "XSS is how tokens get stolen from a browser; output encoding rules are the defence.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Output Encoding"
+      }
+    },
+    {
+      "kind": "lab",
+      "title": "PortSwigger Web Security Academy: CSRF",
+      "url": "https://portswigger.net/web-security/csrf",
+      "why": "Free hands-on labs that let you perform a CSRF before you defend against one.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "What is CSRF"
+      }
+    },
+    {
+      "kind": "lab",
+      "title": "PortSwigger Web Security Academy: Cross-site scripting",
+      "url": "https://portswigger.net/web-security/cross-site-scripting",
+      "why": "Free labs on reflected, stored and DOM XSS, the three ways a session or token leaks.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "What is cross-site scripting"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 6265: HTTP State Management Mechanism",
+      "url": "https://datatracker.ietf.org/doc/html/rfc6265",
+      "why": "The cookie standard; read it when a browser and a server disagree about a cookie.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "The Secure Attribute"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "Fetch Standard: CORS protocol",
+      "url": "https://fetch.spec.whatwg.org/",
+      "why": "The normative CORS rules browsers implement; the MDN guide summarises this.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "CORS protocol"
+      }
+    },
+    {
+      "kind": "tutorial",
+      "title": "The Illustrated TLS 1.3 Connection",
+      "url": "https://tls13.xargs.org/",
+      "why": "Every byte of a TLS 1.3 handshake, annotated; the best way to see what a certificate and a key exchange actually do.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Client Hello"
+      }
+    }
+  ],
+  "practice": "practice/idi-web-sessions",
+  "provenance": {
+    "generated_by": "Claude (Fable 5.1) by hand from the identity and integration ops spike, Scout learning center",
+    "generated_on": "2026-10-14",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-14",
+      "change": "written by hand from the identity and integration ops spike (12 sources verified 2026-10-14; cookie and TLS steps run on a local Keycloak 26.4, the two labs are optional extras)"
+    }
+  ]
+}

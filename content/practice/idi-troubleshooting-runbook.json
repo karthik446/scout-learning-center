@@ -1,0 +1,341 @@
+{
+  "schema_version": "learning-center-practice:1",
+  "id": "practice/idi-troubleshooting-runbook",
+  "version": 1,
+  "lesson": "idi-troubleshooting-runbook",
+  "tool": "SAML-tracer, HAR files and the decoders, with Keycloak's logs",
+  "tool_key": null,
+  "why_this_tool": "A runbook is learned by producing each failure on purpose where you can see both sides, and the local Keycloak and node-saml setup from the earlier paths lets you break the audience, the ACS, the clock, the secret, the code and the scope one at a time while capturing with the tools a customer call allows (a tracer, a HAR, a log). The error rows that came from the spike's runs are verbatim; the vendor rows are from the official references.",
+  "alternatives": "Burp Suite with the SAML Raider extension edits and replays SAML messages for deeper testing; jwt_tool and the step CLI decode and test tokens from the shell; a customer's sandbox tenant with its sign-in logs is the best place to see the vendor side; the Entra test-SSO page and Okta's system log need an account the learning center did not create.",
+  "setup": [
+    {
+      "do": "Have the SAML practice path's Keycloak IdP and node-saml SP running, and the OpenID Connect path's public client configured; install the SAML-tracer extension in Firefox or Chrome.",
+      "done_when": "A SAML login and an OIDC login both succeed in the browser and the tracer icon shows messages when you log in.",
+      "source": {
+        "title": "SAML-tracer (Firefox add-on)",
+        "url": "https://addons.mozilla.org/en-US/firefox/addon/saml-tracer/",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "SAML-tracer"
+        }
+      },
+      "why": "The runbook is practised by breaking a working setup; both flows have to work first.",
+      "n": 1
+    },
+    {
+      "do": "Keep three things open: the browser's Network tab (with 'preserve log' on), the SAML lesson's two-line decoder (or samltool.com for local messages only), and the JWT decode one-liner from the token lesson.",
+      "done_when": "You can decode a SAMLRequest, a SAMLResponse and a JWT from a capture in under a minute each.",
+      "source": {
+        "title": "OneLogin SAML tools: decode SAML messages",
+        "url": "https://www.samltool.com/decode.php",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Decode"
+        }
+      },
+      "why": "Capture and decode are the first two steps of every call; having the tools ready is the preparation.",
+      "n": 2
+    }
+  ],
+  "steps": [
+    {
+      "do": "With the tracer recording, run the SAML login; export the trace; identify the AuthnRequest and the Response and read, from the trace, the Destination, the AssertionConsumerServiceURL, the Issuer, the Audience, the NameID and the signature elements.",
+      "done_when": "Your export is saved and you can point at each of the six values in it.",
+      "source": {
+        "title": "SAML-tracer (Firefox add-on)",
+        "url": "https://addons.mozilla.org/en-US/firefox/addon/saml-tracer/",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "SAML-tracer"
+        }
+      },
+      "why": "The tracer is the first tool on any SSO ticket; reading a good trace once makes the bad ones legible.",
+      "n": 1
+    },
+    {
+      "do": "With the Network tab recording, run the OIDC login and save the HAR; run the HAR-reading script from the lesson and find the redirect that carries the code and state, and the token request that follows.",
+      "done_when": "The script prints the redirect chain with the callback Location containing code and state, and you can say which entries would be sensitive in a customer's HAR.",
+      "source": {
+        "title": "Chrome DevTools: Network features reference",
+        "url": "https://developer.chrome.com/docs/devtools/network/reference",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "HAR"
+        }
+      },
+      "why": "A HAR is what a customer can send you without any extension; knowing where the flow is in it is the skill.",
+      "n": 2
+    },
+    {
+      "do": "Paste the local SAMLResponse (never a customer's) into the samltool.com decoder, and inflate the SAMLRequest from the redirect with the Python two-liner; compare the two results with the tracer's.",
+      "done_when": "All three decodings agree, and you know which tool you would use with no extension and no script available.",
+      "source": {
+        "title": "OneLogin SAML tools: decode SAML messages",
+        "url": "https://www.samltool.com/decode.php",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Decode"
+        }
+      },
+      "why": "The decoders are interchangeable; the rule about customer data is not.",
+      "n": 3
+    },
+    {
+      "do": "Break the SP's audience (set it to a different string), log in, and read the exact error from the SP; restore it.",
+      "done_when": "The SP rejects with an audience error text you have recorded verbatim, and the tracer shows the Audience in the assertion unchanged.",
+      "source": {
+        "title": "Microsoft Entra: Debug SAML-based single sign-on to applications",
+        "url": "https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/debug-saml-sso-issues",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Test SAML"
+        }
+      },
+      "why": "Audience mismatch is the most common SAML failure after certificates; the error text is a runbook row.",
+      "n": 4
+    },
+    {
+      "do": "Break the ACS: change the SP's callback URL to a path Keycloak does not have registered, log in, and read the error on the IdP's page and in its log; restore it.",
+      "done_when": "Keycloak refuses the AuthnRequest with an invalid-request error naming the ACS or redirect, and the row is recorded.",
+      "source": {
+        "title": "Keycloak: Configuring logging",
+        "url": "https://www.keycloak.org/server/logging",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "log level"
+        }
+      },
+      "why": "ACS and redirect URI mismatches fail on the IdP side before the SP sees anything; knowing which side errs is half the diagnosis.",
+      "n": 5
+    },
+    {
+      "do": "Set the SP's accepted clock skew to 0 and shift the SP's idea of time by a few minutes (or wait for an assertion to age past NotOnOrAfter), log in, and read the error; restore the skew.",
+      "done_when": "The SP rejects with a 'not yet valid' or 'expired' style error, and you can state what skew a production SP should accept.",
+      "source": {
+        "title": "Microsoft Entra: Debug SAML-based single sign-on to applications",
+        "url": "https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/debug-saml-sso-issues",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Test SAML"
+        }
+      },
+      "why": "Clock errors look random to users ('works on one node'); seeing the exact text once makes them recognisable.",
+      "n": 6
+    },
+    {
+      "do": "Produce the OIDC failures on purpose: a token request with a wrong client secret, a replayed authorization code, a request with an unregistered redirect_uri, and a userinfo call with a token lacking the openid scope. Record error and error_description from each response body.",
+      "done_when": "Four rows: 401 unauthorized_client or invalid_client, 400 invalid_grant, the IdP's redirect_uri error page, and 403 from userinfo; all with the verbatim text.",
+      "source": {
+        "title": "RFC 6749 section 5.2: Error Response",
+        "url": "https://datatracker.ietf.org/doc/html/rfc6749#section-5.2",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Error Response"
+        }
+      },
+      "why": "The RFC's error codes have exact meanings; a table of them with real text stops the guessing on a call.",
+      "n": 7
+    },
+    {
+      "do": "Raise Keycloak's log level for the SAML and OIDC protocol categories and the events category, repeat two of the failures, and find each in the container log.",
+      "done_when": "The log shows a line for each rejection with the reason, and you can say which category produced it.",
+      "source": {
+        "title": "Keycloak: Configuring logging",
+        "url": "https://www.keycloak.org/server/logging",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "log level"
+        }
+      },
+      "why": "The IdP's log is the vendor-side evidence; a local IdP is the only one whose log you can read in full.",
+      "n": 8
+    },
+    {
+      "do": "Read the Entra SAML debugging page and the error codes reference, and (needs a free account; not run by the learning center) run 'Test single sign-on' on an enterprise application to download the SAML request and read the resolution guidance; read Okta's error codes reference and find E0000004 and E0000011.",
+      "done_when": "You can describe what the Entra test button does and name three AADSTS codes and two Okta codes with their causes.",
+      "source": {
+        "title": "Microsoft Entra: authentication and authorization error codes",
+        "url": "https://learn.microsoft.com/en-us/entra/identity-platform/reference-error-codes",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "AADSTS"
+        }
+      },
+      "why": "Customers paste these codes into tickets; recognising them saves the first round trip.",
+      "n": 9
+    },
+    {
+      "do": "Build the runbook table with at least ten rows from the steps above and the lesson's lists: symptom, exact error text, cause, fix, which capture showed it. Add the three SFTP and webhook rows from the machine-to-machine and file feed lessons.",
+      "done_when": "The table has ten or more rows with verbatim error text in each, and a colleague could use it on a call without you.",
+      "source": {
+        "title": "Postman: Troubleshoot API requests",
+        "url": "https://learning.postman.com/docs/sending-requests/response-data/troubleshooting-api-requests/",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Postman Console"
+        }
+      },
+      "why": "The table is the runbook; every incident after this adds a row.",
+      "n": 10
+    }
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "SAML-tracer (Firefox add-on)",
+      "url": "https://addons.mozilla.org/en-US/firefox/addon/saml-tracer/",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "SAML-tracer"
+      }
+    },
+    {
+      "kind": "lab",
+      "title": "OneLogin SAML tools: decode SAML messages",
+      "url": "https://www.samltool.com/decode.php",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Decode"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Chrome DevTools: Network features reference",
+      "url": "https://developer.chrome.com/docs/devtools/network/reference",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "HAR"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Microsoft Entra: Debug SAML-based single sign-on to applications",
+      "url": "https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/debug-saml-sso-issues",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Test SAML"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Keycloak: Configuring logging",
+      "url": "https://www.keycloak.org/server/logging",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "log level"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 6749 section 5.2: Error Response",
+      "url": "https://datatracker.ietf.org/doc/html/rfc6749#section-5.2",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Error Response"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Microsoft Entra: authentication and authorization error codes",
+      "url": "https://learn.microsoft.com/en-us/entra/identity-platform/reference-error-codes",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "AADSTS"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Postman: Troubleshoot API requests",
+      "url": "https://learning.postman.com/docs/sending-requests/response-data/troubleshooting-api-requests/",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Postman Console"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "simplesamlphp/SAML-tracer (BSD-2-Clause)",
+      "url": "https://github.com/simplesamlphp/SAML-tracer",
+      "why": "The capture tool's source.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/simplesamlphp/SAML-tracer on 2026-10-14: last push 2026-09-07, not archived, 185 stars"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "CompassSecurity/SAMLRaider (MIT)",
+      "url": "https://github.com/CompassSecurity/SAMLRaider",
+      "why": "Edit and replay SAML messages in Burp.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/CompassSecurity/SAMLRaider on 2026-10-14: last push 2026-02-24, not archived, 453 stars"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "ticarpi/jwt_tool (GPL-3.0)",
+      "url": "https://github.com/ticarpi/jwt_tool",
+      "why": "Decode and test JWTs from the shell.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/ticarpi/jwt_tool on 2026-10-14: last push 2025-05-01, not archived, 6,788 stars"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "smallstep/cli (Apache-2.0)",
+      "url": "https://github.com/smallstep/cli",
+      "why": "Inspect certificates and tokens from the shell.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/smallstep/cli on 2026-10-14: last push 2026-10-13, not archived, 4,340 stars"
+      }
+    }
+  ],
+  "verified": {
+    "checked": "2026-10-14",
+    "by": "identity spike, scripts/verify_sources.py (HTTP 200 and the section phrase found on the page)"
+  },
+  "provenance": {
+    "generated_by": "Claude (Fable 5.1) by hand from the identity and integration ops spike, Scout learning center",
+    "generated_on": "2026-10-14",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-14",
+      "change": "written by hand from the identity and integration ops spike; the InResponseTo, signature, invalid_grant, unauthorized_client and userinfo-403 outcomes ran in the spike against Keycloak 26.4; the tracer, HAR, audience, ACS, clock and log-level steps are written from the sources and not run; the Entra test-SSO step needs a free account"
+    }
+  ]
+}

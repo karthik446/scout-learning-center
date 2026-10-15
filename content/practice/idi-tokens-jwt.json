@@ -1,0 +1,336 @@
+{
+  "schema_version": "learning-center-practice:1",
+  "id": "practice/idi-tokens-jwt",
+  "version": 1,
+  "lesson": "idi-tokens-jwt",
+  "tool": "PyJWT",
+  "tool_key": null,
+  "why_this_tool": "PyJWT does the whole validation checklist in one decode call, has a JWKS client that performs the kid lookup and caching, and raises a distinct exception for each failed check, so breaking a token on purpose shows you exactly which check caught it. It is the validator the identity spike used to verify real tokens from Keycloak and node-oidc-provider.",
+  "alternatives": "panva/jose in Node and the browser does the same with a remote JWKS helper; auth0/node-jsonwebtoken is the most installed Node library (read its defaults); lestrrat-go/jwx in Go; the jwt.io debugger for reading a token; jwt_tool and the step CLI for attacking or inspecting tokens from the shell.",
+  "setup": [
+    {
+      "do": "Create a scratch Python virtual environment and install PyJWT with its cryptography extra plus requests. No global install.",
+      "done_when": "python -c 'import jwt, cryptography' exits 0 inside the environment.",
+      "source": {
+        "title": "PyJWT usage: validating tokens and fetching keys from a JWKS endpoint",
+        "url": "https://pyjwt.readthedocs.io/en/stable/usage.html",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Retrieve RSA signing keys from a JWKS endpoint"
+        }
+      },
+      "why": "PyJWT is the validator used in the lesson's proof; the crypto extra is what makes RS256 and the JWKS client work.",
+      "n": 1
+    },
+    {
+      "do": "Have a local OpenID provider running and an ID token to work on: follow the OpenID Connect practice path's setup (Keycloak 26.4 in Docker on 127.0.0.1:18080 with the realm, user and public client) and run its authorization code flow once, keeping the id_token and the issuer URL.",
+      "done_when": "You hold a string with two dots whose first segment base64url-decodes to a JSON object with alg and kid, and the issuer's discovery document answers 200.",
+      "source": {
+        "title": "Keycloak: Getting started with Docker",
+        "url": "https://www.keycloak.org/getting-started/getting-started-docker",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Secure the first application"
+        }
+      },
+      "why": "Every step below works on a real token from a real provider, so the errors you see are the ones a customer's token would produce.",
+      "n": 2
+    }
+  ],
+  "steps": [
+    {
+      "do": "Split the token on the dots and base64url-decode the header and the payload by hand (add padding, then decode). Name alg, typ and kid from the header and iss, aud, sub, exp, iat and nonce from the payload.",
+      "done_when": "You have printed both JSON objects and can say what each of the eight named fields is for without looking it up.",
+      "source": {
+        "title": "jwt.io: Introduction to JSON Web Tokens",
+        "url": "https://jwt.io/introduction",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "What is JSON Web Token"
+        }
+      },
+      "why": "Decode first, validate second: the header tells you which key and algorithm the validator will need.",
+      "n": 1
+    },
+    {
+      "do": "Fetch the provider's discovery document, then its jwks_uri. Find the key whose kid equals the token header's kid and note its kty, use and alg.",
+      "done_when": "The JWKS lists a key with the token's kid, and you can explain what the verifier would do if it did not.",
+      "source": {
+        "title": "RFC 7517: JSON Web Key (JWK)",
+        "url": "https://datatracker.ietf.org/doc/html/rfc7517",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "JWK Set Format"
+        }
+      },
+      "why": "The kid lookup is the join between a token and the provider's published keys; seeing the JSON once makes the rotation story concrete.",
+      "n": 2
+    },
+    {
+      "do": "Validate the token with PyJWT: PyJWKClient for the key, algorithms pinned to the header's RS256 (or the provider's ES256), audience set to the client id, issuer set to the discovery document's issuer, and a require list of exp, iat, iss, aud and sub. Compare the returned nonce with the one you sent.",
+      "done_when": "jwt.decode returns the claims dictionary and the nonce matches; the identity spike's run printed 'id_token VALID' at this point.",
+      "source": {
+        "title": "PyJWT usage: validating tokens and fetching keys from a JWKS endpoint",
+        "url": "https://pyjwt.readthedocs.io/en/stable/usage.html",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Retrieve RSA signing keys from a JWKS endpoint"
+        }
+      },
+      "why": "This is the one call a relying party makes on every login; the arguments are the checklist.",
+      "n": 3
+    },
+    {
+      "do": "Flip one byte of the payload: decode it, change the email claim to mallory@example.test, re-encode without padding, reassemble with the original header and signature, and validate again.",
+      "done_when": "PyJWT raises InvalidSignatureError ('Signature verification failed') and nothing else.",
+      "source": {
+        "title": "RFC 7515: JSON Web Signature (JWS)",
+        "url": "https://datatracker.ietf.org/doc/html/rfc7515",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "JWS Compact Serialization"
+        }
+      },
+      "why": "The signature covers the encoded bytes exactly; this is the proof that reading a claim without verifying is reading the attacker's claim.",
+      "n": 4
+    },
+    {
+      "do": "Validate the genuine token again with audience set to a different client id.",
+      "done_when": "PyJWT raises InvalidAudienceError ('Audience doesn't match').",
+      "source": {
+        "title": "RFC 7519: JSON Web Token (JWT)",
+        "url": "https://datatracker.ietf.org/doc/html/rfc7519",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Registered Claim Names"
+        }
+      },
+      "why": "A token for another application from the same provider passes every other check; aud is the one that says 'this token is for me'.",
+      "n": 5
+    },
+    {
+      "do": "Validate the genuine token with algorithms=['none'], and then with algorithms=['HS256'] and the public key's PEM as the secret.",
+      "done_when": "Both calls fail: PyJWT refuses none for a signed token and refuses an HMAC algorithm with an asymmetric key, and you can name the two attacks (alg none, key confusion) these refusals prevent.",
+      "source": {
+        "title": "RFC 8725: JSON Web Token Best Current Practices",
+        "url": "https://datatracker.ietf.org/doc/html/rfc8725",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Perform Algorithm Verification"
+        }
+      },
+      "why": "A verifier that lets the token choose the algorithm fails both; your library's refusal is the behaviour to keep when you configure it.",
+      "n": 6
+    },
+    {
+      "do": "In the Keycloak admin console set the public client's access token lifespan to 60 seconds, log in again, wait past expiry and validate the new token; then validate once more with leeway=120.",
+      "done_when": "The first validation raises ExpiredSignatureError and the second passes, and you can say what leeway a production verifier should allow (a minute or two, not more).",
+      "source": {
+        "title": "Microsoft Entra: Secure applications and APIs by validating claims",
+        "url": "https://learn.microsoft.com/en-us/entra/identity-platform/claims-validation",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Validate the audience"
+        }
+      },
+      "why": "exp is only as strong as the leeway; seeing both outcomes sets the number.",
+      "n": 7
+    },
+    {
+      "do": "Rotate the provider's key: in the realm's key providers add a new RSA generated key with a higher priority, log in again and compare the new token's kid with the old. Validate the new token with a PyJWKClient instance created before the rotation, then with a fresh one.",
+      "done_when": "The old kid and the new kid differ; the stale client fails to find the key until it refetches and the fresh client succeeds, and you can describe the cache-and-refetch rule a verifier needs.",
+      "source": {
+        "title": "RFC 7517: JSON Web Key (JWK)",
+        "url": "https://datatracker.ietf.org/doc/html/rfc7517",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "JWK Set Format"
+        }
+      },
+      "why": "Key rotation is the most common cause of an SSO outage that 'nobody caused'; a verifier that refetches on an unknown kid survives it.",
+      "n": 8
+    },
+    {
+      "do": "Read the token storage guidance and the OWASP cheat sheet's storage section, then write the storage rule for one client of yours: where the access token lives, where the refresh token lives, their lifetimes, and what revocation actually does.",
+      "done_when": "Your note names a storage place for each token that is not local storage and states honestly what happens to an issued access token when the user is deprovisioned.",
+      "source": {
+        "title": "Auth0: Token Storage",
+        "url": "https://auth0.com/docs/secure/security-guidance/data-security/token-storage",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Browser in-memory scenarios"
+        }
+      },
+      "why": "The storage decision is the one a customer's security review will ask about; writing it down from the sources makes the answer defensible.",
+      "n": 9
+    }
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "PyJWT usage: validating tokens and fetching keys from a JWKS endpoint",
+      "url": "https://pyjwt.readthedocs.io/en/stable/usage.html",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Retrieve RSA signing keys from a JWKS endpoint"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Keycloak: Getting started with Docker",
+      "url": "https://www.keycloak.org/getting-started/getting-started-docker",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Secure the first application"
+      }
+    },
+    {
+      "kind": "guide",
+      "title": "jwt.io: Introduction to JSON Web Tokens",
+      "url": "https://jwt.io/introduction",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "What is JSON Web Token"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 7517: JSON Web Key (JWK)",
+      "url": "https://datatracker.ietf.org/doc/html/rfc7517",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "JWK Set Format"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 7515: JSON Web Signature (JWS)",
+      "url": "https://datatracker.ietf.org/doc/html/rfc7515",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "JWS Compact Serialization"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 7519: JSON Web Token (JWT)",
+      "url": "https://datatracker.ietf.org/doc/html/rfc7519",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Registered Claim Names"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 8725: JSON Web Token Best Current Practices",
+      "url": "https://datatracker.ietf.org/doc/html/rfc8725",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Perform Algorithm Verification"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Microsoft Entra: Secure applications and APIs by validating claims",
+      "url": "https://learn.microsoft.com/en-us/entra/identity-platform/claims-validation",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Validate the audience"
+      }
+    },
+    {
+      "kind": "guide",
+      "title": "Auth0: Token Storage",
+      "url": "https://auth0.com/docs/secure/security-guidance/data-security/token-storage",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Browser in-memory scenarios"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "jpadilla/pyjwt (MIT)",
+      "url": "https://github.com/jpadilla/pyjwt",
+      "why": "The validator used in the proof; read how PyJWKClient caches and refetches keys.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/jpadilla/pyjwt on 2026-10-14: last push 2026-10-14, not archived, 5,717 stars"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "panva/jose (MIT)",
+      "url": "https://github.com/panva/jose",
+      "why": "The same in Node and browsers; its JWKS cache is a good reference implementation.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/panva/jose on 2026-10-14: last push 2026-10-13, not archived, 7,826 stars"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "ticarpi/jwt_tool (GPL-3.0)",
+      "url": "https://github.com/ticarpi/jwt_tool",
+      "why": "Attack tool: alg none, key confusion, kid injection against your own service.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/ticarpi/jwt_tool on 2026-10-14: last push 2025-05-01, not archived, 6,788 stars"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "smallstep/cli (Apache-2.0)",
+      "url": "https://github.com/smallstep/cli",
+      "why": "step crypto jwt inspects and verifies tokens from the shell.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/smallstep/cli on 2026-10-14: last push 2026-10-13, not archived, 4,340 stars"
+      }
+    }
+  ],
+  "verified": {
+    "checked": "2026-10-14",
+    "by": "identity spike, scripts/verify_sources.py (HTTP 200 and the section phrase found on the page)"
+  },
+  "provenance": {
+    "generated_by": "Claude (Fable 5.1) by hand from the identity and integration ops spike, Scout learning center",
+    "generated_on": "2026-10-14",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-14",
+      "change": "written by hand from the identity and integration ops spike; steps 1 to 6 run against Keycloak 26.4 (inside the spike's OIDC script), steps 7 to 9 written from the PyJWT and Keycloak documentation and not run"
+    }
+  ]
+}

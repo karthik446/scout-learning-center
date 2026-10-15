@@ -1,0 +1,376 @@
+{
+  "schema_version": "learning-center-practice:1",
+  "id": "practice/idi-sftp-feeds",
+  "version": 1,
+  "lesson": "idi-sftp-feeds",
+  "tool": "atmoz/sftp with paramiko and gpg",
+  "tool_key": null,
+  "why_this_tool": "atmoz/sftp builds a chrooted, key-only OpenSSH feed account from one line, paramiko lets a producer and a consumer be written in a few dozen lines with the exact rename semantics a real client has, and gpg is the OpenPGP tool customers and their security teams expect; together they reproduce the whole feed pattern on one machine, including the two failure modes the spike found.",
+  "alternatives": "AsyncSSH runs an SFTP server in process for the no-Docker route; sftpgo is a full server with users, quotas and object-store backends when you need the server side for real; the sftp command with -b batch files tests a feed by hand; openpgpjs and gopenpgp are OpenPGP libraries for JavaScript and Go when gpg cannot be shelled out to; a managed endpoint (AWS Transfer Family, Azure Blob SFTP) is what a cloud customer will hand you.",
+  "setup": [
+    {
+      "do": "Generate an ed25519 key pair for the feed account with ssh-keygen (no passphrase for the exercise; a passphrase or a secrets manager in production).",
+      "done_when": "feed_ed25519 and feed_ed25519.pub exist and ssh-keygen -l prints the fingerprint.",
+      "source": {
+        "title": "OpenSSH: ssh-keygen(1)",
+        "url": "https://man.openbsd.org/ssh-keygen",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "ed25519"
+        }
+      },
+      "why": "Key-only accounts are the baseline for a feed; the public half is all the server ever holds.",
+      "n": 1
+    },
+    {
+      "do": "Run atmoz/sftp in Docker bound to 127.0.0.1:12222 with the public key mounted into the account's keys folder and the user specification feed::1001::inbox,outbox,archive (no password). No-Docker alternative: an AsyncSSH in-process SFTP server in the same scratch environment.",
+      "done_when": "docker ps shows the container with 127.0.0.1:12222->22 and the image's log shows the user and folders created.",
+      "source": {
+        "title": "atmoz/sftp README",
+        "url": "https://github.com/atmoz/sftp",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Logging in with SSH keys"
+        }
+      },
+      "why": "The image builds the chrooted, key-only layout a customer's server owner would; its README documents the mounts.",
+      "n": 2
+    },
+    {
+      "do": "Create a scratch Python virtual environment with paramiko (and asyncssh for the no-Docker route); install gpg from your package manager if it is missing, or decide to do the encryption steps with a gpg on another machine.",
+      "done_when": "python -c 'import paramiko' exits 0 and gpg --version prints a version (or you have noted which steps you will read instead).",
+      "source": {
+        "title": "Paramiko: SFTP client API",
+        "url": "https://docs.paramiko.org/en/stable/api/sftp.html",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "rename"
+        }
+      },
+      "why": "paramiko is the client in the proof; gpg is the encryption tool the lesson teaches.",
+      "n": 3
+    }
+  ],
+  "steps": [
+    {
+      "do": "Connect with the key and list the root; then try a password login; then try to write a file at the root; then try to list /etc.",
+      "done_when": "The listing shows .ssh, inbox, outbox and archive; the password login is refused with an authentication failure; the root write fails with permission denied; /etc is not found.",
+      "source": {
+        "title": "OpenSSH: sshd_config(5)",
+        "url": "https://man.openbsd.org/sshd_config",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "ChrootDirectory"
+        }
+      },
+      "why": "These four checks prove key-only, root-owned chroot and no shell escape; run them against every feed account a customer gives you.",
+      "n": 1
+    },
+    {
+      "do": "Read the server's effective configuration (docker exec into the container and grep sshd_config) for Subsystem, ForceCommand and ChrootDirectory.",
+      "done_when": "You can quote the three lines and explain what each one removes from the account's abilities.",
+      "source": {
+        "title": "OpenSSH: sshd_config(5)",
+        "url": "https://man.openbsd.org/sshd_config",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "ChrootDirectory"
+        }
+      },
+      "why": "The three directives are the server side of the feed; recognising them lets you review a customer's configuration.",
+      "n": 2
+    },
+    {
+      "do": "As the producer, write a five-row CSV, upload it as inbox/orders-1.csv.part and rename it to inbox/orders-1.csv; list the inbox between the two operations from a second connection.",
+      "done_when": "The second connection sees the .part name during the upload and the final name only after the rename.",
+      "source": {
+        "title": "OpenSSH: sftp(1)",
+        "url": "https://man.openbsd.org/sftp",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "INTERACTIVE COMMANDS"
+        }
+      },
+      "why": "Drop-then-rename is the convention that makes partial files visible as partial; seeing it from the consumer's side once fixes the rule.",
+      "n": 3
+    },
+    {
+      "do": "Write a manifest (orders-1.manifest.json) listing the file name, byte count, SHA-256 of the uploaded bytes and the row count, and drop it with the same drop-then-rename after the data file.",
+      "done_when": "The manifest's hash and size match what a fresh download of the data file computes.",
+      "source": {
+        "title": "RFC 4180: Common Format and MIME Type for CSV Files",
+        "url": "https://datatracker.ietf.org/doc/html/rfc4180",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Definition of the CSV Format"
+        }
+      },
+      "why": "The manifest is the batch's completeness signal and its integrity check; dropping it last is what makes multi-file batches safe.",
+      "n": 4
+    },
+    {
+      "do": "Generate the consumer's OpenPGP key pair with gpg, export the public key, and as the producer import it and encrypt the CSV to it (orders-2.csv.gpg); add a plain_sha256 field (the SHA-256 of the plaintext) next to the wire hash in the manifest and drop batch 2. (gpg not run on the spike's machine; the commands follow the handbook.)",
+      "done_when": "gpg --list-keys shows the consumer key, the encrypted file decrypts back to the identical CSV, and the manifest holds both hashes.",
+      "source": {
+        "title": "The GNU Privacy Handbook",
+        "url": "https://www.gnupg.org/gph/en/manual.html",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Encrypting and decrypting documents"
+        }
+      },
+      "why": "Encryption to the consumer's public key is what customers mean by 'PGP'; the second hash exists because the ciphertext differs on every run.",
+      "n": 5
+    },
+    {
+      "do": "Write the consumer: list the inbox, ignore any .part file, for each manifest verify every listed file's size and wire hash, decrypt with gpg (or read plain files), verify the plaintext hash and row count, ingest the rows into a local table or file with an upsert on the order id, record the plaintext hash in a ledger, and archive both files with a rename.",
+      "done_when": "Both batches are ingested with the row counts the manifests state, the ledger holds two hashes, and the inbox holds nothing but partial files.",
+      "source": {
+        "title": "Paramiko: SFTP client API",
+        "url": "https://docs.paramiko.org/en/stable/api/sftp.html",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "rename"
+        }
+      },
+      "why": "This is the whole consumer; every later step breaks one assumption of it.",
+      "n": 6
+    },
+    {
+      "do": "Drop batch 1 again (same content, freshly encrypted) and run the consumer.",
+      "done_when": "The consumer reports the batch as already ingested by its plaintext hash and skips it, and the archive rename gets a unique name (a timestamp suffix) because the original name already exists there.",
+      "source": {
+        "title": "SSH File Transfer Protocol (draft-ietf-secsh-filexfer-02)",
+        "url": "https://datatracker.ietf.org/doc/html/draft-ietf-secsh-filexfer-02",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Removing and Renaming Files"
+        }
+      },
+      "why": "The two findings of the proof in one step: the ciphertext hash is not an identity, and version-3 RENAME refuses an existing target.",
+      "n": 7
+    },
+    {
+      "do": "Upload half a file as inbox/orders-99.csv.gpg.part and never rename it; run the consumer twice.",
+      "done_when": "The consumer lists the partial file as skipped both times and never opens it; your alerting note says after how long a stale .part file pages someone.",
+      "source": {
+        "title": "OpenSSH: sftp(1)",
+        "url": "https://man.openbsd.org/sftp",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "INTERACTIVE COMMANDS"
+        }
+      },
+      "why": "A producer that died mid-upload is a normal Tuesday; the consumer's rule is to never touch a partial file.",
+      "n": 8
+    },
+    {
+      "do": "Read OpenSSH's PROTOCOL document on posix-rename@openssh.com and check which rename your client sends (paramiko: rename versus posix_rename); write down which one the producer and the consumer use and why.",
+      "done_when": "Your note names the two operations and states that the producer never overwrites a final name.",
+      "source": {
+        "title": "OpenSSH PROTOCOL: posix-rename@openssh.com and other extensions",
+        "url": "https://github.com/openssh/openssh-portable/blob/master/PROTOCOL",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "posix-rename@openssh.com"
+        }
+      },
+      "why": "Knowing which rename you issue is the difference between an atomic archive step and a silent overwrite.",
+      "n": 9
+    },
+    {
+      "do": "Write the feed contract: account and key handling, folder layout, file naming, drop-then-rename, manifest fields, encryption key exchange and rotation, the CSV rules from RFC 4180 plus encoding, delimiter, header, dates, numbers and nulls, the schedule, the deadline alert, retention of the archive, and what happens on a re-sent batch.",
+      "done_when": "A two-page document a customer's integration owner could implement the producer from, with every rule above present.",
+      "source": {
+        "title": "Enterprise Integration Patterns: File Transfer",
+        "url": "https://www.enterpriseintegrationpatterns.com/patterns/messaging/FileTransferIntegration.html",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "File Transfer"
+        }
+      },
+      "why": "The contract is the deliverable; the practice exists so every line in it has been seen to matter.",
+      "n": 10
+    }
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "OpenSSH: ssh-keygen(1)",
+      "url": "https://man.openbsd.org/ssh-keygen",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "ed25519"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "atmoz/sftp README",
+      "url": "https://github.com/atmoz/sftp",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Logging in with SSH keys"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Paramiko: SFTP client API",
+      "url": "https://docs.paramiko.org/en/stable/api/sftp.html",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "rename"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "OpenSSH: sshd_config(5)",
+      "url": "https://man.openbsd.org/sshd_config",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "ChrootDirectory"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "OpenSSH: sftp(1)",
+      "url": "https://man.openbsd.org/sftp",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "INTERACTIVE COMMANDS"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 4180: Common Format and MIME Type for CSV Files",
+      "url": "https://datatracker.ietf.org/doc/html/rfc4180",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Definition of the CSV Format"
+      }
+    },
+    {
+      "kind": "guide",
+      "title": "The GNU Privacy Handbook",
+      "url": "https://www.gnupg.org/gph/en/manual.html",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Encrypting and decrypting documents"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "SSH File Transfer Protocol (draft-ietf-secsh-filexfer-02)",
+      "url": "https://datatracker.ietf.org/doc/html/draft-ietf-secsh-filexfer-02",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Removing and Renaming Files"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "OpenSSH PROTOCOL: posix-rename@openssh.com and other extensions",
+      "url": "https://github.com/openssh/openssh-portable/blob/master/PROTOCOL",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "posix-rename@openssh.com"
+      }
+    },
+    {
+      "kind": "guide",
+      "title": "Enterprise Integration Patterns: File Transfer",
+      "url": "https://www.enterpriseintegrationpatterns.com/patterns/messaging/FileTransferIntegration.html",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "File Transfer"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "atmoz/sftp (MIT)",
+      "url": "https://github.com/atmoz/sftp",
+      "why": "The server in the proof.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/atmoz/sftp on 2026-10-14: last push 2026-01-11, not archived, 1,910 stars"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "paramiko/paramiko (LGPL-2.1)",
+      "url": "https://github.com/paramiko/paramiko",
+      "why": "The client in the proof; rename versus posix_rename.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/paramiko/paramiko on 2026-10-14: last push 2026-10-10, not archived, 9,877 stars"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "ronf/asyncssh (EPL-2.0)",
+      "url": "https://github.com/ronf/asyncssh",
+      "why": "In-process SFTP server and client, the no-Docker route.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/ronf/asyncssh on 2026-10-14: last push 2026-10-10, not archived, 1,761 stars"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "drakkan/sftpgo (AGPL-3.0)",
+      "url": "https://github.com/drakkan/sftpgo",
+      "why": "A full SFTP and HTTP file server with users, quotas and S3 backends.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/drakkan/sftpgo on 2026-10-14: last push 2026-10-03, not archived, 12,664 stars"
+      }
+    }
+  ],
+  "verified": {
+    "checked": "2026-10-14",
+    "by": "identity spike, scripts/verify_sources.py (HTTP 200 and the section phrase found on the page)"
+  },
+  "provenance": {
+    "generated_by": "Claude (Fable 5.1) by hand from the identity and integration ops spike, Scout learning center",
+    "generated_on": "2026-10-14",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-14",
+      "change": "written by hand from the identity and integration ops spike; steps 1 to 4 and 6 to 8 run on atmoz/sftp with paramiko (the proof encrypted with a Python OpenPGP library because gpg was absent); step 5's gpg commands follow the GNU Privacy Handbook and were not run; steps 9 and 10 are reading and writing"
+    }
+  ]
+}

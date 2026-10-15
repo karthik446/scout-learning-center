@@ -1,0 +1,386 @@
+{
+  "schema_version": "learning-center-practice:1",
+  "id": "practice/idi-okta-entra-scim",
+  "version": 1,
+  "lesson": "idi-okta-entra-scim",
+  "tool": "Okta and Entra ID consoles (reader-only), Keycloak and scim2 as stand-ins",
+  "tool_key": "okta",
+  "why_this_tool": "The vendors' consoles are the actual job and their official pages give the exact field names, so the steps transcribe those and mark them 'needs a free account; not run by the learning center'; everything protocol-shaped is rehearsed against Keycloak, which the OIDC and SAML paths already ran, and the SCIM side against python-scim's server, client and compliance tester, which stand in for a vendor's provisioning engine.",
+  "alternatives": "A customer's sandbox tenant, when offered, beats every stand-in; Auth0 and Ping also offer free developer tenants with similar consoles; for SCIM, elimity-com/scim and imulab/go-scim are Go server libraries and 15five/scim2-filter-parser parses the filter grammar when you write your own endpoint.",
+  "setup": [
+    {
+      "do": "Decide which of the three routes you will take: a real Okta Integrator Free Plan organisation and a free Entra tenant (both need an account of your own; the learning center created none and the vendor steps below are reader-only until you do), or the Keycloak stand-in from the OpenID Connect and SAML practice paths, or both.",
+      "done_when": "You have either a vendor admin console open, or Keycloak on 127.0.0.1:18080 with the realm from the earlier paths, or both.",
+      "source": {
+        "title": "Okta Developer: Integrator Free Plan sign-up",
+        "url": "https://developer.okta.com/signup/",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Integrator"
+        }
+      },
+      "why": "The vendor consoles are the job; Keycloak is where the protocol parts can be rehearsed without an account.",
+      "n": 1
+    },
+    {
+      "do": "Create a scratch Python virtual environment and install scim2-server, scim2-cli and scim2-tester for the provisioning steps (no global install).",
+      "done_when": "scim2-server --help and scim2 --help both print usage.",
+      "source": {
+        "title": "RFC 7644: SCIM Protocol",
+        "url": "https://datatracker.ietf.org/doc/html/rfc7644",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Modifying with PATCH"
+        }
+      },
+      "why": "A local SCIM endpoint, a client that sends what an IdP sends, and a compliance tester are the SCIM stand-in.",
+      "n": 2
+    }
+  ],
+  "steps": [
+    {
+      "do": "Okta (needs a free account; not run by the learning center): read the Integrator Free Plan sign-up page and note the inactivity expiry; if you proceed, create the organisation with your own details.",
+      "done_when": "You can state the plan's expiry rule and, if you signed up, you can open the Admin Console.",
+      "source": {
+        "title": "Okta Developer: Integrator Free Plan sign-up",
+        "url": "https://developer.okta.com/signup/",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Integrator"
+        }
+      },
+      "why": "Knowing the free route exists, and its limits, lets you rehearse the console before a customer call.",
+      "n": 1
+    },
+    {
+      "do": "Okta (needs a free account; not run by the learning center): create an OIDC app integration of type Single-Page Application with Authorization Code and Refresh Token, the sign-in redirect URI http://127.0.0.1:18081/callback, a sign-out redirect URI, a Trusted Origin for http://127.0.0.1:18081, and an assignment to yourself; then read the Client ID, the PKCE setting and the client authentication method on the General tab. Keycloak stand-in (run): the public client web-pkce with the same switches.",
+      "done_when": "You have the client id, the issuer URL and the registered redirect URI written down, and the discovery document of the issuer answers 200.",
+      "source": {
+        "title": "Okta help: Create OIDC app integrations",
+        "url": "https://help.okta.com/en-us/content/topics/apps/apps_app_integration_wizard_oidc.htm",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "OIDC"
+        }
+      },
+      "why": "These are the fields you will fill in with every customer's administrator; the names on the page are what you will be reading aloud.",
+      "n": 2
+    },
+    {
+      "do": "Okta (needs a free account; not run by the learning center): create a SAML 2.0 app integration with the Single sign-on URL set to your SP's ACS, the Audience URI to the SP's entity ID, Name ID format EmailAddress, an attribute statement email = user.email and a group attribute statement groups filtered to a group name; preview the assertion; download the certificate on the Sign On tab; assign the app. Keycloak stand-in (run): the SAML client from the SAML path with its mappers.",
+      "done_when": "The previewed assertion shows your audience, the NameID as an email and the two attributes, and you hold the IdP certificate and metadata.",
+      "source": {
+        "title": "Okta help: Create SAML app integrations",
+        "url": "https://help.okta.com/en-us/content/topics/apps/apps_app_integration_wizard_saml.htm",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "SAML"
+        }
+      },
+      "why": "This is the SAML half of the setup call; the preview is where claim mapping is fixed before a single real login.",
+      "n": 3
+    },
+    {
+      "do": "Okta (needs a free account; not run by the learning center): on a custom authorization server add a claim (for example department from user.department) to the ID token, and a groups claim with a filter; test with the token preview. Keycloak stand-in (run): a user attribute mapper and the group membership mapper on the client.",
+      "done_when": "The previewed or real token carries the custom claim and a groups array with the filtered group names.",
+      "source": {
+        "title": "Okta Developer: Customize tokens returned from Okta with a custom claim",
+        "url": "https://developer.okta.com/docs/guides/customize-tokens-returned-from-okta/main/",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "custom claim"
+        }
+      },
+      "why": "Custom and group claims are the usual second request from a customer; the filter is what keeps tokens small and roles explicit.",
+      "n": 4
+    },
+    {
+      "do": "Entra ID (needs a free account; not run by the learning center): in the admin center register an application (single tenant), record the Application (client) ID and the Directory (tenant) ID, add a Web platform with the redirect URI http://127.0.0.1:18081/callback, create a client secret and note its expiry, and fetch the tenant's v2.0 discovery document.",
+      "done_when": "The discovery document for your tenant answers 200 and its issuer contains the tenant id; the secret expiry date is in your note.",
+      "source": {
+        "title": "Microsoft Entra: Quickstart - register an application",
+        "url": "https://learn.microsoft.com/en-us/entra/identity-platform/quickstart-register-app",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Register an application"
+        }
+      },
+      "why": "An app registration is Entra's OIDC client; the two ids and the secret expiry are what every later ticket will ask for.",
+      "n": 5
+    },
+    {
+      "do": "Entra ID (needs a free account; not run by the learning center): create a non-gallery enterprise application, open Single sign-on, SAML, set the Identifier to your SP's entity ID and the Reply URL to its ACS, download the certificate and note the Login URL, the Microsoft Entra Identifier and the App Federation Metadata Url; under Attributes and Claims set the Name identifier to the email with format Email address and add a group claim for groups assigned to the application; assign a user; run 'Test single sign-on'.",
+      "done_when": "The test sign-on succeeds (or reports an error you can read), and you have the three URLs, the certificate expiry and the claim configuration written down.",
+      "source": {
+        "title": "Microsoft Entra: Enable single sign-on for an enterprise application",
+        "url": "https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/add-application-portal-setup-sso",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Enable single sign-on"
+        }
+      },
+      "why": "This is the Entra SAML setup call end to end, including the test button the troubleshooting lesson relies on.",
+      "n": 6
+    },
+    {
+      "do": "Entra ID (needs a free account; not run by the learning center): read the provisioning page for what the Entra service sends to a SCIM endpoint (the resources, the filters, the PATCH operations, active for soft delete) and the endpoint requirements; compare with Okta's SCIM concept page and list the differences you would need to handle in one endpoint that serves both.",
+      "done_when": "Your note lists at least three concrete behaviours (for example the lookup filter, the active flag handling, DELETE vs deactivate) with which vendor does what.",
+      "source": {
+        "title": "Microsoft Entra: Use SCIM to provision users and groups",
+        "url": "https://learn.microsoft.com/en-us/entra/identity/app-provisioning/use-scim-to-provision-users-and-groups",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "SCIM"
+        }
+      },
+      "why": "A SCIM endpoint is written once and called by several vendors' engines; the differences are what make it hard.",
+      "n": 7
+    },
+    {
+      "do": "Keycloak stand-in (run in the OIDC and SAML paths): confirm you have done, against Keycloak, the OIDC client with PKCE and exact redirect URIs, the SAML client with NameID and mappers, a group claim, and one login of each with the messages decoded. Write the mapping table 'Keycloak field, Okta field, Entra field' for the ten fields you touched.",
+      "done_when": "The table has ten rows with all three columns filled from the vendor pages.",
+      "source": {
+        "title": "Microsoft Entra: Customize SAML token claims",
+        "url": "https://learn.microsoft.com/en-us/entra/identity-platform/saml-claims-customization",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "NameID"
+        }
+      },
+      "why": "The table is the artifact that lets you run a customer's console you have never seen: same fields, different labels.",
+      "n": 8
+    },
+    {
+      "do": "Start scim2-server on 127.0.0.1 and, with scim2-cli, create a user alice@example.test, query by a userName filter, PATCH active to false, read the user back, and delete it; read the server's log for each request. (Read in the spike, not run.)",
+      "done_when": "Each of the five operations returns the status code RFC 7644 prescribes (201, 200, 200, 200, 204) and the log shows the exact JSON the client sent.",
+      "source": {
+        "title": "RFC 7644: SCIM Protocol",
+        "url": "https://datatracker.ietf.org/doc/html/rfc7644",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Modifying with PATCH"
+        }
+      },
+      "why": "Doing the four operations by hand once is the fastest way to read a vendor's provisioning log later.",
+      "n": 9
+    },
+    {
+      "do": "Run scim2-tester against the local endpoint and read its report; then write down which checks a hand-written endpoint of yours would need to pass before a vendor's 'test connection' would succeed. (Read in the spike, not run.)",
+      "done_when": "The tester reports no failures against scim2-server, and your note lists the checks (discovery endpoints, filter on userName, PATCH semantics, error codes).",
+      "source": {
+        "title": "RFC 7643: SCIM Core Schema",
+        "url": "https://datatracker.ietf.org/doc/html/rfc7643",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "\"User\" Resource Schema"
+        }
+      },
+      "why": "The compliance tester stands in for the vendor's provisioning engine; it fails on the same things Okta and Entra fail on.",
+      "n": 10
+    },
+    {
+      "do": "Write the deprovisioning decision for a product: what happens on active false, on DELETE, to live sessions, to API keys, to the user's data and after how long; and the offboarding runbook for a customer who uses JIT only.",
+      "done_when": "A one-page note a customer's security reviewer could accept, with both the SCIM and the JIT-only case covered.",
+      "source": {
+        "title": "Okta Developer: SCIM",
+        "url": "https://developer.okta.com/docs/concepts/scim/",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "SCIM"
+        }
+      },
+      "why": "This is the question every security review asks about provisioning; having the answer written is the difference between a pass and a follow-up.",
+      "n": 11
+    }
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Okta Developer: Integrator Free Plan sign-up",
+      "url": "https://developer.okta.com/signup/",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Integrator"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 7644: SCIM Protocol",
+      "url": "https://datatracker.ietf.org/doc/html/rfc7644",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Modifying with PATCH"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Okta help: Create OIDC app integrations",
+      "url": "https://help.okta.com/en-us/content/topics/apps/apps_app_integration_wizard_oidc.htm",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "OIDC"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Okta help: Create SAML app integrations",
+      "url": "https://help.okta.com/en-us/content/topics/apps/apps_app_integration_wizard_saml.htm",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "SAML"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Okta Developer: Customize tokens returned from Okta with a custom claim",
+      "url": "https://developer.okta.com/docs/guides/customize-tokens-returned-from-okta/main/",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "custom claim"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Microsoft Entra: Quickstart - register an application",
+      "url": "https://learn.microsoft.com/en-us/entra/identity-platform/quickstart-register-app",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Register an application"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Microsoft Entra: Enable single sign-on for an enterprise application",
+      "url": "https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/add-application-portal-setup-sso",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Enable single sign-on"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Microsoft Entra: Use SCIM to provision users and groups",
+      "url": "https://learn.microsoft.com/en-us/entra/identity/app-provisioning/use-scim-to-provision-users-and-groups",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "SCIM"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Microsoft Entra: Customize SAML token claims",
+      "url": "https://learn.microsoft.com/en-us/entra/identity-platform/saml-claims-customization",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "NameID"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 7643: SCIM Core Schema",
+      "url": "https://datatracker.ietf.org/doc/html/rfc7643",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "\"User\" Resource Schema"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Okta Developer: SCIM",
+      "url": "https://developer.okta.com/docs/concepts/scim/",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "SCIM"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "python-scim/scim2-server (Apache-2.0)",
+      "url": "https://github.com/python-scim/scim2-server",
+      "why": "A SCIM server core to stand up a local endpoint.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/python-scim/scim2-server on 2026-10-14: last push 2026-10-12, not archived, 15 stars"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "python-scim/scim2-cli (Apache-2.0)",
+      "url": "https://github.com/python-scim/scim2-cli",
+      "why": "A command-line SCIM client that sends what Okta or Entra would.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/python-scim/scim2-cli on 2026-10-14: last push 2026-10-11, not archived, 9 stars"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "python-scim/scim2-tester (Apache-2.0)",
+      "url": "https://github.com/python-scim/scim2-tester",
+      "why": "An RFC compliance checker for your endpoint.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/python-scim/scim2-tester on 2026-10-14: last push 2026-10-11, not archived, 9 stars"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "elimity-com/scim (MIT)",
+      "url": "https://github.com/elimity-com/scim",
+      "why": "A Go SCIM server library for a production endpoint.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/elimity-com/scim on 2026-10-14: last push 2026-07-28, not archived, 251 stars"
+      }
+    }
+  ],
+  "verified": {
+    "checked": "2026-10-14",
+    "by": "identity spike, scripts/verify_sources.py (HTTP 200 and the section phrase found on the page)"
+  },
+  "provenance": {
+    "generated_by": "Claude (Fable 5.1) by hand from the identity and integration ops spike, Scout learning center",
+    "generated_on": "2026-10-14",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-14",
+      "change": "written by hand from the identity and integration ops spike; the Okta and Entra steps are transcribed from the official pages and marked 'needs a free account; not run by the learning center'; the Keycloak stand-in ran in the OIDC and SAML paths; the scim2 steps read only"
+    }
+  ]
+}

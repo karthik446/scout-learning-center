@@ -1,0 +1,309 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "idi-oidc",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "OpenID Connect: ID tokens, discovery and logout",
+  "area": "security",
+  "primary_key": "sso-saml-oidc",
+  "secondary_keys": [
+    "oauth2",
+    "identity-and-access"
+  ],
+  "keys": [
+    "sso-saml-oidc",
+    "oauth2",
+    "identity-and-access"
+  ],
+  "summary": "OAuth 2.0 hands a client a token to call an API; it says nothing about who logged in. OpenID Connect is the identity layer on top of it: the ID token (a JWT about the authentication event), discovery (one well-known document that names every endpoint and the signing keys), the nonce that binds an ID token to one request, the userinfo endpoint and the standard claims, the iss parameter on the way back, and the three logouts (RP-initiated, front-channel, back-channel). This is the protocol behind 'Sign in with your company account' for every modern customer, and the lesson whose practice is the identity spike's OIDC proof: authorization code with PKCE against a local Keycloak and a local node-oidc-provider, with the ID token validated against the provider's JWKS and the tampered and wrong-audience cases rejected.",
+  "detail": [],
+  "in_practice": "When a customer says 'we use Okta' or 'we are on Entra', the implementation engineer asks for the issuer URL, fetches its discovery document, and has the authorization, token, userinfo, JWKS and end-session endpoints in one request. They register the app with the customer's administrator (client id, exact redirect URI, which claims the app needs), run the authorization code flow once with a script to see a real ID token, and read its claims next to the provider's claims reference to decide the mapping: which claim becomes the user's id (sub, never email), which gives the display name, whether groups arrive in the token or need a call to a directory API. The validator pins the algorithm, checks iss, aud, exp and nonce, and refetches the JWKS on an unknown kid. Then they decide logout: usually RP-initiated logout with id_token_hint so the provider session ends too, and back-channel logout when the customer wants a sign-out in the provider to end the app's sessions. Every one of those decisions goes in the integration document with the discovery URL and the client id, not the secret.",
+  "subtopics": [
+    {
+      "id": "id-token-vs-access-token",
+      "title": "The ID token and the access token",
+      "body": [
+        {
+          "heading": "Two tokens, two audiences",
+          "body": "An OpenID Connect login returns two tokens with different jobs. The ID token is a JWT addressed to the client (aud is the client id) that states who authenticated, when, how, and at which provider; the client validates it and reads sub to know the user. The access token is addressed to a resource server (userinfo, or an API) and the client should treat it as opaque, even when it happens to be a JWT; the API validates it, the client does not. Using an ID token to call an API is a mistake (its audience is wrong and APIs should reject it) and so is reading identity out of an access token in the client (its format is the API's business). The Okta overview puts the two side by side; the Entra ID token claims reference shows how much an ID token can carry."
+        },
+        {
+          "heading": "What is in an ID token",
+          "body": "iss, sub, aud, exp and iat are required; nonce when the request sent one; auth_time, acr and amr describe when and how the user authenticated (amr tells you whether MFA happened); azp names the client when aud lists several. Then the claims the requested scopes unlock: profile (name, preferred_username, picture), email and email_verified, and anything a mapper adds, such as groups. The spike's ID token from Keycloak carried iss, aud web-pkce, sub, email alice@example.test, groups integration-engineers and the nonce; node-oidc-provider's carried the same core claims with sub alice."
+        }
+      ]
+    },
+    {
+      "id": "discovery-and-jwks",
+      "title": "Discovery and the JWKS",
+      "body": [
+        {
+          "heading": "One document to rule the configuration",
+          "body": "Every OpenID provider publishes its configuration at issuer plus /.well-known/openid-configuration: the issuer (which must equal the document's own base, and which every ID token's iss must match), authorization_endpoint, token_endpoint, userinfo_endpoint, jwks_uri, end_session_endpoint, the supported scopes, response types, grant types, claims, signing algorithms, code challenge methods and client authentication methods. A client configured with only the issuer URL can derive everything else, and a client that hard-codes endpoints breaks when the provider moves them. Keycloak's issuer is the realm URL; Entra's is https://login.microsoftonline.com/<tenant>/v2.0; Okta's is the org URL or a custom authorization server under it."
+        },
+        {
+          "heading": "Keys and how a client uses them",
+          "body": "jwks_uri points at the JSON Web Key Set with the provider's public signing keys, each with a kid. The client's JWT library fetches it, caches it, finds the key by the ID token's kid, and refetches when a kid is unknown, which is what makes key rotation invisible. Comparing two providers' discovery documents (the practice asks for Keycloak against node-oidc-provider) is a fast way to learn which features are optional: one lists a device endpoint, the other a revocation endpoint, one supports more signing algorithms, one lists claims_supported and the other does not."
+        }
+      ]
+    },
+    {
+      "id": "authorization-request-with-nonce",
+      "title": "The authorization request, nonce and the iss parameter",
+      "body": [
+        {
+          "heading": "Authorization code with PKCE, plus two things",
+          "body": "An OpenID Connect login is the OAuth authorization code flow with the openid scope and, for a code flow, a nonce: a random value the client generates, keeps in the session, and sends as a parameter; the provider puts it in the ID token, and the client checks it matches, so an ID token obtained in one context cannot be replayed into another. state protects the redirect, PKCE protects the code, nonce protects the ID token; all three travel in the same request. The scopes decide which claims come back (openid is required; profile and email are the usual two; offline_access asks for a refresh token). prompt, max_age, login_hint and acr_values let the client ask for a fresh login, a particular user, or a stronger authentication."
+        },
+        {
+          "heading": "The iss response parameter",
+          "body": "RFC 9207 adds iss to the redirect back so a client that talks to several providers can check that the code arrived from the one it sent the user to, which stops a mix-up attack where a malicious provider gets a code meant for another. node-oidc-provider sent it in the spike's run (the redirect was callback?code=...&state=...&iss=http://127.0.0.1:19000); the discovery document advertises it as authorization_response_iss_parameter_supported. A client should compare it when present."
+        }
+      ]
+    },
+    {
+      "id": "id-token-validation",
+      "title": "ID token validation",
+      "body": [
+        {
+          "heading": "The checklist in OpenID Connect Core 3.1.3.7",
+          "body": "The relying party validates the ID token before trusting anything in it: the signature with the key found by kid in the provider's JWKS, using an algorithm the client accepts (RS256 by default; the spec allows the client to require others); iss equals the issuer from discovery; aud contains the client id, and if it contains others, azp is present and equals the client id; exp is in the future and iat is recent enough for the client's policy; nonce equals the value sent; and, if the client asked for a maximum authentication age, auth_time is recent enough. A token that fails any check is not a login."
+        },
+        {
+          "heading": "What the proof did",
+          "body": "The spike's client did exactly this with PyJWT: header read (alg RS256, kid), key found through PyJWKClient at the discovery document's jwks_uri, decode with algorithms pinned, audience set to web-pkce, issuer set to the discovery issuer and a require list, then a nonce comparison. It printed the validated claims, then showed a token with one changed payload byte rejected on the signature and the genuine token rejected when presented with the wrong audience. The token lesson has the same checklist from the verifier's side; this one is the relying party's."
+        }
+      ]
+    },
+    {
+      "id": "userinfo-and-claims",
+      "title": "Userinfo, standard claims and claim mapping",
+      "body": [
+        {
+          "heading": "The userinfo endpoint",
+          "body": "With the access token, the client may call userinfo and get the claims the scopes unlocked, as JSON (or a signed JWT if the client registered for that). It is the place to fetch claims that are too big or too changeable for the ID token, and it is what the Postman and Bruno collections in the API testing lesson call as 'the protected resource'. Keycloak serves it only to tokens that carry the openid scope: the first Newman run in the spike got 403 from a client-credentials token until the token request asked for scope=openid, which is the kind of provider rule that costs an afternoon when you do not know it."
+        },
+        {
+          "heading": "Mapping claims to your user model",
+          "body": "The standard claims (sub, name, given_name, family_name, preferred_username, email, email_verified, picture, locale, updated_at) are the common ground; everything else is provider-specific and configured by the customer's administrator through mappers (Keycloak), claim customisation (Entra) or a custom authorization server's claims (Okta). The rules an engineer applies: key the user record on iss plus sub, never on email (emails change and can be reassigned); treat email as verified only when email_verified is true; ask for a groups claim when the app needs roles and decide what to do when the list is too long (Entra emits a groups overage marker beyond a limit and expects a directory call instead); document every claim the app reads so the customer can see what they are disclosing."
+        }
+      ]
+    },
+    {
+      "id": "logout-three-ways",
+      "title": "Logout, three ways",
+      "body": [
+        {
+          "heading": "RP-initiated, front-channel, back-channel",
+          "body": "Logging out of an app does not log out of the provider, and customers notice when the next login happens without a password prompt. RP-initiated logout sends the browser to the provider's end_session_endpoint with id_token_hint (so the provider knows which session) and post_logout_redirect_uri (registered in advance; Keycloak calls them valid post logout redirect URIs); the provider ends its session and sends the browser back. Front-channel logout is the provider loading a logout URL of every app in hidden iframes during its own logout, which browsers' third-party cookie rules increasingly break. Back-channel logout is the provider posting a signed logout token (a JWT with sub or sid and a logout event claim) directly to each app's registered back-channel endpoint, which works without the browser and is what to implement when the customer wants 'sign out everywhere'."
+        },
+        {
+          "heading": "What to decide for an integration",
+          "body": "At minimum implement RP-initiated logout with id_token_hint so a user who clicks 'sign out' is signed out of the provider as well, and register the post-logout redirect URI exactly. Implement back-channel logout when the customer's security team asks for provider-initiated sign-out or deprovisioning to end live sessions; it means storing the sid from the ID token with the app session so the logout token can find it. Say in the integration document which of the three the app supports; the Okta and Entra lesson shows where each is configured on the provider side."
+        }
+      ]
+    },
+    {
+      "id": "provider-quirks",
+      "title": "Provider quirks the proof found",
+      "body": [
+        {
+          "heading": "Three Keycloak facts worth knowing before the first run",
+          "body": "Keycloak serves userinfo only to tokens carrying the openid scope (a client-credentials token without it gets 403, and the fix is to ask for scope=openid). Keycloak ends the whole user session when an authorization code is reused, as RFC 6749 permits, so a test that replays a code must run after the tests that use the session's tokens. Keycloak's cookies are Secure with SameSite=None; a browser logs in on plain http to 127.0.0.1 because that is a secure context, while a scripted client has to clear the Secure flag (dev only) or use https. Its issuer is the realm URL, its admin REST API can create the realm, the user, the clients and the mappers in one script, and its JWKS and SAML descriptor are both one GET away."
+        },
+        {
+          "heading": "node-oidc-provider, and reading the differences",
+          "body": "node-oidc-provider requires PKCE by default (it refused a request without one before the login page), sends the iss parameter on the redirect, issues a refresh token only when configured to, and runs in process with no container. Its discovery document is smaller than Keycloak's. Listing the differences between two providers' discovery documents, and between a provider's behaviour and the specification's optional features, is the habit that keeps an integration from assuming the customer's provider behaves like the one you tested on."
+        }
+      ]
+    }
+  ],
+  "diagram": {
+    "source": "sequenceDiagram\n  participant B as Browser\n  participant RP as Relying party (your app)\n  participant OP as OpenID provider\n  RP->>OP: GET /.well-known/openid-configuration (once, cached)\n  OP-->>RP: endpoints, jwks_uri, issuer\n  RP->>B: redirect /authorize scope=openid profile email, state, nonce, code_challenge\n  B->>OP: login and consent\n  OP->>B: 302 redirect_uri?code&state&iss\n  B->>RP: callback: check state and iss\n  RP->>OP: POST /token code + code_verifier\n  OP-->>RP: id_token, access_token, refresh_token\n  RP->>OP: GET jwks_uri (on unknown kid)\n  RP->>RP: validate id_token: signature, iss, aud, exp, nonce\n  RP->>OP: GET /userinfo Bearer access_token\n  RP->>B: Set-Cookie app session; later: redirect end_session_endpoint?id_token_hint"
+  },
+  "code": [
+    {
+      "lang": "sh",
+      "code": "# The local provider the practice uses (bound to 127.0.0.1 only; choose your own admin password)\ndocker run -d --name idspike-keycloak --memory 1g -p 127.0.0.1:18080:8080 \\\n  -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=\"$KC_ADMIN_PASSWORD\" \\\n  quay.io/keycloak/keycloak:26.4 start-dev\ncurl -s http://127.0.0.1:18080/realms/master/.well-known/openid-configuration | head -c 300\n"
+    },
+    {
+      "lang": "python",
+      "code": "# The relying party's side of the login, trimmed from the identity spike's proof script\nimport secrets, requests, jwt\nfrom jwt import PyJWKClient\ndisc = requests.get(ISSUER + \"/.well-known/openid-configuration\").json()\nstate, nonce = secrets.token_urlsafe(16), secrets.token_urlsafe(16)\n# 1. send the browser to disc[\"authorization_endpoint\"] with response_type=code, client_id, redirect_uri,\n#    scope=\"openid profile email\", state, nonce, code_challenge (S256) ... the browser returns code and state\n# 2. exchange the code (public client: code_verifier, no secret)\ntok = requests.post(disc[\"token_endpoint\"], data={\"grant_type\": \"authorization_code\", \"code\": code,\n      \"redirect_uri\": REDIRECT_URI, \"client_id\": CLIENT_ID, \"code_verifier\": verifier}).json()\n# 3. validate the ID token: kid lookup in the JWKS, pinned algorithm, iss, aud, exp, then nonce\nkey = PyJWKClient(disc[\"jwks_uri\"]).get_signing_key_from_jwt(tok[\"id_token\"])\nclaims = jwt.decode(tok[\"id_token\"], key.key, algorithms=[\"RS256\"], audience=CLIENT_ID, issuer=disc[\"issuer\"],\n                    options={\"require\": [\"exp\", \"iat\", \"iss\", \"aud\", \"sub\"]})\nassert claims[\"nonce\"] == nonce\n# 4. userinfo with the access token (Keycloak: only for tokens that carry the openid scope)\nme = requests.get(disc[\"userinfo_endpoint\"], headers={\"Authorization\": \"Bearer \" + tok[\"access_token\"]}).json()\n# {'sub': ..., 'email': 'alice@example.test', 'groups': ['integration-engineers'], ...}\n"
+    },
+    {
+      "lang": "javascript",
+      "code": "// The no-Docker provider: panva/node-oidc-provider on 127.0.0.1:19000 (dev interactions, PKCE required)\nconst Provider = require(\"oidc-provider\").default || require(\"oidc-provider\");\nconst oidc = new Provider(\"http://127.0.0.1:19000\", {\n  clients: [{ client_id: \"web-pkce\", token_endpoint_auth_method: \"none\",\n              redirect_uris: [\"http://127.0.0.1:18081/callback\"], grant_types: [\"authorization_code\", \"refresh_token\"], response_types: [\"code\"] }],\n  features: { devInteractions: { enabled: true }, introspection: { enabled: true }, revocation: { enabled: true } },\n  pkce: { methods: [\"S256\"], required: () => true },\n  findAccount: async (ctx, id) => ({ accountId: id, claims: async () => ({ sub: id, email: `${id}@example.test`, email_verified: true }) }),\n});\noidc.listen(19000, \"127.0.0.1\");\n"
+    }
+  ],
+  "technologies": [
+    "OpenID Connect",
+    "ID token",
+    "Discovery",
+    "JWKS",
+    "PKCE",
+    "Userinfo",
+    "RP-initiated logout",
+    "Back-channel logout",
+    "Keycloak",
+    "node-oidc-provider",
+    "Authlib",
+    "PyJWT"
+  ],
+  "related": [
+    "idi-oauth2",
+    "idi-tokens-jwt",
+    "idi-saml",
+    "idi-okta-entra-scim",
+    "idi-troubleshooting-runbook",
+    "rest-apis-json-oauth"
+  ],
+  "sources": [
+    {
+      "kind": "guide",
+      "title": "OpenID Foundation: How OpenID Connect Works",
+      "url": "https://openid.net/developers/how-connect-works/",
+      "why": "The foundation's own one-page explanation of the identity layer on top of OAuth.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "OpenID Connect"
+      }
+    },
+    {
+      "kind": "guide",
+      "title": "Okta: OAuth 2.0 and OpenID Connect overview",
+      "url": "https://developer.okta.com/docs/concepts/oauth-openid/",
+      "why": "The difference between an access token and an ID token, with the flows a vendor actually supports.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "OpenID Connect"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Microsoft Entra: OpenID Connect on the Microsoft identity platform",
+      "url": "https://learn.microsoft.com/en-us/entra/identity-platform/v2-protocols-oidc",
+      "why": "A real provider's discovery document, authorize and token endpoints, and sign-out, with the exact URLs.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Find your app's OpenID configuration document URI"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Microsoft Entra: ID token claims reference",
+      "url": "https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference",
+      "why": "Every claim an Entra ID token carries and which ones your app may trust; the model for a claim-mapping conversation.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Payload claims"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Keycloak: Getting started with Docker",
+      "url": "https://www.keycloak.org/getting-started/getting-started-docker",
+      "why": "The local IdP used in the practice round: start it, make a realm, a user and a client.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Secure the first application"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Authlib (GitHub README): OAuth and OpenID Connect clients and servers for Python",
+      "url": "https://github.com/authlib/authlib",
+      "why": "A Python client that does discovery, PKCE, nonce and ID-token parsing for you; read it after doing it by hand.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "OpenID Connect"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "OpenID Connect Core 1.0",
+      "url": "https://openid.net/specs/openid-connect-core-1_0.html",
+      "why": "Section 3.1.3.7 is the validation checklist (iss, aud, azp, signature, exp, nonce) every relying party must implement.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "ID Token Validation"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "OpenID Connect Discovery 1.0",
+      "url": "https://openid.net/specs/openid-connect-discovery-1_0.html",
+      "why": "The .well-known/openid-configuration document: where every endpoint and the JWKS URI come from.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Obtaining OpenID Provider Configuration Information"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "OpenID Connect RP-Initiated Logout 1.0",
+      "url": "https://openid.net/specs/openid-connect-rpinitiated-1_0.html",
+      "why": "How an app ends the provider session (end_session_endpoint, id_token_hint, post_logout_redirect_uri).",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "RP-Initiated Logout"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "OpenID Connect Back-Channel Logout 1.0",
+      "url": "https://openid.net/specs/openid-connect-backchannel-1_0.html",
+      "why": "How a provider tells every app a user signed out; the mechanism customers ask for under 'single logout'.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Logout Token"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 9207: OAuth 2.0 Authorization Server Issuer Identification",
+      "url": "https://datatracker.ietf.org/doc/html/rfc9207",
+      "why": "The iss parameter on the redirect back (seen in the node-oidc-provider proof); it stops mix-up attacks between providers.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Response Parameter iss"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "node-oidc-provider documentation",
+      "url": "https://github.com/panva/node-oidc-provider/blob/main/docs/README.md",
+      "why": "The certified provider used in the no-Docker proof: configuration keys for clients, PKCE, claims and interactions.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "findAccount"
+      }
+    }
+  ],
+  "practice": "practice/idi-oidc",
+  "provenance": {
+    "generated_by": "Claude (Fable 5.1) by hand from the identity and integration ops spike, Scout learning center",
+    "generated_on": "2026-10-14",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-14",
+      "change": "written by hand from the identity and integration ops spike (12 sources verified 2026-10-14; the authorization code with PKCE login, ID token validation, userinfo, group claim and the openid-scope 403 run against Keycloak 26.4 and node-oidc-provider 9; logout and the discovery comparison read only)"
+    }
+  ]
+}

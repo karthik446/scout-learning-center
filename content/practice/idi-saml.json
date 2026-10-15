@@ -1,0 +1,356 @@
+{
+  "schema_version": "learning-center-practice:1",
+  "id": "practice/idi-saml",
+  "version": 1,
+  "lesson": "idi-saml",
+  "tool": "Keycloak as IdP and node-saml as SP",
+  "tool_key": null,
+  "why_this_tool": "A SAML integration has two sides and the free way to hold both is Keycloak as the identity provider and a small node-saml service provider you can read in full: every option of the SP (signatures wanted, audience, clock skew, InResponseTo) is one line, every IdP field is a console switch, and a scripted browser lets you replay and tamper on purpose. The spike ran this path end to end and the step outcomes are its outputs.",
+  "alternatives": "python3-saml is the Python SP toolkit and its settings file has the same fields, but it needs libxmlsec1 from the system package manager (a global install, so reader-only here); pysaml2 can play both SP and IdP in tests; Keycloak can also act as the SP through identity brokering against a second realm; a free Okta or Entra tenant gives a real customer-side IdP, covered in the Okta and Entra lesson; samltool.com decodes messages when you have no script.",
+  "setup": [
+    {
+      "do": "Start Keycloak 26.4 in Docker on 127.0.0.1:18080 (as in the OpenID Connect practice path) with a realm and a user alice (alice@example.test) in a group integration-engineers.",
+      "done_when": "The realm's SAML IdP descriptor at <realm>/protocol/saml/descriptor answers 200 with XML that contains an X509Certificate element.",
+      "source": {
+        "title": "Keycloak Server Administration Guide",
+        "url": "https://www.keycloak.org/docs/latest/server_admin/index.html",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "SAML clients"
+        }
+      },
+      "why": "Keycloak is a full SAML 2.0 IdP out of the box, which is what makes a local round trip possible without a vendor account.",
+      "n": 1
+    },
+    {
+      "do": "In a scratch folder, npm install express and @node-saml/node-saml (no global install) and save the lesson's 40-line service provider as sp.js, reading the IdP certificate PEM from a file you extract in step 1. No-Docker alternative for the IdP: a second node-saml-based IdP or samlify; python3-saml as the SP needs libxmlsec1 from the system package manager and is reader-only here.",
+      "done_when": "node sp.js prints that the SP listens on 127.0.0.1:18082 and GET /saml/metadata returns an EntityDescriptor.",
+      "source": {
+        "title": "node-saml README",
+        "url": "https://github.com/node-saml/node-saml",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "validateInResponseTo"
+        }
+      },
+      "why": "node-saml is pure JavaScript, so the SP runs anywhere Node runs; its options list doubles as the SP validation checklist.",
+      "n": 2
+    },
+    {
+      "do": "Create a Python virtual environment with requests for the scripted browser (or use a real browser with the SAML-tracer add-on and read the messages there).",
+      "done_when": "python -c 'import requests' exits 0, or the SAML-tracer icon appears in the browser toolbar.",
+      "source": {
+        "title": "SAML-tracer (Firefox add-on)",
+        "url": "https://addons.mozilla.org/en-US/firefox/addon/saml-tracer/",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "SAML-tracer"
+        }
+      },
+      "why": "Either tool shows the AuthnRequest and the Response; the script also lets you replay and tamper on purpose.",
+      "n": 3
+    }
+  ],
+  "steps": [
+    {
+      "do": "Fetch the realm's SAML descriptor and extract the signing certificate (the X509Certificate text, wrapped as a PEM) to a file; note the IdP's entityID and its SingleSignOnService URL for the HTTP-Redirect and HTTP-POST bindings.",
+      "done_when": "You have a PEM file and can name the IdP entity ID and the two SSO URLs.",
+      "source": {
+        "title": "OASIS: Security Assertion Markup Language (SAML) V2.0 Technical Overview",
+        "url": "https://docs.oasis-open.org/security/saml/Post2.0/sstc-saml-tech-overview-2.0.html",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Web Browser SSO Profile"
+        }
+      },
+      "why": "This is 'their metadata' in every customer exchange; reading it by hand once makes the console fields obvious later.",
+      "n": 1
+    },
+    {
+      "do": "Start the SP and open its /saml/metadata; read your entityID, the AssertionConsumerService URL and binding, the NameIDFormat and whether it declares WantAssertionsSigned.",
+      "done_when": "You can list the four values a customer's IdP administrator will ask you for.",
+      "source": {
+        "title": "node-saml README",
+        "url": "https://github.com/node-saml/node-saml",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "validateInResponseTo"
+        }
+      },
+      "why": "This is 'your metadata'; the values here and the IdP's client registration must agree exactly.",
+      "n": 2
+    },
+    {
+      "do": "Register the SP in Keycloak as a SAML client: client id equal to the SP's entityID (its metadata URL), valid redirect URI and assertion consumer POST URL equal to the ACS, NameID format email with force on, assertions and documents signed with RSA-SHA256, client signature off, force POST binding on, plus an email property mapper and a group membership mapper (single attribute, no full path).",
+      "done_when": "The client saves without error and its 'Installation' or settings page shows the ACS and NameID format you set.",
+      "source": {
+        "title": "Keycloak Server Administration Guide",
+        "url": "https://www.keycloak.org/docs/latest/server_admin/index.html",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "SAML clients"
+        }
+      },
+      "why": "Registering an SP in the customer's IdP is the integration; Keycloak's fields map one to one onto Okta's and Entra's.",
+      "n": 3
+    },
+    {
+      "do": "Start an SP-initiated login (GET /login), capture the redirect, and inflate the SAMLRequest: name the AuthnRequest's ID, Destination, AssertionConsumerServiceURL, ProtocolBinding and Issuer, and the RelayState.",
+      "done_when": "You have printed the AuthnRequest XML and the five values; the Destination equals the IdP's SSO URL from step 1.",
+      "source": {
+        "title": "Microsoft Entra: Single sign-on SAML protocol",
+        "url": "https://learn.microsoft.com/en-us/entra/identity-platform/single-sign-on-saml-protocol",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "AuthnRequest"
+        }
+      },
+      "why": "Reading the request is the first half of every SAML trace; the Entra page says what an IdP reads from each element.",
+      "n": 4
+    },
+    {
+      "do": "Log in as alice; capture the auto-post form, base64-decode the SAMLResponse and read it: the StatusCode, the NameID and its format, the Audience, the number of Signature elements, the attribute names, and the Conditions' NotBefore and NotOnOrAfter.",
+      "done_when": "The status is Success, the NameID is alice@example.test, the Audience is your entityID, email and groups are among the attributes, and at least two signatures are present.",
+      "source": {
+        "title": "Microsoft Entra: SAML token claims reference",
+        "url": "https://learn.microsoft.com/en-us/entra/identity-platform/reference-saml-tokens",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Sample SAML token"
+        }
+      },
+      "why": "A decoded response next to the claims reference is the fastest education in SAML there is; this is what you will decode from a customer's tracer export.",
+      "n": 5
+    },
+    {
+      "do": "POST the captured SAMLResponse and RelayState to the ACS.",
+      "done_when": "The SP answers 200 with ok true, the NameID, the email and the groups attribute; the spike's output was exactly that.",
+      "source": {
+        "title": "OWASP SAML Security Cheat Sheet",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/SAML_Security_Cheat_Sheet.html",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Validate Signatures"
+        }
+      },
+      "why": "A genuine response accepted after every validation is the happy path; the next two steps prove the validations are real.",
+      "n": 6
+    },
+    {
+      "do": "POST the same SAMLResponse to the ACS a second time.",
+      "done_when": "The SP answers 400 with an InResponseTo error ('InResponseTo is not valid'), and you can explain which cache the SP consulted.",
+      "source": {
+        "title": "OWASP SAML Security Cheat Sheet",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/SAML_Security_Cheat_Sheet.html",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Validate Signatures"
+        }
+      },
+      "why": "Replay is the cheapest attack on a bearer document; the request binding is the defence, and it also explains why the next step needs a fresh login.",
+      "n": 7
+    },
+    {
+      "do": "Log in again to get a fresh response, replace alice@example.test with mallory@example.test inside the signed assertion, re-encode and POST it.",
+      "done_when": "The SP answers 400 with a signature error ('Invalid document signature').",
+      "source": {
+        "title": "OWASP SAML Security Cheat Sheet",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/SAML_Security_Cheat_Sheet.html",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Validate Signatures"
+        }
+      },
+      "why": "The signature covers the assertion bytes; a changed NameID is a changed document. This is the test to run against any SP you are asked to review.",
+      "n": 8
+    },
+    {
+      "do": "Switch the SP to wantAssertionsSigned only (response signature not required) and in Keycloak turn off 'Sign documents' but keep 'Sign assertions'; repeat the login, the replay and the tampering. (Read in the spike, not run.)",
+      "done_when": "The genuine login still passes, the two attacks still fail, and you can say which element each signature covered in both configurations.",
+      "source": {
+        "title": "node-saml README",
+        "url": "https://github.com/node-saml/node-saml",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "validateInResponseTo"
+        }
+      },
+      "why": "Customers' IdPs differ in what they sign; an SP that insists on both will reject some of them, and this step shows what the weaker setting still protects.",
+      "n": 9
+    },
+    {
+      "do": "Rotate the IdP's signing key: in Keycloak's realm keys add a new RSA key provider with a higher priority, log in again and watch the SP reject the response; then replace the SP's certificate with the new one from the descriptor and log in again. (Read in the spike, not run.)",
+      "done_when": "The SP fails with a signature error until its idpCert is updated, then succeeds, and your runbook note has the rotation steps and where the expiry date is recorded.",
+      "source": {
+        "title": "Microsoft Entra: Manage certificates for federated single sign-on",
+        "url": "https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/tutorial-manage-certificates-for-federated-single-sign-on",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "certificate"
+        }
+      },
+      "why": "Certificate rotation is the most common SAML outage; the Entra tutorial shows the IdP side and this step shows the SP side.",
+      "n": 10
+    }
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Keycloak Server Administration Guide",
+      "url": "https://www.keycloak.org/docs/latest/server_admin/index.html",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "SAML clients"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "node-saml README",
+      "url": "https://github.com/node-saml/node-saml",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "validateInResponseTo"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "SAML-tracer (Firefox add-on)",
+      "url": "https://addons.mozilla.org/en-US/firefox/addon/saml-tracer/",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "SAML-tracer"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "OASIS: Security Assertion Markup Language (SAML) V2.0 Technical Overview",
+      "url": "https://docs.oasis-open.org/security/saml/Post2.0/sstc-saml-tech-overview-2.0.html",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Web Browser SSO Profile"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Microsoft Entra: Single sign-on SAML protocol",
+      "url": "https://learn.microsoft.com/en-us/entra/identity-platform/single-sign-on-saml-protocol",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "AuthnRequest"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Microsoft Entra: SAML token claims reference",
+      "url": "https://learn.microsoft.com/en-us/entra/identity-platform/reference-saml-tokens",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Sample SAML token"
+      }
+    },
+    {
+      "kind": "guide",
+      "title": "OWASP SAML Security Cheat Sheet",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/SAML_Security_Cheat_Sheet.html",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Validate Signatures"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Microsoft Entra: Manage certificates for federated single sign-on",
+      "url": "https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/tutorial-manage-certificates-for-federated-single-sign-on",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "certificate"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "keycloak/keycloak (Apache-2.0)",
+      "url": "https://github.com/keycloak/keycloak",
+      "why": "The IdP in the proof; also an SP through identity brokering.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/keycloak/keycloak on 2026-10-14: last push 2026-10-15, not archived, 37,353 stars"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "node-saml/node-saml (MIT)",
+      "url": "https://github.com/node-saml/node-saml",
+      "why": "The SP in the proof (pure JS); its options are the validation checklist.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/node-saml/node-saml on 2026-10-14: last push 2026-10-14, not archived, 135 stars"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "SAML-Toolkits/python3-saml (MIT)",
+      "url": "https://github.com/SAML-Toolkits/python3-saml",
+      "why": "The Python SP (needs libxmlsec1); its settings.json mirrors the console fields.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/SAML-Toolkits/python3-saml on 2026-10-14: last push 2026-01-14, not archived, 757 stars"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "IdentityPython/pysaml2 (Apache-2.0)",
+      "url": "https://github.com/IdentityPython/pysaml2",
+      "why": "Python SP and IdP; the IdP side can play a customer's IdP in tests.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/IdentityPython/pysaml2 on 2026-10-14: last push 2026-09-28, not archived, 616 stars"
+      }
+    }
+  ],
+  "verified": {
+    "checked": "2026-10-14",
+    "by": "identity spike, scripts/verify_sources.py (HTTP 200 and the section phrase found on the page)"
+  },
+  "provenance": {
+    "generated_by": "Claude (Fable 5.1) by hand from the identity and integration ops spike, Scout learning center",
+    "generated_on": "2026-10-14",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-14",
+      "change": "written by hand from the identity and integration ops spike; steps 1 to 8 run with Keycloak 26.4 and node-saml 5.1, steps 9 and 10 read only"
+    }
+  ]
+}

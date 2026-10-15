@@ -1,0 +1,356 @@
+{
+  "schema_version": "learning-center-practice:1",
+  "id": "practice/idi-oauth2",
+  "version": 1,
+  "lesson": "idi-oauth2",
+  "tool": "Keycloak with curl or Python requests",
+  "tool_key": null,
+  "why_this_tool": "Keycloak is a free, certified authorization server that supports every grant in the lesson behind plain switches, and curl or a few lines of requests show every request and response of a flow without a framework hiding them. The spike ran authorization code with PKCE, client credentials, refresh, introspection and revocation this way and the step outcomes above are its outputs.",
+  "alternatives": "node-oidc-provider (npm, no Docker) runs the same flows in process and refuses a request without PKCE by default; the oauth.com playground walks the authorization code flow in a browser against a demo server; Postman's OAuth 2.0 helper fetches tokens for any grant (the API testing lesson); navikt/mock-oauth2-server gives a throwaway second issuer for tests.",
+  "setup": [
+    {
+      "do": "Start Keycloak 26.4 in Docker, bound to 127.0.0.1:18080 with a 1 GiB memory cap, in start-dev mode with a bootstrap admin user whose password you choose; wait until the master realm's discovery document answers 200.",
+      "done_when": "curl http://127.0.0.1:18080/realms/master/.well-known/openid-configuration prints a JSON document.",
+      "source": {
+        "title": "Keycloak: Getting started with Docker",
+        "url": "https://www.keycloak.org/getting-started/getting-started-docker",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Secure the first application"
+        }
+      },
+      "why": "Keycloak is the free, local authorization server that supports every grant in this lesson; the no-Docker alternative is node-oidc-provider, which the OpenID Connect path names.",
+      "n": 1
+    },
+    {
+      "do": "Create a realm with one user (alice@example.test with a password of your choosing), a public client web-pkce with authorization code enabled, PKCE method S256 required and the exact redirect URI http://127.0.0.1:18081/callback, and a confidential client m2m-batch with service accounts enabled and a generated secret. The admin console or the admin REST API both work; the spike did it with a short Python script against the REST API.",
+      "done_when": "The realm's discovery document answers 200 and lists S256 under code_challenge_methods_supported; the two clients appear under Clients.",
+      "source": {
+        "title": "Keycloak: Getting started with Docker",
+        "url": "https://www.keycloak.org/getting-started/getting-started-docker",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Secure the first application"
+        }
+      },
+      "why": "One public client for the user grants and one confidential client for the machine grants cover every step below.",
+      "n": 2
+    },
+    {
+      "do": "Create a scratch Python virtual environment with requests and PyJWT (crypto extra), or decide to use curl for every call; keep the client secret in an environment variable, never in a file you might commit.",
+      "done_when": "An interpreter in the environment imports requests and jwt, and echo $CLIENT_SECRET prints the secret.",
+      "source": {
+        "title": "OWASP OAuth 2.0 Protocol Cheat Sheet",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/OAuth2_Cheat_Sheet.html",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "PKCE"
+        }
+      },
+      "why": "The steps are small HTTP calls; either tool works, and the secret-handling rule is part of the lesson.",
+      "n": 3
+    }
+  ],
+  "steps": [
+    {
+      "do": "Fetch the realm's discovery document and list grant_types_supported, code_challenge_methods_supported, and the token, introspection, revocation and device authorization endpoints.",
+      "done_when": "You have the five endpoint URLs and can say which grants this server supports without opening the console.",
+      "source": {
+        "title": "OpenID Connect Discovery 1.0",
+        "url": "https://openid.net/specs/openid-connect-discovery-1_0.html",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Obtaining OpenID Provider Configuration Information"
+        }
+      },
+      "why": "Every grant starts at an endpoint the discovery document names; reading it once replaces guessing URLs from vendor docs.",
+      "n": 1
+    },
+    {
+      "do": "Generate a code_verifier (32 random bytes, base64url, no padding) and its S256 code_challenge; build the authorization URL for web-pkce with response_type=code, the exact redirect URI, scope openid, a random state and the challenge.",
+      "done_when": "Opening the URL in a browser shows the realm's login page, and the URL holds code_challenge_method=S256.",
+      "source": {
+        "title": "RFC 7636: Proof Key for Code Exchange by OAuth Public Clients",
+        "url": "https://datatracker.ietf.org/doc/html/rfc7636",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Client Creates a Code Verifier"
+        }
+      },
+      "why": "PKCE is two lines of code and the thing every public client must do; seeing the challenge in the URL makes the later token call make sense.",
+      "n": 2
+    },
+    {
+      "do": "Log in as alice. The browser lands on the redirect URI (nothing listens there; read the URL bar) with code and state. Check that state equals the one you sent.",
+      "done_when": "You have a code and a matching state; a mismatch would mean the response did not answer your request.",
+      "source": {
+        "title": "RFC 9700: Best Current Practice for OAuth 2.0 Security",
+        "url": "https://datatracker.ietf.org/doc/html/rfc9700",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Implicit Grant"
+        }
+      },
+      "why": "state is the login-flow CSRF check; checking it by hand once is how you remember to check it in code.",
+      "n": 3
+    },
+    {
+      "do": "Exchange the code at the token endpoint with grant_type=authorization_code, the code, the same redirect URI, client_id web-pkce and the code_verifier, with no client secret.",
+      "done_when": "The response is 200 with access_token, id_token, refresh_token, token_type Bearer and expires_in.",
+      "source": {
+        "title": "RFC 6749: The OAuth 2.0 Authorization Framework",
+        "url": "https://datatracker.ietf.org/doc/html/rfc6749",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Authorization Code Grant"
+        }
+      },
+      "why": "This is the one call that turns a login into tokens; a public client authenticates with the verifier alone.",
+      "n": 4
+    },
+    {
+      "do": "Post the same code again with a wrong verifier (or the right one).",
+      "done_when": "The token endpoint answers 400 with error invalid_grant, and you can say why a code must be single-use.",
+      "source": {
+        "title": "RFC 7636: Proof Key for Code Exchange by OAuth Public Clients",
+        "url": "https://datatracker.ietf.org/doc/html/rfc7636",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Client Creates a Code Verifier"
+        }
+      },
+      "why": "Code replay is the attack PKCE and single-use codes defend against; Keycloak also ends the session on reuse, so run this step last among the user-token steps.",
+      "n": 5
+    },
+    {
+      "do": "Post grant_type=refresh_token with the refresh token and client_id to the token endpoint.",
+      "done_when": "A new access token comes back that differs from the first, and you have noted whether a new refresh token came with it (rotation).",
+      "source": {
+        "title": "RFC 6749: The OAuth 2.0 Authorization Framework",
+        "url": "https://datatracker.ietf.org/doc/html/rfc6749",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Authorization Code Grant"
+        }
+      },
+      "why": "Refresh is how a client stays logged in without the user; rotation is the setting a security review will ask about.",
+      "n": 6
+    },
+    {
+      "do": "Request a token for m2m-batch with grant_type=client_credentials and the client id and secret as HTTP Basic authentication. Decode the access token's payload and read azp, aud, typ and preferred_username.",
+      "done_when": "The response is 200 with a Bearer token and expires_in, no refresh token, and the payload names the client as azp and a service account as the subject.",
+      "source": {
+        "title": "RFC 6749: The OAuth 2.0 Authorization Framework",
+        "url": "https://datatracker.ietf.org/doc/html/rfc6749",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Authorization Code Grant"
+        }
+      },
+      "why": "The machine grant in one call; the absence of a refresh token and the service-account subject are the two things to notice.",
+      "n": 7
+    },
+    {
+      "do": "Introspect the client-credentials token at the introspection endpoint (Basic authentication as m2m-batch), then introspect a copy with its last five characters changed.",
+      "done_when": "The genuine token introspects as active true with client_id m2m-batch; the corrupted one as active false.",
+      "source": {
+        "title": "RFC 7662: OAuth 2.0 Token Introspection",
+        "url": "https://datatracker.ietf.org/doc/html/rfc7662",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Introspection Request"
+        }
+      },
+      "why": "Introspection is how a resource server checks an opaque token and how a JWT's revocation can be noticed; the active false answer for garbage is the shape of every failed check.",
+      "n": 8
+    },
+    {
+      "do": "Revoke the token at the revocation endpoint and introspect it again; then request a token with a wrong client secret.",
+      "done_when": "The revoked token introspects as active false and the wrong-secret request answers 401 with unauthorized_client or invalid_client.",
+      "source": {
+        "title": "RFC 7662: OAuth 2.0 Token Introspection",
+        "url": "https://datatracker.ietf.org/doc/html/rfc7662",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Introspection Request"
+        }
+      },
+      "why": "Revocation and client-authentication failure are the two negative paths an integration's tests should cover; both ran this way in the spike.",
+      "n": 9
+    },
+    {
+      "do": "Enable the OAuth 2.0 Device Authorization Grant on a client in the console, post to the device authorization endpoint, open the verification URI in a browser and enter the user code, and poll the token endpoint at the stated interval until it returns tokens. (Read in the spike, not run.)",
+      "done_when": "The device endpoint returns device_code, user_code, verification_uri and interval; after approval the token endpoint returns tokens, and before approval it returns authorization_pending.",
+      "source": {
+        "title": "RFC 8628: OAuth 2.0 Device Authorization Grant",
+        "url": "https://datatracker.ietf.org/doc/html/rfc8628",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Device Authorization Request"
+        }
+      },
+      "why": "The device grant is what replaced the password grant for CLIs; running it once makes the 'go to this URL and enter this code' prompt of every cloud CLI legible.",
+      "n": 10
+    }
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Keycloak: Getting started with Docker",
+      "url": "https://www.keycloak.org/getting-started/getting-started-docker",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Secure the first application"
+      }
+    },
+    {
+      "kind": "guide",
+      "title": "OWASP OAuth 2.0 Protocol Cheat Sheet",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/OAuth2_Cheat_Sheet.html",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "PKCE"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "OpenID Connect Discovery 1.0",
+      "url": "https://openid.net/specs/openid-connect-discovery-1_0.html",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Obtaining OpenID Provider Configuration Information"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 7636: Proof Key for Code Exchange by OAuth Public Clients",
+      "url": "https://datatracker.ietf.org/doc/html/rfc7636",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Client Creates a Code Verifier"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 9700: Best Current Practice for OAuth 2.0 Security",
+      "url": "https://datatracker.ietf.org/doc/html/rfc9700",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Implicit Grant"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 6749: The OAuth 2.0 Authorization Framework",
+      "url": "https://datatracker.ietf.org/doc/html/rfc6749",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Authorization Code Grant"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 7662: OAuth 2.0 Token Introspection",
+      "url": "https://datatracker.ietf.org/doc/html/rfc7662",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Introspection Request"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 8628: OAuth 2.0 Device Authorization Grant",
+      "url": "https://datatracker.ietf.org/doc/html/rfc8628",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Device Authorization Request"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "authlib/authlib (BSD-3-Clause)",
+      "url": "https://github.com/authlib/authlib",
+      "why": "Python client and server; read the PKCE and token endpoint code.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/authlib/authlib on 2026-10-14: last push 2026-10-14, not archived, 5,434 stars"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "panva/node-oidc-provider (MIT)",
+      "url": "https://github.com/panva/node-oidc-provider",
+      "why": "The certified provider used in the no-Docker proof; read features/ for each grant.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/panva/node-oidc-provider on 2026-10-14: last push 2026-10-12, not archived, 3,833 stars"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "ory/hydra (Apache-2.0)",
+      "url": "https://github.com/ory/hydra",
+      "why": "An OAuth 2.1 server in Go with a headless login flow, the opposite architecture to Keycloak.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/ory/hydra on 2026-10-14: last push 2026-07-29, not archived, 17,611 stars"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "oauth2-proxy/oauth2-proxy (MIT)",
+      "url": "https://github.com/oauth2-proxy/oauth2-proxy",
+      "why": "Put a login in front of any app; read how it stores tokens in cookies.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/oauth2-proxy/oauth2-proxy on 2026-10-14: last push 2026-10-14, not archived, 15,188 stars"
+      }
+    }
+  ],
+  "verified": {
+    "checked": "2026-10-14",
+    "by": "identity spike, scripts/verify_sources.py (HTTP 200 and the section phrase found on the page)"
+  },
+  "provenance": {
+    "generated_by": "Claude (Fable 5.1) by hand from the identity and integration ops spike, Scout learning center",
+    "generated_on": "2026-10-14",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-14",
+      "change": "written by hand from the identity and integration ops spike; steps 1 to 9 run against Keycloak 26.4 (and again against node-oidc-provider), step 10 (device grant) read only"
+    }
+  ]
+}

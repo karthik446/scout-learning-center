@@ -1,0 +1,396 @@
+{
+  "schema_version": "learning-center-practice:1",
+  "id": "practice/idi-api-testing",
+  "version": 1,
+  "lesson": "idi-api-testing",
+  "tool": "Postman collection format with Newman, and the Bruno CLI",
+  "tool_key": null,
+  "why_this_tool": "A collection is the artifact that is at once the demo, the regression suite and the documentation of an integration, Newman runs it headless with secrets from the environment so it can gate a pipeline, and Bruno keeps the same thing as reviewable text files; the spike ran the seven-request collection against Keycloak with 17 assertions passing and the two-request Bruno version with 4 of 4.",
+  "alternatives": "Hoppscotch is an open-source web client with a CLI; Insomnia is another open-source client; curl with a shell script is the no-tool route and the referee for all of them; WireMock or Mockoon give a mock API to run the collection against before the real one exists.",
+  "setup": [
+    {
+      "do": "Have Keycloak 26.4 running on 127.0.0.1:18080 with the realm and the confidential client m2m-batch from the OAuth practice path, and its secret in an environment variable.",
+      "done_when": "A curl client-credentials request answers 200.",
+      "source": {
+        "title": "Keycloak: Getting started with Docker",
+        "url": "https://www.keycloak.org/getting-started/getting-started-docker",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Secure the first application"
+        }
+      },
+      "why": "The collection tests a real token endpoint; Keycloak is the local one.",
+      "n": 1
+    },
+    {
+      "do": "Choose the authoring tool: the Postman app (export the collection as v2.1 JSON) or Bruno (plain .bru files); install Newman and the Bruno CLI with npx in a scratch folder, no global install.",
+      "done_when": "npx -y newman --version and npx -y @usebruno/cli --version print versions.",
+      "source": {
+        "title": "Postman: Postman overview",
+        "url": "https://learning.postman.com/docs/introduction/overview/",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Postman"
+        }
+      },
+      "why": "Both runners work from the command line without the desktop apps; the collection format decides which you use.",
+      "n": 2
+    }
+  ],
+  "steps": [
+    {
+      "do": "Create an environment with issuer, client_id, client_secret (secret type) and an empty access_token; export it and confirm the secret's value is not in the file.",
+      "done_when": "The exported environment holds the four names and no secret value.",
+      "source": {
+        "title": "Postman: Store values in variables",
+        "url": "https://learning.postman.com/docs/sending-requests/variables/variables/",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Variable scopes"
+        }
+      },
+      "why": "Secret-typed variables are the hygiene rule in practice; checking the export once makes it a habit.",
+      "n": 1
+    },
+    {
+      "do": "Request 1, discovery: GET {{issuer}}/.well-known/openid-configuration with no auth; tests assert 200, issuer equals the environment's issuer and S256 is supported; store token_endpoint, introspection_endpoint, jwks_uri and userinfo_endpoint in the environment.",
+      "done_when": "The request passes its three assertions and the four endpoint variables are populated.",
+      "source": {
+        "title": "Postman: Write test scripts",
+        "url": "https://learning.postman.com/docs/tests-and-scripts/write-scripts/test-scripts/",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "pm.test"
+        }
+      },
+      "why": "The first link in the chain: every later URL comes from this response, so the collection follows the provider wherever it moves its endpoints.",
+      "n": 2
+    },
+    {
+      "do": "Request 2, token: POST {{token_endpoint}} with the Basic auth helper (username {{client_id}}, password {{client_secret}}) and a form body grant_type=client_credentials, scope=openid; tests assert 200, token_type Bearer, expires_in above 0 and no refresh_token; decode the JWT header and assert alg and kid; store access_token and kid.",
+      "done_when": "The request passes and access_token and kid are set for the rest of the run.",
+      "source": {
+        "title": "Postman: Authorizing requests",
+        "url": "https://learning.postman.com/docs/sending-requests/authorization/authorization/",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Authorization"
+        }
+      },
+      "why": "The Basic helper is the client authentication; the scope=openid is the lesson the first run taught (userinfo is 403 without it).",
+      "n": 3
+    },
+    {
+      "do": "Request 3, JWKS: GET {{jwks_uri}}; assert the stored kid is among the published keys.",
+      "done_when": "The assertion passes, proving the token's signing key is where a verifier would look.",
+      "source": {
+        "title": "RFC 7517: JSON Web Key (JWK)",
+        "url": "https://datatracker.ietf.org/doc/html/rfc7517",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "JWK Set Format"
+        }
+      },
+      "why": "A collection can assert the token lesson's kid rule in one line; it also catches a rotated key whose JWKS has not been updated.",
+      "n": 4
+    },
+    {
+      "do": "Request 4, introspection: POST {{introspection_endpoint}} with Basic auth as the client and token={{access_token}}; assert active true and client_id equals the environment's client id.",
+      "done_when": "The assertions pass.",
+      "source": {
+        "title": "RFC 7662: OAuth 2.0 Token Introspection",
+        "url": "https://datatracker.ietf.org/doc/html/rfc7662",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Introspection Request"
+        }
+      },
+      "why": "The resource-server check in the collection; it fails loudly when a token is revoked.",
+      "n": 5
+    },
+    {
+      "do": "Set the collection's auth to Bearer with {{access_token}}; request 5, protected call: GET {{userinfo_endpoint}} inheriting auth; assert 200 and that preferred_username is service-account- plus the client id.",
+      "done_when": "The request passes using inherited auth and no per-request header.",
+      "source": {
+        "title": "Postman: Authorizing requests",
+        "url": "https://learning.postman.com/docs/sending-requests/authorization/authorization/",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Authorization"
+        }
+      },
+      "why": "Inheritance is how a collection stays maintainable; one place to change the token for every request.",
+      "n": 6
+    },
+    {
+      "do": "Requests 6 and 7, negative: the token request with the password not-the-secret, asserting 401 and an error of unauthorized_client or invalid_client; and the protected call with no auth, asserting 401 and a WWW-Authenticate header containing Bearer.",
+      "done_when": "Both requests pass by failing as asserted.",
+      "source": {
+        "title": "Postman: Postman JavaScript reference (pm API)",
+        "url": "https://learning.postman.com/docs/tests-and-scripts/write-scripts/postman-sandbox-api-reference/",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "pm.sendRequest"
+        }
+      },
+      "why": "Negative tests that pass are the proof that the positive tests mean something.",
+      "n": 7
+    },
+    {
+      "do": "Run the collection headless: npx newman run collection -e environment --reporters cli,json --reporter-json-export newman-run.json.",
+      "done_when": "Newman reports 7 requests, 17 assertions and 0 failed, exits 0, and the JSON report exists; this is the spike's result.",
+      "source": {
+        "title": "Postman: Run and test collections from the command line using Newman",
+        "url": "https://learning.postman.com/docs/collections/using-newman-cli/command-line-integration-with-newman/",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Newman"
+        }
+      },
+      "why": "The CI gate in one command; the exit code is what a pipeline reads.",
+      "n": 8
+    },
+    {
+      "do": "Remove client_secret's value from the environment file entirely and run again with --env-var client_secret=$CLIENT_SECRET; then run once with a wrong value.",
+      "done_when": "The first run passes identically; the second fails requests 2 to 5 and exits non-zero, and no secret is in any committed file.",
+      "source": {
+        "title": "Newman README (postmanlabs/newman)",
+        "url": "https://github.com/postmanlabs/newman",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "--reporters"
+        }
+      },
+      "why": "This is how the collection runs in CI: the secret from the pipeline's store, the file in git with none.",
+      "n": 9
+    },
+    {
+      "do": "Write the token and protected-call requests as two .bru files with a local environment that declares client_secret under vars:secret, and run bru run --env local --env-var client_secret=$CLIENT_SECRET.",
+      "done_when": "The Bruno CLI reports 2 requests passed and 4 of 4 tests, as in the spike.",
+      "source": {
+        "title": "Bruno CLI overview",
+        "url": "https://docs.usebruno.com/bru-cli/overview",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "Bruno CLI"
+        }
+      },
+      "why": "The same scenario as reviewable plain text; a team that keeps collections in git can stop here.",
+      "n": 10
+    },
+    {
+      "do": "Reproduce request 2 with curl -v -u and --data-urlencode and compare the request headers curl sent with what the Postman console shows for the same request.",
+      "done_when": "The two Authorization headers are identical and you can say what the helper did for you.",
+      "source": {
+        "title": "curl manual page",
+        "url": "https://curl.se/docs/manpage.html",
+        "verified": {
+          "checked": "2026-10-14",
+          "http": 200,
+          "section_found": "--user"
+        }
+      },
+      "why": "curl is the referee when a tool and a pipeline disagree; knowing the equivalent command for every helper is the skill.",
+      "n": 11
+    }
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Keycloak: Getting started with Docker",
+      "url": "https://www.keycloak.org/getting-started/getting-started-docker",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Secure the first application"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Postman: Postman overview",
+      "url": "https://learning.postman.com/docs/introduction/overview/",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Postman"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Postman: Store values in variables",
+      "url": "https://learning.postman.com/docs/sending-requests/variables/variables/",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Variable scopes"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Postman: Write test scripts",
+      "url": "https://learning.postman.com/docs/tests-and-scripts/write-scripts/test-scripts/",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "pm.test"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Postman: Authorizing requests",
+      "url": "https://learning.postman.com/docs/sending-requests/authorization/authorization/",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Authorization"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 7517: JSON Web Key (JWK)",
+      "url": "https://datatracker.ietf.org/doc/html/rfc7517",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "JWK Set Format"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 7662: OAuth 2.0 Token Introspection",
+      "url": "https://datatracker.ietf.org/doc/html/rfc7662",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Introspection Request"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Postman: Postman JavaScript reference (pm API)",
+      "url": "https://learning.postman.com/docs/tests-and-scripts/write-scripts/postman-sandbox-api-reference/",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "pm.sendRequest"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Postman: Run and test collections from the command line using Newman",
+      "url": "https://learning.postman.com/docs/collections/using-newman-cli/command-line-integration-with-newman/",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Newman"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Newman README (postmanlabs/newman)",
+      "url": "https://github.com/postmanlabs/newman",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "--reporters"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Bruno CLI overview",
+      "url": "https://docs.usebruno.com/bru-cli/overview",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Bruno CLI"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "curl manual page",
+      "url": "https://curl.se/docs/manpage.html",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "--user"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "postmanlabs/newman (Apache-2.0)",
+      "url": "https://github.com/postmanlabs/newman",
+      "why": "The runner in the proof; every CLI option including --env-var and the reporters.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/postmanlabs/newman on 2026-10-14: last push 2026-10-09, not archived, 7,263 stars"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "usebruno/bruno (MIT)",
+      "url": "https://github.com/usebruno/bruno",
+      "why": "The git-native client and CLI in the proof.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/usebruno/bruno on 2026-10-14: last push 2026-10-14, not archived, 47,614 stars"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "hoppscotch/hoppscotch (MIT)",
+      "url": "https://github.com/hoppscotch/hoppscotch",
+      "why": "An open-source web client with a CLI, if neither of the above fits.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/hoppscotch/hoppscotch on 2026-10-14: last push 2026-10-12, not archived, 80,630 stars"
+      }
+    },
+    {
+      "kind": "repo",
+      "title": "curl/curl (NOASSERTION)",
+      "url": "https://github.com/curl/curl",
+      "why": "The ground truth.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": null,
+        "note": "gh api repos/curl/curl on 2026-10-14: last push 2026-10-14, not archived, 43,114 stars"
+      }
+    }
+  ],
+  "verified": {
+    "checked": "2026-10-14",
+    "by": "identity spike, scripts/verify_sources.py (HTTP 200 and the section phrase found on the page)"
+  },
+  "provenance": {
+    "generated_by": "Claude (Fable 5.1) by hand from the identity and integration ops spike, Scout learning center",
+    "generated_on": "2026-10-14",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-14",
+      "change": "written by hand from the identity and integration ops spike; every step run against Keycloak 26.4 with Newman 6.2 (17 assertions, 0 failed) and the Bruno CLI (4 of 4)"
+    }
+  ]
+}

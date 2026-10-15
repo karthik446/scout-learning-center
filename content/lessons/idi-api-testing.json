@@ -1,0 +1,320 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "idi-api-testing",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "API testing with Postman, Newman, Bruno and curl",
+  "area": "software",
+  "primary_key": "api-testing",
+  "secondary_keys": [
+    "apis",
+    "rest-apis"
+  ],
+  "keys": [
+    "api-testing",
+    "apis",
+    "rest-apis"
+  ],
+  "summary": "A saved collection of requests is how an integration engineer proves an API works, hands the proof to a customer, and keeps it working in CI. This lesson is the craft: collections, environments and the variable scopes that decide which value wins; the auth helpers (basic, bearer, API key, OAuth 2.0) and inheritance from collection to request; pre-request and test scripts with the pm API; chaining requests by storing values from one response for the next; running the collection headless with Newman in CI with secrets passed as environment variables; the same collection as plain-text Bruno files in git; curl as the ground truth when a tool hides something; the negative tests every auth integration needs; and collection hygiene so nothing secret is ever exported. The practice is the identity spike's run: a seven-request collection against a local Keycloak with 17 assertions and 0 failures under Newman, and the same two requests in the Bruno CLI, 4 of 4.",
+  "detail": [],
+  "in_practice": "At the start of an integration the engineer builds a collection in the vendor's sandbox: discovery, a token request with the OAuth helper or Basic auth, one protected call, and the negative cases (wrong secret, no token). Every value that differs between environments (issuer, client id, base URL) is an environment variable; every secret is a secret-typed variable that stays out of the export. The collection becomes three things at once: the demo for the customer's call ('here is the token request, here is the 401 without it'), the regression suite that Newman runs in CI on every change with the secret passed on the command line, and the documentation a colleague opens six months later. Teams that want the collection reviewed like code keep it as Bruno files in the repository instead. When a request behaves differently in the tool and in production, the engineer reproduces it with curl -v, because the raw request is the only thing both sides can agree on.",
+  "subtopics": [
+    {
+      "id": "collections-and-environments",
+      "title": "Collections, environments and variable scopes",
+      "body": [
+        {
+          "heading": "The shapes",
+          "body": "A collection is an ordered tree of requests with shared settings (auth, scripts, variables) that a runner executes top to bottom. An environment is a named set of variables for one target (local, the customer's sandbox, production), selected at run time; the same collection runs against each. Postman's overview covers workspaces, collections, environments and the runner; the collection format (JSON schema v2.1 at schema.postman.com) is what gets exported and committed."
+        },
+        {
+          "heading": "Which value wins",
+          "body": "Variables resolve by scope, narrowest first: local (set in a script for this run), data (from a CSV or JSON file in a data-driven run), environment, collection, global. A value set with pm.environment.set in a test script overrides the environment file's value for the rest of the run, which is how chaining works and also how a stale token from a previous run lingers; the spike's environment started access_token empty on purpose so each run had to earn one. Put values that describe the target (issuer, client id) in the environment, values that describe the collection (API version, a path prefix) in collection variables, and nothing in globals."
+        }
+      ]
+    },
+    {
+      "id": "auth-helpers",
+      "title": "The auth helpers and inheritance",
+      "body": [
+        {
+          "heading": "Basic, bearer, API key, OAuth 2.0",
+          "body": "A request's Authorization tab offers helpers that build the header for you: Basic (username and password, base64 into an Authorization header, which is how the spike's token request authenticated as the client with client_id and client_secret), Bearer (an Authorization: Bearer header from a variable), API key (a named header or query parameter), and OAuth 2.0, which runs the grant itself (authorization code with PKCE in a browser window, client credentials, and others), stores the token, and refreshes it. The authorization guide covers the helpers; the OAuth 2.0 page covers the grant types and where the token is kept."
+        },
+        {
+          "heading": "Inherit from parent",
+          "body": "Auth set on the collection or a folder applies to every request below it that is set to 'inherit auth from parent'; a request can override (the spike's discovery, JWKS and negative requests used 'no auth'; the token and introspection requests used Basic as the client; everything else inherited the collection's bearer helper that read access_token). Set the common case once at the collection level and override only the exceptions, so a new request is authenticated by default."
+        }
+      ]
+    },
+    {
+      "id": "tests-and-chaining",
+      "title": "Test scripts and chaining requests",
+      "body": [
+        {
+          "heading": "pm.test and friends",
+          "body": "A test script runs after the response: pm.test(name, fn) records a named assertion; pm.response.to.have.status(200), pm.expect(value).to.eql(expected) and the rest of the chai-style API make the checks; pm.response.json() parses the body; pm.response.headers.get reads a header. A pre-request script runs before the request and can compute values or fetch a token with pm.sendRequest. The Postman JavaScript reference lists the sandbox API. The spike's discovery request asserted the issuer equals the environment's issuer and that S256 is among the supported code challenge methods; the token request asserted a Bearer token with a positive lifetime and no refresh token, and decoded the JWT header to assert alg RS256 and a kid."
+        },
+        {
+          "heading": "Chaining",
+          "body": "Chaining is storing something from one response for the next request: pm.environment.set('token_endpoint', d.token_endpoint) in the discovery test made the token request's URL {{token_endpoint}}; the token test stored access_token and the kid; the JWKS request asserted that kid was published; the introspection request asserted active true for it. A chained collection is a scenario, not a list of independent calls, and its order matters; name requests with a number so the runner's output reads as a story."
+        }
+      ]
+    },
+    {
+      "id": "newman-in-ci",
+      "title": "Newman in CI",
+      "body": [
+        {
+          "heading": "The command",
+          "body": "Newman runs a collection from the command line: newman run collection.json -e environment.json with reporters (cli for humans, json and junit for CI systems), and it exits non-zero when any assertion fails, which is what makes it a CI gate. The spike's run (npx newman, no global install) reported 7 requests, 7 test scripts, 17 assertions and 0 failed in 132 ms, and the same command in a pipeline fails the build when the token endpoint changes its behaviour."
+        },
+        {
+          "heading": "Secrets on the command line",
+          "body": "The environment file in the repository holds no secret; the CI job passes it with --env-var client_secret=$CLIENT_SECRET from the pipeline's secret store (Newman's README lists --env-var and --global-var). The same flag overrides any variable for a one-off run against another tenant. Add --bail to stop at the first failure when the chain cannot continue without a token, and --timeout-request so a hung endpoint fails fast; keep the JSON report as a build artifact so a failure can be read without re-running."
+        }
+      ]
+    },
+    {
+      "id": "bruno-as-git-native-alternative",
+      "title": "Bruno as the git-native alternative",
+      "body": [
+        {
+          "heading": "Plain files",
+          "body": "Bruno stores a collection as a folder of .bru files, one request per file, with a bruno.json at the root and environments as .bru files too: a meta block (name, type, sequence), the method block with the URL, body type and auth type, auth blocks, a body block, and a tests block with the same chai-style assertions (res.getStatus(), res.getBody(), bru.setVar to chain). The files diff and review like code, which is the reason teams choose it over an exported JSON blob. The spike's token request was twelve lines of .bru with Basic auth from {{client_id}} and {{client_secret}} and two tests; the userinfo request used bearer auth from the chained variable."
+        },
+        {
+          "heading": "The CLI",
+          "body": "The Bruno CLI runs a collection or a folder: bru run --env local, with --env-var client_secret=... for the secret and reporters for CI, and an environment file declares secret variables by name under vars:secret so their values never land in the file. The spike's run reported 2 requests passed and 4 of 4 tests. Bruno's open-source client and CLI cover the same ground as Postman's for an integration team; the differences are in collaboration features, not in what a request can do."
+        }
+      ]
+    },
+    {
+      "id": "curl-ground-truth",
+      "title": "curl as the ground truth",
+      "body": [
+        {
+          "heading": "When the tool hides something",
+          "body": "Every helper builds a request; curl shows the request. curl -v prints the TLS handshake lines, the request headers it sent and the response headers it got; -u client:secret builds the Basic header; -H adds any header; --data-urlencode encodes a form field; -o /dev/null -w '%{http_code}' gives a status alone. When a request works in a tool and not in the customer's pipeline, reproduce both with curl and diff the two verbose outputs; the difference is the bug. The curl manual is long and the dozen options above are most of what an integration needs."
+        },
+        {
+          "heading": "A public echo",
+          "body": "httpbin.org echoes what it receives: /headers shows which headers arrived, /basic-auth and /bearer test the helpers, /status/401 and /status/429 simulate failures, /redirect-to follows redirects. It is the place to test a collection's auth helpers before the real API exists, and the place to show a customer what their gateway strips from a request. Never send a real secret to it."
+        }
+      ]
+    },
+    {
+      "id": "negative-tests",
+      "title": "Negative tests",
+      "body": [
+        {
+          "heading": "The three every auth integration needs",
+          "body": "A collection that only proves the happy path proves little. The spike's collection ended with two negative requests: the token request with a wrong secret, asserting 401 and an error of unauthorized_client or invalid_client; and the protected call with no token, asserting 401 and a WWW-Authenticate header that names Bearer. The third, from the OAuth lesson, is a revoked or expired token asserting 401 or an introspection of active false. Each of them failing to fail is a security finding, and each of them is a line in the runbook when a customer's integration breaks ('is it a 401 from the token endpoint or from the API?')."
+        },
+        {
+          "heading": "What the first run taught",
+          "body": "The spike's first Newman run failed request 5 with 403: the protected call (Keycloak's userinfo) refused a client-credentials token until the token request asked for scope=openid. A negative test that expects 401 and gets 403 is a different story (authenticated, not authorized), and the collection's assertions are what turned an afternoon of guessing into a one-line fix. Assert the exact status, not 'not 200'."
+        }
+      ]
+    },
+    {
+      "id": "collection-hygiene",
+      "title": "Collection hygiene",
+      "body": [
+        {
+          "heading": "No secrets in the file",
+          "body": "Secrets go in secret-typed variables (Postman) or vars:secret (Bruno) whose values are not exported; the committed environment holds the issuer and the client id and an empty token. Before committing an export, grep it for the words secret, password, token and Bearer, and for anything that looks like a key. A collection with a secret in it is a leaked credential the moment it is shared, and sharing collections is their purpose."
+        },
+        {
+          "heading": "Format, naming, review",
+          "body": "Export in the current collection format (v2.1), commit the JSON or the .bru files, number the requests in execution order, name assertions as sentences a reviewer can read in the CI log, keep one collection per API or integration, and re-run it against the customer's sandbox before every release. A collection that was true in March and never run since is documentation of March."
+        }
+      ]
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  E[\"environment: issuer, client_id, client_secret (secret), access_token (empty)\"] --> R1[\"1 discovery: assert issuer, S256; store endpoints\"]\n  R1 --> R2[\"2 token (Basic auth as the client): assert Bearer, expires_in, no refresh; store token, kid\"]\n  R2 --> R3[\"3 JWKS: assert kid published\"]\n  R3 --> R4[\"4 introspect: assert active, client_id\"]\n  R4 --> R5[\"5 protected call (collection bearer helper): assert 200, identity\"]\n  R5 --> R6[\"6 wrong secret: assert 401, error code\"]\n  R6 --> R7[\"7 no token: assert 401, WWW-Authenticate\"]\n  N[\"newman run -e env --env-var client_secret=... --reporters cli,json\"] -.-> R1"
+  },
+  "code": [
+    {
+      "lang": "javascript",
+      "code": "// The token request's test script (Postman sandbox): assert, then chain the token and the kid into the environment\npm.test('200', () => pm.response.to.have.status(200));\nconst t = pm.response.json();\npm.test('bearer token with a lifetime', () => { pm.expect(t.token_type).to.eql('Bearer'); pm.expect(t.expires_in).to.be.above(0); });\npm.test('no refresh token for client credentials', () => pm.expect(t.refresh_token).to.be.undefined);\npm.environment.set('access_token', t.access_token);\nconst hdr = JSON.parse(atob(t.access_token.split('.')[0].replace(/-/g, '+').replace(/_/g, '/')));\npm.test('JWT header has alg and kid', () => { pm.expect(hdr.alg).to.eql('RS256'); pm.expect(hdr.kid).to.be.a('string'); });\npm.environment.set('kid', hdr.kid);\n"
+    },
+    {
+      "lang": "sh",
+      "code": "# Headless in CI: the environment file holds no secret; the secret comes from the pipeline's store\nnpx -y newman run idspike.postman_collection.json -e idspike.postman_environment.json \\\n  --env-var \"client_secret=$CLIENT_SECRET\" --reporters cli,json --reporter-json-export newman-run.json --bail\n# ... assertions 17 | failed 0 ... exit code 0\n\n# The same two requests as Bruno files, run with the Bruno CLI\nbru run --env local --env-var \"client_secret=$CLIENT_SECRET\"\n# Requests 2 (2 Passed)  Tests 4/4\n\n# The ground truth: the token request by hand\ncurl -sv -u \"$CLIENT_ID:$CLIENT_SECRET\" --data-urlencode grant_type=client_credentials --data-urlencode scope=openid \\\n  http://127.0.0.1:18080/realms/idspike/protocol/openid-connect/token\n"
+    },
+    {
+      "lang": "text",
+      "code": "# token.bru: one request per file, auth from variables, a secret declared by name only in the environment file\nmeta { name: token (client credentials)  type: http  seq: 1 }\npost { url: {{issuer}}/protocol/openid-connect/token  body: formUrlEncoded  auth: basic }\nauth:basic { username: {{client_id}}  password: {{client_secret}} }\nbody:form-urlencoded { grant_type: client_credentials  scope: openid }\ntests {\n  test(\"200\", function() { expect(res.getStatus()).to.equal(200); });\n  test(\"bearer with lifetime\", function() { expect(res.getBody().token_type).to.equal(\"Bearer\"); expect(res.getBody().expires_in).to.be.above(0); });\n  bru.setVar(\"access_token\", res.getBody().access_token);\n}\n# environments/local.bru:  vars { issuer: ...  client_id: m2m-batch }   vars:secret [ client_secret ]\n"
+    }
+  ],
+  "technologies": [
+    "Postman",
+    "Postman collection format v2.1",
+    "Newman",
+    "Bruno and the Bruno CLI",
+    "curl",
+    "httpbin",
+    "OAuth 2.0 auth helper",
+    "Keycloak",
+    "GitHub Actions or any CI runner"
+  ],
+  "related": [
+    "idi-oauth2",
+    "idi-m2m-api-auth",
+    "idi-troubleshooting-runbook",
+    "idi-tokens-jwt",
+    "rest-apis-json-oauth",
+    "github-actions-ci-cd"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Postman: Postman overview",
+      "url": "https://learning.postman.com/docs/introduction/overview/",
+      "why": "Orientation: workspaces, collections, environments, the runner.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Postman"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Postman: Store values in variables",
+      "url": "https://learning.postman.com/docs/sending-requests/variables/variables/",
+      "why": "Global, collection, environment, local and data variables, and which wins.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Variable scopes"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Postman: Authorizing requests",
+      "url": "https://learning.postman.com/docs/sending-requests/authorization/authorization/",
+      "why": "The auth helpers (bearer, basic, API key, OAuth 2.0) and inheritance from collection to request.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Authorization"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Postman: Authenticate with OAuth 2.0 in Postman",
+      "url": "https://learning.postman.com/docs/sending-requests/authorization/oauth-20/",
+      "why": "The OAuth 2.0 helper: grant types, token fetch, refresh, and where the token is stored.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Client Credentials"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Postman: Write test scripts",
+      "url": "https://learning.postman.com/docs/tests-and-scripts/write-scripts/test-scripts/",
+      "why": "Post-response tests: status, body, headers, setting variables for the next request.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "pm.test"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Postman: Postman JavaScript reference (pm API)",
+      "url": "https://learning.postman.com/docs/tests-and-scripts/write-scripts/postman-sandbox-api-reference/",
+      "why": "The sandbox API: pm.environment, pm.response, pm.sendRequest for a pre-request token fetch.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "pm.sendRequest"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Postman: Run and test collections from the command line using Newman",
+      "url": "https://learning.postman.com/docs/collections/using-newman-cli/command-line-integration-with-newman/",
+      "why": "Running a collection with an environment in CI; exit codes and reporters.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Newman"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Newman README (postmanlabs/newman)",
+      "url": "https://github.com/postmanlabs/newman",
+      "why": "Every CLI option, including --env-var for secrets and the JSON and JUnit reporters.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "--reporters"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Postman schemas: collection format versions",
+      "url": "https://schema.postman.com/",
+      "why": "The JSON schema a collection is stored in (v2.1); needed when you generate or diff collections in git.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Collections"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Bruno CLI overview",
+      "url": "https://docs.usebruno.com/bru-cli/overview",
+      "why": "The open-source, git-native alternative: plain-text .bru files and a CLI runner (run in the practice round).",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Bruno CLI"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "curl manual page",
+      "url": "https://curl.se/docs/manpage.html",
+      "why": "The ground truth tool: -u, -H, --data-urlencode, -v for every token request you will ever debug.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "--user"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "httpbin.org",
+      "url": "https://httpbin.org/",
+      "why": "A public echo service for testing auth headers, status codes and redirects without a real API.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "httpbin"
+      }
+    }
+  ],
+  "practice": "practice/idi-api-testing",
+  "provenance": {
+    "generated_by": "Claude (Fable 5.1) by hand from the identity and integration ops spike, Scout learning center",
+    "generated_on": "2026-10-14",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-14",
+      "change": "written by hand from the identity and integration ops spike (12 sources verified 2026-10-14; the seven-request collection run with Newman 6 (17 assertions, 0 failed) and two requests with the Bruno CLI (4 of 4) against Keycloak 26.4)"
+    }
+  ]
+}

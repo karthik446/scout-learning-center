@@ -1,0 +1,291 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "idi-troubleshooting-runbook",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "The SSO and integration troubleshooting runbook",
+  "area": "security",
+  "primary_key": "sso-saml-oidc",
+  "secondary_keys": [
+    "identity-and-access",
+    "api-testing"
+  ],
+  "keys": [
+    "sso-saml-oidc",
+    "identity-and-access",
+    "api-testing"
+  ],
+  "summary": "This is a runbook, not a theory lesson: what to do in the first twenty minutes of 'SSO is broken', 'the token is rejected', 'the file never arrived' or 'your webhook returns 400'. Capture the flow (a SAML tracer, a HAR file, the Postman console), decode the messages (a SAML response, a JWT), compare the handful of values that are almost always the problem (entity ID, ACS, redirect URI, audience, NameID, the clock), read the vendor's side (Entra sign-in logs and AADSTS codes, Okta error codes and the system log, Keycloak's logs), and know the table of the most common errors with their one-line causes. The last subtopic is how to write the ticket when it has to go to the vendor or to another team, so it comes back answered instead of with questions.",
+  "detail": [],
+  "in_practice": "The solutions engineer joins the customer's call with three tabs open: the SAML tracer or the browser's Network tab, a decoder, and the vendor's sign-in log. They ask the user to reproduce the login once with the tracer recording, read the first failing message, and name the mismatch out loud: the ACS URL in the request is not the one registered, the audience is the staging entity ID, the certificate the SP holds expired on Sunday, the clock on the SP node is four minutes fast, the user is not assigned to the application. For an OAuth failure they read the error and error_description from the token response rather than the UI's message, because invalid_grant, invalid_client and unauthorized_client each mean one specific thing. For a feed or a webhook they look at the server-side evidence first (the SFTP log line, the receiver's 400 reason). Then they write down what was captured, what was compared, and what changed, which is the ticket if one is needed and the runbook entry if it is not.",
+  "subtopics": [
+    {
+      "id": "capture-the-flow",
+      "title": "Capture the flow",
+      "body": [
+        {
+          "heading": "The three capture tools",
+          "body": "SAML-tracer (a Firefox and Chrome extension) records every request of a login and decodes the SAML (and WS-Federation) messages in place: the AuthnRequest on the redirect and the Response on the POST, with the XML readable and exportable. A HAR file from the browser's Network tab (right-click, 'Save all as HAR') captures every request and response of a flow including redirects, headers, cookies and bodies; the Chrome DevTools reference describes the export and the HAR specification describes the format. The Postman console shows the exact request a helper built, including the Authorization header, and is the first thing to open on a 401 from a collection. For a scripted client, log the request and response at debug level with the secret masked."
+        },
+        {
+          "heading": "What a capture leaks",
+          "body": "A HAR file contains cookies, bearer tokens, SAML assertions and sometimes passwords in form bodies. Before a customer sends one, tell them to log out and reproduce with a test user, or use a HAR sanitiser; before you forward one to a vendor, redact it. The same applies to a tracer export and to a Postman console paste. Never decode a customer's assertion or token on a public web tool; the practice uses only the local Keycloak's."
+        }
+      ]
+    },
+    {
+      "id": "decode-and-compare",
+      "title": "Decode and compare",
+      "body": [
+        {
+          "heading": "Decoding",
+          "body": "A SAMLResponse on the POST binding is base64; a SAMLRequest on the redirect binding is deflated then base64 then URL-encoded; the tracer does both, samltool.com's decoder does both when you paste (local messages only), and two lines of Python do both (the SAML lesson's code). A JWT is three base64url segments; decode the header and payload without verifying (the token lesson's code) to read iss, aud, exp, kid, nonce and the claims. Keep the decoded message next to the registration: the IdP's app configuration and the SP's or relying party's settings."
+        },
+        {
+          "heading": "The comparison list",
+          "body": "Nine values cause most SSO failures, and the comparison is mechanical. For SAML: the Audience in the assertion against the SP's entity ID; the Destination and the Recipient against the ACS URL as registered; the Issuer against the IdP entity ID the SP trusts; the signing certificate's fingerprint against the one the SP holds; NotBefore and NotOnOrAfter against the SP's clock; the NameID format and attribute names against what the SP reads; InResponseTo against an outstanding request. For OIDC: redirect_uri in the request against the registered list, byte for byte; iss and aud in the ID token against the configured issuer and client id; the nonce; the kid against the JWKS; exp against the clock. Write the two columns down; the mismatch is usually visible in the first minute."
+        }
+      ]
+    },
+    {
+      "id": "common-saml-errors",
+      "title": "Common SAML errors and their one-line causes",
+      "body": [
+        {
+          "heading": "The table",
+          "body": "Audience mismatch (node-saml: 'SAML assertion audience mismatch'; most toolkits name it the same way): the IdP's app has a different entity ID for you than your SP's configured issuer; usually staging against production, or a trailing slash. ACS or reply URL mismatch (Entra: AADSTS50011 'The reply URL specified in the request does not match the reply URLs configured for the application'; Okta: a 400 on the SSO URL): the AuthnRequest's AssertionConsumerServiceURL is not the registered one. NameID missing or wrong format: the IdP's name identifier source is empty for this user or its format is not the one the SP requested. Certificate expired or rotated ('Invalid document signature', 'certificate has expired'): the IdP rotated its signing certificate and the SP still holds the old one. Clock skew ('SAML assertion not yet valid' or 'expired'): a server clock off by more than the accepted skew. Unsigned assertion where the SP requires a signature: the IdP signs the response only, or nothing. InResponseTo not valid: a replayed response, an IdP-initiated login against an SP that requires SP-initiated, or an SP cluster whose nodes do not share the request cache. User not assigned (Okta: 'User is not assigned to the client application'; Entra: AADSTS50105 'The signed in user is not assigned to a role for the application'): an assignment problem, not a protocol one. Status not Success with a Responder code: the IdP refused, and its log says why."
+        },
+        {
+          "heading": "Reading the status",
+          "body": "A SAML Response whose StatusCode is not Success often carries a second-level StatusCode and a StatusMessage; read them before anything else, because a Requester code means the IdP thinks the SP's request was wrong (which value, the IdP's log says) and a Responder code means the IdP failed on its side (policy, the user, the certificate). The spike's evidence has the two SP-side errors ('InResponseTo is not valid', 'Invalid document signature') with the exact requests that produced them."
+        }
+      ]
+    },
+    {
+      "id": "common-oidc-errors",
+      "title": "Common OIDC and OAuth errors",
+      "body": [
+        {
+          "heading": "From the token endpoint (RFC 6749 section 5.2)",
+          "body": "invalid_request: a required parameter is missing or repeated (often the code_verifier, or a scope the server does not know). invalid_client: client authentication failed, which means the client id or secret is wrong or the authentication method does not match (Basic versus form body, secret versus private_key_jwt); Keycloak answers 401 unauthorized_client with 'Invalid client or Invalid client credentials' in this case, as the spike's wrong-secret test showed. invalid_grant: the code is expired, already used, issued to another client, or the code_verifier does not match (the spike's replay with a wrong verifier), or the redirect_uri in the token request differs from the one in the authorization request, or the refresh token is revoked. unauthorized_client: this client may not use this grant (client credentials not enabled, the device grant switched off). unsupported_grant_type and invalid_scope are what they say. Read error and error_description from the JSON body; the UI's message is a paraphrase."
+        },
+        {
+          "heading": "From the authorization endpoint and the relying party",
+          "body": "A redirect_uri mismatch never reaches the token endpoint: Keycloak shows 'Invalid parameter: redirect_uri' on its own page, Okta returns a 400 with a description naming the redirect URI, Entra returns AADSTS50011; the fix is an exact-match registration including scheme, host, port, path and trailing slash. 'User is not assigned' (Okta access_denied, Entra AADSTS50105) is an assignment. On the relying party side: 'state mismatch' is the state cookie not surviving the redirect (the SameSite problem from the web sessions lesson) or two login tabs; 'nonce mismatch' is the same for the ID token; 'invalid audience' is a token for another client; 'unknown kid' is a JWKS cache that has not refreshed after a rotation; a 403 from userinfo is a token without the openid scope (the spike's finding); a 401 from an API with a valid-looking token is usually the audience, the issuer (v1 versus v2 endpoints in Entra), or the typ."
+        }
+      ]
+    },
+    {
+      "id": "vendor-side-logs",
+      "title": "The vendor's side: logs and error catalogues",
+      "body": [
+        {
+          "heading": "Entra ID",
+          "body": "The sign-in logs in the Entra admin center (Monitoring, Sign-in logs) show every attempt with the application, the user, the status and a failure reason with an AADSTS code; the error codes reference lists the codes with causes, and a customer can paste the code into a ticket. The SAML debugging page describes the test-SSO button on the enterprise application (which downloads the SAML request the application sent and offers resolution guidance for common mismatches) and the errors it reports. Ask the customer's administrator for the sign-in log entry of the failing attempt before anything else; it says whether the request reached Entra and why Entra refused."
+        },
+        {
+          "heading": "Okta and Keycloak",
+          "body": "Okta's error codes reference lists the E0000xxx codes (E0000004 is an authentication exception, E0000011 an invalid token, E0000022 the endpoint does not support the request) and their meanings; the System Log in the admin console records every authentication and app sign-on event with the outcome and the reason. Keycloak logs to the container's standard output; the logging page shows how to raise the level for a category (for example the SAML or OIDC protocol classes) to see why a client or an assertion was rejected, and the admin console's Events section records login errors per realm when enabled. For every vendor the question is the same: did the request arrive, and what did the vendor say about it."
+        }
+      ]
+    },
+    {
+      "id": "sftp-and-webhook-failures",
+      "title": "SFTP and webhook failures",
+      "body": [
+        {
+          "heading": "SFTP",
+          "body": "'Permission denied (publickey)': the public key is not in the account's authorized keys, the key file permissions on the client are too open, or the key type is not accepted; the server's auth log names which. 'Connection closed' right after authentication with a chroot: the chroot directory is not owned by root or is group- or world-writable, which sshd refuses silently; the server log says 'bad ownership or modes for chroot directory'. 'Failure' on a rename: the target exists (version-3 RENAME) or the account cannot write the target folder. A partial file in the inbox that is hours old: the producer died mid-upload; never process it, and alert. A batch with a manifest mismatch: a truncated transfer or an edited file; reject the batch and ask for a re-send. A re-sent batch ingested twice: the idempotency key is the ciphertext hash rather than the content hash (the spike's own first bug)."
+        },
+        {
+          "heading": "Webhooks",
+          "body": "A receiver answering 400 'signature mismatch' on every delivery: the secret differs between the two sides (rotated on one), or the receiver computes the HMAC over a re-serialised body rather than the raw bytes, or a proxy changed the body (compression, charset). 'Stale timestamp' on every delivery: a clock problem on either side, or a queue delaying deliveries beyond the tolerance. Deliveries arriving twice: the receiver answered slowly and the sender retried; answer fast and process idempotently on the event id. Deliveries not arriving: the sender's log shows the attempts and the response code; an endpoint behind the customer's firewall needs an allow-list of the sender's addresses. The machine-to-machine lesson's receiver prints the reason for each rejection, which is the habit to keep in production logs (masked, not the secret)."
+        }
+      ]
+    },
+    {
+      "id": "write-the-ticket",
+      "title": "Write the ticket",
+      "body": [
+        {
+          "heading": "What to collect before escalating",
+          "body": "A ticket to a vendor or another team is answered quickly when it carries: the exact time of the failing attempt with the time zone; the user (a test user, not a real one, where possible); the application and tenant identifiers (client id, entity ID, tenant id, never a secret); the capture (a redacted tracer export or HAR, or the decoded message with the values compared); the error text verbatim, from the response body or the vendor log, not from the UI; the comparison table with the mismatch, or the statement that no mismatch was found; what changed recently on either side (a certificate, a release, a configuration edit, a renamed group); and what was already tried. Attach the vendor's own log entry (the AADSTS line, the Okta system log event) when the customer can get it."
+        },
+        {
+          "heading": "Close the loop",
+          "body": "When the cause is found, write one line into the runbook table: the symptom as the user saw it, the error text, the cause, the fix, and the capture that showed it. The practice ends with a ten-row table built from the local Keycloak and SP by breaking things on purpose; a real runbook grows one row per incident and becomes the fastest tool on the next call."
+        }
+      ]
+    }
+  ],
+  "diagram": {
+    "source": "flowchart TB\n  S[\"Symptom: SSO broken, token rejected, file missing, webhook 400\"] --> C[\"Capture: SAML-tracer, HAR, Postman console, server log\"]\n  C --> D[\"Decode: SAMLResponse, SAMLRequest, JWT\"]\n  D --> M{\"Compare the nine values: entity ID, ACS, redirect URI, issuer, audience, NameID, certificate, clock, InResponseTo or nonce\"}\n  M -- mismatch --> F[\"Fix the registration or the SP; add a runbook row\"]\n  M -- no mismatch --> V[\"Vendor side: Entra sign-in logs and AADSTS, Okta system log and E0000 codes, Keycloak log level\"]\n  V --> T[\"Write the ticket: time, ids, redacted capture, error text verbatim, what changed, what was tried\"]"
+  },
+  "code": [
+    {
+      "lang": "python",
+      "code": "# Read a login flow out of a HAR file: the redirect chain, and the code or SAMLResponse where it appears\nimport json, base64, urllib.parse\nhar = json.load(open(\"login.har\"))\nfor e in har[\"log\"][\"entries\"]:\n    req, res = e[\"request\"], e[\"response\"]\n    print(res[\"status\"], req[\"method\"], req[\"url\"][:90])\n    for h in res.get(\"headers\", []):\n        if h[\"name\"].lower() == \"location\":\n            print(\"   ->\", h[\"value\"][:120])\n    if req[\"method\"] == \"POST\":\n        for p in req.get(\"postData\", {}).get(\"params\", []):\n            if p[\"name\"] == \"SAMLResponse\":\n                xml = base64.b64decode(urllib.parse.unquote(p[\"value\"])).decode()\n                print(\"   SAMLResponse:\", xml[:200])\n# the OIDC code is in the Location header of the IdP's final redirect (?code=...&state=...); never paste either into a public tool\n"
+    },
+    {
+      "lang": "sh",
+      "code": "# Keycloak: raise the log level for the SAML and OIDC protocol classes to see why a message was rejected (dev only)\ndocker run -d --name idspike-keycloak --memory 1g -p 127.0.0.1:18080:8080 \\\n  -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=\"$KC_ADMIN_PASSWORD\" \\\n  quay.io/keycloak/keycloak:26.4 start-dev \\\n  --log-level=INFO,org.keycloak.protocol.saml:DEBUG,org.keycloak.protocol.oidc:DEBUG,org.keycloak.events:DEBUG\ndocker logs -f idspike-keycloak | grep -iE 'saml|oidc|error|invalid'\n"
+    }
+  ],
+  "technologies": [
+    "SAML-tracer",
+    "HAR files",
+    "Chrome DevTools",
+    "samltool.com decoders",
+    "Entra sign-in logs and AADSTS codes",
+    "Okta System Log and error codes",
+    "Keycloak logging",
+    "Postman console",
+    "jwt_tool"
+  ],
+  "related": [
+    "idi-saml",
+    "idi-oidc",
+    "idi-web-sessions",
+    "idi-sftp-feeds",
+    "idi-m2m-api-auth",
+    "debugging-postmortems"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "SAML-tracer (Firefox add-on)",
+      "url": "https://addons.mozilla.org/en-US/firefox/addon/saml-tracer/",
+      "why": "Captures and decodes SAML and WS-Federation messages in the browser; the first tool on any SSO ticket.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "SAML-tracer"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Chrome DevTools: Network features reference",
+      "url": "https://developer.chrome.com/docs/devtools/network/reference",
+      "why": "How to export a HAR file and read the redirects of a login flow.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "HAR"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "HTTP Archive (HAR) format",
+      "url": "https://w3c.github.io/web-performance/specs/HAR/Overview.html",
+      "why": "What a HAR file contains, so you can read one a customer sends and know what it leaks (cookies, tokens).",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "HAR"
+      }
+    },
+    {
+      "kind": "lab",
+      "title": "OneLogin SAML tools: decode SAML messages",
+      "url": "https://www.samltool.com/decode.php",
+      "why": "Paste a SAMLResponse from the tracer or a HAR and read it; also inflates HTTP-Redirect requests.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Decode"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Microsoft Entra: Debug SAML-based single sign-on to applications",
+      "url": "https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/debug-saml-sso-issues",
+      "why": "Entra's own test-SSO button, the errors it reports and what each means.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Test SAML"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Microsoft Entra: authentication and authorization error codes",
+      "url": "https://learn.microsoft.com/en-us/entra/identity-platform/reference-error-codes",
+      "why": "The AADSTS codes customers paste into tickets, with causes.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "AADSTS"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Microsoft Entra: What are sign-in logs?",
+      "url": "https://learn.microsoft.com/en-us/entra/identity/monitoring-health/concept-sign-ins",
+      "why": "Where to look on the Entra side when a login fails before it reaches your app.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "sign-in logs"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Okta Developer: Error codes",
+      "url": "https://developer.okta.com/docs/reference/error-codes/",
+      "why": "Okta's API error catalogue; the E0000xxx codes in integration failures.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Authentication exception"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Keycloak: Configuring logging",
+      "url": "https://www.keycloak.org/server/logging",
+      "why": "Turning up logging on the local IdP to see why a client or assertion was rejected.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "log level"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 6749 section 5.2: Error Response",
+      "url": "https://datatracker.ietf.org/doc/html/rfc6749#section-5.2",
+      "why": "invalid_grant, invalid_client, unauthorized_client: the exact meanings, so you stop guessing.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Error Response"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Postman: Troubleshoot API requests",
+      "url": "https://learning.postman.com/docs/sending-requests/response-data/troubleshooting-api-requests/",
+      "why": "The Postman console shows the raw request including auth headers; the first thing to open on a 401.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Postman Console"
+      }
+    }
+  ],
+  "practice": "practice/idi-troubleshooting-runbook",
+  "provenance": {
+    "generated_by": "Claude (Fable 5.1) by hand from the identity and integration ops spike, Scout learning center",
+    "generated_on": "2026-10-14",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-14",
+      "change": "written by hand from the identity and integration ops spike (11 sources verified 2026-10-14; the InResponseTo, signature, invalid_grant, unauthorized_client and userinfo-403 rows come from the spike's runs against Keycloak 26.4; the Entra and Okta rows are transcribed from the vendors' error references and the Entra test-SSO page is reader-only)"
+    }
+  ]
+}

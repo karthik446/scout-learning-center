@@ -1,0 +1,305 @@
+{
+  "schema_version": "learning-center-lesson:1",
+  "id": "idi-m2m-api-auth",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Machine-to-machine API auth: keys, client credentials, mTLS and signed webhooks",
+  "area": "software",
+  "primary_key": "apis",
+  "secondary_keys": [
+    "oauth2",
+    "webhooks",
+    "identity-and-access"
+  ],
+  "keys": [
+    "apis",
+    "oauth2",
+    "webhooks",
+    "identity-and-access"
+  ],
+  "summary": "Most of the traffic in an enterprise integration has no user behind it: a nightly job pulling records, a service calling a partner's API, a vendor pushing events to a webhook. This lesson is how services authenticate to each other and how to tell a good scheme from a weak one: API keys done well (the model, restricted keys, rotation), client credentials with a shared secret or a private key (private_key_jwt), mutual TLS as client authentication and token binding, HMAC-signed webhooks with timestamps and a replay window (GitHub, Stripe and the Standard Webhooks spec), request signing with AWS Signature Version 4 as the known example, and the secrets handling and rotation that all of them depend on. The practice runs client credentials, introspection and revocation against Keycloak and a 40-line webhook receiver that accepts a valid delivery and rejects a tampered and a stale one.",
+  "detail": [],
+  "in_practice": "When a customer asks 'how will your service authenticate to our API' the engineer answers in their vocabulary and in order of preference: OAuth client credentials against their authorization server, with a private key rather than a shared secret where they support it; mutual TLS when their gateway requires it; an API key only when that is what the API offers, and then restricted, rotated and stored in a secrets manager. When the customer's system will call the product's webhook, the engineer specifies the signature scheme (HMAC-SHA256 over a timestamp and the raw body, a five-minute tolerance, a per-endpoint secret) or adopts the Standard Webhooks headers so the customer can use an existing library, and writes the receiver that checks the signature before parsing anything. The integration document names each credential, where it lives, who rotates it and how often, and the test suite includes the negative cases: wrong secret, tampered body, stale timestamp, revoked token.",
+  "subtopics": [
+    {
+      "id": "api-keys-done-well",
+      "title": "API keys done well",
+      "body": [
+        {
+          "heading": "The model",
+          "body": "An API key is a bearer credential that identifies a client with no user and no expiry unless you give it one. Stripe's model is the reference for designing yours: a publishable key that may appear in a browser and can do almost nothing, a secret key that lives on the server and can do everything, separate test and live keys, restricted keys scoped to particular resources and permissions, and rotation with an overlap during which both the old and the new key work. The OWASP REST cheat sheet adds the rules of carriage: in an Authorization header or a dedicated header, never in a URL (query strings land in logs and browser history), always over TLS, and validated on the server with a constant-time comparison against a stored hash, not a stored plaintext."
+        },
+        {
+          "heading": "When a key is enough and when it is not",
+          "body": "A key is enough for a low-risk, server-to-server call to one API where the key can be scoped and rotated. It is not enough when the call acts on a user's behalf (that is a delegated token), when the customer requires short-lived credentials or an audit of who minted what (client credentials with introspection), or when the network itself must authenticate the client (mTLS). The questions to ask about any key you are handed: what can it do, where will it live, how is it rotated, how is it revoked, and what is logged when it is used."
+        }
+      ]
+    },
+    {
+      "id": "client-credentials-and-service-accounts",
+      "title": "Client credentials and service accounts",
+      "body": [
+        {
+          "heading": "The grant and the token",
+          "body": "OAuth's client credentials grant (RFC 6749 section 4.4) is a POST to the token endpoint with grant_type=client_credentials and the client's own authentication, and the answer is an access token that represents the client. The spike's run against Keycloak returned a Bearer token with a 300-second lifetime and no refresh token; the token's claims named the client as azp and a service account user as the subject, and introspection confirmed active true with the client id. Okta's client-credentials guide and Entra's daemon-app flow are the two vendor shapes: a service app with scopes on a custom authorization server in Okta; an app registration with application permissions and admin consent in Entra, where the token request names the resource's .default scope."
+        },
+        {
+          "heading": "What to decide with the customer",
+          "body": "Which authorization server issues the token (theirs or yours), which scopes or application permissions the client gets (least privilege, named in the document), how long tokens live (short; the client simply asks again), how the client authenticates (a secret, a private key, or mTLS, in rising order of preference), and how the resource server validates (local JWT validation with the aud check, or introspection). Revocation of a client-credentials token is the same story as for any JWT: it lasts until it expires unless the resource server introspects, which the spike demonstrated by revoking a token (RFC 7009) and watching introspection flip to active false."
+        }
+      ]
+    },
+    {
+      "id": "private-key-jwt-and-certificates",
+      "title": "private_key_jwt and certificate credentials",
+      "body": [
+        {
+          "heading": "Authenticating with a signature instead of a secret",
+          "body": "A shared client secret is a password: it travels on every token request and anyone who reads the config has it. RFC 7523 defines client authentication with a JWT instead: the client signs a short-lived assertion (iss and sub equal to its client id, aud equal to the token endpoint or issuer, a jti, an exp a few minutes out) with its private key, and sends it as client_assertion with client_assertion_type urn:ietf:params:oauth:client-assertion-type:jwt-bearer. The authorization server verifies it with the client's registered public key or JWKS. The private key never leaves the client, the assertion is single-use and expires, and rotation is a new key pair rather than a new password in every config."
+        },
+        {
+          "heading": "Where you will configure it",
+          "body": "Okta calls it Public key / Private key client authentication on the app's General tab; Entra calls it a certificate credential under Certificates and secrets and accepts the same client_assertion; Keycloak offers it as the 'Signed JWT' client authenticator with a JWKS URL or an uploaded certificate. Prefer it over a secret whenever the customer's server supports it, and say so in the design document. The same RFC also defines a JWT as an authorization grant (a signed assertion exchanged directly for a token), which is what service-account key files in some clouds do under the hood."
+        }
+      ]
+    },
+    {
+      "id": "mtls",
+      "title": "Mutual TLS",
+      "body": [
+        {
+          "heading": "Client certificates as client authentication",
+          "body": "In ordinary TLS only the server presents a certificate. In mutual TLS the client presents one too, and the server (or its gateway) verifies it against a trusted authority; RFC 8705 defines how an OAuth authorization server uses that as client authentication (tls_client_auth with a subject DN, or self_signed_tls_client_auth with a registered certificate) and, separately, how an access token can be bound to the client certificate (a cnf claim with the certificate's thumbprint), so a stolen token is useless without the private key. Regulated customers, banks and healthcare in particular, ask for it, and open-banking profiles require it."
+        },
+        {
+          "heading": "What it costs and what the customer's gateway must do",
+          "body": "mTLS moves the problem to certificate lifecycle: issuing client certificates from a CA the customer trusts, installing them where the client runs, rotating them before expiry, and revoking them. The TLS termination point matters: a load balancer or API gateway that terminates TLS must either pass the client certificate to the application in a header it also protects, or perform the verification itself and pass only the result. Ask the customer who issues the certificates, where TLS terminates, and whether the gateway forwards the certificate; those three answers decide most of the work. The practice reads this; the step CLI in the repositories makes a local CA and client certificates in minutes for a rehearsal."
+        }
+      ]
+    },
+    {
+      "id": "signed-webhooks",
+      "title": "Signed webhooks with timestamps",
+      "body": [
+        {
+          "heading": "The pattern",
+          "body": "A webhook is the partner calling you, so the receiver has to authenticate the caller. The pattern every mature vendor converges on: the sender computes an HMAC-SHA256 over the raw request body (GitHub's X-Hub-Signature-256) or over a timestamp joined to the body (Stripe's Stripe-Signature with its t and v1 fields, and the Standard Webhooks headers webhook-id, webhook-timestamp and webhook-signature) with a per-endpoint secret shared at setup, and the receiver recomputes it and compares in constant time. The timestamp defends against replay: the receiver rejects deliveries older than a tolerance (Stripe's default is five minutes; Standard Webhooks says the same) and may also remember recent ids. GitHub's page gives the receiver in several languages; Stripe's describes the tolerance and why the raw body matters."
+        },
+        {
+          "heading": "What the receiver must get right",
+          "body": "Compute the HMAC over the exact bytes received, before any JSON parsing or re-serialisation, because a re-encoded body has different bytes and a different signature. Use a constant-time comparison. Check the timestamp before the signature so a stale delivery is cheap to reject. Return 2xx quickly and do the work asynchronously, because senders retry on timeouts and you will otherwise process duplicates; make the handler idempotent on the event id anyway. Rotate the endpoint secret with an overlap, and accept both during it. The practice writes a receiver of this shape and sends it a valid, a tampered, a stale and a wrong-key delivery; it answered 200 and three 400s with the reasons named."
+        }
+      ]
+    },
+    {
+      "id": "request-signing",
+      "title": "Request signing: SigV4 as the known example",
+      "body": [
+        {
+          "heading": "The idea",
+          "body": "Request signing authenticates each HTTP request without sending the secret: the client builds a canonical representation of the request (method, path, sorted query, selected headers, a hash of the body), derives a signing key from its secret, the date, the region and the service, and puts the HMAC in an Authorization header with the credential scope and the list of signed headers. The server rebuilds the canonical request and verifies. AWS Signature Version 4 is the scheme most engineers meet, and its documentation walks through every step of the calculation; a request is valid for a short window, so replay and clock skew are bounded, and the signature covers the parts of the request that matter."
+        },
+        {
+          "heading": "Why read it once",
+          "body": "You will rarely implement SigV4 by hand (every SDK does it), but customers' and vendors' APIs borrow its shape: signed headers, a date header, a credential scope, a canonical form. Having read the AWS page once, a partner's 'HMAC-signed requests' specification is a day's work instead of a week's, and the two questions to ask are always the same: exactly which bytes are signed, and what is the clock tolerance."
+        }
+      ]
+    },
+    {
+      "id": "secrets-handling-and-rotation",
+      "title": "Secrets handling and rotation",
+      "body": [
+        {
+          "heading": "Where secrets live",
+          "body": "Every scheme above has a secret somewhere: an API key, a client secret, a private key, a webhook secret, a client certificate. The rules are the same for all of them: in a secrets manager or the platform's keychain, injected at runtime as an environment variable or a mounted file, never in source control, never in a Postman collection or a Bruno file (both tools have a secret variable type and an environment flag for exactly this reason), never in logs (mask the Authorization header), and never in a ticket or a chat message. The spike's collections kept the client secret in a secret-typed environment variable and the Newman run passed it on the command line with --env-var; the lesson's code uses placeholders throughout."
+        },
+        {
+          "heading": "Rotation and revocation, written down",
+          "body": "For each credential record who owns it, where it is stored, its expiry or rotation period, the rotation procedure (issue the new, deploy, verify, retire the old, with an overlap), and the revocation procedure for when it leaks. Prefer credentials that rotate themselves: short-lived OAuth tokens, certificates with an automated CA, cloud identity federation instead of long-lived keys where the platform offers it. A customer's security review will ask for this table; writing it during the integration costs an hour, and reconstructing it during an incident costs a weekend."
+        }
+      ]
+    }
+  ],
+  "diagram": {
+    "source": "flowchart LR\n  subgraph Outbound [Your service calls their API]\n    K[\"API key in a header\"] --> R1[\"Their API\"]\n    CC[\"Client credentials: secret or private_key_jwt\"] --> AS[\"Their authorization server\"] --> T[\"Access token\"] --> R1\n    M[\"mTLS: client certificate\"] --> R1\n  end\n  subgraph Inbound [Their system calls your webhook]\n    W[\"Delivery: body + timestamp + HMAC signature\"] --> V[\"Verify: timestamp within tolerance, HMAC over raw bytes, constant-time compare\"] --> Q[\"Queue, 2xx, process idempotently\"]\n  end"
+  },
+  "code": [
+    {
+      "lang": "python",
+      "code": "# A signed-webhook receiver: HMAC-SHA256 over timestamp.body with a 5-minute tolerance (run in the practice; stdlib only)\nimport hashlib, hmac, os, time\nSECRET = os.environ[\"WEBHOOK_SECRET\"].encode()      # per-endpoint secret shared at setup, never in the code\nTOLERANCE_S = 300\n\ndef verify(headers, raw_body: bytes, now: float) -> tuple[bool, str]:\n    ts, sig = headers.get(\"X-Webhook-Timestamp\", \"\"), headers.get(\"X-Webhook-Signature\", \"\")\n    if not ts.isdigit() or abs(now - int(ts)) > TOLERANCE_S:\n        return False, \"stale or missing timestamp\"\n    expected = hmac.new(SECRET, ts.encode() + b\".\" + raw_body, hashlib.sha256).hexdigest()\n    if not hmac.compare_digest(\"sha256=\" + expected, sig):     # constant-time; over the raw bytes, never re-serialised JSON\n        return False, \"signature mismatch\"\n    return True, \"ok\"\n# valid -> 200 ok; body changed -> 400 signature mismatch; 6 minutes old -> 400 stale; other secret -> 400 signature mismatch\n"
+    },
+    {
+      "lang": "python",
+      "code": "# Client authentication with a signed JWT instead of a shared secret (RFC 7523, private_key_jwt)\nimport time, uuid, jwt, requests\nassertion = jwt.encode(\n    {\"iss\": CLIENT_ID, \"sub\": CLIENT_ID, \"aud\": disc[\"token_endpoint\"], \"jti\": str(uuid.uuid4()),\n     \"iat\": int(time.time()), \"exp\": int(time.time()) + 120},\n    PRIVATE_KEY_PEM, algorithm=\"RS256\", headers={\"kid\": KEY_ID})\ntok = requests.post(disc[\"token_endpoint\"], data={\n    \"grant_type\": \"client_credentials\",\n    \"client_assertion_type\": \"urn:ietf:params:oauth:client-assertion-type:jwt-bearer\",\n    \"client_assertion\": assertion}).json()\n"
+    }
+  ],
+  "technologies": [
+    "API keys",
+    "OAuth client credentials",
+    "private_key_jwt",
+    "Mutual TLS",
+    "HMAC-SHA256 webhook signatures",
+    "Standard Webhooks",
+    "AWS Signature Version 4",
+    "Token introspection and revocation",
+    "Keycloak",
+    "Secrets managers"
+  ],
+  "related": [
+    "idi-oauth2",
+    "idi-tokens-jwt",
+    "idi-api-testing",
+    "idi-sftp-feeds",
+    "webhooks-kafka-events",
+    "rest-apis-json-oauth"
+  ],
+  "sources": [
+    {
+      "kind": "doc",
+      "title": "Stripe: API keys",
+      "url": "https://docs.stripe.com/keys",
+      "why": "A well-run vendor's API-key model (publishable vs secret, test vs live, restricted keys, rotation) as the reference for designing your own.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Secret keys"
+      }
+    },
+    {
+      "kind": "guide",
+      "title": "OWASP REST Security Cheat Sheet",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html",
+      "why": "When API keys are enough, when they are not, and the transport and validation rules around them.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "API Keys"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Okta Developer: Implement OAuth for Okta - Client Credentials flow",
+      "url": "https://developer.okta.com/docs/guides/implement-grant-type/clientcreds/main/",
+      "why": "A vendor's client-credentials walkthrough including scopes and the service app setup.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Client Credentials"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Microsoft Entra: OAuth 2.0 client credentials flow",
+      "url": "https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-client-creds-grant-flow",
+      "why": "The daemon-app flow on Entra with application permissions, admin consent and the token request.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Get a token"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "GitHub Docs: Validating webhook deliveries",
+      "url": "https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries",
+      "why": "HMAC-SHA256 signature validation with example code in several languages; the pattern every webhook consumer implements.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Validating webhook deliveries"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "Stripe: Receive Stripe events in your webhook endpoint",
+      "url": "https://docs.stripe.com/webhooks",
+      "why": "Signed webhooks with a timestamp for replay protection and the tolerance window; the second reference implementation.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "signature"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "Standard Webhooks specification",
+      "url": "https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md",
+      "why": "A vendor-neutral webhook signing scheme (webhook-id, webhook-timestamp, webhook-signature) to copy rather than invent.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Signature"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 6749 section 4.4: Client Credentials Grant",
+      "url": "https://datatracker.ietf.org/doc/html/rfc6749#section-4.4",
+      "why": "The machine-to-machine grant; two paragraphs that define it.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Client Credentials Grant"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 7523: JWT Profile for OAuth 2.0 Client Authentication and Authorization Grants",
+      "url": "https://datatracker.ietf.org/doc/html/rfc7523",
+      "why": "private_key_jwt: client authentication with a signed JWT instead of a shared secret; what Entra and Okta call certificate credentials.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Using JWTs for Client Authentication"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 8705: OAuth 2.0 Mutual-TLS Client Authentication and Certificate-Bound Access Tokens",
+      "url": "https://datatracker.ietf.org/doc/html/rfc8705",
+      "why": "mTLS as client authentication and as token binding; the option regulated customers ask for.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Mutual TLS for OAuth Client Authentication"
+      }
+    },
+    {
+      "kind": "spec",
+      "title": "RFC 7009: OAuth 2.0 Token Revocation",
+      "url": "https://datatracker.ietf.org/doc/html/rfc7009",
+      "why": "How a client revokes a token (run in the practice round against Keycloak and node-oidc-provider).",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Revocation Request"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "AWS: Create a signed AWS API request (Signature Version 4)",
+      "url": "https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-create-signed-request.html",
+      "why": "The best-known HMAC request-signing scheme; read once so SigV4-style headers from any vendor look familiar.",
+      "verified": {
+        "checked": "2026-10-14",
+        "http": 200,
+        "section_found": "Calculate the signature"
+      }
+    }
+  ],
+  "practice": "practice/idi-m2m-api-auth",
+  "provenance": {
+    "generated_by": "Claude (Fable 5.1) by hand from the identity and integration ops spike, Scout learning center",
+    "generated_on": "2026-10-14",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-14",
+      "change": "written by hand from the identity and integration ops spike (12 sources verified 2026-10-14; client credentials, introspection and revocation run against Keycloak 26.4; the signed-webhook receiver written and run locally for this lesson; private_key_jwt and mTLS read only)"
+    }
+  ]
+}
