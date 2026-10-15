@@ -491,25 +491,15 @@ SCHEMAS = {
         "reference_example": {"situation": str, "sections": [TITLED_BODY], "written_by": str}, "review_checklist": [str],
         "provenance": PROVENANCE, "changelog": CHANGELOG,
     },
-    "pathway": {
-        "schema_version": str, "id": str, "version": int, "title": str, "family": str, "role_key": str,
-        "titles": {"phrases": [str], "deny": [str]}, "summary": str, "shared_modules": [str],
-        "modules": [{"id": str, "title": str, "intro": str}], "expectations": None, "technologies": None,
-        "steps": [{"n": int, "lesson": str, "module": str, "depth": str, "why": str, "prerequisites": [str]}],
-        "changelog": CHANGELOG,
-    },
     "module": {
-        "schema_version": str, "id": str, "version": int, "title": str, "status": str, "summary": str,
-        "parts": [{"id": str, "title": str}],
-        "lessons": [{"id": str, "title": str, "part": str, "part_title": str, "status": str}],
+        "schema_version": str, "id": str, "version": int, "title": str, "status": str, "summary": str, "intro?": str,
+        "parts?": [{"id": str, "title": str}],
+        "lessons": [{"id": str, "title?": str, "part?": str, "part_title?": str, "status": str}],
+        "changelog?": CHANGELOG,
     },
-    "family": {
-        "schema_version": str, "id": str, "version": int, "title": str, "status": str, "summary": str,
-        "roles": [{"key": str, "title": str, "pathway": str}], "shared_modules": [str],
-    },
-    "families": {
-        "schema_version": str, "version": int,
-        "families": [{"id": str, "title": str, "status": str, "summary": str}],
+    "modules-index": {
+        "schema_version": str,
+        "modules": [{"id": str, "title": str, "status": str, "summary": str, "lessons_published": int, "lessons_planned": int}],
     },
     "redirects": {"schema_version": str, "redirects": [{"from": str, "to": str, "since": str, "reason": str}]},
     "changelog": {
@@ -556,16 +546,80 @@ def kind_of(rel: str) -> str | None:
         return "sim-staging"
     if rel.startswith("practice/"):
         return "practice"
-    if rel.startswith("pathways/"):
-        return "pathway"
+    if rel == "modules/index.json":
+        return "modules-index"
     if rel.startswith("modules/"):
         return "module"
-    if rel == "families/index.json":
-        return "families"
-    if rel.startswith("families/"):
-        return "family"
     return {"redirects.json": "redirects", "changelog.json": "changelog", "site.json": "site",
             "keys/concept-keys.json": "keys", "merge-candidates.json": "merge"}.get(rel)
+
+
+ENTRY_FORBIDDEN = ("home", "why", "depth")   # no cross-references: a lesson sits in exactly one module
+
+
+def module_checks(docs: dict, lessons: dict, modules: dict) -> list[str]:
+    """The module rules: ids and parts, published entries have a published lesson file and planned ones have none,
+    every published lesson is listed in exactly one module, modules/index.json lists every module file once with matching counts."""
+    out: list[str] = []
+    homes: dict[str, list[str]] = {}
+    for mid, m in modules.items():
+        w = f"modules/{mid}.json"
+        if not KEBAB.match(mid):
+            out.append(f"{w}: id is not kebab-case")
+        if m["status"] not in ("planned", "published"):
+            out.append(f"{w}: bad status {m['status']!r}")
+        if m.get("changelog") and m["changelog"][-1]["version"] != m["version"]:
+            out.append(f"{w}: version does not match the last changelog entry")
+        part_ids = [p["id"] for p in m.get("parts", [])]
+        if len(set(part_ids)) != len(part_ids):
+            out.append(f"{w}: duplicate part id")
+        seen: set[str] = set()
+        for e in m["lessons"]:
+            eid = e["id"]
+            if eid in seen:
+                out.append(f"{w}: lists {eid} twice")
+            seen.add(eid)
+            for f in ENTRY_FORBIDDEN:
+                if f in e:
+                    out.append(f"{w}: entry {eid} has a {f!r} field (no cross-references, no why or depth)")
+            if e["status"] not in ("planned", "published"):
+                out.append(f"{w}: entry {eid} has bad status {e['status']!r}")
+            elif e["status"] == "planned":
+                if eid in lessons:
+                    out.append(f"{w}: {eid} is planned but a lesson file exists")
+                if not e.get("title", "").strip():
+                    out.append(f"{w}: planned entry {eid} needs a title")
+            else:
+                if eid not in lessons or lessons[eid]["status"] != "published":
+                    out.append(f"{w}: {eid} is published but no published lesson file exists")
+                homes.setdefault(eid, []).append(mid)
+            if part_ids:
+                if e.get("part") not in part_ids:
+                    out.append(f"{w}: entry {eid} names part {e.get('part')!r}, not one of {part_ids}")
+            elif "part" in e or "part_title" in e:
+                out.append(f"{w}: entry {eid} names a part but the module has none")
+    for lid, l in lessons.items():
+        if l["status"] == "published" and len(homes.get(lid, [])) != 1:
+            out.append(f"lessons/{lid}: listed in {len(homes.get(lid, []))} modules ({', '.join(homes.get(lid, [])) or 'none'}); a published lesson sits in exactly one")
+    rows = docs["modules/index.json"]["modules"]
+    listed = [r["id"] for r in rows]
+    if len(set(listed)) != len(listed):
+        out.append("modules/index.json: duplicate module id")
+    for mid in modules:
+        if mid not in listed:
+            out.append(f"modules/index.json: module {mid} is not listed")
+    for r in rows:
+        m = modules.get(r["id"])
+        if m is None:
+            out.append(f"modules/index.json: {r['id']} has no file modules/{r['id']}.json")
+            continue
+        for f in ("title", "status", "summary"):
+            if r[f] != m[f]:
+                out.append(f"modules/index.json: {r['id']} {f} differs from the module file")
+        pub = sum(1 for e in m["lessons"] if e["status"] == "published")
+        if (r["lessons_published"], r["lessons_planned"]) != (pub, len(m["lessons"]) - pub):
+            out.append(f"modules/index.json: {r['id']} counts {r['lessons_published']}/{r['lessons_planned']} do not match the file ({pub}/{len(m['lessons']) - pub})")
+    return out
 
 
 def validate(docs: dict) -> list[str]:
@@ -613,9 +667,10 @@ def validate(docs: dict) -> list[str]:
 
     lessons = {d["id"]: d for r, d in docs.items() if r.startswith("lessons/")}
     practice = {d["lesson"]: d for r, d in docs.items() if r.startswith("practice/")}
-    sd_ids = {l["id"] for l in docs["modules/system-design.json"]["lessons"]}
+    modules = {d["id"]: d for r, d in docs.items() if r.startswith("modules/") and r != "modules/index.json"}
+    planned_ids = {e["id"] for m in modules.values() for e in m["lessons"] if e["status"] == "planned"}
     for rel, d in docs.items():
-        if rel.startswith(("lessons/", "practice/", "pathways/")) and Path(rel).stem != (d["id"].split("/")[-1]):
+        if rel.startswith(("lessons/", "practice/", "modules/")) and rel != "modules/index.json" and Path(rel).stem != (d["id"].split("/")[-1]):
             out.append(f"{rel}: file name does not match id {d['id']}")
     for lid, l in lessons.items():
         w = f"lessons/{lid}"
@@ -654,7 +709,7 @@ def validate(docs: dict) -> list[str]:
         if "sim" in l:
             out.extend(sim_checks(lid, l, docs))
         for r in l["related"]:
-            if r not in lessons and not (ex and r in sd_ids):
+            if r not in lessons and not (ex and r in planned_ids):
                 out.append(f"{w}: related names unknown lesson {r}")
         if (l["practice"] is None) != (lid not in practice):
             out.append(f"{w}: 'practice' pointer and practice file disagree")
@@ -675,66 +730,9 @@ def validate(docs: dict) -> list[str]:
         for s in pr["setup"] + pr["steps"]:
             if not s["source"].get("verified", {}).get("checked"):
                 out.append(f"{w}: step {s['n']} has no verified.checked date")
-    seen_in_pathway: set[str] = set()
-    pathways = {d["id"]: d for r, d in docs.items() if r.startswith("pathways/")}
-    families = {d["id"]: d for r, d in docs.items() if r.startswith("families/") and r != "families/index.json"}
-    for pid, pw in pathways.items():
-        w = f"pathways/{pid}"
-        if pw["family"] not in families:
-            out.append(f"{w}: unknown family {pw['family']}")
-        mods = {m["title"] for m in pw["modules"]}
-        seen = set()
-        for i, s in enumerate(pw["steps"], 1):
-            if s["n"] != i:
-                out.append(f"{w}: step numbers are not 1..N in order")
-            if s["lesson"] not in lessons:
-                out.append(f"{w}: step {s['n']} names unknown lesson {s['lesson']}")
-            if s["lesson"] in seen:
-                out.append(f"{w}: lists lesson {s['lesson']} twice")
-            seen.add(s["lesson"])
-            if s["module"] not in mods:
-                out.append(f"{w}: step {s['n']} module {s['module']!r} is not a module of the pathway")
-            if s["depth"] not in ("L1", "L2", "L3"):
-                out.append(f"{w}: step {s['n']} bad depth")
-            if not s["why"].strip():
-                out.append(f"{w}: step {s['n']} has no 'why'")
-            for pre in s["prerequisites"]:
-                if pre not in sd_ids:
-                    out.append(f"{w}: step {s['n']} prerequisite {pre} is not an sd- lesson")
-        for grp in ("expectations", "technologies"):
-            for g, ks in pw[grp].items():
-                for k in ks:
-                    if k not in keys:
-                        out.append(f"{w}: {grp}.{g} names unknown key {k}")
-        for m in pw["shared_modules"]:
-            if f"modules/{m}.json" not in docs:
-                out.append(f"{w}: unknown shared module {m}")
-        seen_in_pathway |= seen
-    for fid, fam in families.items():
-        for r in fam["roles"]:
-            if r["pathway"] not in pathways:
-                out.append(f"families/{fid}: role {r['key']} names unknown pathway {r['pathway']}")
-    index_ids = [f["id"] for f in docs["families/index.json"]["families"]]
-    for fid in families:
-        if fid not in index_ids:
-            out.append(f"families/index.json: published family {fid} is not listed")
-    for f in docs["families/index.json"]["families"]:
-        if (f["status"] == "published") != (f["id"] in families):
-            out.append(f"families/index.json: {f['id']} status {f['status']} does not match its file")
-    mod = docs["modules/system-design.json"]
-    if len(mod["lessons"]) != 40 or any(l["status"] not in ("planned", "published") or not l["id"].startswith("sd-") for l in mod["lessons"]):
-        out.append("modules/system-design.json: expected 40 sd- lessons, each planned or published")
-    if len({l["id"] for l in mod["lessons"]}) != len(mod["lessons"]):
-        out.append("modules/system-design.json: duplicate lesson id")
-    for l in mod["lessons"]:
-        if l["status"] == "planned" and l["id"] in lessons:
-            out.append(f"modules/system-design.json: {l['id']} is planned but a lesson file exists")
-        if l["status"] == "published" and (l["id"] not in lessons or lessons[l["id"]]["status"] != "published"):
-            out.append(f"modules/system-design.json: {l['id']} is published but no published lesson file exists")
+    out.extend(module_checks(docs, lessons, modules))
     for r in docs["redirects.json"]["redirects"]:
-        m = re.match(r"^/learn/lessons/([a-z0-9-]+)/$", r["to"])
-        if not m or m.group(1) not in lessons:
-            out.append(f"redirects.json: redirect to an unknown lesson {r['to']}")
+        out.append(f"redirects.json: no redirects are kept (the old URLs simply stop existing): {r['from']}")
     ids = {l for l in lessons}
     for p in docs["merge-candidates.json"]["pairs"]:
         if p["a"] not in ids or p["b"] not in ids:
