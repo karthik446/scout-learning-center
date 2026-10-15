@@ -1,7 +1,7 @@
 {
-  "schema_version": "learning-center-lesson:1",
+  "schema_version": "learning-center-lesson:2",
   "id": "sd-consistency-consensus",
-  "version": 1,
+  "version": 2,
   "status": "published",
   "superseded_by": null,
   "title": "Consistency models, transactions and consensus in plain words",
@@ -16,80 +16,786 @@
     "consensus",
     "distributed-systems"
   ],
-  "summary": "A consistency model is the contract between a data store and its clients about which reads can follow which writes. Transactions group operations so they succeed or fail together under a chosen isolation level, and consensus lets several machines agree on one ordered history despite crashes. In practice most teams do not write consensus code; they rent it from a coordination store and must use leases and fencing correctly.",
+  "summary": "A consistency model is the contract between a store and its clients about which reads may follow which writes, and it is chosen per operation, not per system. This lesson lays the models out as a map from strict serializability to eventual consistency, separates linearizability from serializability, says what the CAP proof actually covers, gives the isolation levels and their anomalies as PostgreSQL implements them, turns all of it into a decision table per operation, explains Raft and majority quorums in plain words, shows why a lease needs a fencing token, and marks the cases where a CRDT replaces consensus, with a worked sizing of a five-member coordination cluster and a fenced job lock.",
   "detail": [],
-  "in_practice": "Teams rarely implement consensus themselves. They run a three or five node coordination cluster such as etcd or ZooKeeper, or use a database that embeds Raft, and keep only small critical state there: leader identity, shard assignments, feature configuration. Design reviews go through each piece of data and write down the required guarantee, then pick the cheapest store that meets it. Leader election uses a leased key with keep-alives, and anything the leader writes carries a fencing token or uses a compare-and-set on a revision. Correctness is tested with fault injection: killing leaders, partitioning nodes and pausing processes to confirm that no stale writer gets through.",
+  "in_practice": {
+    "blocks": [
+      {
+        "type": "p",
+        "text": "Google's SRE book reports that distributed consensus sits under virtually every service Google offers, and that a typical Chubby or ZooKeeper deployment uses five replicas so that two can be lost. Its Photon pipeline coordinator shows the read-scaling pattern the chapter recommends: writes go through an atomic compare-and-set that must be consistent, while reads are served from any replica because stale data there only causes extra work, not wrong results.",
+        "cites": [
+          "s6"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "Spanner's clock uncertainty as the paper measured it in production, and what it buys.",
+        "columns": [
+          "quantity",
+          "value",
+          "note"
+        ],
+        "rows": [
+          [
+            "clock uncertainty (epsilon)",
+            "about 1 to 7 ms over each poll interval",
+            "a sawtooth; about 4 ms most of the time"
+          ],
+          [
+            "daemon poll interval",
+            "30 seconds",
+            "with an applied drift rate of 200 microseconds per second"
+          ],
+          [
+            "commit wait",
+            "until the commit timestamp has definitely passed",
+            "the leader waits out the uncertainty before releasing locks"
+          ],
+          [
+            "result",
+            "external consistency across datacenters",
+            "a transaction that commits before another starts gets the smaller timestamp"
+          ]
+        ],
+        "cites": [
+          "s10"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Amazon's service teams use leases rather than consensus libraries for most leader election, through the DynamoDB lock client or ZooKeeper, and the Builders' Library sets out their rules: check the remaining lease time before any side effect, assume slow networks, retries and garbage collection can expire it early, do not heartbeat from a background thread, keep an audit log of leadership changes, and design for the fact that during failures there may be zero or two leaders. The Kinesis Client Library uses the same leases to give each shard one processing owner.",
+        "cites": [
+          "s11"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "etcd, the store behind Kubernetes, documents its guarantees rather than describing them loosely: the key-value API is strictly serializable, operations are linearizable by default because they pass through Raft, clients may opt into serializable reads that skip consensus and may return stale data, every modification receives one increasing revision usable as a logical clock, and watches deliver events ordered by revision, never duplicated, never with gaps inside the history window.",
+        "cites": [
+          "s7"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Redis's own documentation of distributed locks now tells readers what the critique established: implement fencing tokens, do not assume a lock is held just because the process that took it is alive, and remember that key expiry uses a wall clock that can shift and let two processes hold one lock.",
+        "cites": [
+          "s9",
+          "s8"
+        ]
+      }
+    ]
+  },
   "subtopics": [
     {
-      "body": [
+      "id": "the-map",
+      "title": "The consistency map: what each model promises",
+      "blocks": [
         {
-          "body": "Linearizability means the system behaves like a single copy: once a write completes, every later read sees it, and operations appear in an order consistent with real time. Serializability is about transactions: the result equals some serial order of the transactions, though not necessarily the real time order. Strict serializability combines both. Eventual consistency promises only that replicas converge if writes stop, so a read may return stale data. Between them sit session guarantees such as read-your-writes and monotonic reads, which are often enough for user facing features.",
-          "heading": "The spectrum"
+          "type": "p",
+          "text": "A consistency model is a contract between a data store and its clients about which histories of reads and writes the store may produce. Jepsen's reference defines it exactly that way: a model is the set of histories a system is allowed to execute, and one model is stronger than another when every history it allows, the other allows too. The models form a map, not a line. Models for single operations on single objects sit on one side; models for multi-object transactions sit on the other; strict serializability joins the two at the top.",
+          "cites": [
+            "s1"
+          ]
         },
         {
-          "body": "Stronger models cost latency and availability, because a node that cannot reach a quorum must refuse the request instead of answering from local state. The practical question per data item is: what breaks if a client reads an old value? Account balances, uniqueness constraints and leader election need linearizable operations. Feeds, counters, search indexes and recommendations usually tolerate staleness measured in seconds. Good designs mix models: a small strongly consistent core for decisions, with eventually consistent copies for reads at scale.",
-          "heading": "Choosing a model"
+          "type": "table",
+          "caption": "The models a designer meets, from strongest to weakest, with what each one lets a client observe. Availability is the Jepsen map's shading for an asynchronous network.",
+          "columns": [
+            "model",
+            "what it promises",
+            "what a client may still see",
+            "available under partition?"
+          ],
+          "rows": [
+            [
+              "strict serializable",
+              "transactions appear in one serial order that agrees with real time",
+              "nothing surprising; the single-machine illusion",
+              "no"
+            ],
+            [
+              "linearizable",
+              "each single-object operation takes effect at one instant between its call and its return",
+              "nothing stale once a write has returned",
+              "no"
+            ],
+            [
+              "serializable",
+              "transactions appear in some serial order",
+              "a stale read, because the order need not match real time",
+              "no"
+            ],
+            [
+              "snapshot isolation",
+              "each transaction reads one consistent snapshot",
+              "write skew: two transactions each read, then both write",
+              "no"
+            ],
+            [
+              "sequential",
+              "every process sees the same order, and its own operations in program order",
+              "a lag behind real time, the same for everyone",
+              "no"
+            ],
+            [
+              "causal",
+              "effects follow their causes everywhere",
+              "concurrent, unrelated writes in different orders",
+              "sticky: yes, if a client keeps to one server"
+            ],
+            [
+              "read your writes, monotonic reads",
+              "a session never goes backwards or loses its own writes",
+              "other sessions' writes arriving late",
+              "sticky: yes"
+            ],
+            [
+              "read committed",
+              "no dirty reads",
+              "a value that changes between two reads",
+              "yes"
+            ],
+            [
+              "eventual",
+              "replicas converge once writes stop",
+              "anything, for a while",
+              "yes"
+            ]
+          ],
+          "cites": [
+            "s1",
+            "s4"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The right-hand column is the price list. Every model at or above sequential consistency, snapshot isolation or cursor stability cannot be totally available on an asynchronous network; the session models can be at most sticky available, meaning a client must keep talking to the same replica; only the weakest models are available everywhere all the time. A model is therefore chosen per piece of data, not per system, and the choice is a statement of what the application can afford to see.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Write the model down per operation, in the words of the table: 'the balance read is linearizable', 'the feed is eventual with read-your-writes for the author'. A store that is 'strongly consistent' without that sentence has promised nothing a reviewer can check.",
+          "cites": [
+            "s1"
+          ]
         }
-      ],
-      "id": "consistency-models",
-      "title": "Consistency models from linearizable to eventual"
+      ]
     },
     {
-      "body": [
+      "id": "linearizable-vs-serializable",
+      "title": "Linearizable, serializable, strictly serializable",
+      "blocks": [
         {
-          "body": "A transaction provides atomicity (all writes apply or none do), isolation (concurrent transactions do not see each other's partial work) and durability (committed data survives a crash). Isolation is a dial, not a switch. Read committed prevents dirty reads but allows a value to change between two reads. Snapshot isolation gives each transaction a consistent view but allows write skew, where two transactions each read a condition, then both write in ways that jointly violate it. Serializable isolation removes these anomalies at the cost of more aborts or locking.",
-          "heading": "What a transaction gives you"
+          "type": "p",
+          "text": "The two words most often confused come from different communities. Linearizability comes from concurrent programming and is about single operations on single objects: a write appears to take effect at one instant between its invocation and its response, so once it has returned, every later read, later by the wall clock, returns that value or a newer one. Serializability comes from databases and is about transactions over many objects: the outcome equals some serial execution of the transactions, with no requirement that the serial order match the order in which they ran.",
+          "cites": [
+            "s2"
+          ]
         },
         {
-          "body": "A single database transaction cannot span two services with separate stores. Two-phase commit can do it but blocks participants if the coordinator fails, so most systems avoid it on request paths. The common alternatives are sagas, where each step commits locally and failures trigger compensating actions, and the outbox pattern, where a state change and its event commit in one local transaction. Both accept temporary inconsistency in exchange for availability, and both require idempotent steps because steps get retried.",
-          "heading": "Across services"
+          "type": "table",
+          "caption": "The two guarantees side by side, after Bailis.",
+          "columns": [
+            "",
+            "linearizability",
+            "serializability"
+          ],
+          "rows": [
+            [
+              "unit",
+              "one operation on one object",
+              "a transaction over many objects"
+            ],
+            [
+              "order",
+              "real time: later calls see earlier completed writes",
+              "some serial order; real time is not consulted"
+            ],
+            [
+              "composable across objects",
+              "yes: linearizable objects make a linearizable system",
+              "no"
+            ],
+            [
+              "the C in",
+              "CAP",
+              "ACID (the I, isolation)"
+            ],
+            [
+              "cost",
+              "coordination on every operation",
+              "coordination on every transaction"
+            ]
+          ],
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Strict serializability is both at once: a serial order that also respects real time. If one client commits a transaction that writes x and another client later begins a transaction that reads x, strict serializability places the write first; plain serializability may order the read before the write and return the old value. Spanner calls this property external consistency and defines it the same way: if transaction one commits before transaction two starts, one's commit timestamp is smaller, and the paper treats the term as equivalent to linearizability over transactions.",
+          "cites": [
+            "s2",
+            "s10"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Neither guarantee comes without coordination, and in practice the defaults are weaker than the names suggest: most databases do not run serializable by default, and most multi-core processors do not give linearizable memory access by default. The practical consequence is that a design must say which operations are strict and pay for them, and leave the rest to cheaper models.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "The SQL keyword SERIALIZABLE is not a promise of strict serializability, and in some engines not even of serializability: PostgreSQL's level is a true serializable implementation built on snapshot isolation, while other products have shipped snapshot isolation under the same name. Read the engine's own definition before relying on the word.",
+          "cites": [
+            "s4",
+            "s2"
+          ]
         }
-      ],
-      "id": "transactions-isolation",
-      "title": "Transactions and isolation levels"
+      ]
     },
     {
-      "body": [
+      "id": "what-cap-says",
+      "title": "What CAP says, and what it does not",
+      "blocks": [
         {
-          "body": "Consensus algorithms such as Raft and Paxos let a group of nodes agree on an ordered log of commands. In Raft one node is elected leader for a term, clients send writes to it, and the leader appends each entry to its log and replicates it. An entry is committed once a majority has stored it, so any later majority must contain at least one node that knows it. This overlap is why a cluster of 2f+1 nodes survives f failures: three nodes tolerate one failure, five tolerate two.",
-          "heading": "How agreement works"
+          "type": "p",
+          "text": "The CAP theorem is quoted far more often than its definitions are read. In the proof, consistency means linearizability of a single read-write register and nothing else; availability means that every request to a non-failing node must receive a non-error response, not that some node can answer; and partition tolerance means the network may delay or drop messages, which every real network does. The theorem then says that under a partition a system must give up one of linearizability or that strict form of availability.",
+          "cites": [
+            "s3"
+          ]
         },
         {
-          "body": "Every write needs a round trip to a majority and a durable disk write, so consensus stores are sized for small, critical data such as configuration, membership and locks, not bulk application data. Adding members raises fault tolerance but slows writes, which is why clusters are usually three or five nodes and odd sized. During a partition the minority side cannot commit and must reject writes. A store like etcd exposes this as a key-value API with a global revision counter that increases on every change.",
-          "heading": "What it costs"
+          "type": "p",
+          "text": "That is a narrow result. It says nothing about transactions over several objects, nothing about latency, and nothing about the other failures a system meets: crashed nodes, full disks, bugs. A CAP-available system may take minutes to answer and still count as available. Kleppmann's conclusion is that the labels CP and AP describe almost no real system. A single-leader replicated database is not CAP-available, because a client cut off from the leader cannot write; if it reads from an asynchronous follower it is not linearizable either. A consensus store that serves reads from any member, as ZooKeeper does by default, is not linearizable for reads without an extra sync, while its majority side keeps serving writes during a partition.",
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "list",
+          "items": [
+            "The CAP proof in one picture: two datacenters, a replication link between them, the link breaks. Either both sides keep accepting writes and a reader on one side misses the other's writes, or one side stops serving until the link returns.",
+            "CAP-consistency is only linearizability; ACID's C is unrelated.",
+            "CAP-availability is every non-failing node answering; a leader-based system fails it by design and may still meet a 99.9 percent SLO.",
+            "Most systems are neither CP nor AP by the proof's definitions, and the design question is which operations need which guarantee."
+          ],
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Replace 'is it CP or AP' with two concrete questions per operation: what may a client read after a partition starts, and which side keeps accepting writes. The answers differ by operation inside one database, and that is the design.",
+          "cites": [
+            "s3"
+          ]
         }
-      ],
-      "id": "consensus-raft-quorums",
-      "title": "Consensus, quorums and Raft"
+      ]
     },
     {
-      "body": [
+      "id": "isolation-levels",
+      "title": "Transactions and isolation levels",
+      "blocks": [
         {
-          "body": "A distributed lock is usually a key attached to a lease: a time to live that the holder must keep refreshing. If the holder crashes, the lease expires and the key disappears so another client can acquire it. The danger is a holder that is paused, by garbage collection or a slow network, past its lease expiry. It wakes up still believing it holds the lock while another client has taken it, and both write. Clocks and timeouts alone cannot prevent this.",
-          "heading": "Why a lock is not enough"
+          "type": "p",
+          "text": "A transaction groups operations so that they commit or abort together, and its isolation level says how much of other transactions' concurrent work it may observe. The SQL standard defines the levels by the phenomena each forbids: a dirty read of uncommitted data, a non-repeatable read where a row changes between two reads in the same transaction, a phantom where the set of rows matching a condition changes, and a serialization anomaly where the committed result matches no serial order at all. PostgreSQL's documentation gives the table and adds what its engine actually does at each level.",
+          "cites": [
+            "s4"
+          ]
         },
         {
-          "body": "The fix is a fencing token: a number that increases each time the lock is granted, taken from the lock service, for example a store revision. The client sends the token with every write to the protected resource, and the resource rejects any write whose token is lower than the highest it has already seen. Safety then depends on the resource checking tokens, not on timing assumptions. If the resource cannot check tokens, treat the lock as an efficiency optimization only, never as a correctness guarantee.",
-          "heading": "Fencing"
+          "type": "table",
+          "caption": "The isolation levels as PostgreSQL implements them. The standard allows a level to forbid more than it must; PostgreSQL's Repeatable Read forbids phantoms too.",
+          "columns": [
+            "level",
+            "dirty read",
+            "non-repeatable read",
+            "phantom",
+            "serialization anomaly",
+            "how PostgreSQL implements it"
+          ],
+          "rows": [
+            [
+              "Read Uncommitted",
+              "allowed by the standard, never in PostgreSQL",
+              "possible",
+              "possible",
+              "possible",
+              "behaves as Read Committed"
+            ],
+            [
+              "Read Committed (default)",
+              "no",
+              "possible",
+              "possible",
+              "possible",
+              "each statement sees a snapshot taken when the statement began"
+            ],
+            [
+              "Repeatable Read",
+              "no",
+              "no",
+              "no in PostgreSQL",
+              "possible",
+              "snapshot isolation: one snapshot for the whole transaction; a concurrent update of a row it modifies aborts it"
+            ],
+            [
+              "Serializable",
+              "no",
+              "no",
+              "no",
+              "no",
+              "Serializable Snapshot Isolation: snapshot isolation plus predicate locks that detect dangerous read-write dependencies and abort one transaction"
+            ]
+          ],
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The anomaly that matters most in application code is write skew, which snapshot isolation permits. The documentation's example is two transactions that each sum the rows of one class and insert the result as a row of the other class; under Repeatable Read both commit, and no serial order could have produced that state. Under Serializable one of them is rolled back with a serialization failure, SQLSTATE 40001, and the application must retry it from the beginning. The same retry discipline is needed at Repeatable Read, where a concurrent update of a row the transaction wants to change also ends it with a serialization error.",
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Serializable isolation is therefore cheaper than it sounds in PostgreSQL, because its predicate locks never block, only detect; what it costs is the monitoring overhead and the restarts. The documentation's own advice is to declare read-only transactions as such, keep transactions short, limit active connections, and drop the explicit row locks that the level makes unnecessary. Read Committed remains right for simple single-row updates such as moving money between two named accounts, where re-evaluating the row after a concurrent update is exactly what is wanted.",
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "Repeatable Read means something different in every major engine, and one widely used engine has shipped snapshot isolation under the name Serializable. Test the anomaly you care about against the engine you run; the name of the level is not evidence.",
+          "cites": [
+            "s4",
+            "s2"
+          ]
         }
-      ],
-      "id": "leases-locks-fencing",
-      "title": "Leases, distributed locks and fencing tokens"
+      ]
+    },
+    {
+      "id": "choosing-the-guarantee",
+      "title": "Choosing the guarantee per operation",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The map and the isolation table become a decision only when applied to one operation at a time. The question for each is what breaks if a client acts on an old value, and the answer sets the weakest model that is safe. Everything above that line costs coordination, a round trip to a majority for a linearizable operation, and loses availability on the minority side of a partition; everything below it risks an anomaly the application must tolerate or repair.",
+          "cites": [
+            "s1",
+            "s2"
+          ]
+        },
+        {
+          "type": "decision",
+          "caption": "Picking the guarantee for one operation of a design.",
+          "rows": [
+            {
+              "option": "Linearizable or strictly serializable",
+              "pick_when": "the operation decides something that must not be decided twice: a balance check before a debit, a uniqueness check, an election, a lock",
+              "avoid_when": "a high-volume read that can tolerate seconds of staleness; every call pays a majority round trip and the minority side cannot answer",
+              "example": "an account debit; 'is this username taken'; acquiring a lease"
+            },
+            {
+              "option": "Serializable transaction",
+              "pick_when": "several rows change together under an invariant that spans them, and the engine detects the conflict",
+              "avoid_when": "the transaction is long or wide, so restarts after serialization failures dominate",
+              "example": "moving stock between warehouses under a fixed total; double-entry postings"
+            },
+            {
+              "option": "Snapshot isolation (Repeatable Read)",
+              "pick_when": "a multi-row read must see one point in time, and the writes do not depend on what was read",
+              "avoid_when": "two transactions read a condition and both write on the strength of it (write skew)",
+              "example": "a nightly reconciliation; an export"
+            },
+            {
+              "option": "Read Committed",
+              "pick_when": "single-row updates that re-evaluate the row they touch",
+              "avoid_when": "the code reads several rows and expects them to agree",
+              "example": "most CRUD endpoints; an increment by SQL expression"
+            },
+            {
+              "option": "Causal or session guarantees",
+              "pick_when": "a user must see their own writes and never see time go backwards; others' writes may arrive late",
+              "avoid_when": "a client cannot be pinned to one replica, so the session cannot be tracked",
+              "example": "a profile edit then a profile read; a chat thread in order"
+            },
+            {
+              "option": "Eventual",
+              "pick_when": "a derived view, feed, cache, index or counter whose exact value nobody acts on",
+              "avoid_when": "a human or a machine will decide something from the value",
+              "example": "a timeline; a search index; a view count"
+            }
+          ],
+          "cites": [
+            "s1",
+            "s4",
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Two patterns follow. The first is the small strong core: keep the decisions, the money, the uniqueness constraints and the locks in a linearizable or serializable store, and derive what is read at scale from it under weaker guarantees. The second is that cheap models are cheap only when the code is written for them: a reader of an eventual view must be able to act on a stale value without harm, and a writer under Read Committed must not reason across rows.",
+          "cites": [
+            "s1",
+            "s4"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "The guarantee is a per-operation line in the design doc, with the anomaly it accepts next to it. A review that finds a decision taken from an eventually consistent read has found a bug, whatever the store's marketing says.",
+          "cites": [
+            "s3"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "consensus-raft",
+      "title": "Consensus in plain words: Raft, terms and majorities",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Consensus is how a group of machines agrees on one ordered history despite crashes and a network that delays messages. It is the primitive behind leader election, group membership, distributed locks and replicated configuration, and Google's SRE book makes one point above all: these problems cannot be solved by heartbeats, timeouts or gossip, because a slow network looks exactly like a dead partner and both sides then act. Its three case studies, a STONITH pair that shot each other, a failover that needed a human, and a gossip cluster that elected two leaders, are the same mistake three times.",
+          "cites": [
+            "s6"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Raft is the algorithm written to be understood. Time is divided into terms, each with at most one leader. A follower that hears no heartbeat within a randomised election timeout becomes a candidate, increments the term and asks for votes; a candidate that receives votes from a majority of the cluster for that term becomes leader and sends heartbeats to hold its authority. Clients send commands to the leader, which appends them to its log and replicates them; an entry is committed once the leader has stored it on a majority of servers, which also commits every earlier entry. Because any two majorities overlap, every later leader's log contains every committed entry, the property the paper calls Leader Completeness.",
+          "cites": [
+            "s5"
+          ]
+        },
+        {
+          "type": "diagram",
+          "mermaid": "sequenceDiagram\n    participant C as Client\n    participant L as Leader\n    participant F1 as Follower 1\n    participant F2 as Follower 2\n    C->>L: write x=5\n    L->>L: append to log\n    L->>F1: replicate entry\n    L->>F2: replicate entry\n    F1-->>L: ack\n    Note over L: majority stored, entry committed\n    L-->>C: ok with revision\n    F2-->>L: ack later",
+          "legend": "One write through a three-node Raft group: the leader appends, replicates, and answers the client once a majority (itself plus one follower) holds the entry. The slow follower catches up afterwards."
+        },
+        {
+          "type": "table",
+          "caption": "Cluster size against what it survives, from the SRE book's deployment guidance.",
+          "columns": [
+            "members",
+            "majority",
+            "failures tolerated",
+            "the SRE book's note"
+          ],
+          "rows": [
+            [
+              "3",
+              "2",
+              "1",
+              "the minimum; survives one planned maintenance but not a failure during it"
+            ],
+            [
+              "5",
+              "3",
+              "2",
+              "the recommended size: operates through a failure during maintenance"
+            ],
+            [
+              "7",
+              "4",
+              "3",
+              "more fault tolerance, slower writes; rarely worth it for one cluster"
+            ],
+            [
+              "2f + 1",
+              "f + 1",
+              "f",
+              "the general rule; Byzantine tolerance needs 3f + 1"
+            ]
+          ],
+          "cites": [
+            "s6"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The paper's timing requirement is the number sense a designer needs: the time to broadcast to the cluster must be an order of magnitude below the election timeout, which must be orders of magnitude below the mean time between server failures. The randomised timeout is what keeps split votes rare.",
+          "cites": [
+            "s5"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The Raft paper's timing requirement, broadcast time much less than election timeout much less than MTBF, with its own figures.",
+          "columns": [
+            "quantity",
+            "typical value",
+            "why"
+          ],
+          "rows": [
+            [
+              "broadcast time",
+              "0.5 to 20 ms",
+              "a round of RPCs including a persistent write; depends on the storage"
+            ],
+            [
+              "election timeout",
+              "10 to 500 ms",
+              "an order of magnitude above the broadcast, so heartbeats arrive in time"
+            ],
+            [
+              "randomised interval",
+              "for example 150 to 300 ms",
+              "spreads the candidates so one usually wins outright"
+            ],
+            [
+              "server MTBF",
+              "months or more",
+              "orders of magnitude above the timeout, so elections are rare"
+            ]
+          ],
+          "cites": [
+            "s5"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Consensus is bought, not built. Run a proven implementation as a service, keep only small critical state in it, and never let the application's own heartbeats decide who the leader is.",
+          "cites": [
+            "s6"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "leases-and-fencing",
+      "title": "Leases, locks and fencing tokens",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "A distributed lock is almost always a lease: a key the holder must keep refreshing, with a time to live so that a crashed holder releases it. Amazon's Builders' Library describes leases as its most used election mechanism, chosen because they depend only on locally elapsed time, never on synchronised clocks. The lease is the easy part. The hard part, the same article says, is making sure the holder only does work while it really holds the lease, because a slow network or a garbage-collection pause between checking the lease and acting on it breaks that assumption.",
+          "cites": [
+            "s11"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Kleppmann's account is the standard one. A client takes the lease, pauses for longer than the lease lasts, and resumes convinced it still holds the lock while a second client has taken it; both then write. No check placed before the write fixes this, because the pause can fall between the check and the write, and no lock service fixes it either, because the problem is in the client. The fix is a fencing token: a number the lock service increases on every grant, sent with every write to the protected resource, which rejects any write carrying a token lower than one it has already seen.",
+          "cites": [
+            "s8"
+          ]
+        },
+        {
+          "type": "steps",
+          "title": "The fencing sequence from Kleppmann's post",
+          "items": [
+            "Client one acquires the lease and receives token 33.",
+            "Client one pauses; its lease expires while it is stopped.",
+            "Client two acquires the lease and receives token 34.",
+            "Client two writes to the storage service with token 34; the service records 34 as the highest seen.",
+            "Client one wakes and writes with token 33; the service rejects it because 33 is below 34.",
+            "Safety now rests on the storage service checking tokens, not on anyone's clock."
+          ],
+          "cites": [
+            "s8"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The token must be strictly increasing across grants, which is why it comes from a consensus store: etcd assigns every modifying operation a single increasing revision and documents it as a logical clock, which is exactly the number to send. Redis's own distributed-locking page, which describes the single-instance lock with SET NX PX and a signed release, and the multi-instance Redlock, now carries a disclaimer saying the same thing: implement fencing tokens, and remember that key expiry runs on a wall clock that can shift.",
+          "cites": [
+            "s7",
+            "s9"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Decide first whether the lock is for efficiency or for correctness. For efficiency, a single-instance lease with a signed release is fine and should be documented as approximate. For correctness, take the lease from a consensus store and fence every write with its revision; if the resource cannot check tokens, the lock protects nothing.",
+          "cites": [
+            "s8",
+            "s9"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "without-consensus",
+      "title": "When you do not want consensus: CRDTs",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Coordination has a cost that some data cannot pay: a phone that is offline, a collaborative document with several people typing, a counter updated in every region. The CRDT reference site frames the choice as two replication models. Under strongly consistent replication the replicas coordinate before applying a change, which gives serializable transactions and linearizability but means a disconnected replica cannot change anything. Under optimistic replication any replica accepts changes at any time, and conflicts between concurrent changes must be resolved when the replicas next talk.",
+          "cites": [
+            "s12"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "A conflict-free replicated data type is a data structure built so that the resolution is automatic: whatever modifications were made on different replicas, their states can always be merged into one consistent state, with no conflict-resolution code and no user intervention. The price is in the type's design. A counter becomes a set of per-replica counts that are summed; a register either keeps the latest write by a timestamp, and silently loses the other, or keeps all concurrent values and hands the choice back to the application; a set must decide what an add and a concurrent remove of the same element mean. The merge is always defined, and the result is always the same on every replica, but it is not always the result a user wanted.",
+          "cites": [
+            "s12"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Where a CRDT fits and where only consensus will do.",
+          "columns": [
+            "data",
+            "CRDT or consensus",
+            "why"
+          ],
+          "rows": [
+            [
+              "a like count, a view count, an offline-first to-do list",
+              "CRDT",
+              "every replica can take the update; the merge (sum, union) is the right answer"
+            ],
+            [
+              "a collaborative document",
+              "CRDT",
+              "edits by different people must merge without a server deciding; the ordering rules are built into the type"
+            ],
+            [
+              "an account balance with an overdraft rule",
+              "consensus",
+              "the invariant spans concurrent updates; a merge cannot refuse one of them"
+            ],
+            [
+              "a unique username",
+              "consensus",
+              "two replicas accepting the same name must not both succeed"
+            ],
+            [
+              "who is the leader; who holds the lock",
+              "consensus",
+              "the answer must be one, and agreed, before anyone acts on it"
+            ]
+          ],
+          "cites": [
+            "s12",
+            "s6"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "tip",
+          "text": "A CRDT removes the coordination from the write path and moves the hard question into the data type. Pick one when the merge rule can be stated in a sentence that the product owner agrees with; otherwise the data belongs in the strong core.",
+          "cites": [
+            "s12"
+          ]
+        }
+      ]
     }
   ],
-  "diagram": {
-    "source": "sequenceDiagram\n    participant C as Client\n    participant L as Leader\n    participant F1 as Follower 1\n    participant F2 as Follower 2\n    C->>L: write x=5\n    L->>L: append to log\n    L->>F1: replicate entry\n    L->>F2: replicate entry\n    F1-->>L: ack\n    Note over L: majority stored, entry committed\n    L-->>C: ok with revision\n    F2-->>L: ack later"
+  "worked_example": {
+    "title": "Worked example: a coordination cluster for a three-zone region, and a fenced job lock",
+    "blocks": [
+      {
+        "type": "p",
+        "text": "A platform team needs one place for its critical state: which worker leads each shard, the feature flags, and a lock per batch job so that a job never runs twice at once. They must size and place a Raft-backed store across three availability zones and make the job lock safe. Every input is an assumption chosen to make the arithmetic concrete; the sizing rules are the SRE book's and the timing rules are the Raft paper's.",
+        "cites": [
+          "s6",
+          "s5"
+        ]
+      },
+      {
+        "type": "steps",
+        "title": "From the failure domains to a cluster and a lock",
+        "items": [
+          "State: about 400 keys in total (assumption: shard leaders, flags and locks), a few megabytes, far below what matters; the cluster is sized for safety and latency, not data.",
+          "Failures to survive: the loss of one whole zone, plus one member in planned maintenance at the same time, so f is 2.",
+          "Members: 2f + 1 gives 5, the size the SRE book recommends for operating through a failure during maintenance.",
+          "Placement: 2, 2 and 1 across the three zones; losing the two-member zone leaves 3, still a majority.",
+          "Write latency: one round trip to a majority plus a durable log write on each member; with a cross-zone round trip of about 2 ms and a disk write of about 2 ms (assumptions), a write completes in about 5 ms.",
+          "Write ceiling: if a durable log write took 10 ms, unbatched consensus would be limited to about 100 operations per second, the SRE book's figure; batching proposals is what lifts it.",
+          "Load: 20 writes per second steady with bursts of 500 during deploys (assumption) fits under that ceiling with batching, and the reads, far more numerous, are served without consensus.",
+          "Election timing: a broadcast of about 5 ms needs an election timeout an order of magnitude longer, so the cluster runs with timeouts drawn from 150 to 300 ms and a leader is replaced within about a second of failing.",
+          "Job lock: each worker takes a lease of 10 seconds (assumption) on the key for its job and refreshes it every 3 seconds; a crashed worker frees the job within the lease.",
+          "Fencing: the grant returns the store's revision, and every write the job makes to the shared bucket carries it; the bucket's writer rejects a revision lower than its highest seen.",
+          "The decider: the fencing check, not the lease length. A paused worker with an expired 10-second lease is harmless because its revision is stale; without the check, no lease length would make the job safe."
+        ],
+        "cites": [
+          "s6",
+          "s5",
+          "s7",
+          "s8"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "The design as a reviewer should receive it: one row per decision, with its rule.",
+        "columns": [
+          "decision",
+          "value",
+          "rule or source"
+        ],
+        "rows": [
+          [
+            "failures tolerated",
+            "2",
+            "one zone lost plus one member in maintenance"
+          ],
+          [
+            "members",
+            "5",
+            "2f + 1 with f = 2"
+          ],
+          [
+            "placement",
+            "2, 2, 1 across zones",
+            "any single zone leaves a majority"
+          ],
+          [
+            "write latency",
+            "about 5 ms",
+            "majority round trip plus durable log write"
+          ],
+          [
+            "unbatched write ceiling",
+            "about 100 per second at 10 ms per log write",
+            "the SRE book's disk-bound figure"
+          ],
+          [
+            "election timeout",
+            "150 to 300 ms",
+            "an order of magnitude above the broadcast time"
+          ],
+          [
+            "job lease",
+            "10 s, refreshed every 3 s",
+            "assumption; frees a crashed job within the lease"
+          ],
+          [
+            "fencing token",
+            "the store revision",
+            "strictly increasing per modification"
+          ]
+        ],
+        "cites": [
+          "s6",
+          "s5",
+          "s7"
+        ]
+      },
+      {
+        "type": "code",
+        "lang": "python",
+        "code": "highest_seen = 0            # kept by the resource, durably in practice\n\ndef write(token, data, store):\n    \"\"\"Accept a write only if its fencing token is not older than the newest seen.\"\"\"\n    global highest_seen\n    if token < highest_seen:\n        raise PermissionError(\"stale lock holder\")\n    highest_seen = token\n    store.append(data)",
+        "caption": "The resource-side check that makes the lease safe: the token is the store revision returned with the lease grant."
+      }
+    ]
   },
-  "code": [
-    {
-      "code": "# grant a 30 second lease, attach a lock key to it\netcdctl lease grant 30\n# lease 694d81417acd4754 granted with TTL(30s)\netcdctl put --lease=694d81417acd4754 /locks/report-job worker-a\n# keep it alive while working; key vanishes if this stops\netcdctl lease keep-alive 694d81417acd4754",
-      "lang": "bash"
-    },
-    {
-      "code": "# resource side check of a fencing token\nhighest_seen = 0\n\ndef write(token, data, store):\n    global highest_seen\n    if token < highest_seen:\n        raise PermissionError('stale lock holder')\n    highest_seen = token\n    store.append(data)",
-      "lang": "python"
-    }
-  ],
+  "diagram": null,
+  "code": [],
   "technologies": [
     "etcd",
     "ZooKeeper",
@@ -109,25 +815,142 @@
   ],
   "sources": [
     {
+      "id": "s1",
+      "title": "Jepsen, Consistency Models (the clickable map adapted from Bailis et al. and Viotti and Vukolic): which model implies which, and which can be available under partition",
+      "url": "https://jepsen.io/consistency/models",
       "kind": "doc",
-      "title": "etcd learning: data model, API guarantees",
-      "url": "https://etcd.io/docs/v3.5/learning/"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "strict serializable implies both serializability and linearizability"
+      }
     },
     {
-      "kind": "doc",
-      "title": "etcd tutorial: create a lease",
-      "url": "https://etcd.io/docs/v3.5/tutorials/how-to-create-lease/"
-    },
-    {
+      "id": "s2",
+      "title": "Peter Bailis, Linearizability versus Serializability (2014-09-24): single-object real-time order against multi-object arbitrary order, and strict serializability",
+      "url": "https://www.bailis.org/blog/linearizability-versus-serializability/",
       "kind": "article",
-      "title": "How to do distributed locking (Kleppmann)",
-      "url": "https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Combining serializability and linearizability yields strict serializability"
+      }
+    },
+    {
+      "id": "s3",
+      "title": "Martin Kleppmann, Please stop calling databases CP or AP (2015-05-11): the narrow definitions in the CAP proof and why most systems fit neither bucket",
+      "url": "https://martin.kleppmann.com/2015/05/11/please-stop-calling-databases-cp-or-ap.html",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Consistency in CAP actually means linearizability"
+      }
+    },
+    {
+      "id": "s4",
+      "title": "PostgreSQL 18 documentation, 13.2 Transaction Isolation: the four levels, the phenomena each forbids, Repeatable Read as snapshot isolation, Serializable Snapshot Isolation and the serialization failure to retry",
+      "url": "https://www.postgresql.org/docs/current/transaction-iso.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "could not serialize access due to read/write dependencies among transactions"
+      }
+    },
+    {
+      "id": "s5",
+      "title": "Diego Ongaro and John Ousterhout, In Search of an Understandable Consensus Algorithm (extended version, the Raft paper, 2014): terms, leader election, log replication, commitment by majority, the timing requirement",
+      "url": "https://raft.github.io/raft.pdf",
+      "kind": "paper",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "A log entry is committed once the leader that created the entry has replicated it on a majority of the servers"
+      }
+    },
+    {
+      "id": "s6",
+      "title": "Site Reliability Engineering, chapter 23, Managing Critical State: Distributed Consensus for Reliability (Google, 2016, free online): why heartbeats cannot elect a leader, 2f+1 replicas, three against five, disk and network costs, Photon and Chubby",
+      "url": "https://sre.google/sre-book/managing-critical-state/",
+      "kind": "book",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "a group of 2f + 1 replicas may tolerate f failures"
+      }
+    },
+    {
+      "id": "s7",
+      "title": "etcd documentation, API guarantees (v3.5): strict serializability for the KV API, linearizable by default with a serializable read mode, the revision as a logical clock, lease semantics, watch guarantees",
+      "url": "https://etcd.io/docs/v3.5/learning/api_guarantees/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "The revision can be used as a logical clock for key value store"
+      }
+    },
+    {
+      "id": "s8",
+      "title": "Martin Kleppmann, How to do distributed locking (2016-02-08): efficiency against correctness locks, the paused client, fencing tokens, the Redlock critique",
+      "url": "https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "a fencing token is simply a number that increases"
+      }
+    },
+    {
+      "id": "s9",
+      "title": "Redis documentation, Distributed Locks with Redis: the single-instance lock with SET NX PX and a signed release, the Redlock algorithm, and its own disclaimer about fencing tokens and wall-clock shifts",
+      "url": "https://redis.io/docs/latest/develop/clients/patterns/distributed-locks/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "You should implement fencing tokens"
+      }
+    },
+    {
+      "id": "s10",
+      "title": "James C. Corbett et al., Spanner: Google's Globally-Distributed Database, OSDI 2012 (PDF): external consistency, the TrueTime interval API, commit wait, the measured clock uncertainty",
+      "url": "https://static.googleusercontent.com/media/research.google.com/en//archive/spanner-osdi2012.pdf",
+      "kind": "paper",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "varying from about 1 to 7 ms over each poll interval"
+      }
+    },
+    {
+      "id": "s11",
+      "title": "Amazon Builders' Library, Leader Election in Distributed Systems (Marc Brooker, 2019-12-05): leases as Amazon's usual election mechanism, the DynamoDB lock client, what to check before a side effect, two leaders during failures",
+      "url": "https://aws.amazon.com/builders-library/leader-election-in-distributed-systems/",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Leases are the most widely used leader election mechanism at Amazon"
+      }
+    },
+    {
+      "id": "s12",
+      "title": "crdt.tech, About CRDTs (maintained by Kleppmann, Bieniusa and Shapiro): strongly consistent replication against optimistic replication, and what a conflict-free replicated data type guarantees",
+      "url": "https://crdt.tech/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Optimistic replication"
+      }
     }
   ],
   "practice": "practice/sd-consistency-consensus",
   "provenance": {
-    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
-    "generated_on": "2026-10-13",
+    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center, format v2",
+    "generated_on": "2026-10-15",
     "reviewed_by": null,
     "reviewed_on": null
   },
@@ -136,6 +959,11 @@
       "version": 1,
       "date": "2026-10-13",
       "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-15",
+      "change": "rewritten by hand from primary sources at format v2 (learning-center-lesson:2): 8 subtopics with the consistency map, the linearizable-against-serializable table, the isolation-level table, a decision block over the guarantee per operation, the Raft write as a diagram block in its subtopic plus the cluster-size table, the fencing sequence as steps, a CRDT-or-consensus table, a worked example sizing a five-member coordination cluster across three zones with a fenced job lock and the token check as code after the teaching, cited in-practice blocks (Google SRE and Spanner, Amazon leases, etcd guarantees, Redis's fencing disclaimer), 12 verified sources with ids"
     }
   ]
 }
