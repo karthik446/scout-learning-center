@@ -40,7 +40,7 @@
       },
       {
         "type": "p",
-        "text": "Stripe accepts an Idempotency-Key header on every mutating endpoint, saves the response once execution begins and replays it to a retry, including error responses, compares the retry's parameters with the original and rejects a mismatch, prunes keys after at least 24 hours, and ships client libraries that retry with backoff, jitter and the same key automatically.",
+        "text": "Stripe accepts an Idempotency-Key header on every mutating endpoint, saves the response once execution begins and replays it to a retry, including error responses (in its v1 API), compares the retry's parameters with the original and rejects a mismatch, prunes keys after at least 24 hours, and ships client libraries that retry with backoff, jitter and the same key automatically.",
         "cites": [
           "s3",
           "s4"
@@ -55,7 +55,7 @@
       },
       {
         "type": "p",
-        "text": "The IETF HTTPAPI working group is standardising the Stripe-style header as Idempotency-Key, with a recommended UUID value, an optional payload fingerprint, a replay of the stored result for a retry, a conflict error for a concurrent duplicate and a published expiry policy per API.",
+        "text": "The IETF HTTPAPI working group's draft (draft-07, October 2025, expired without a successor as of this reading) specifies the Stripe-style header as Idempotency-Key, with a recommended UUID value, an optional payload fingerprint, a replay of the stored result for a retry, a conflict error for a concurrent duplicate and a published expiry policy per API.",
         "cites": [
           "s5"
         ]
@@ -371,7 +371,7 @@
             [
               "retry after completion",
               "return the stored result without redoing the work",
-              "Stripe saves the response once execution begins and replays it, including a 500"
+              "Stripe saves the response once execution begins and replays it, including a 500 (its v1 API; v2 instead re-runs failed work to completion)"
             ],
             [
               "retry while the first is still running",
@@ -391,7 +391,7 @@
             [
               "key older than the retention window",
               "treat as a new request",
-              "Stripe prunes keys after at least 24 hours and documents it; the draft asks every API to publish its expiry"
+              "Stripe prunes keys after at least 24 hours (v1 API) and documents it; the draft asks every API to publish its expiry"
             ]
           ],
           "cites": [
@@ -638,8 +638,8 @@
         "items": [
           "Measure the provider: its p99.9 latency is 800 ms (assumption from a month of metrics), so with a false-timeout rate of one in a thousand the request timeout to the provider is 800 ms, rounded to 1 second.",
           "Set the deadline once at the edge: the checkout page gives the whole payment step 5 seconds, and that absolute deadline is propagated to the payment service and on to the provider call.",
-          "Fit the attempts inside it: with a 1-second per-try timeout, 3 attempts and full-jitter sleeps capped at 1 second, the worst case is 3 seconds of waiting plus 2 seconds of sleeping, which fits the 5-second deadline with nothing to spare, so the third attempt only starts if at least 1 second remains.",
-          "Choose the backoff: base 100 ms, cap 1 second, full jitter, so the sleep before the second attempt is random between 0 and 200 ms and before the third between 0 and 400 ms.",
+          "Fit the attempts inside it: with a 1-second per-try timeout, 3 attempts and full-jitter sleeps capped at 1 second, the worst case is 3 seconds of waiting plus at most 2 seconds of sleeping if both sleeps hit the cap, which fits the 5-second deadline with nothing to spare, so the third attempt only starts if at least 1 second remains.",
+          "Choose the backoff: base 100 ms, cap 1 second, full jitter, so the sleep before the second attempt is random between 0 and 100 ms and before the third between 0 and 200 ms.",
           "Pick the retrying layer: the payment service retries the provider; the checkout service does not retry the payment service, it passes the error up with the remaining deadline, so the amplification factor is 3 and not 9.",
           "Set the budget: the payment service retries while its retry ratio over the last minute is under 10 percent, so at 1,000 payment requests per second it will issue at most about 100 retries per second however badly the provider fails.",
           "Key the operation: the checkout service generates a UUIDv4 per payment attempt and sends it on every retry; the payment service inserts the key with a unique constraint in the same transaction as the payment record and stores the provider's response beside it.",
@@ -784,7 +784,7 @@
     },
     {
       "id": "s5",
-      "title": "IETF HTTPAPI working group, The Idempotency-Key HTTP Header Field (Internet-Draft): the header, fingerprints, enforcement for first, retried and concurrent requests, error handling",
+      "title": "IETF HTTPAPI working group, The Idempotency-Key HTTP Header Field (Internet-Draft, draft-07 of 15 October 2025, expired 18 April 2026): the header, fingerprints, enforcement for first, retried and concurrent requests, error handling",
       "url": "https://datatracker.ietf.org/doc/html/draft-ietf-httpapi-idempotency-key-header",
       "kind": "doc",
       "verified": {
@@ -839,7 +839,7 @@
     },
     {
       "id": "s10",
-      "title": "Shopify engineering blog, 10 Tips for Building Resilient Payment Systems (Bart de Water, 2023): lower timeouts, Semian circuit breakers, idempotency keys, reconciliation, load testing",
+      "title": "Shopify engineering blog, 10 Tips for Building Resilient Payment Systems (Bart de Water, 28 July 2022): lower timeouts, Semian circuit breakers, idempotency keys, reconciliation, load testing",
       "url": "https://shopify.engineering/building-resilient-payment-systems",
       "kind": "article",
       "verified": {
@@ -875,8 +875,8 @@
   "provenance": {
     "generated_by": "Claude (Fable 5.1) by hand, Scout learning center, format v2",
     "generated_on": "2026-10-15",
-    "reviewed_by": null,
-    "reviewed_on": null
+    "reviewed_by": "a second reader (Claude Fable 5.1), Scout learning center, format v2 C3",
+    "reviewed_on": "2026-10-15"
   },
   "changelog": [
     {

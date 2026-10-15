@@ -45,7 +45,7 @@
       },
       {
         "type": "p",
-        "text": "Amazon's services measure goodput rather than throughput, prioritise once at the edge that receives the request, give in-quota requests priority over another client's burst, skip the remaining work when the client has already timed out, keep enough spare capacity to lose an Availability Zone without scaling, and load-test far beyond the breaking point so that goodput is seen to plateau rather than collapse.",
+        "text": "Amazon's services measure goodput rather than throughput, keep prioritisation heuristics consistent across the services that cooperate on one request and shift crawler traffic off peak, give in-quota requests priority over another client's burst, skip the remaining work when the client has already timed out, keep enough spare capacity to lose an Availability Zone without scaling, and load-test far beyond the breaking point so that goodput is seen to plateau rather than collapse.",
         "cites": [
           "s8",
           "s9"
@@ -76,7 +76,8 @@
           "type": "p",
           "text": "The reason it falls to zero rather than to a plateau is a feedback loop. When a client times out, the server has usually still done the work, so the capacity was spent for nothing; the client retries, which adds load; and the service becomes modal, behaving one way under normal load and another, worse way under stress. The whole toolkit in this lesson exists to break that loop: reject early and cheaply, reject the least important work first, and stop the demand at its source before it reaches the network.",
           "cites": [
-            "s8"
+            "s8",
+            "s10"
           ]
         },
         {
@@ -448,7 +449,7 @@
         },
         {
           "type": "p",
-          "text": "Stripe runs a second shedder ahead of utilisation: a fleet usage shedder that reserves a fraction of the fleet for critical requests, counted in Redis, so that when the reservation is 20 percent any non-critical request beyond the other 80 percent is rejected with a 503 before the workers are busy. The Builders' Library adds two rules about where to decide: make the prioritisation decision once, at the edge that receives the client's request, rather than with conflicting heuristics deep in the stack; and let a client burst above its quota only at a lower priority than other clients' within-quota requests.",
+          "text": "Stripe runs a second shedder ahead of utilisation: a fleet usage shedder that reserves a fraction of the fleet for critical requests, counted in Redis, so that when the reservation is 20 percent any non-critical request beyond the other 80 percent is rejected with a 503 before the workers are busy. The Builders' Library adds two rules about the decision: when many services cooperate on one request, conflicting prioritisation heuristics between them waste work and hurt availability, so the ordering is agreed once rather than invented per service; and a client that bursts above its quota is served at a lower priority than other clients' within-quota requests.",
           "cites": [
             "s1",
             "s8"
@@ -943,8 +944,8 @@
   "provenance": {
     "generated_by": "Claude (Fable 5.1) by hand, Scout learning center, format v2",
     "generated_on": "2026-10-15",
-    "reviewed_by": null,
-    "reviewed_on": null
+    "reviewed_by": "a second reader (Claude Fable 5.1), Scout learning center, format v2 C3",
+    "reviewed_on": "2026-10-15"
   },
   "changelog": [
     {
