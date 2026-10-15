@@ -85,7 +85,7 @@
       },
       {
         "type": "p",
-        "text": "Stripe migrated hundreds of millions of Subscriptions objects to a new data model with every service at full traffic, using the four-step dual-writing pattern: dual write to the old and new tables, backfill the history, switch every read path, then stop writing to the old table and remove the old data.",
+        "text": "Stripe migrated hundreds of millions of Subscriptions objects to a new data model with every service at full traffic, using the four-step dual-writing pattern: dual write to the existing and new tables and backfill the history, change every read path to the new table, change every write path to write only to the new table, then remove the old data that relies on the outdated model.",
         "cites": [
           "s9"
         ]
@@ -311,7 +311,7 @@
         },
         {
           "type": "decision",
-          "caption": "Choosing a data store. Products are examples of the kind; the AWS service after the semicolon is the decision guide's mapping.",
+          "caption": "Choosing a data store. Products are examples of the kind; the AWS service after the semicolon follows the decision guide, except S3, which the guide does not cover.",
           "rows": [
             {
               "option": "Relational",
@@ -546,7 +546,7 @@
         },
         {
           "type": "p",
-          "text": "Two cells deserve a sentence. Query flexibility is the hidden price of every non-relational choice: the DynamoDB guide describes data that can be queried efficiently in a limited number of ways, outside of which queries are expensive, against relational data that can be queried flexibly at a cost that does not scale under high traffic. The time-series consistency cell is the Prometheus project's own warning: where every sample must be exact, as in per-request billing, another store must hold the record.",
+          "text": "Two cells deserve a sentence, and one row a caveat: the team-familiarity row is the lesson's own judgement, not a source's. Query flexibility is the hidden price of every non-relational choice: the DynamoDB guide describes data that can be queried efficiently in a limited number of ways, outside of which queries are expensive, against relational data that can be queried flexibly at a cost that does not scale under high traffic. The time-series consistency cell is the Prometheus project's own warning: where every sample must be exact, as in per-request billing, another store must hold the record.",
           "cites": [
             "s2",
             "s11"
@@ -746,7 +746,7 @@
         },
         {
           "type": "p",
-          "text": "Stripe's account of moving hundreds of millions of subscription objects states the method most teams use and the constraint that makes it hard: the migration had to run with every service at full traffic and with users expecting consistency throughout. The four-step dual-writing pattern is the answer, and it is slow by design, because each step is reversible until the last.",
+          "text": "Stripe's account of moving hundreds of millions of subscription objects states the method most teams use and the constraint that makes it hard: the migration had to run with every service at full traffic and with users expecting consistency throughout. The four-step dual-writing pattern is the answer, one codebase-wide change at a time.",
           "cites": [
             "s9"
           ]
@@ -755,10 +755,10 @@
           "type": "steps",
           "title": "The four-step dual-writing migration, as Stripe describes it",
           "items": [
-            "Dual write: every write goes to the old table and the new one, so the new table stays in step from the moment it exists.",
-            "Backfill: copy the historical records into the new table, in Stripe's case hundreds of millions of subscription objects, while the dual writes continue.",
-            "Switch reads: change every read path in the codebase to the new table, one caller at a time, verifying that the two sources agree before each switch.",
-            "Stop writing to the old table and remove the data that depends on the old model; before this step, every earlier step can be reversed."
+            "Dual write: every new write goes to the existing table and the new one, so they stay in sync; then backfill the missing history into the new table, in Stripe's case hundreds of millions of subscription objects, until the two hold identical information.",
+            "Change every read path in the codebase to read from the new table.",
+            "Change every write path in the codebase to write only to the new table.",
+            "Remove the old data that relies on the outdated data model."
           ],
           "cites": [
             "s9"
@@ -775,7 +775,7 @@
         {
           "type": "callout",
           "kind": "rule",
-          "text": "Write the exit before the entry. When a store is chosen, record the limit at which it stops fitting, the store that replaces it, and the dual-write plan. A migration that was planned costs a quarter; one that was not costs a year.",
+          "text": "Write the exit before the entry. When a store is chosen, record the limit at which it stops fitting, the store that replaces it, and the dual-write plan.",
           "cites": [
             "s6",
             "s9"
@@ -789,14 +789,14 @@
       "blocks": [
         {
           "type": "p",
-          "text": "The neutral decision comes first; the product mapping is the last step. On AWS the database decision guide gives it in one table: each managed engine, its data model, when to use it and what it is optimised for. The table below carries that mapping for the eight kinds of this lesson, with the alternative the guide offers where there is one; the exercises in this module link back here when they take a design down to AWS.",
+          "text": "The neutral decision comes first; the product mapping is the last step. On AWS the database decision guide gives it in one table: each managed engine, its data model, when to use it and what it is optimised for. The table below carries that mapping for the eight kinds of this lesson; the alternative column is the lesson's own reading of the guide's other rows, and two cells the guide does not cover are marked; the exercises in this module link back here when they take a design down to AWS.",
           "cites": [
             "s1"
           ]
         },
         {
           "type": "table",
-          "caption": "The AWS managed service for each kind of store, from the AWS database decision guide. The use-when column paraphrases the guide.",
+          "caption": "The AWS managed service for each kind of store. The service and use-when columns follow the AWS database decision guide except where a cell says otherwise; the alternative column is the lesson's own reading of the guide's other rows.",
           "columns": [
             "store kind",
             "AWS service",
@@ -831,14 +831,14 @@
             [
               "Search index",
               "Amazon OpenSearch Service",
-              "search and log analytics; native k-NN for vectors at scale",
+              "from the guide's vector table: native k-NN; RAG at scale, hybrid search, log analytics",
               "none in the guide; OpenSearch is the search service"
             ],
             [
               "Time series",
               "Amazon Timestream",
               "large amounts of time series data from many sources: IoT, metrics, asset tracking",
-              "a managed Prometheus for monitoring metrics"
+              "a managed Prometheus for monitoring metrics (the lesson's own; not in the guide)"
             ],
             [
               "Graph",
@@ -849,7 +849,7 @@
             [
               "Object store",
               "Amazon S3",
-              "large, immutable objects at low cost per byte",
+              "not a row in the guide; the lesson's own mapping: large, immutable objects at low cost per byte",
               "none; the metadata belongs in one of the stores above"
             ]
           ],
@@ -957,7 +957,7 @@
         "columns": [
           "data",
           "store kind",
-          "on AWS, per the decision guide",
+          "on AWS (the mapping in the on-AWS subtopic)",
           "why this kind"
         ],
         "rows": [
@@ -1168,8 +1168,8 @@
   "provenance": {
     "generated_by": "Claude (Fable 5.1) by hand, Scout learning center, format v2",
     "generated_on": "2026-10-15",
-    "reviewed_by": null,
-    "reviewed_on": null
+    "reviewed_by": "a second reader (Claude Fable 5.1), Scout learning center, format v2 C1",
+    "reviewed_on": "2026-10-15"
   },
   "changelog": [
     {
