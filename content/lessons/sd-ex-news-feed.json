@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-news-feed",
-  "version": 4,
+  "version": 5,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: news feed",
@@ -227,7 +227,7 @@
     },
     {
       "id": "s17",
-      "title": "Amazon ElastiCache pricing (node-based and serverless; the page's worked examples price a cache.r7g.xlarge node), read 2026-10-15",
+      "title": "Amazon ElastiCache pricing (node-based and serverless; the page's Valkey worked example, US East (N. Virginia), prices a cache.r7g.xlarge node at $0.3496 an hour and serverless data storage at $0.084 per GB-hour), read 2026-10-15",
       "url": "https://aws.amazon.com/elasticache/pricing/",
       "kind": "doc",
       "verified": {
@@ -238,7 +238,7 @@
     },
     {
       "id": "s18",
-      "title": "AWS Fargate pricing (per vCPU-second and GB-second, US East (N. Virginia) example), read 2026-10-15",
+      "title": "AWS Fargate pricing (per vCPU-second and GB-second, Linux/x86 US East (N. Virginia) example; the Linux/ARM prices render only from the price list, see s28), read 2026-10-15",
       "url": "https://aws.amazon.com/fargate/pricing/",
       "kind": "doc",
       "verified": {
@@ -293,7 +293,7 @@
     },
     {
       "id": "s23",
-      "title": "Amazon SQS pricing (per million requests; the free tier), read 2026-10-15",
+      "title": "Amazon SQS pricing (per million requests; the free tier; the per-Region table renders from the price list, see s29), read 2026-10-15",
       "url": "https://aws.amazon.com/sqs/pricing/",
       "kind": "doc",
       "verified": {
@@ -333,6 +333,50 @@
         "checked": "2026-10-15",
         "http": 200,
         "section_found": "adds a highly available in-memory cache"
+      }
+    },
+    {
+      "id": "s27",
+      "title": "Amazon API Gateway Developer Guide: Throttle requests to your REST APIs (per-client throttling with API keys and usage plans)",
+      "url": "https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-request-throttling.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Per-client throttling limits are applied to clients that use API keys associated with your usage plan"
+      }
+    },
+    {
+      "id": "s28",
+      "title": "AWS Price List Bulk API, AmazonECS offer file for us-east-1 (AWS Fargate Linux/x86 and Linux/ARM per vCPU-hour and per GB-hour; publication date 2026-09-11), read 2026-10-15",
+      "url": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonECS/current/us-east-1/index.json",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "AWS Fargate - ARM - vCPU - US East (N. Virginia)"
+      }
+    },
+    {
+      "id": "s29",
+      "title": "AWS Price List Bulk API, AWSQueueService offer file for us-east-1 (Amazon SQS standard and FIFO requests per million; publication date 2026-09-11), read 2026-10-15",
+      "url": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSQueueService/current/us-east-1/index.json",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "$0.40 per million Amazon SQS standard requests in Tier1 in US East (N Virginia)"
+      }
+    },
+    {
+      "id": "s30",
+      "title": "Amazon DynamoDB Developer Guide: Using Global Secondary Indexes (an index update consumes write units in addition to the base table's)",
+      "url": "https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/GSI.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "the sum of write capacity units consumed by writing to the base table and those consumed by updating the global secondary indexes"
       }
     }
   ],
@@ -622,7 +666,7 @@
         "blocks": [
           {
             "type": "p",
-            "text": "The design above names roles; this section names an AWS service for every box in the diagram, applies the three forks of this design (SQL or NoSQL for the posts, queue or stream for the post events, functions or containers for the compute) to the numbers in the estimates table, and reviews the result against the six Well-Architected pillars. Prices are list prices for US East (N. Virginia) read from the AWS pricing pages on 2026-10-15; they change, so every price carries its date and its page."
+            "text": "The design above names roles; this section names an AWS service for every box in the diagram, prices the three forks of this design (SQL or NoSQL for the posts, queue or stream for the post events, functions or containers for the compute) with the numbers in the estimates table, and reviews the result against the six Well-Architected pillars. Prices are list prices for US East (N. Virginia) read from the AWS pricing pages and the AWS Price List API on 2026-10-15; they change, so every price carries its date and its source."
           },
           {
             "type": "table",
@@ -639,8 +683,8 @@
                 "Authors and readers reach the API",
                 "an Application Load Balancer in front of the post and feed services, with CloudFront in front for cacheable responses and media",
                 "Amazon API Gateway in front of Lambda functions",
-                "the API is served by functions and needs per-client throttling and keys rather than a load balancer",
-                "s12, s25"
+                "the API is served by functions and needs per-client throttling and API keys through usage plans rather than a load balancer",
+                "s12, s25, s27"
               ],
               [
                 "Post service and feed service",
@@ -667,7 +711,7 @@
                 "Fan-out workers",
                 "an ECS service on Fargate, scaled on queue depth and fan-out lag; appends batched per cache node",
                 "Lambda with the SQS queue as its event source",
-                "post volume is bursty and small; the 15-minute limit and the default 1,000 concurrent executions fit a burst of a million appends badly",
+                "post volume is small or bursty, so functions sit idle between events; at a steady 4,600 appends per second the workers hold connections and batch appends per cache node across posts, which an invocation per post cannot (the default concurrency of 1,000 can be raised, so it is not the obstacle)",
                 "s12"
               ],
               [
@@ -681,7 +725,7 @@
                 "Timeline cache (post ids per user, capped list)",
                 "Amazon ElastiCache for Valkey, node-based cluster of cache.r7g.xlarge nodes with one replica per shard, VPC endpoint only",
                 "ElastiCache Serverless; Amazon MemoryDB",
-                "the working set is small or unpredictable (serverless bills per GB-hour and per request); the timeline must survive a cache loss without a rebuild (MemoryDB is durable)",
+                "the working set is small or unpredictable: serverless bills data stored per GB-hour and requests per ECPU, so 128 GB held all month costs more than the nodes; or the timeline must survive a cache loss without a rebuild (MemoryDB is durable)",
                 "s9, s17"
               ],
               [
@@ -714,59 +758,260 @@
               "s17",
               "s24",
               "s25",
-              "s26"
+              "s26",
+              "s27"
             ]
           },
           {
             "type": "p",
-            "text": "The three forks are not matters of taste once the estimates table is open. Each row below takes the exercise's own numbers, prices the options from the pricing pages where a price exists, and says which option wins at these numbers and what would change the answer."
+            "text": "The three forks are not matters of taste once the estimates table is open. Each fork below gets a price table built from the exercise's own numbers and today's unit prices, with the arithmetic in the note column, then a verdict: the pick, why, and what would flip it."
           },
           {
             "type": "table",
-            "caption": "The three decisions of this design, applied to its numbers (prices as of 2026-10-15, US East (N. Virginia)).",
+            "caption": "Posts store: DynamoDB on-demand against Aurora Serverless v2 at this design's numbers (US East (N. Virginia), prices as of 2026-10-15).",
             "columns": [
-              "decision",
-              "the numbers it turns on",
-              "the options at these numbers",
-              "our pick and why",
+              "option",
+              "unit price, as of 2026-10-15",
+              "quantity per month",
+              "monthly cost",
+              "note",
               "cites"
             ],
             "rows": [
               [
-                "Posts: SQL (Aurora or RDS) or NoSQL (DynamoDB)",
-                "2 million posts a day, 230 writes per second at peak, 1 kB each, 730 GB a year; reads by post_id and by author_id plus time; no join on the hot path",
-                "DynamoDB on-demand: 60 million writes a month at 0.625 dollars per million is about 38 dollars; storage at 0.25 dollars per GB-month is about 180 dollars a month once a year of posts is stored; peak needs no capacity planning, and on-demand is the mode the Serverless Lens recommends by default. Aurora Serverless v2: compute at 0.12 dollars per ACU-hour (a writer and a reader averaging 4 ACUs each is about 700 dollars a month) plus storage at 0.10 dollars per GB-month and I/O at 0.20 dollars per million",
-                "DynamoDB. Every hot-path read is a key lookup, the write rate is small and spiky, and the bill is a tenth of the relational one. Aurora wins when analytics, cross-entity transactions or the team's SQL skills matter more than the fit",
-                "s9, s16, s20, s21"
+                "DynamoDB on-demand: table writes",
+                "$0.625 per million write units",
+                "60 million posts",
+                "$37.50",
+                "one write unit per post of 1 kB or less: 60 × 0.625",
+                "s20"
               ],
               [
-                "Post events: SQS, SNS or EventBridge, or Kinesis or MSK",
-                "2 million events a day, 23 per second on average and 230 at peak; one consumer group today; at-least-once is fine because appends are idempotent; no ordering across authors; rebuilds come from the post store, not from replay",
-                "SQS standard: messages persist until consumed (up to 14 days), consumers pull and scale on depth; about 60 million messages a month, roughly three requests each, priced per million requests after the first million free. SNS: push fan-out to several queues when a second consumer appears. Kinesis Data Streams or MSK: per-key ordering and replay for many independent consumers; at 2 GB of posts a day the data volume is trivial, the shard and consumer management is not",
-                "SQS, with an SNS topic in front the day a second consumer appears. A stream pays off when replay or ordered per-author processing becomes a requirement, for example rebuilding timelines from the event history instead of the post store",
-                "s10, s11, s23"
+                "DynamoDB on-demand: author_id index writes",
+                "$0.625 per million write units",
+                "60 million index writes",
+                "$37.50",
+                "the global secondary index for the celebrity merge is written once per post, so the index doubles the write units",
+                "s20, s30"
               ],
               [
-                "Compute: Lambda, ECS on Fargate, or EKS",
-                "feed service 11,600 reads per second at peak with persistent connections to the cache; fan-out workers a steady 4,600 appends per second averaging to 46,000 at peak; ranking behind a 50 ms deadline",
-                "Lambda for the feed: 3 billion requests a month at 0.20 dollars per million is 600 dollars, plus about 150 million GB-seconds (100 ms at 512 MB each) at 0.0000166667 dollars is about 2,500 dollars, before cold starts and a 1,000-concurrency default. Fargate for the feed: 12 tasks of 2 vCPU and 4 GB at 0.000011244 dollars per vCPU-second and 0.000001235 dollars per GB-second is about 870 dollars a month. EKS: the same tasks plus 0.10 dollars per cluster-hour (about 73 dollars) and a Kubernetes upgrade three times a year",
-                "ECS on Fargate for the feed service, the fan-out workers and ranking: steady, container-shaped, cheaper than per-request billing at this volume. Lambda for event-shaped side jobs (media thumbnails). EKS only if a platform team already runs it",
-                "s12, s13, s18, s19, s22"
+                "DynamoDB on-demand: store reads",
+                "$0.125 per million read units",
+                "300 million reads",
+                "$37.50",
+                "a tenth of the 3 billion feed opens miss the content cache and read the store (assumption); eventually consistent reads would halve it",
+                "s20"
+              ],
+              [
+                "DynamoDB storage",
+                "$0.25 per GB-month",
+                "730 GB after a year of posts",
+                "$182.50",
+                "730 × 0.25; the first month holds 60 GB, about $15",
+                "s20"
+              ],
+              [
+                "DynamoDB total",
+                "",
+                "",
+                "about $295 / month after a year; about $130 in the first month",
+                "writes, index writes and reads at $37.50 each plus storage; storage is the line that grows",
+                "s20, s30"
+              ],
+              [
+                "Aurora Serverless v2: compute",
+                "$0.12 per ACU-hour",
+                "2 instances at 4 ACUs for 730 hours",
+                "$700.80",
+                "a writer and a reader averaging 4 ACUs each (assumption); 8 ACU-hours per hour × 0.12 × 730",
+                "s21"
+              ],
+              [
+                "Aurora Serverless v2: storage",
+                "$0.10 per GB-month",
+                "730 GB after a year of posts",
+                "$73",
+                "730 × 0.10; about $6 in the first month",
+                "s21"
+              ],
+              [
+                "Aurora Serverless v2: I/O (Aurora Standard)",
+                "$0.20 per million I/Os",
+                "360 million I/Os",
+                "$72",
+                "one I/O per post written and per store read (assumption); the I/O-Optimized configuration drops this line for higher compute and storage prices",
+                "s21"
+              ],
+              [
+                "Aurora total",
+                "",
+                "",
+                "about $850 / month after a year; about $780 in the first month",
+                "compute is the bill; storage and I/O add about a fifth",
+                "s21"
               ]
             ],
             "cites": [
-              "s9",
-              "s10",
-              "s11",
-              "s12",
-              "s13",
-              "s16",
-              "s18",
-              "s19",
               "s20",
               "s21",
+              "s30"
+            ]
+          },
+          {
+            "type": "callout",
+            "kind": "rule",
+            "text": "Pick: DynamoDB. Why: every hot-path read is a key lookup, the write rate is small and spiky, and on-demand needs no capacity planning; the bill is about a third of the relational one after a year of posts (about $295 against about $850) and about a sixth in the first month, before storage accumulates. What flips it: joins or ad hoc queries on the hot path, transactions across posts and follows, or a team whose relational skills outweigh the key-value fit.",
+            "cites": [
+              "s9",
+              "s16",
+              "s20",
+              "s21",
+              "s30"
+            ]
+          },
+          {
+            "type": "table",
+            "caption": "Post events: SQS against SNS, EventBridge and a stream at this design's numbers (US East (N. Virginia), prices as of 2026-10-15).",
+            "columns": [
+              "option",
+              "unit price, as of 2026-10-15",
+              "quantity per month",
+              "monthly cost",
+              "note",
+              "cites"
+            ],
+            "rows": [
+              [
+                "SQS standard queue",
+                "$0.40 per million requests after the first million free",
+                "180 million requests: 60 million messages, three requests each",
+                "about $72",
+                "send, receive, delete per message, unbatched: 179 × 0.40; batching ten messages per request would cut it about tenfold",
+                "s23, s29"
+              ],
+              [
+                "SQS FIFO queue",
+                "$0.50 per million requests after the first million free",
+                "the same 180 million requests",
+                "about $90",
+                "ordering per message group; this design needs none across authors, so it is not bought",
+                "s29"
+              ],
+              [
+                "SNS topic in front of per-consumer SQS queues",
+                "not priced: no second consumer today",
+                "none",
+                "$0 today",
+                "pushes each post event to a queue per consumer the day search indexing or notifications appear; the queue costs above then repeat per consumer",
+                "s10"
+              ],
+              [
+                "Kinesis Data Streams or Amazon MSK",
+                "not priced: capacity this design does not need",
+                "2 GB of post events a day",
+                "not priced",
+                "per-key ordering and replay for many independent consumers; the data volume is trivial, the shard and consumer management is not",
+                "s11"
+              ]
+            ],
+            "cites": [
+              "s10",
+              "s11",
+              "s23",
+              "s29"
+            ]
+          },
+          {
+            "type": "callout",
+            "kind": "rule",
+            "text": "Pick: an SQS standard queue, about $72 a month. Why: one consumer group, appends are idempotent so at-least-once is fine, no ordering across authors, and rebuilds come from the post store rather than from replay. What flips it: a second consumer (put an SNS topic in front, one queue per consumer), or a requirement to replay the event history or process each author's posts in order at high throughput (a stream: Kinesis Data Streams or MSK).",
+            "cites": [
+              "s10",
+              "s11",
+              "s23",
+              "s29"
+            ]
+          },
+          {
+            "type": "table",
+            "caption": "Compute: Lambda, ECS on Fargate and EKS for the feed service and the fan-out workers at this design's numbers (US East (N. Virginia), prices as of 2026-10-15; Fargate priced on Arm (Graviton) because the sustainability row picks it).",
+            "columns": [
+              "option",
+              "unit price, as of 2026-10-15",
+              "quantity per month",
+              "monthly cost",
+              "note",
+              "cites"
+            ],
+            "rows": [
+              [
+                "Feed service: Lambda",
+                "$0.20 per million requests; $0.0000166667 per GB-second",
+                "3 billion requests; 150 million GB-seconds",
+                "about $3,100",
+                "100 ms at 512 MB per feed open (assumption): $600 in requests, $2,500 in compute, before cold starts",
+                "s19"
+              ],
+              [
+                "Feed service: ECS on Fargate, Arm (Graviton)",
+                "$0.03238 per vCPU-hour; $0.00356 per GB-hour",
+                "12 tasks of 2 vCPU and 4 GB for 730 hours",
+                "about $690",
+                "1,000 feed opens per second per task at the 11,600 peak (assumption); $57.67 per task; the x86 prices would make it about $870",
+                "s18, s28"
+              ],
+              [
+                "Feed service: EKS with Fargate pods",
+                "$0.10 per cluster-hour plus the x86 Fargate prices",
+                "one cluster for 730 hours plus the same 12 tasks",
+                "about $940",
+                "$73 for the cluster plus about $865 for the pods: Arm Fargate is ECS-only, so EKS pods pay x86 prices; add a Kubernetes upgrade three times a year",
+                "s13, s18, s22"
+              ],
+              [
+                "Fan-out workers: ECS on Fargate, Arm (Graviton)",
+                "$0.03238 per vCPU-hour; $0.00356 per GB-hour",
+                "10 tasks of 1 vCPU and 2 GB for 730 hours",
+                "about $290",
+                "4,600 appends per second on average, 46,000 at peak; 5,000 batched appends per second per task sized for the peak (assumption), $28.84 per task; scaling on queue depth runs fewer tasks off-peak",
+                "s18, s28"
+              ],
+              [
+                "Fan-out workers: Lambda, one invocation per append",
+                "$0.20 per million requests",
+                "12 billion invocations",
+                "about $2,400 in requests alone",
+                "the shape per-request billing punishes: every append pays the request price before any compute",
+                "s19"
+              ],
+              [
+                "Fan-out workers: Lambda, one invocation per post",
+                "$0.20 per million requests; $0.0000166667 per GB-second",
+                "60 million invocations; 6 million GB-seconds",
+                "about $110",
+                "200 appends in 50 ms at 2 GB per invocation (assumption); $12 of it is requests; close to the tasks, so cost alone does not decide this fork",
+                "s19"
+              ]
+            ],
+            "cites": [
+              "s13",
+              "s18",
+              "s19",
               "s22",
-              "s23"
+              "s28"
+            ]
+          },
+          {
+            "type": "callout",
+            "kind": "rule",
+            "text": "Pick: ECS on Fargate, Arm (Graviton) tasks, for the feed service, the fan-out workers and the ranking service; Lambda for event-shaped side jobs such as thumbnails. Why: both loads are steady and container-shaped. The feed holds persistent connections to the cache and per-request billing costs about four times the tasks. The workers batch appends per cache node across many posts, which one invocation per post cannot do, and one invocation per append pays the request price 12 billion times. Lambda's 15-minute limit is not the obstacle, each batch is short, and the default concurrency of 1,000 can be raised. What flips it: spiky or low traffic, where Lambda's bill falls with the load; or a platform team that already runs EKS, which costs the cluster fee and the x86 pod prices.",
+            "cites": [
+              "s12",
+              "s13",
+              "s18",
+              "s19",
+              "s22",
+              "s28"
             ]
           },
           {
@@ -811,7 +1056,7 @@
               [
                 "Cost optimization",
                 "adopt a consumption model; measure overall efficiency; analyze and attribute expenditure",
-                "cost per daily active user on the dashboard beside the SLO; DynamoDB on-demand; a node-based cache because 12 billion appends a month would be metered per request on the serverless option; Savings Plans on Fargate once the load is proven steady",
+                "cost per daily active user on the dashboard beside the SLO; DynamoDB on-demand; a node-based ElastiCache for Valkey cluster, because the serverless option bills data stored per GB-hour, about $7,850 a month for this working set against about $3,570 for the nodes (the appends themselves would cost about $28 in ECPUs); Savings Plans on Fargate once the load is proven steady",
                 "a commitment made too early locks in a shape the celebrity threshold may change",
                 "s14, s17"
               ],
@@ -820,7 +1065,7 @@
                 "maximize utilization; use managed services; align to demand",
                 "Graviton (Arm) Fargate tasks and r7g cache nodes; expire the timelines of users idle for 30 days and rebuild on return; scale workers on lag so idle tasks do not run",
                 "a returning user pays a rebuild on the first open",
-                "s14, s18"
+                "s14, s18, s28"
               ],
               [
                 "Serverless Applications Lens",
@@ -836,7 +1081,8 @@
               "s16",
               "s12",
               "s17",
-              "s18"
+              "s18",
+              "s28"
             ]
           },
           {
@@ -1152,49 +1398,96 @@
           },
           {
             "type": "table",
-            "caption": "Cost at 10x: the neutral unit-price assumptions, and the same lines at AWS list prices for US East (N. Virginia) as of 2026-10-15 (prices change; each is cited to its pricing page).",
+            "caption": "Cost at 10x, at the same assumed unit prices.",
             "columns": [
               "cost line",
               "at 10 million daily active users",
               "at 100 million daily active users",
-              "note",
-              "on AWS, as of 2026-10-15: at 10 million; at 100 million"
+              "note"
             ],
             "rows": [
               [
                 "Replicated memory",
                 "2,560 dollars per month",
                 "25,600 dollars per month",
-                "256 GB and 2.56 TB at 10 dollars per GB-month",
-                "about 3,570 dollars per month; about 33,200. ElastiCache cache.r7g.xlarge nodes at 0.3496 dollars an hour: 26.32 GB each with 75 percent usable, so 7 shards with a replica (14 nodes) hold 128 GB and 65 shards (130 nodes) hold 1.3 TB"
+                "256 GB and 2.56 TB at 10 dollars per GB-month"
               ],
               [
                 "Fan-out appends",
                 "12,000 dollars per month",
                 "120,000 dollars per month",
-                "12 billion and 120 billion appends a month at 1 dollar per million",
-                "about 360 dollars per month; about 3,600. Fargate workers at 0.000011244 dollars per vCPU-second and 0.000001235 per GB-second: 10 tasks of 1 vCPU and 2 GB (assumption: 5,000 batched appends per second per task) run all month, 100 tasks at 100 million; a node-based cache bills no per-request charge, where ElastiCache Serverless would meter the 12 billion appends a month as ECPUs at 0.0023 dollars per million, about 27,600 dollars"
-              ],
-              [
-                "Lines the neutral estimate left out (feed service, post store, queue)",
-                "not priced",
-                "not priced",
-                "the neutral estimate priced only the two lines the design can move",
-                "about 1,130 dollars per month; about 11,250. Feed service on Fargate: 12 tasks of 2 vCPU and 4 GB (assumption: 1,000 feed opens per second per task) about 870 dollars, 120 tasks at 100 million; DynamoDB on-demand for posts: 60 million writes at 0.625 dollars per million, about 300 million store reads at 0.125 per million and 730 GB at 0.25 dollars per GB-month, about 260 dollars after a year of posts; SQS requests are priced per million after the first million free and are small at this volume"
+                "12 billion and 120 billion appends a month at 1 dollar per million"
               ],
               [
                 "Total",
                 "about 14,600 dollars per month",
                 "about 146,000 dollars per month",
-                "the same 0.0015 dollars per active user per month; the per-user number is what the team is held to",
-                "about 5,100 dollars per month; about 48,000, once the lines below are added: about 0.0005 dollars per active user per month, a third of the neutral figure because the neutral unit prices were deliberately round and conservative"
+                "the same 0.0015 dollars per active user per month; the per-user number is what the team is held to"
+              ]
+            ]
+          },
+          {
+            "type": "table",
+            "caption": "The same lines at AWS list prices for US East (N. Virginia) as of 2026-10-15, with the lines the neutral estimate left out (prices change; each line is cited to its pricing page or price list). The neutral table above keeps its assumed unit prices.",
+            "columns": [
+              "cost line",
+              "sizing assumption",
+              "unit price",
+              "at 10M daily active users",
+              "at 100M daily active users"
+            ],
+            "rows": [
+              [
+                "Timeline cache: ElastiCache for Valkey, node-based",
+                "one replica per shard; 19.74 GB usable per cache.r7g.xlarge node (75 percent of 26.32 GB)",
+                "$0.3496 per node-hour",
+                "about $3,570 (14 nodes)",
+                "about $33,200 (130 nodes)"
+              ],
+              [
+                "Fan-out workers: ECS on Fargate, Arm",
+                "1 vCPU and 2 GB per task; 5,000 batched appends per second per task, sized for the peak, all month (assumption)",
+                "$0.03238 per vCPU-hour, $0.00356 per GB-hour",
+                "about $290 (10 tasks)",
+                "about $2,900 (100 tasks)"
+              ],
+              [
+                "Feed service: ECS on Fargate, Arm",
+                "2 vCPU and 4 GB per task; 1,000 feed opens per second per task (assumption)",
+                "$0.03238 per vCPU-hour, $0.00356 per GB-hour",
+                "about $690 (12 tasks)",
+                "about $6,900 (120 tasks)"
+              ],
+              [
+                "Posts: DynamoDB on-demand",
+                "one write unit per post plus one for the author_id index; a tenth of feed opens read the store; a year of posts stored",
+                "$0.625 per million writes, $0.125 per million reads, $0.25 per GB-month",
+                "about $295",
+                "about $2,950"
+              ],
+              [
+                "Post events: SQS standard",
+                "three requests per message, unbatched; the first million requests free",
+                "$0.40 per million requests",
+                "about $72 (180 million requests)",
+                "about $720 (1.8 billion requests)"
+              ],
+              [
+                "Total on AWS",
+                "the five lines above; CDN, media, ranking and data transfer not priced; a third of the neutral total because the neutral unit prices were deliberately round and conservative",
+                "",
+                "about $4,900 / month, about $0.0005 per active user",
+                "about $46,700 / month, about $0.0005 per active user"
               ]
             ],
             "cites": [
               "s17",
               "s18",
               "s20",
-              "s23"
+              "s23",
+              "s28",
+              "s29",
+              "s30"
             ]
           },
           {
@@ -1277,6 +1570,11 @@
       "version": 4,
       "date": "2026-10-15",
       "change": "Building it on AWS section after the high-level design (format v2 addendum B): one AWS service per component with the alternative, the three decisions (DynamoDB or Aurora, SQS or SNS or a stream, Lambda or Fargate or EKS) priced at this design's numbers, the six-pillar Well-Architected table with the Serverless Lens row, an AWS column on the 10x cost table with every price dated 2026-10-15 and cited; 18 AWS sources added (s9 to s26); technologies filled; sd-aws-well-architected added to related; reviewed_by stays null for the second read"
+    },
+    {
+      "version": 5,
+      "date": "2026-10-15",
+      "change": "AWS section: price tables per fork, separate 10x AWS table, number fixes"
     }
   ]
 }

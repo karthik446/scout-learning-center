@@ -162,6 +162,18 @@ class Negative(Fixture):
         def m(d): section(d, "scaling-and-the-bottleneck")["blocks"][0]["text"] = "230 posts, 11,600 reads, 46,000 appends, 128 GB cache and 0.5 headroom."
         self.refuses(EXERCISE, m, "holds 5 numbers")
 
+    def test_five_numbers_in_a_table_cell(self) -> None:
+        def m(d): first(d, "table")["rows"][0][0] = "14 nodes at $0.3496 an hour for 730 hours is $3,573, about 128 GB"
+        self.refuses(LESSON, m, "a table cell holds 5 numbers (at most 4), the same as a paragraph")
+        def dm(d):
+            d["subtopics"][0]["blocks"].append({"type": "decision", "caption": "c", "rows": [
+                {"option": "Aurora", "pick_when": "1 writer, 2 readers, 4 ACUs, 730 hours and $700.80 a month", "avoid_when": "key lookups"}]})
+        self.refuses(LESSON, dm, "a decision cell holds 5 numbers (at most 4), the same as a paragraph")
+
+    def test_four_numbers_in_a_table_cell_pass(self) -> None:
+        def m(d): first(d, "table")["rows"][0][0] = "14 nodes at $0.3496 an hour for 730 hours is about $3,570"
+        self.assertEqual(self.problems_after(LESSON, m), [])
+
     def test_cite_to_an_unknown_source(self) -> None:
         self.refuses(LESSON, lambda d: first(d, "p").update(cites=["s99"]), "'s99' is not a source id")
 
