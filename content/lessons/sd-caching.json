@@ -1,7 +1,7 @@
 {
-  "schema_version": "learning-center-lesson:1",
+  "schema_version": "learning-center-lesson:2",
   "id": "sd-caching",
-  "version": 1,
+  "version": 2,
   "status": "published",
   "superseded_by": null,
   "title": "Caching",
@@ -16,90 +16,785 @@
     "low-latency",
     "scaling"
   ],
-  "summary": "A cache trades freshness for speed and reduced load by keeping a copy of data closer to where it is read. The design work is not in adding the cache but in deciding how it is filled, how it goes stale, what gets evicted and what happens when it is empty or down. A cache that the system cannot survive without has become a hidden dependency.",
+  "summary": "A cache trades freshness for speed and reduced load by keeping a copy of data close to where it is read, and the design work is in what happens when it is stale, full, empty or down. This lesson explains the modal behaviour a cache introduces, sets out cache-aside and the other read and write patterns with the order of the write steps, compares local, shared and edge tiers, gives the time-to-live and HTTP freshness vocabulary as a table, covers eviction policies and sizing from the working set, shows how stampedes, cold starts and negative lookups are handled, and turns it into a decision per read path, with a worked sizing of a product-catalogue cache that the database can survive.",
   "detail": [],
-  "in_practice": "A team adds a cache only after measuring that a dependency is too slow or too expensive, and writes down the allowed staleness for each cached object. The usual first step is cache-aside against a managed Redis cluster with a time to live plus jitter and delete on write. They watch hit ratio, latency, memory use and evictions on dashboards, and alert on sudden drops in hit ratio. Before launch they run a load test with the cache flushed to confirm the backend survives a cold start, and they wrap cache calls in short timeouts so the service degrades to direct reads instead of failing.",
+  "in_practice": {
+    "blocks": [
+      {
+        "type": "p",
+        "text": "Facebook's memcache, as the NSDI paper describes it, is a demand-filled look-aside cache in front of MySQL: web servers read the cache, fill it on a miss, and send a delete after each database write because deletes are idempotent. Leases bound to each key stop stale sets and thundering herds, invalidations are extracted from committed SQL by the mcsqueal daemons and broadcast to every frontend cluster, servers are split into pools by churn so that cheap-to-miss keys do not evict expensive ones, and a Gutter pool of about one percent of the servers absorbs the misses of failed hosts.",
+        "cites": [
+          "s4"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "Facebook's measured workload, from the paper.",
+        "columns": [
+          "metric",
+          "value"
+        ],
+        "rows": [
+          [
+            "items fetched per popular page, average",
+            "521"
+          ],
+          [
+            "keys per batched request, average",
+            "24"
+          ],
+          [
+            "median request latency to memcache",
+            "333 microseconds"
+          ],
+          [
+            "p95 request latency to memcache",
+            "1.135 ms"
+          ],
+          [
+            "share of issued deletes that invalidate cached data",
+            "4 percent"
+          ]
+        ],
+        "cites": [
+          "s4"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Amazon's service teams, per the Builders' Library, justify each cache in terms of cost, latency or availability before adding it, emit hit and miss metrics and the downstream request count, use soft and hard time to live values so that a dependency brownout is survived on cached data, cache negative responses with a separate time to live, coalesce requests for uncached resources, and run load tests with caching disabled to prove the safeguards against browning out dependencies.",
+        "cites": [
+          "s1"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "Cloudflare's documented default edge behaviour when the origin sends no freshness headers.",
+        "columns": [
+          "status code",
+          "default edge TTL"
+        ],
+        "rows": [
+          [
+            "200, 206, 301",
+            "120 minutes"
+          ],
+          [
+            "302, 303",
+            "20 minutes"
+          ],
+          [
+            "404, 410",
+            "3 minutes"
+          ]
+        ],
+        "cites": [
+          "s10"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Cloudflare's CDN caches by file extension and does not cache HTML or JSON unless a rule says so, respects private, no-store, no-cache and a zero max-age by not caching, and collapses simultaneous misses for one asset at one data centre into a single origin request with a cache lock.",
+        "cites": [
+          "s10"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Redis 6 added server-assisted client-side caching after observing that very large applications were building their own: the server tracks which keys a connection read and pushes an invalidation when one changes, with a broadcasting mode that costs no server memory, and the reference tells client authors to cap local memory, put a maximum time to live on every entry and flush the local cache when the invalidation connection is lost.",
+        "cites": [
+          "s12"
+        ]
+      }
+    ]
+  },
   "subtopics": [
     {
-      "body": [
+      "id": "what-a-cache-buys",
+      "title": "What a cache buys, and the dependency it creates",
+      "blocks": [
         {
-          "body": "In cache-aside the application owns the logic: read the cache, and on a miss load from the source of truth, store the result with a time to live and return it. On a write, update the database and then delete the cached key, so the next read repopulates it. Deleting is safer than updating the cache in place, because two concurrent writers can otherwise leave the older value in the cache. Even so, a slow reader can write a stale value after an invalidation, which is why a time to live remains as a backstop.",
-          "heading": "Cache-aside"
+          "type": "p",
+          "text": "A cache keeps a copy of data closer to where it is read, so that repeated reads skip the slow or expensive source. The gains are real and arrive quickly: latency drops, the source fleet shrinks, and brief downstream outages are smoothed over. Amazon's Builders' Library describes what happens next. Nobody remembers life before the cache, dependencies size themselves for the cached load, and the service has become addicted to its cache: a change in traffic, a cache-fleet failure or a cold restart sends the full read rate at a backend that can no longer take it.",
+          "cites": [
+            "s1"
+          ]
         },
         {
-          "body": "Read-through moves the loading logic into the cache layer or a library, so callers only see a get. Write-through writes to the cache and the store together, keeping the cache warm at the cost of slower writes and caching data that may never be read. Write-behind acknowledges after writing the cache and flushes to the store asynchronously, which is fast but loses data if the cache node dies before the flush. Most services start with cache-aside because it fails safely: a cache outage degrades to slower reads.",
-          "heading": "Alternatives"
-        }
-      ],
-      "id": "cache-read-write-patterns",
-      "title": "Cache-aside and other read and write patterns"
-    },
-    {
-      "body": [
-        {
-          "body": "A time to live sets the maximum age of an entry and is the simplest staleness control. Pick it from the business tolerance for stale data, not from habit: seconds for prices or permissions, minutes or hours for profile data or rendered fragments. Add random jitter to the value so that entries created together do not all expire in the same instant. In Redis a key gets an expiry with EXPIRE or with SET and the EX option, and the remaining time can be read with TTL.",
-          "heading": "Bounding staleness"
+          "type": "p",
+          "text": "The root of that risk is modal behaviour. A cached request and an uncached request follow different paths with different costs, and the system's capacity depends on the mix. The design work is therefore not in adding the cache but in deciding four things in advance: how it is filled, how it goes stale, what is evicted when it is full, and what happens when it is empty or down. Amazon's own checklist starts earlier still, with whether a cache is justified at all.",
+          "cites": [
+            "s1"
+          ]
         },
         {
-          "body": "When staleness must be shorter than any practical time to live, invalidate on change: delete the key when the source record is written, or publish change events that a consumer uses to evict keys. Versioned keys are another option: include a version or updated timestamp in the key so that new data lands under a new key and old entries simply age out. Invalidation is hard when one change affects many derived entries, such as lists and aggregates, so keep cached objects close to the shape of the source records where possible.",
-          "heading": "Explicit invalidation"
-        }
-      ],
-      "id": "expiry-invalidation",
-      "title": "Expiry, TTLs and invalidation"
-    },
-    {
-      "body": [
-        {
-          "body": "A cache has a memory limit, and the eviction policy decides which keys are removed when it is reached. Redis sets the limit with maxmemory and the behavior with maxmemory-policy. The noeviction policy rejects writes that need more memory. The allkeys policies consider every key, using approximated least recently used, least frequently used or random selection. The volatile policies consider only keys that have an expiry set, and volatile-ttl prefers keys closest to expiring. For a pure cache an allkeys policy is the usual choice.",
-          "heading": "What happens when memory is full"
+          "type": "table",
+          "caption": "When a cache fits, from the Amazon and Azure guidance.",
+          "columns": [
+            "signal",
+            "cache fits",
+            "cache does not fit"
+          ],
+          "rows": [
+            [
+              "reuse across requests",
+              "the same downstream result serves many requests",
+              "each request needs a unique query; the hit rate would be negligible"
+            ],
+            [
+              "change rate of the source",
+              "static or slow-changing data",
+              "data that changes faster than any tolerable staleness"
+            ],
+            [
+              "tolerance for staleness",
+              "the service and its clients can act on an older value",
+              "a decision or a payment depends on the current value"
+            ],
+            [
+              "cost of the source",
+              "slow, expensive to scale, or throttling on hot keys",
+              "already cheap and fast enough"
+            ],
+            [
+              "sensitivity",
+              "data safe to hold in a shared store",
+              "secrets or personal data that must come from the primary source"
+            ]
+          ],
+          "cites": [
+            "s1",
+            "s3",
+            "s2"
+          ]
         },
         {
-          "body": "Size the cache from the working set, not the whole data set: access is usually skewed, so a small fraction of keys serves most requests. Estimate entries times average value size plus per key overhead, then validate with the hit ratio and eviction rate in production. A rising eviction rate with a falling hit ratio means the cache is too small or keys are too large. Do not mix durable data and cache entries in one instance with an allkeys policy, because eviction will silently delete the durable keys.",
-          "heading": "Sizing"
-        }
-      ],
-      "id": "eviction-memory",
-      "title": "Eviction policies and memory sizing"
-    },
-    {
-      "body": [
-        {
-          "body": "A stampede happens when a hot key expires and many requests miss at once, all recomputing the same value and overloading the backend. A cold start is the same effect across all keys after a restart or flush. Negative lookups cause a third problem: requests for keys that do not exist always miss and always hit the database. The deeper risk is modal behavior: a system sized for a high hit ratio may not survive the load when the cache is empty, so a cache failure becomes a full outage.",
-          "heading": "Failure modes"
+          "type": "p",
+          "text": "Two facts about caches are easy to forget. The first is that a cache is not the source of truth: the Azure guidance and the Facebook paper both treat the cache as a store that may evict or lose anything at any time, with every important change written to the persistent store first. The second is that hit ratio is a property of the workload, not of the cache: a skewed access pattern makes a small cache valuable, and a flat one makes any cache useless.",
+          "cites": [
+            "s3",
+            "s4"
+          ]
         },
         {
-          "body": "Coalesce requests so only one caller per key recomputes while others wait or get the old value. Refresh hot entries before they expire, or serve stale data while a background refresh runs. Cache negative results with a short time to live. Use jitter on expiry. Put timeouts and a circuit breaker on cache calls so a slow cache does not stall every request. Finally, load test with the cache empty and make sure rate limiting protects the backend in that state.",
-          "heading": "Mitigations"
+          "type": "callout",
+          "kind": "rule",
+          "text": "Before adding a cache, write down the measured problem it solves, the hit ratio you expect from the access pattern, and the staleness each cached object may show. Then size the backend for the cache being empty, or decide what you will shed when it is.",
+          "cites": [
+            "s1"
+          ]
         }
-      ],
-      "id": "cache-failure-modes",
-      "title": "Stampedes, cold starts and cache as a dependency"
+      ]
     },
     {
-      "body": [
+      "id": "read-and-write-patterns",
+      "title": "Cache-aside and the other read and write patterns",
+      "blocks": [
         {
-          "body": "An in-process cache is the fastest, with no network hop, but each instance has its own copy, so entries are inconsistent between instances, lost on every deploy and multiplied in memory by the instance count. A distributed cache such as Redis or Memcached is shared, survives application deploys and gives one place to invalidate, at the cost of a network round trip and a new service to operate. Edge caches and CDNs sit in front of the service and cache whole responses, controlled by HTTP cache headers. Many systems layer them: a small short lived local cache in front of a shared cache in front of the database.",
-          "heading": "Where the cache lives"
+          "type": "p",
+          "text": "Cache-aside, also called look-aside or demand-filled, is the pattern most services start with and the one Facebook's memcache runs at a billion requests a second. The application owns the logic. On a read it asks the cache first; on a miss it reads the source, stores the result in the cache and returns it. On a write it updates the source and then deletes the cached key, so the next read repopulates it. The Facebook paper gives the reason for deleting rather than updating in one line: deletes are idempotent, so reordered or repeated invalidations cannot leave an old value behind.",
+          "cites": [
+            "s2",
+            "s4"
+          ]
+        },
+        {
+          "type": "diagram",
+          "mermaid": "flowchart TD\n    A[Request] --> B{Key in cache?}\n    B -- hit --> C[Return cached value]\n    B -- miss --> D[Read from database]\n    D --> E[Set key with TTL plus jitter]\n    E --> C\n    W[Write request] --> X[Update database]\n    X --> Y[Delete cache key]",
+          "legend": "Cache-aside: reads fill the cache on a miss; writes go to the source and then delete the key."
+        },
+        {
+          "type": "p",
+          "text": "The order of the two write steps matters. Azure's pattern page says to update the store before removing the cached item: if the key is deleted first, a concurrent reader can miss, fetch the old row and put it back, and the cache now holds stale data until the time to live rescues it. Even in the right order a slow reader can overwrite an invalidation with a value it read before the write, which is why a time to live stays on every entry as the backstop, and why Facebook attaches a lease token to each miss so that a set with an invalidated token is refused.",
+          "cites": [
+            "s2",
+            "s4"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The four patterns and what each one fails safely or badly at.",
+          "columns": [
+            "pattern",
+            "who fills the cache",
+            "on a write",
+            "what it costs",
+            "when it fits"
+          ],
+          "rows": [
+            [
+              "cache-aside (side cache)",
+              "the application, on a miss",
+              "update the source, then delete the key",
+              "application code owns the logic; a miss costs a cache call plus a source read",
+              "the default; fails safe, a cache outage degrades to slower reads"
+            ],
+            [
+              "read-through (inline cache)",
+              "the cache or a caching client, transparently",
+              "same as cache-aside, inside the cache",
+              "the cache is now on the availability path: if it is down, the dependency looks down",
+              "a uniform client API: HTTP caches, DAX-style accelerators"
+            ],
+            [
+              "write-through",
+              "every write lands in cache and store together",
+              "the write returns after both succeed",
+              "slower writes; caches data that may never be read",
+              "read-heavy paths that need read-after-write freshness"
+            ],
+            [
+              "write-behind",
+              "writes go to the cache first",
+              "flushed to the store asynchronously",
+              "data loss if the cache node dies before the flush",
+              "write-heavy, loss-tolerant data such as counters"
+            ]
+          ],
+          "cites": [
+            "s1",
+            "s3",
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Amazon's distinction between side caches and inline caches is the one to keep. A side cache such as Memcached or Redis is a generic store the code manipulates around its data calls; an inline cache such as an HTTP proxy or DAX hides itself behind the data API, which removes a class of bugs from application code but also removes the application's chance to compensate when the cache fleet is unavailable.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "Write-through does not make the cache the source of truth; it only makes it fresh. The persistent store still takes every write, or the design has quietly moved its data into a component built to evict it.",
+          "cites": [
+            "s3"
+          ]
         }
-      ],
-      "id": "cache-placement",
-      "title": "Local, distributed and edge caches"
+      ]
+    },
+    {
+      "id": "where-the-cache-lives",
+      "title": "Local, shared and edge caches",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The same object can be cached in three places, and each place changes what consistency and what failure look like. An in-process cache is a hash table in the service's own memory: no network hop, no new fleet, and the Builders' Library notes it is usually the first thing tried. Its costs follow from being private to one server. The copy on each server is different, so a client can see newer data on one call and older on the next; the downstream load is proportional to the fleet size; and a new server starts empty, so a deploy is a fleet-wide cold start.",
+          "cites": [
+            "s1",
+            "s3"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "An external cache such as Memcached or Redis gives every server the same copy, survives deploys with its data intact, offers far more memory, and makes downstream load independent of fleet size. In exchange it is another fleet to operate, with its own availability, often lower than the service it protects, and a network round trip on every read. The Azure guidance's answer to its outage is the layered design: a small local cache in front of the shared cache in front of the store, so that losing the shared tier degrades hit rate instead of availability. Amazon's teams either do that or cap the request rate to the dependency with load shedding, and test with the cache disabled.",
+          "cites": [
+            "s1",
+            "s3"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The three tiers side by side.",
+          "columns": [
+            "tier",
+            "latency",
+            "consistency between servers",
+            "survives a deploy",
+            "when it is down"
+          ],
+          "rows": [
+            [
+              "in-process (private)",
+              "no network hop",
+              "none; each copy ages separately",
+              "no; every instance restarts empty",
+              "the process is down anyway"
+            ],
+            [
+              "shared external (Redis, Memcached)",
+              "one round trip inside the datacenter",
+              "one copy, one place to invalidate",
+              "yes",
+              "every server misses at once: shed load or fall back to the local tier"
+            ],
+            [
+              "edge or CDN (HTTP shared cache)",
+              "near the user; no origin round trip",
+              "per point of presence, controlled by headers",
+              "yes",
+              "origin takes the full load; managed caches can be purged"
+            ]
+          ],
+          "cites": [
+            "s1",
+            "s3",
+            "s9"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "HTTP caching sorts the same tiers by who may see a response: a private cache is tied to one client and may hold a personalised response, a shared cache sits between clients and the origin and must not, and the Cache-Control directive private is the switch. Managed shared caches, meaning reverse proxies and CDNs, can be purged on demand, which standard HTTP cannot express.",
+          "cites": [
+            "s9",
+            "s7"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Redis gives the local tier a way to stay correct: with tracking enabled the server remembers which keys each connection read and pushes an invalidation when one is modified, expired or evicted. The client must still cap its memory, put a maximum time to live on every local entry, and flush if the invalidation connection drops.",
+          "cites": [
+            "s12"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "tip",
+          "text": "Layer the tiers in order of trust: a short-lived local copy, then the shared cache, then the source. Each layer only needs to be right about its own staleness budget.",
+          "cites": [
+            "s3"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ttl-and-invalidation",
+      "title": "Time to live, HTTP freshness and invalidation",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "A time to live bounds how old a cached value may be before the cache stops serving it; it is the simplest staleness control and the one every other mechanism falls back on. Redis attaches an expiry with EXPIRE or the EX option of SET, resolves it to the millisecond, and replicates and persists it. The number comes from the business, not from habit: too short sends reads straight back to the store, too long serves stale data, and Amazon's teams have seen outages from values picked once and never revisited.",
+          "cites": [
+            "s6",
+            "s3",
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Amazon adds two refinements. Entries created together expire together, so a random jitter on each expiry spreads the misses out. And a soft time to live that triggers a refresh attempt, separate from a hard one past which the stale value is no longer used, lets a downstream brownout be survived on cached data; the IAM client uses that pair.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The HTTP freshness vocabulary, from RFC 9111, RFC 5861 and MDN.",
+          "columns": [
+            "directive or header",
+            "meaning for a cache"
+          ],
+          "rows": [
+            [
+              "max-age=N",
+              "the response is stale once its age exceeds N seconds; Age carries the elapsed time through shared caches"
+            ],
+            [
+              "s-maxage=N",
+              "the same limit for shared caches only, overriding max-age and Expires there"
+            ],
+            [
+              "no heuristic header at all",
+              "a cache may guess a lifetime from Last-Modified; the RFC suggests at most about a tenth of the interval since that time"
+            ],
+            [
+              "no-cache",
+              "store it, but revalidate with the origin before every reuse"
+            ],
+            [
+              "no-store",
+              "do not store the request or response at all; not a privacy mechanism"
+            ],
+            [
+              "private",
+              "only the client's own cache may store it; the switch for personalised responses"
+            ],
+            [
+              "must-revalidate",
+              "once stale, never reuse without a successful validation; a disconnected cache returns an error instead"
+            ],
+            [
+              "Vary: header",
+              "the cache key is the URL plus the named request headers, so a language or encoding variant is stored separately"
+            ],
+            [
+              "stale-while-revalidate=N",
+              "serve the stale copy for up to N seconds while revalidating in the background"
+            ],
+            [
+              "stale-if-error=N",
+              "serve the stale copy for up to N seconds if the origin answers with a server error"
+            ]
+          ],
+          "cites": [
+            "s7",
+            "s8",
+            "s9"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Validation is the second HTTP mechanism: a stale entry is checked with a conditional request carrying its ETag or Last-Modified, and a 304 Not Modified answer makes it fresh again without a body. For application caches the equivalent is explicit invalidation: delete the key when the row is written, or publish change events, as Facebook's mcsqueal daemons do by broadcasting the deletes embedded in committed SQL to every frontend cluster. Where a cache cannot be reached, change the name instead: versioned keys and cache-busting URLs put new data under a new key.",
+          "cites": [
+            "s9",
+            "s4"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Set the time to live from the staleness the product tolerates, add jitter, invalidate on write where the tolerance is shorter than any sensible value, and keep the time to live anyway as the backstop for the invalidation that gets lost.",
+          "cites": [
+            "s1",
+            "s2"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "eviction-and-sizing",
+      "title": "Eviction policies and sizing the cache",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "A cache has a memory limit, and the eviction policy decides which keys go when it is reached. Redis sets the limit with maxmemory and the behaviour with maxmemory-policy; with no limit a 64-bit server simply grows. The policies differ in two ways: which keys are candidates, every key or only those with an expiry set, and how a candidate is chosen, by recency, by frequency, by time to live or at random. Redis approximates recency and frequency by sampling a few keys rather than keeping an exact list, because an exact list costs memory; under a power-law access pattern the difference is minimal.",
+          "cites": [
+            "s5"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The Redis maxmemory policies and when each fits.",
+          "columns": [
+            "policy",
+            "candidates",
+            "evicts",
+            "fits when"
+          ],
+          "rows": [
+            [
+              "noeviction",
+              "none",
+              "writes that need memory fail",
+              "the instance holds durable data; the default when nothing is set"
+            ],
+            [
+              "allkeys-lru",
+              "every key",
+              "least recently used",
+              "a subset of keys is accessed far more than the rest; the documentation's default choice for a cache"
+            ],
+            [
+              "allkeys-lfu",
+              "every key",
+              "least frequently used, with a decaying counter",
+              "frequency predicts reuse better than recency"
+            ],
+            [
+              "allkeys-random",
+              "every key",
+              "at random",
+              "keys are accessed with roughly equal frequency, as in a repeating cycle"
+            ],
+            [
+              "volatile-lru, volatile-lfu, volatile-random",
+              "keys with an expiry",
+              "as above",
+              "one instance holds both cache and persistent keys; the documentation suggests two instances instead"
+            ],
+            [
+              "volatile-ttl",
+              "keys with an expiry",
+              "the shortest remaining time to live",
+              "the code can mark good eviction candidates with short expiries"
+            ]
+          ],
+          "cites": [
+            "s5"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "LRU is the default because it is simple and good enough for skewed workloads, but it has a known failure: a scan of many keys read once evicts the whole working set. The Caffeine library's evaluation against real traces shows the alternatives, ARC, LIRS and Window TinyLFU, all beating LRU, and chose Window TinyLFU because it reaches a near-optimal hit rate with a frequency sketch of a few bits per entry, admitting a new key only when it is likely to be used more than the key it would evict.",
+          "cites": [
+            "s11"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Sizing starts from the working set, not the data set. Access is skewed, so a fraction of the keys serves most reads; estimate the hot entries, multiply by the average value size plus per-key overhead, and validate against production, because real traffic differs from the model. Redis exposes the measurement directly: keyspace hits over hits plus misses is the hit ratio, a high evicted-keys count says the cache is too small or the policy wrong, and a high expired-keys count says the time to live is too short. Facebook found that keys with different churn interfere, valuable slow-changing keys being evicted before dead fast-changing ones, and split its servers into pools by churn and miss cost.",
+          "cites": [
+            "s3",
+            "s5",
+            "s4"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "Never run an allkeys policy on an instance that also holds data the application cannot recreate: eviction will delete it silently. The cache and the durable keys belong on different instances.",
+          "cites": [
+            "s5"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "stampedes-and-cold-starts",
+      "title": "Stampedes, cold starts and the cache as a failure mode",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The failures a cache introduces are all the same event at different scales. A thundering herd is many requests missing the same key at once, each recomputing the value and hitting the backend; Facebook's paper names the common trigger, a key under heavy read and write where each write invalidates the entry and sends the next wave of reads to the database. A cold start is the same miss across every key after a restart, a flush or a new server joining the fleet. A negative lookup, a key that does not exist, misses every time unless the absence itself is cached.",
+          "cites": [
+            "s4",
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The remedy for the herd is to let one caller fill the key while the others wait or take the old value. Amazon calls it request coalescing, HTTP caches call it request collapsing, and Cloudflare implements it as a cache lock: one request per asset per data centre goes to the origin and the response is streamed to everyone waiting. Facebook's lease does the same at the key level, handing out one fill token per key every ten seconds and telling other missers to wait a few milliseconds and retry.",
+          "cites": [
+            "s1",
+            "s9",
+            "s10",
+            "s4"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Facebook's measured effect of leases on a set of keys prone to thundering herds, over one week.",
+          "columns": [
+            "",
+            "peak database query rate"
+          ],
+          "rows": [
+            [
+              "without leases",
+              "17,000 per second"
+            ],
+            [
+              "with leases",
+              "1,300 per second"
+            ]
+          ],
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "For negative results, cache the error or the absence with its own, usually shorter, time to live; Amazon has seen failure rates rise when a service kept asking a dependency for a resource that no longer existed and discarded each error. For a cache that is down or empty, the Builders' Library is explicit that falling straight through to the dependency can turn a cache outage into a dependency outage, and prefers a local-cache fallback or a cap on the request rate to the backend. Facebook's Gutter pool, about one percent of the memcached servers, takes over for failed servers and converts a large share of would-be misses into hits within minutes.",
+          "cites": [
+            "s1",
+            "s4"
+          ]
+        },
+        {
+          "type": "list",
+          "items": [
+            "Coalesce misses per key so the backend sees one fill, not a herd.",
+            "Put jitter on expiries so entries filled together do not expire together.",
+            "Cache negative results and errors with their own time to live.",
+            "Wrap cache calls in short timeouts and a circuit breaker so a slow cache does not stall every request.",
+            "Load test with the cache disabled, and make the backend's rate limit or load shedding the thing that holds in that state."
+          ],
+          "cites": [
+            "s1",
+            "s3"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Design the empty-cache path first. If the backend cannot survive a flush, the mitigation is not a warmer cache but a cap on what reaches the backend.",
+          "cites": [
+            "s1"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "choosing-where-and-how",
+      "title": "Choosing the cache for one read path",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The choice is per read path, and it starts with whether to cache at all. The decision below applies the sources' guidance to the question a design review asks: this endpoint, this data, this staleness budget. The example column names the kind of data each option is usually right for; the cost of being wrong is the modal behaviour of the first subtopic.",
+          "cites": [
+            "s1",
+            "s3"
+          ]
+        },
+        {
+          "type": "decision",
+          "caption": "Picking the caching approach for one read path.",
+          "rows": [
+            {
+              "option": "No cache",
+              "pick_when": "each request needs a unique result, the source is already fast, or the data is sensitive or decision-critical",
+              "avoid_when": "a dependency throttles on hot keys or a dashboard shows the same query answered thousands of times",
+              "example": "a per-user export; a balance read before a debit"
+            },
+            {
+              "option": "In-process cache",
+              "pick_when": "a small, slow-changing set of objects, tolerant of per-server differences and of an empty cache after each deploy",
+              "avoid_when": "fleet size makes downstream load from cold starts dangerous, or servers must agree",
+              "example": "configuration, feature flags, a template; the local tier in front of a shared cache"
+            },
+            {
+              "option": "Shared cache, cache-aside",
+              "pick_when": "many servers read the same objects, one place to invalidate is wanted, and a cache outage may degrade to slower reads",
+              "avoid_when": "the code cannot be trusted to keep the cache and store in order, or read-after-write freshness is required",
+              "example": "user profiles, catalogue entries, rendered fragments: the default pattern"
+            },
+            {
+              "option": "Inline read-through cache",
+              "pick_when": "a uniform client API matters more than the application's ability to compensate for a cache outage",
+              "avoid_when": "the cache fleet is less available than the dependency it fronts and no fallback exists",
+              "example": "an HTTP cache in front of a REST dependency; a database accelerator"
+            },
+            {
+              "option": "Write-through to the shared cache",
+              "pick_when": "a read-heavy path must show its own write immediately",
+              "avoid_when": "data is rarely read after it is written, or changes constantly",
+              "example": "a shopping cart; a user's own settings page"
+            },
+            {
+              "option": "Edge or CDN cache",
+              "pick_when": "whole responses are reusable across users and can be keyed by URL and a few headers",
+              "avoid_when": "responses are personalised and cannot be marked private, or must be current on every request",
+              "example": "images, scripts with hashed names, public pages with a purge on change"
+            }
+          ],
+          "cites": [
+            "s1",
+            "s2",
+            "s3",
+            "s9"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Two patterns recur in the sources. The first is layering: a local tier for latency and for surviving the shared tier's outage, a shared tier for coherence, the source for truth. The second is that the invalidation path is designed with the same care as the read path: who deletes which keys on which writes, in what order, and what the time to live is for the deletes that get lost. A review that cannot answer those questions has found an eventual-consistency bug waiting to be reported.",
+          "cites": [
+            "s3",
+            "s4"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Choose the pattern by what happens when the cache is wrong or gone, not by what happens when it hits. Cache-aside with delete-on-write and a time to live is the default because both answers are tolerable.",
+          "cites": [
+            "s1",
+            "s2"
+          ]
+        }
+      ]
     }
   ],
-  "diagram": {
-    "source": "flowchart TD\n    A[Request] --> B{Key in cache?}\n    B -- hit --> C[Return cached value]\n    B -- miss --> D[Read from database]\n    D --> E[Set key with TTL plus jitter]\n    E --> C\n    W[Write request] --> X[Update database]\n    X --> Y[Delete cache key]"
+  "worked_example": {
+    "title": "Worked example: a product-catalogue read path from 20,000 reads per second",
+    "blocks": [
+      {
+        "type": "p",
+        "text": "A retail service serves product pages from a catalogue in a relational database. The team must decide whether to cache, size the cache, set its time to live and invalidation, and make sure the database survives an empty cache. Every input is an assumption chosen to make the arithmetic concrete; the patterns are the cache-aside pattern, the Redis policies and the Amazon checklist.",
+        "cites": [
+          "s2",
+          "s5",
+          "s1"
+        ]
+      },
+      {
+        "type": "steps",
+        "title": "From the read rate to a cache that the backend can survive",
+        "items": [
+          "Reads: 20,000 product reads per second at peak (assumption), against a database load-tested at 4,000 reads per second.",
+          "Reuse: the same product is read many times, so the data is cacheable; prices change a few times a day and a one-minute delay is acceptable to the product owner (assumption), so the data tolerates staleness.",
+          "Data set: 2 million products at about 2 kB each is 4 GB in total.",
+          "Working set: about a tenth of the products draw nine tenths of the reads (assumption from access logs), so 200,000 hot entries at 2 kB is 400 MB.",
+          "Memory: with per-key overhead and headroom the cache is sized at 1 GB, under an allkeys-lru policy because a skewed subset is read far more than the rest.",
+          "Hit ratio: holding the whole working set gives about 90 percent hits, so misses at peak are about 2,000 per second, half of what the database sustains.",
+          "Time to live: 60 seconds plus up to 10 seconds of jitter, because invalidation on write handles price changes and the time to live only catches lost deletes.",
+          "Invalidation: a price or stock change updates the row and then deletes the product's key; the next read refills it.",
+          "Negative lookups: a missing product id is cached as absent for 30 seconds so that crawlers hitting dead ids do not reach the database.",
+          "Hot key: a featured product at 2,000 reads per second expires once a minute; misses for that key are coalesced so the database sees one fill per expiry.",
+          "Empty cache: 20,000 reads per second would reach a database sized for 4,000, so the service caps database reads at 3,500 per second and sheds the rest with a short retry hint until the cache refills.",
+          "The decider: the empty-cache cap, not the hit ratio. With it, a flush costs a few minutes of partial errors; without it, a flush is an outage of the database and everything behind it."
+        ],
+        "cites": [
+          "s1",
+          "s2",
+          "s5"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "The design as a reviewer should receive it: one row per quantity, with its rule.",
+        "columns": [
+          "quantity",
+          "value",
+          "derived from"
+        ],
+        "rows": [
+          [
+            "peak reads",
+            "20,000 per second",
+            "assumption"
+          ],
+          [
+            "database capacity",
+            "4,000 reads per second",
+            "load test (assumption)"
+          ],
+          [
+            "working set",
+            "400 MB",
+            "200,000 hot products times 2 kB"
+          ],
+          [
+            "cache memory",
+            "1 GB",
+            "working set plus overhead and headroom"
+          ],
+          [
+            "misses at peak",
+            "about 2,000 per second",
+            "20,000 times 10 percent"
+          ],
+          [
+            "time to live",
+            "60 s plus 10 s jitter",
+            "staleness budget of a minute; jitter against mass expiry"
+          ],
+          [
+            "negative cache",
+            "30 s",
+            "assumption"
+          ],
+          [
+            "empty-cache cap",
+            "3,500 reads per second to the database",
+            "below the load-tested capacity"
+          ]
+        ],
+        "cites": [
+          "s1",
+          "s5"
+        ]
+      },
+      {
+        "type": "code",
+        "lang": "python",
+        "code": "import json, random\n\nTTL, JITTER = 60, 10          # seconds; the staleness budget and the spread against mass expiry\n\ndef get_product(cache, db, product_id):\n    key = f\"product:{product_id}\"\n    hit = cache.get(key)\n    if hit is not None:\n        return None if hit == b\"\\x00\" else json.loads(hit)   # the absent marker is a negative entry\n    row = db.load_product(product_id)            # source of truth\n    if row is None:\n        cache.set(key, b\"\\x00\", ex=30)           # negative cache, shorter TTL\n        return None\n    cache.set(key, json.dumps(row), ex=TTL + random.randint(0, JITTER))\n    return row\n\ndef update_product(cache, db, product_id, fields):\n    db.save_product(product_id, fields)           # update the store first\n    cache.delete(f\"product:{product_id}\")        # then delete: idempotent, never overwrite",
+        "caption": "Cache-aside as the example sizes it: a jittered time to live, a negative entry for missing ids, and delete-on-write in the order the pattern requires. Coalescing of misses and the empty-cache cap live in the service's request layer."
+      }
+    ]
   },
-  "code": [
-    {
-      "code": "import json, random\n\ndef get_user(r, db, user_id):\n    key = f'user:{user_id}'\n    cached = r.get(key)\n    if cached is not None:\n        return json.loads(cached)\n    user = db.load_user(user_id)          # source of truth\n    ttl = 300 + random.randint(0, 60)     # jitter against mass expiry\n    r.set(key, json.dumps(user), ex=ttl)\n    return user\n\ndef update_user(r, db, user_id, fields):\n    db.save_user(user_id, fields)\n    r.delete(f'user:{user_id}')           # invalidate, do not overwrite",
-      "lang": "python"
-    },
-    {
-      "code": "# redis.conf for a pure cache\nmaxmemory 2gb\nmaxmemory-policy allkeys-lru",
-      "lang": "text"
-    }
-  ],
+  "diagram": null,
+  "code": [],
   "technologies": [
     "Redis",
     "Memcached",
@@ -119,30 +814,142 @@
   ],
   "sources": [
     {
-      "kind": "doc",
-      "title": "Redis key eviction",
-      "url": "https://redis.io/docs/latest/develop/reference/eviction/"
-    },
-    {
-      "kind": "doc",
-      "title": "Redis keyspace: expiry and TTL",
-      "url": "https://redis.io/docs/latest/develop/using-commands/keyspace/"
-    },
-    {
+      "id": "s1",
+      "title": "Amazon Builders' Library, Caching challenges and strategies (Jas Chhabra, 2019-12-05): the cache a service becomes addicted to, local against external caches, inline against side caches, soft and hard TTLs, negative caching, request coalescing, Amazon's checklist",
+      "url": "https://builder.aws.com/content/3K9TeXp6strMiJ4vhakpRD7BQWO/caching-challenges-and-strategies",
       "kind": "article",
-      "title": "Caching challenges and strategies (Amazon Builders' Library)",
-      "url": "https://builder.aws.com/content/3K9TeXp6strMiJ4vhakpRD7BQWO/caching-challenges-and-strategies"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "a service that has become addicted to its cache"
+      }
     },
     {
+      "id": "s2",
+      "title": "Azure Architecture Center, Cache-Aside pattern: load on demand, invalidate on write, the order of the two steps, when the pattern does not fit",
+      "url": "https://learn.microsoft.com/en-us/azure/architecture/patterns/cache-aside",
       "kind": "doc",
-      "title": "Cache-Aside pattern (Azure Architecture Center)",
-      "url": "https://learn.microsoft.com/en-us/azure/architecture/patterns/cache-aside"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Update the data store before removing the item from the cache"
+      }
+    },
+    {
+      "id": "s3",
+      "title": "Azure Architecture Center, Caching guidance (updated 2026-06-12): private against shared caches, seeding, expiration, eviction, write-through against invalidate-on-write, a local cache as the fallback for a shared one",
+      "url": "https://learn.microsoft.com/en-us/azure/architecture/best-practices/caching",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Use write-through only for read-heavy access paths that need read-after-write freshness"
+      }
+    },
+    {
+      "id": "s4",
+      "title": "Rajesh Nishtala et al., Scaling Memcache at Facebook, NSDI 2013 (PDF): the look-aside cache, deletes over updates, leases against stale sets and thundering herds, pools by churn, the Gutter pool, mcsqueal invalidation, measured workload",
+      "url": "https://www.usenix.org/system/files/conference/nsdi13/nsdi13-final170_update.pdf",
+      "kind": "paper",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "We choose to delete cached data instead of updating it because deletes are idempotent"
+      }
+    },
+    {
+      "id": "s5",
+      "title": "Redis documentation, Key eviction: maxmemory, the allkeys and volatile policies, approximated LRU by sampling, LFU with a decaying counter, reading hit and miss counts from INFO",
+      "url": "https://redis.io/docs/latest/develop/reference/eviction/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "allkeys-lru is a good default option if you have no reason to prefer any others"
+      }
+    },
+    {
+      "id": "s6",
+      "title": "Redis documentation, Keys and values: key expiration with EXPIRE and SET EX, millisecond resolution, expiry persisted and replicated, key naming",
+      "url": "https://redis.io/docs/latest/develop/using-commands/keyspace/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Key expiration lets you set a timeout for a key"
+      }
+    },
+    {
+      "id": "s7",
+      "title": "RFC 9111, HTTP Caching (June 2022): freshness from max-age and Age, heuristic freshness, the Vary cache key, must-revalidate, no-store, s-maxage, invalidation by unsafe methods",
+      "url": "https://www.rfc-editor.org/rfc/rfc9111.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "A typical setting of this fraction might be 10%"
+      }
+    },
+    {
+      "id": "s8",
+      "title": "RFC 5861, HTTP Cache-Control Extensions for Stale Content (Mark Nottingham, May 2010): stale-while-revalidate and stale-if-error",
+      "url": "https://www.rfc-editor.org/rfc/rfc5861.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "allows a cache to immediately return a stale response while it revalidates it in the background"
+      }
+    },
+    {
+      "id": "s9",
+      "title": "MDN, HTTP caching guide (updated 2026-08-14): private and shared caches, heuristic caching, fresh and stale by age, Vary, validation with ETag, no-cache against no-store, request collapse, cache busting",
+      "url": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Caching",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "This is called request collapse"
+      }
+    },
+    {
+      "id": "s10",
+      "title": "Cloudflare documentation, Default cache behavior (updated 2026-09-14): what is cached by default, request collapsing with a cache lock, default edge TTLs by status code",
+      "url": "https://developers.cloudflare.com/cache/concepts/default-cache-behavior/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Only the first request is forwarded to the origin to fetch the asset"
+      }
+    },
+    {
+      "id": "s11",
+      "title": "Caffeine wiki, Efficiency (Ben Manes, 2019): why LRU loses on scans, ARC, LIRS and Window TinyLFU compared against the optimal policy on real traces",
+      "url": "https://github.com/ben-manes/caffeine/wiki/Efficiency",
+      "kind": "repo",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Caffeine uses the Window TinyLfu policy due to its high hit rate and low memory footprint"
+      }
+    },
+    {
+      "id": "s12",
+      "title": "Redis documentation, Client-side caching reference: server-assisted tracking, invalidation messages, broadcasting mode, the race between data and invalidation connections, what to cache",
+      "url": "https://redis.io/docs/latest/develop/reference/client-side-caching/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "The Redis client-side caching support is called Tracking"
+      }
     }
   ],
   "practice": "practice/sd-caching",
   "provenance": {
-    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
-    "generated_on": "2026-10-13",
+    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center, format v2",
+    "generated_on": "2026-10-15",
     "reviewed_by": null,
     "reviewed_on": null
   },
@@ -151,48 +958,11 @@
       "version": 1,
       "date": "2026-10-13",
       "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-15",
+      "change": "rewritten by hand from primary sources at format v2 (learning-center-lesson:2): 7 subtopics with the when-a-cache-fits table, the cache-aside diagram in its subtopic and the four-pattern table, the three-tier table, the HTTP freshness table, the Redis eviction-policy table, Facebook's lease measurement, a decision block over the caching approach per read path, a worked product-catalogue cache sizing with the cache-aside code after the teaching, cited in-practice blocks (Facebook memcache, Amazon, Cloudflare, Redis), 12 verified sources with ids"
     }
-  ],
-  "sim": {
-    "scenario": "sd-caching",
-    "heading": "Simulate it",
-    "caption": "The database only ever sees the cache misses, so a good hit rate is the cheapest capacity there is. At the defaults it receives about 29 requests a second of the 200 offered and is about 22% busy.",
-    "steps": [
-      "Leave the controls alone and read the database utilisation: about 22%, steady.",
-      "Set the cache hit rate to 0.3 and wait ten seconds.",
-      "The database saturates at 100% busy and about 4% of requests start to fail.",
-      "Put the hit rate back to 0.85 and raise the offered load to 1200: the database saturates again, this time from volume.",
-      "At 1200 a second, a hit rate of 0.95 brings the database back to about 46% busy."
-    ],
-    "sim_claims": [
-      {
-        "text": "about 29 requests a second",
-        "assertion": "db-sees-misses"
-      },
-      {
-        "text": "about 22% busy",
-        "assertion": "db-sees-misses"
-      },
-      {
-        "text": "about 22%",
-        "assertion": "db-is-a-quarter-busy"
-      },
-      {
-        "text": "100% busy",
-        "assertion": "low-hit-overloads-db"
-      },
-      {
-        "text": "about 4% of requests",
-        "assertion": "low-hit-sheds"
-      },
-      {
-        "text": "saturates again",
-        "assertion": "more-load-overloads-db"
-      },
-      {
-        "text": "about 46% busy",
-        "assertion": "hit-rate-rescues-db"
-      }
-    ]
-  }
+  ]
 }
