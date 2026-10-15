@@ -463,6 +463,49 @@ def sim_checks(lid: str, l: dict, docs: dict) -> list[str]:
     return out
 
 
+# --- lesson format v2 (learning-center-lesson:2): typed blocks, numbered sources, cites (SPEC-format-v2-system-design.md section 1) ---
+V2 = "learning-center-lesson:2"
+SOURCE_KINDS_V2 = ("doc", "article", "book", "paper", "repo", "tutorial")
+SOURCE_V2 = {"id": str, "title": str, "url": str, "kind": str, "verified?": VERIFIED}
+BLOCK_SPECS = {
+    "p": {"type": str, "text": str, "cites?": [str]},
+    "list": {"type": str, "items": [str], "ordered?": bool, "cites?": [str]},
+    "table": {"type": str, "caption?": str, "columns": [str], "rows": [[str]], "cites?": [str]},
+    "code": {"type": str, "lang": str, "code": str, "caption?": str},
+    "callout": {"type": str, "kind": str, "text": str, "cites?": [str]},
+    "steps": {"type": str, "title?": str, "items": [str], "cites?": [str]},
+    "decision": {"type": str, "caption?": str, "rows": [{"option": str, "pick_when": str, "avoid_when": str, "example?": str}], "cites?": [str]},
+    "diagram": {"type": str, "mermaid": str, "legend?": str},
+}
+CALLOUT_KINDS = ("rule", "pitfall", "tip")
+CITING_BLOCKS = frozenset(t for t, spec in BLOCK_SPECS.items() if "cites?" in spec)
+# A block carries its own text fields; the strings below must not be blank.
+BLOCK_TEXT_FIELDS = {"p": ("text",), "callout": ("text",), "code": ("code",), "diagram": ("mermaid",)}
+LESSON_V2 = {
+    "schema_version": str, "id": str, "version": int, "status": str, "superseded_by": (str, N), "title": str, "area": str,
+    "primary_key": str, "secondary_keys": [str], "keys": [str], "summary": str, "detail": [None], "in_practice": {"blocks": [None]},
+    "subtopics": [{"id": str, "title": str, "blocks": [None]}], "worked_example?": {"title": str, "blocks": [None]},
+    "diagram": ({"source": str}, N), "code": [None], "technologies": [str], "related": [str],
+    "sources": [SOURCE_V2], "practice": (str, N), "provenance": PROVENANCE, "changelog": CHANGELOG,
+    "kind?": str, "exercise?": {
+        "prompt": str, "constraints": None, "clarifying_questions": [{"q": str, "a": str}],
+        "reference_answer": [{"id": str, "title": str, "blocks": [None]}], "rubric": {"L1": [str], "L2": [str], "L3": [str]},
+        "interview_frame": None, "design_doc_frame": None, "depth_notes": {"L1": str, "L2": str, "L3": str},
+    }, "sim?": SIM,
+}
+# lessons whose job is a choice carry a decision block (ids, and primary keys of any lesson)
+DECISION_LESSON_IDS = frozenset("sd-storage-engines sd-queues-streams sd-caching sd-consistency-consensus sd-replication-partitioning sd-load-balancing".split())
+DECISION_KEYS = frozenset("storage-engines message-queues caching consistency replication load-balancing".split())
+MAX_NUMBERS_IN_P = 4
+# integers (with thousands commas) and decimals; a digit run glued to a letter before it (p99, S3, v4) is a name, not a number
+V2_NUMBER = re.compile(r"(?<![\w.])(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?")
+RESERVED_IDS_V2 = frozenset({"worked-example", "in-practice", "sources", "related", "technologies", "simulate", "prompt", "constraints",
+                             "clarifying-questions", "reference-answer", "rubric", "interview-frame", "design-doc-frame", "depth"})
+EST_COLUMNS = ["quantity", "per day", "average per second", "peak per second", "note"]
+DATA_COLUMNS = ["entity", "fields", "key or partition", "notes"]
+API_COLUMNS = ["method", "path", "request", "response", "notes"]
+
+
 SCHEMAS = {
     "lesson": {
         "schema_version": str, "id": str, "version": int, "status": str, "superseded_by": (str, N), "title": str, "area": str,
@@ -473,6 +516,7 @@ SCHEMAS = {
         "sources": [SOURCE], "practice": (str, N), "provenance": PROVENANCE, "changelog": CHANGELOG,
         "kind?": str, "exercise?": EXERCISE, "sim?": SIM,
     },
+    "lesson2": LESSON_V2,
     "scenario": SCENARIO,
     "sim-staging": {"lesson": str, "sim": SIM},
     "practice": {
@@ -636,9 +680,12 @@ def validate(docs: dict) -> list[str]:
                 out.append(f"{rel}: unknown practice kind {pk!r}")
                 continue
             kind = "practice" if pk == "tool" else f"practice-{pk}"
-        _t(SCHEMAS[kind], doc, "$", errs)
+        v2 = kind == "lesson" and isinstance(doc, dict) and doc.get("schema_version") == V2
+        _t(SCHEMAS["lesson2" if v2 else kind], doc, "$", errs)
         out.extend(f"{rel}: {e}" for e in errs)
         out.extend(public_checks(rel, doc))
+        if v2 and not errs:
+            out.extend(f"{rel}: {e}" for e in lesson2_checks(doc))
         if kind in ("practice-case", "practice-artifact") and not errs:
             out.extend(written_checks(rel, doc))
         if kind == "scenario" and not errs:
@@ -790,6 +837,8 @@ def exercise_checks(l: dict) -> list[str]:
     out: list[str] = []
     if "exercise" not in l:
         return ["kind is design-exercise but there is no 'exercise' object"]
+    if l["schema_version"] == V2:
+        return exercise2_checks(l)
     ex = l["exercise"]
     if not l["summary"].strip() or not ex["prompt"].strip():
         out.append("summary and exercise.prompt must not be empty")
@@ -819,6 +868,175 @@ def exercise_checks(l: dict) -> list[str]:
         out.append("a design exercise cites at least 3 sources")
     if len(ex["interview_frame"]) < 3 or len(ex["design_doc_frame"]) < 3:
         out.append("both frames need at least 3 entries")
+    return out
+
+
+# --- the :2 checks: blocks, cites, the 4-number rule, the concept-lesson and exercise rules ----------------------------------
+def as_blocks(v) -> list:
+    """An exercise field that holds blocks may be one block or a list of blocks."""
+    return [v] if isinstance(v, dict) else v if isinstance(v, list) else []
+
+
+def block_problems(b, path: str) -> list[str]:
+    if not isinstance(b, dict):
+        return [f"{path}: a block is an object, got {type(b).__name__}"]
+    t = b.get("type")
+    if t not in BLOCK_SPECS:
+        return [f"{path}: block type {t!r} is not one of {sorted(BLOCK_SPECS)}"]
+    spec = BLOCK_SPECS[t]
+    out: list[str] = []
+    _t(spec, b, path, out)
+    if out:
+        return out
+    known = {k.rstrip("?") for k in spec}
+    out += [f"{path}: unknown field {k!r} on a {t} block" for k in b if k not in known]
+    for f in BLOCK_TEXT_FIELDS.get(t, ()):
+        if not b[f].strip():
+            out.append(f"{path}.{f}: empty")
+    if t in ("list", "steps") and (not b["items"] or not all(i.strip() for i in b["items"])):
+        out.append(f"{path}.items: needs at least one item and no blank item")
+    if t == "table":
+        if not b["columns"] or not b["rows"]:
+            out.append(f"{path}: a table needs columns and rows")
+        out += [f"{path}.rows[{i}]: {len(r)} cells, the table has {len(b['columns'])} columns" for i, r in enumerate(b["rows"]) if len(r) != len(b["columns"])]
+    if t == "callout" and b["kind"] not in CALLOUT_KINDS:
+        out.append(f"{path}.kind: {b['kind']!r} is not one of {CALLOUT_KINDS}")
+    if t == "decision":
+        if not b["rows"]:
+            out.append(f"{path}: a decision block needs rows")
+        for i, r in enumerate(b["rows"]):
+            out += [f"{path}.rows[{i}].{f}: empty" for f in ("option", "pick_when", "avoid_when") if not r[f].strip()]
+    if t == "diagram" and (re.search(r"(?i)^\s*C4", b["mermaid"]) or "%%{" in b["mermaid"]):
+        out.append(f"{path}: no C4 syntax and no Mermaid directives in a diagram")
+    return out
+
+
+def v2_blocks(l: dict):
+    """Yield (path, region, block) for every block of a :2 lesson; region is 'subtopic', 'worked_example', 'in_practice' or 'exercise:<part>'."""
+    for i, s in enumerate(l["subtopics"]):
+        for j, b in enumerate(s["blocks"]):
+            yield f"$.subtopics[{i}].blocks[{j}]", "subtopic", b
+    if "worked_example" in l:
+        for j, b in enumerate(l["worked_example"]["blocks"]):
+            yield f"$.worked_example.blocks[{j}]", "worked_example", b
+    for j, b in enumerate(l["in_practice"]["blocks"]):
+        yield f"$.in_practice.blocks[{j}]", "in_practice", b
+    ex = l.get("exercise")
+    if ex:
+        for i, sec in enumerate(ex["reference_answer"]):
+            for j, b in enumerate(sec["blocks"]):
+                yield f"$.exercise.reference_answer[{i}].blocks[{j}]", f"exercise:{sec['id']}", b
+        for f in ("constraints", "interview_frame", "design_doc_frame"):
+            for j, b in enumerate(as_blocks(ex[f])):
+                yield f"$.exercise.{f}[{j}]", f"exercise:{f}", b
+
+
+def lesson2_checks(l: dict) -> list[str]:
+    """Every :2 rule that needs only this one file (the schema has already passed). Refuses, never warns."""
+    out: list[str] = []
+    if l["detail"] or l["code"]:
+        out.append("$: detail and code are empty lists in :2 (the teaching and the code live in blocks)")
+    if l["diagram"] is not None:
+        out.append("$.diagram: a :2 lesson places its diagram in a diagram block of the subtopic it explains; the top-level diagram must be null")
+    ids = [s["id"] for s in l["sources"]]
+    if ids != [f"s{n}" for n in range(1, len(ids) + 1)]:
+        out.append(f"$.sources: ids must be s1..s{len(ids)} in order, got {ids}")
+    for s in l["sources"]:
+        if s["kind"] not in SOURCE_KINDS_V2:
+            out.append(f"$.sources.{s['id']}: kind {s['kind']!r} is not one of {SOURCE_KINDS_V2}")
+    for s in l["subtopics"]:
+        if s["id"] in RESERVED_IDS_V2:
+            out.append(f"$.subtopics.{s['id']}: id is reserved for a page section")
+    exercise = l.get("kind") == "design-exercise"
+    known = set(ids)
+    blocks = []
+    for path, region, b in v2_blocks(l):
+        bp = block_problems(b, path)
+        out += bp
+        if bp:
+            continue
+        blocks.append((path, region, b))
+        t = b["type"]
+        cites = b.get("cites", [])
+        out += [f"{path}.cites: {c!r} is not a source id of this lesson" for c in cites if c not in known]
+        if region == "in_practice":
+            if t not in CITING_BLOCKS:
+                out.append(f"{path}: a {t} block cannot cite, so it cannot stand in 'in practice'")
+            elif not cites:
+                out.append(f"{path}: every block of in_practice cites at least one source (a claim with nothing to cite is cut)")
+        if t == "p":
+            n = len(V2_NUMBER.findall(b["text"]))
+            if n > MAX_NUMBERS_IN_P:
+                out.append(f"{path}: a paragraph holds {n} numbers (at most {MAX_NUMBERS_IN_P}); put them in a table or steps block")
+        if t == "diagram" and exercise and not DIAGRAM_START.match(b["mermaid"]):
+            out.append(f"{path}: the diagram must be a Mermaid flowchart (starts with 'flowchart' or 'graph')")
+    if not exercise:
+        types = {b["type"] for _, _, b in blocks}
+        if not types & {"table", "decision"}:
+            out.append("$: a concept lesson needs at least one table or decision block")
+        we = l.get("worked_example")
+        if we is None:
+            out.append("$.worked_example: a concept lesson needs a worked example")
+        elif not we["title"].strip() or not any(b.get("type") == "steps" for b in we["blocks"]):
+            out.append("$.worked_example: needs a title and a steps block (the real numbers go there)")
+        if (l["id"] in DECISION_LESSON_IDS or l["primary_key"] in DECISION_KEYS) and "decision" not in types:
+            out.append("$: a lesson about a choice (storage, queues, caching, consistency, replication, load balancing) needs a decision block")
+        if not 8 <= len(l["sources"]) <= 12:
+            out.append(f"$.sources: a concept lesson cites 8 to 12 sources, got {len(l['sources'])}")
+        for s in l["sources"]:
+            v = s.get("verified") or {}
+            if v.get("http") != 200 or not DATE.match(str(v.get("checked", ""))):
+                out.append(f"$.sources.{s['id']}: verified.http must be 200 with a checked date (YYYY-MM-DD)")
+    else:
+        for s in l["sources"]:
+            v = s.get("verified")
+            if v and "checked" in v and not DATE.match(v["checked"]):
+                out.append(f"$.sources.{s['id']}: verified.checked is not a date")
+    return out
+
+
+def exercise2_checks(l: dict) -> list[str]:
+    """The :2 design-exercise rules: eight sections in order and their blocks, one diagram, rubric, questions, frames, sources."""
+    out: list[str] = []
+    ex = l["exercise"]
+    if not l["summary"].strip() or not ex["prompt"].strip():
+        out.append("summary and exercise.prompt must not be empty")
+    secs = ex["reference_answer"]
+    ids = [sec["id"] for sec in secs]
+    if ids != EXERCISE_SECTION_IDS:
+        out.append(f"reference_answer sections must be exactly {EXERCISE_SECTION_IDS} in that order, got {ids}")
+    for sec in secs:
+        sid, bl = sec["id"], [b for b in sec["blocks"] if isinstance(b, dict)]
+        tables = [b for b in bl if b.get("type") == "table"]
+        if sid == "requirements-and-estimates" and not any(t["columns"] == EST_COLUMNS for t in tables):
+            out.append(f"section {sid}: needs a table block with the columns {EST_COLUMNS}")
+        if sid == "data-model" and not (any(t["columns"] == DATA_COLUMNS for t in tables) or any(b.get("type") == "code" for b in bl)):
+            out.append(f"section {sid}: needs a table block with the columns {DATA_COLUMNS} or a code block")
+        if sid == "core-flow" and not any(b.get("type") == "steps" for b in bl):
+            out.append(f"section {sid}: needs a steps block")
+        n_diagrams = sum(1 for b in bl if b.get("type") == "diagram")
+        if sid == "high-level-design" and n_diagrams != 1:
+            out.append(f"section {sid}: needs exactly one diagram block, has {n_diagrams}")
+        if sid != "high-level-design" and n_diagrams:
+            out.append(f"section {sid}: a diagram block belongs in high-level-design only")
+        for t in tables:
+            if t["columns"][:1] == ["method"] and t["columns"] != API_COLUMNS:
+                out.append(f"section {sid}: an API table has the columns {API_COLUMNS}, got {t['columns']}")
+    for f, allowed in (("constraints", ("list", "table")), ("interview_frame", ("list", "steps")), ("design_doc_frame", ("list", "steps"))):
+        bl = as_blocks(ex[f])
+        if not bl or any(not isinstance(b, dict) or b.get("type") not in allowed for b in bl):
+            out.append(f"exercise.{f}: a {' or '.join(allowed)} block (or a list of them) is required")
+    n = sum(len(ex["rubric"][k]) for k in ("L1", "L2", "L3"))
+    if not 8 <= n <= 12:
+        out.append(f"rubric has {n} lines; 8 to 12 required")
+    if not 5 <= len(ex["clarifying_questions"]) <= 8:
+        out.append(f"{len(ex['clarifying_questions'])} clarifying questions; 5 to 8 required")
+    if len(l["sources"]) < 3:
+        out.append("a design exercise cites at least 3 sources")
+    for f in ("interview_frame", "design_doc_frame"):
+        items = sum(len(b.get("items", [])) for b in as_blocks(ex[f]) if isinstance(b, dict))
+        if items < 3:
+            out.append(f"exercise.{f}: at least 3 entries needed, got {items}")
     return out
 
 
