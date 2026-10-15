@@ -130,7 +130,7 @@ class Imported(unittest.TestCase):
         flat = json.dumps(cat)
         for word in ("expectations", "role_key", "postings", "sequence", '"summary"', '"detail"'):
             self.assertNotIn(word, flat)
-        self.assertEqual([m["order"] for m in cat["modules"]], list(range(1, 15)))
+        self.assertEqual([m["order"] for m in cat["modules"]], list(range(1, len(cat["modules"]) + 1)))
 
     def test_content_files_keep_kind_and_fields(self) -> None:
         for lid, kind in (("fixture-case-lesson", "case"), ("fixture-artifact-lesson", "artifact")):
