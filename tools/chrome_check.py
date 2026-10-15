@@ -305,7 +305,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--base", default="http://127.0.0.1:18765")
     ap.add_argument("--out", type=Path, default=ROOT / "verify")
-    ap.add_argument("--widths", default="1280,390")
+    ap.add_argument("--widths", default="1280,820")   # desktop and iPad portrait; nothing below 820 (operator 2026-10-15)
     ap.add_argument("--sim", action="store_true", help="only the simulator pages (SIM_PAGES), each also with prefers-reduced-motion")
     ap.add_argument("--no-sim", action="store_true", help="leave the simulator pages out of the run")
     ap.add_argument("--page", action="append", metavar="NAME=PATH", help="check only these pages (repeatable); a name starting 'format-v2' adds the v2 facts")
