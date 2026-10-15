@@ -1,7 +1,7 @@
 {
-  "schema_version": "learning-center-lesson:1",
+  "schema_version": "learning-center-lesson:2",
   "id": "sd-numbers",
-  "version": 1,
+  "version": 2,
   "status": "published",
   "superseded_by": null,
   "title": "Latency, throughput and back-of-envelope numbers",
@@ -18,62 +18,754 @@
     "capacity-planning",
     "scaling"
   ],
-  "summary": "System design starts with numbers: how many requests arrive, how long each takes, and how much data accumulates. This lesson covers the latency figures worth memorising, why percentiles matter more than averages, and how to turn a vague requirement into a machine count using simple arithmetic and queueing relationships.",
+  "summary": "System design starts with numbers: how many requests arrive, how long each takes, and how much data accumulates. This lesson gives the latency ladder as a table, explains why percentiles matter more than averages and how fan-out turns a rare slow reply into a common one, states Little's law and the utilisation curve, and walks one estimate from users to QPS to storage to a machine count.",
   "detail": [],
-  "in_practice": "A team writes the estimate at the top of the design document: stated assumptions for users, request mix, payload sizes and retention, then derived peak rates, storage growth and node counts with headroom. The numbers are checked against load test results and production dashboards showing percentile latency, and revised when measurement disagrees. Reviewers challenge the assumptions and the first bottleneck rather than the arithmetic, and the same sheet later becomes the baseline for capacity planning.",
+  "in_practice": {
+    "blocks": [
+      {
+        "type": "p",
+        "text": "Google's SRE workbook teaches design by this arithmetic. Its non-abstract design chapter sizes an ad click-through dashboard from 500,000 search queries per second and 10,000 ad clicks per second, rounds each query log entry up to 2 KB before computing bandwidth and disk, and iterates from one machine to a sharded, multi-datacenter design, checking each iteration against the stated SLO.",
+        "cites": [
+          "s8"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Google's capacity planning moved from per-service spreadsheets to intent-based planning. The Auxon system described in the SRE book takes a demand forecast and the constraints on how it may be met, such as serving users from their own continent, and solves for the allocation, because hand-maintained spreadsheets of machine counts did not scale and went stale.",
+        "cites": [
+          "s9"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Amazon's service teams instrument every request and set their dashboards and alarms on high percentiles rather than the mean. The Builders' Library states that teams focus on the 99.9th and 99.99th percentiles because one slow request in 1,000 or 10,000 is still a poor experience, and that lowering those percentiles has lowered the median as a side effect.",
+        "cites": [
+          "s11"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "Google's measured result for hedged requests in a BigTable benchmark (The Tail at Scale). The paper also reports micro-partitioning at about 20 partitions per machine so that load sheds in 5 percent steps.",
+        "columns": [
+          "metric",
+          "without hedging",
+          "hedged request after 10 ms"
+        ],
+        "rows": [
+          [
+            "p99.9 for reading 1,000 keys spread over 100 BigTable servers",
+            "1,800 ms",
+            "74 ms"
+          ],
+          [
+            "extra requests sent",
+            "none",
+            "about 2 percent"
+          ]
+        ],
+        "cites": [
+          "s4"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Google's monitoring guidance records latency as bucketed histograms rather than averages, with bucket boundaries that grow by roughly a factor of three, so that the tail can be read directly and histograms from many hosts can be merged.",
+        "cites": [
+          "s10"
+        ]
+      }
+    ]
+  },
   "subtopics": [
     {
-      "body": [
+      "id": "start-with-the-numbers",
+      "title": "Why the numbers come first",
+      "blocks": [
         {
-          "body": "The classic latency table is useful for its ratios, not its exact values. A main memory reference costs around 100 nanoseconds. A random 4 KB read from SSD is around 150 microseconds, roughly a thousand times slower. A round trip inside one datacenter is about half a millisecond. A spinning disk seek is about 10 milliseconds, and a packet crossing an ocean and back is about 150 milliseconds. Sequential access is far cheaper per byte than random access on every medium. The design consequences follow directly: keep hot data in memory, batch and sequentialise disk writes, count network round trips per request, and never put a cross-region call on a path that needs a low-millisecond budget.",
-          "heading": "The ladder from nanoseconds to milliseconds"
-        }
-      ],
-      "id": "orders-of-magnitude",
-      "title": "Latency orders of magnitude"
-    },
-    {
-      "body": [
-        {
-          "body": "Latency distributions are skewed, so the mean describes almost no real request. Teams report p50, p95, p99 and sometimes p99.9, and set targets on the high percentiles because heavy users and large requests live there. Percentiles cannot be averaged across hosts; aggregate histograms instead.",
-          "heading": "Why the average hides the problem"
+          "type": "p",
+          "text": "A design conversation that starts with boxes and arrows has nothing to argue about. One that starts with numbers does: how many requests arrive, how long each is allowed to take, how much data accumulates and how fast it grows. Those quantities decide whether the design fits on one machine or needs a thousand, whether a synchronous call chain can meet its budget, and which resource runs out first. The arithmetic is deliberately crude. It is done to the nearest power of ten with every assumption written down, so that a reviewer attacks the assumptions rather than the multiplication."
         },
         {
-          "body": "When one user request fans out to many backends and waits for all of them, the slowest reply sets the response time. If each backend is slow one time in a hundred, a request touching 100 backends hits at least one slow reply about 63 percent of the time. The Tail at Scale describes mitigations: hedged requests sent to a second replica after a short delay, tied requests that cancel each other, good-enough partial results, and steering traffic away from temporarily slow machines.",
-          "heading": "Fan-out amplifies the tail"
+          "type": "p",
+          "text": "Jeff Dean's talk on building Google's systems makes the point with one slide. Generating a page of image thumbnails by reading each image serially from disk costs a seek and a transfer per image; issuing the reads in parallel costs one seek and one transfer in total. Four lines of arithmetic separate the two designs by a factor of about 30, before anyone has drawn a diagram. The slide also notes that the parallel figure ignores variance, so the real answer is a few times worse: an early appearance of the tail problem covered below.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The thumbnail page from Jeff Dean's slides: the same requirement, two designs, four lines of arithmetic.",
+          "columns": [
+            "design",
+            "arithmetic",
+            "estimate"
+          ],
+          "rows": [
+            [
+              "Serial: read 30 images of 256 KB one after another",
+              "30 seeks at 10 ms each plus 30 transfers of 256 KB at 30 MB/s",
+              "560 ms"
+            ],
+            [
+              "Parallel: issue the 30 reads at once",
+              "one seek of 10 ms plus one transfer of 256 KB at 30 MB/s",
+              "18 ms (the slide says more like 30 to 60 ms once variance is counted)"
+            ]
+          ],
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "An estimate is not a forecast. Its job is to find the bottleneck: the component whose limit is reached first, and the single input that would change the architecture if it moved by a factor of ten. The SRE workbook's chapter on non-abstract design works exactly this way. It states the requirements with numbers, sizes the simplest design that could work, finds where it breaks, and iterates towards a distributed design, rounding every quantity up aggressively so that no limit arrives by surprise.",
+          "cites": [
+            "s8"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Write the estimate on one page before the design. Every input is a stated assumption. Round to powers of ten, keep units on every line, and carry the arithmetic through to the resource that runs out first.",
+          "cites": [
+            "s8"
+          ]
+        },
+        {
+          "type": "list",
+          "items": [
+            "A day is 86,400 seconds; round it to 100,000 for arithmetic in your head.",
+            "A month is about 2.6 million seconds, so one request per second is about 2.6 million requests a month.",
+            "A year is about 31.5 million seconds, or 365 days when sizing storage growth."
+          ]
         }
-      ],
-      "id": "percentiles-and-tail",
-      "title": "Percentiles and tail latency"
+      ]
     },
     {
-      "body": [
+      "id": "latency-ladder",
+      "title": "The latency ladder",
+      "blocks": [
         {
-          "body": "Start from users and behaviour, then derive rates. Daily requests divided by 86,400 gives average requests per second; multiply by a peak factor, often 2 to 10, to get the design load. Multiply the rate by payload size for bandwidth, and by retention time for storage, then by the replication factor. Divide peak load by measured per-node capacity and add headroom for failure of a node or a zone. Round aggressively: one day is about 100,000 seconds, and powers of ten are enough. The aim is to find which resource runs out first, such as disk IOPS, memory, network or CPU, and to iterate the design until the numbers fit, as the non-abstract design approach recommends.",
-          "heading": "From requirement to resource count"
+          "type": "p",
+          "text": "The latency ladder is a short table of reference times, from a cache hit to an intercontinental round trip. The values come from Jeff Dean's talks and are maintained by others as hardware changes; what matters is the ratios, which have held for two decades. Memory is hundreds of times slower than a processor cache, a datacenter network hop thousands of times slower than memory, a disk seek tens of times slower again, and an ocean round trip an order of magnitude beyond that.",
+          "cites": [
+            "s1",
+            "s2"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The ladder: Jeff Dean's Numbers Everyone Should Know slide, plus the SSD rows and newer values from the maintained list.",
+          "columns": [
+            "operation",
+            "latency",
+            "note"
+          ],
+          "rows": [
+            [
+              "L1 cache reference",
+              "0.5 ns",
+              ""
+            ],
+            [
+              "Branch mispredict",
+              "5 ns",
+              ""
+            ],
+            [
+              "L2 cache reference",
+              "7 ns",
+              "14 times L1"
+            ],
+            [
+              "Mutex lock and unlock",
+              "25 ns",
+              "100 ns on Dean's slide"
+            ],
+            [
+              "Main memory reference",
+              "100 ns",
+              "20 times L2"
+            ],
+            [
+              "Compress 1 KB with Zippy (now Snappy)",
+              "3,000 ns",
+              "10,000 ns on Dean's slide"
+            ],
+            [
+              "Send 1 KB over a 1 Gbps network",
+              "10,000 ns",
+              ""
+            ],
+            [
+              "Read 4 KB at random from SSD",
+              "150,000 ns",
+              "maintained list only; about 1 GB/s"
+            ],
+            [
+              "Read 1 MB sequentially from memory",
+              "250,000 ns",
+              "0.25 ms"
+            ],
+            [
+              "Round trip within the same datacenter",
+              "500,000 ns",
+              "0.5 ms"
+            ],
+            [
+              "Read 1 MB sequentially from SSD",
+              "1,000,000 ns",
+              "1 ms; four times memory"
+            ],
+            [
+              "Disk seek",
+              "10,000,000 ns",
+              "10 ms; 20 datacenter round trips"
+            ],
+            [
+              "Read 1 MB sequentially from a 1 Gbps network",
+              "10,000,000 ns",
+              "10 ms"
+            ],
+            [
+              "Read 1 MB sequentially from disk",
+              "20,000,000 ns",
+              "30 ms on Dean's slide"
+            ],
+            [
+              "Send a packet from California to the Netherlands and back",
+              "150,000,000 ns",
+              "150 ms; set by the speed of light"
+            ]
+          ],
+          "cites": [
+            "s1",
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Three consequences account for most of the structure of large systems. Anything that must be fast lives in memory, and a cache hit is the cheapest operation a service performs. Sequential access beats random access on every medium, so storage engines batch and append rather than seek. Network round trips are the unit of cost in a distributed design: twenty dependent calls inside one datacenter spend about ten milliseconds before doing any work, and one cross-region call costs more than all twenty."
+        },
+        {
+          "type": "p",
+          "text": "The values drift, and the drift is itself a lesson. The interactive version of the table lets you pick a year and watch the SSD and network rows fall while the intercontinental row stays fixed, set by the speed of light. The maintained list now also carries rows for language model inference, where a generated token costs tens of milliseconds and a first token from a hosted model about a second: a new rung at the slow end.",
+          "cites": [
+            "s2",
+            "s3"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "A round trip across an ocean is about 150 ms. A synchronous cross-region call on a path with a 200 ms budget has spent most of the budget on physics before any work is done. Keep such calls off the hot path, or move the data.",
+          "cites": [
+            "s1"
+          ]
         }
-      ],
-      "id": "back-of-envelope",
-      "title": "Back-of-envelope estimation"
+      ]
     },
     {
-      "body": [
+      "id": "percentiles-and-tail-latency",
+      "title": "Percentiles and tail latency",
+      "blocks": [
         {
-          "body": "Little's law states that the average number of items in a stable system equals the average arrival rate multiplied by the average time each item spends in it: L equals lambda times W. It holds regardless of arrival distribution. At 2,000 requests per second and 50 milliseconds per request, about 100 requests are in flight, which sizes thread pools, connection pools and memory per request. It also runs backwards: a pool of 100 connections with 50 millisecond queries caps throughput near 2,000 per second. If latency doubles under a fixed arrival rate, concurrency doubles too, which is how a slow dependency exhausts pools upstream. Queueing delay grows sharply as utilisation approaches 100 percent, so plan to run well below saturation.",
-          "heading": "One equation that links the three"
+          "type": "p",
+          "text": "Latency has a skewed distribution: most requests are fast, a few are very slow, and the slow ones are the ones users remember. The mean sits at a value that describes almost no real request, so teams report percentiles instead and set their targets on the high ones. A percentile is read as a fraction of requests, and the table gives the ones that appear in practice."
+        },
+        {
+          "type": "table",
+          "caption": "Reading a percentile.",
+          "columns": [
+            "percentile",
+            "meaning",
+            "out of 1,000 requests",
+            "what it is used for"
+          ],
+          "rows": [
+            [
+              "p50 (the median)",
+              "half of requests are faster",
+              "500 are slower",
+              "the typical experience; efficiency work shows up here"
+            ],
+            [
+              "p95",
+              "one request in 20 is slower",
+              "50 are slower",
+              "the delay after which a hedged request is often sent"
+            ],
+            [
+              "p99",
+              "one request in 100 is slower",
+              "10 are slower",
+              "the usual latency SLO; heavy users and large requests live here"
+            ],
+            [
+              "p99.9",
+              "one request in 1,000 is slower",
+              "1 is slower",
+              "what a fan-out of many backends turns into the median; Amazon's dashboards focus here"
+            ],
+            [
+              "p99.99",
+              "one request in 10,000 is slower",
+              "about 0.1",
+              "still thousands of slow requests a day at high volume"
+            ]
+          ],
+          "cites": [
+            "s4",
+            "s10",
+            "s11"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The SRE book's monitoring chapter gives the canonical example of why the mean misleads: a web service with an average latency of 100 ms at 1,000 requests per second can easily have 1 percent of requests taking 5 seconds. If a page depends on several such services, the slow percentile of one backend becomes the median of the page.",
+          "cites": [
+            "s10"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Why target the tail rather than the middle? The heaviest users make the most requests, so they meet the tail most often; the largest requests are over-represented in it; and in a service-oriented architecture a slow response deep in a call chain becomes the latency of every page built on it. Amazon's engineering guidance states both effects: its teams focus on the 99.9th and 99.99th percentiles because one slow request in a thousand is still a poor experience, and reducing high-percentile latency tends to reduce the median too, while the reverse rarely holds.",
+          "cites": [
+            "s11"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Percentiles have one awkward property: they cannot be combined by averaging. The p99 of a fleet is not the mean of each host's p99, and the p99 over an hour is not the mean of the one-minute values. The right representation is a histogram of request counts per latency bucket, which is additive across hosts and across time; the percentile is read off the merged histogram. The SRE book recommends bucket boundaries that grow by roughly a factor of three, and HdrHistogram is the common library for recording values at high resolution and merging them.",
+          "cites": [
+            "s10",
+            "s12"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "Never average percentiles across hosts or time windows. Merge histograms, then read the percentile from the merged histogram.",
+          "cites": [
+            "s12"
+          ]
         }
-      ],
+      ]
+    },
+    {
+      "id": "fan-out-amplifies-the-tail",
+      "title": "Fan-out amplifies the tail",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "A request that fans out to many backends and waits for all of them is as slow as its slowest reply. That turns a rare event on one server into a common event for the user: the chance that at least one of N backends is slow is one minus the chance that all N are fast. The Tail at Scale, by Dean and Barroso, states the canonical case: a server that is slow one time in a hundred gives one slow user request in a hundred when a request touches one server, and slow responses for most user requests when it touches a hundred.",
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "steps",
+          "title": "The share of requests that see a slow backend",
+          "items": [
+            "Each backend answers slowly one time in 100, so a single call is fast with probability 0.99.",
+            "A user request fans out to 100 backends and waits for every reply.",
+            "All replies are fast only when every one is fast: 0.99 to the power of 100, about 0.37.",
+            "So about 63 percent of user requests (1 minus 0.37) wait for a slow backend. In general: 1 minus (1 minus p) to the power of N, with p one backend's slow fraction and N the fan-out.",
+            "Make the server a hundred times better, slow one time in 10,000, and fan out to 2,000 backends: 1 minus 0.9999 to the power of 2,000 is about 18 percent, nearly one request in five."
+          ],
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Measured finishing times in a large fan-out service at Google (The Tail at Scale, Table 1).",
+          "columns": [
+            "requests measured at the root",
+            "p50",
+            "p95",
+            "p99"
+          ],
+          "rows": [
+            [
+              "one random leaf finishes",
+              "1 ms",
+              "5 ms",
+              "10 ms"
+            ],
+            [
+              "95 percent of all leaves finish",
+              "12 ms",
+              "32 ms",
+              "70 ms"
+            ],
+            [
+              "all leaves finish",
+              "40 ms",
+              "87 ms",
+              "140 ms"
+            ]
+          ],
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The measured table shows the consequence. Waiting for the slowest 5 percent of leaves costs as much at p99 as all the others together, so every mitigation attacks the slowest few replies, not the average. None makes a server faster; they change what the request does when one is slow.",
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "list",
+          "items": [
+            "Hedged requests: send a copy to a second replica once the first has been outstanding longer than the p95 expected latency; take whichever answers first. Waiting for the p95 caps the extra load at about 5 percent.",
+            "Tied requests: enqueue the request on two servers at once, each tagged with the other; whichever starts first cancels its twin.",
+            "Micro-partitions: many more partitions than machines (about 20 per machine), so load moves in small steps and a slow machine sheds work quickly.",
+            "Good-enough responses: return what has arrived at the deadline, marked as partial.",
+            "Latency-induced probation: take a machine that has turned slow out of rotation and probe it until it recovers."
+          ],
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Before putting a synchronous fan-out on a hot path, compute the slow share from the backend's slow fraction and the fan-out width. If it is not acceptable: hedge, shrink the fan-out, or make the step asynchronous.",
+          "cites": [
+            "s4"
+          ]
+        }
+      ]
+    },
+    {
       "id": "littles-law-and-utilisation",
-      "title": "Throughput, concurrency and Little's law"
-    }
-  ],
-  "diagram": null,
-  "code": [
+      "title": "Little's law and utilisation",
+      "blocks": [
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Little's law: L = lambda times W. The average number of requests in a system equals the average arrival rate times the average time each request spends there. It holds for any arrival pattern and any service order, as long as the system is stable.",
+          "cites": [
+            "s5",
+            "s6"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The law links the three quantities a designer measures separately: throughput, which is easy to count; latency, which is easy to time; and concurrency, which is hard to observe but is what consumes resources, because threads, connections, memory per request and file handles are all numerically limited. Marc Brooker's post on the law makes this case: concurrency is the capacity a system runs out of, and Little's law computes it from the two quantities you can measure.",
+          "cites": [
+            "s6"
+          ]
+        },
+        {
+          "type": "steps",
+          "title": "Sizing a pool with Little's law",
+          "items": [
+            "A service receives 2,000 requests per second: that is lambda.",
+            "Each request spends 50 ms in the service, including its downstream calls: that is W.",
+            "L equals 2,000 times 0.05, so about 100 requests are in flight on average, and the thread or connection pool must hold about 100 before queueing starts.",
+            "Run it backwards: a pool capped at 100 connections with 50 ms queries carries at most 100 divided by 0.05, which is 2,000 requests per second.",
+            "A dependency slows and W doubles to 100 ms at the same lambda: L doubles to 200, the pool is exhausted, and the service queues although its own code did not change."
+          ],
+          "cites": [
+            "s5",
+            "s6"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The last step is how a slow dependency exhausts pools two or three hops away: latency and concurrency rise together at a fixed arrival rate, and the hop with the smallest pool fails first. The same arithmetic sizes memory per request, the queue depth that absorbs a burst of known duration, and the workers needed to drain a backlog."
+        },
+        {
+          "type": "p",
+          "text": "Utilisation, the fraction of time a server is busy, is the arrival rate divided by the service rate, and its effect on latency is not linear. For the simplest model, one server with a queue in front of it, the mean number of items in the system is rho divided by (1 minus rho), and by Little's law the mean time in the system is the service time divided by (1 minus rho). The table shows the shape: comfortable at half utilisation, steep past 80 percent, unbounded at saturation.",
+          "cites": [
+            "s7",
+            "s5"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The single-server queue (M/M/1). Real systems differ in detail, but the shape holds.",
+          "columns": [
+            "utilisation rho",
+            "mean items in the system",
+            "mean time in system, as a multiple of service time"
+          ],
+          "rows": [
+            [
+              "0.5",
+              "1",
+              "2"
+            ],
+            [
+              "0.8",
+              "4",
+              "5"
+            ],
+            [
+              "0.9",
+              "9",
+              "10"
+            ],
+            [
+              "0.95",
+              "19",
+              "20"
+            ],
+            [
+              "0.99",
+              "99",
+              "100"
+            ]
+          ],
+          "cites": [
+            "s7"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "High-percentile latency is a leading indicator of overload, not a measure of efficiency. Efficiency work lowers utilisation and the tail falls; growth raises it and the tail returns, with no code change in between. Run well below saturation at peak.",
+          "cites": [
+            "s7"
+          ]
+        }
+      ]
+    },
     {
-      "code": "dau = 20_000_000\nreqs_per_user = 30\npeak_factor = 4\navg_rps = dau * reqs_per_user / 86_400\npeak_rps = avg_rps * peak_factor\n\nlatency_s = 0.05\nin_flight = peak_rps * latency_s          # Little's law: L = lambda * W\n\nper_node_rps = 1_500\nnodes = peak_rps / per_node_rps * 1.5     # 50 percent headroom\n\nwrite_bytes = 2_000\nwrites_per_day = dau * 5\nstorage_tb_year = writes_per_day * write_bytes * 365 * 3 / 1e12  # 3 replicas\n\nprint(round(avg_rps), round(peak_rps), round(in_flight), round(nodes))\nprint(round(storage_tb_year, 1), 'TB per year')",
-      "lang": "python"
+      "id": "from-users-to-machines",
+      "title": "From users to machines: the order of the estimate",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Sizing a system is a chain of multiplications from a population to a machine count, and the discipline is to do it in a fixed order so that nothing is skipped. Start from the users and what each does per day; convert to average rates per second; apply a peak factor; multiply by payload sizes for bandwidth and by retention for storage; divide by per-component capacity to get machine counts, with headroom for failure. Each line names its assumption and carries its unit."
+        },
+        {
+          "type": "steps",
+          "title": "The order of the estimate",
+          "items": [
+            "Users: daily active users, and how many of each kind of action (reads, writes, uploads) each performs per day. These are assumptions; write them down.",
+            "Average rate: actions per day divided by 86,400 seconds. Round the divisor to 100,000 in your head.",
+            "Peak rate: the average times a peak factor. Diurnal consumer traffic peaks at 2 to 3 times the average; bursty or event-driven traffic at 10 times or more. State which you assumed.",
+            "Bandwidth: peak rate times payload size gives bytes per second; times 8 for bits per second, compared with the link.",
+            "Storage: writes per day times bytes per write times retention in days, times the replication factor, plus indexes and the free space a disk needs.",
+            "Concurrency: peak rate times latency, by Little's law, gives in-flight requests, which sizes pools and memory per request.",
+            "Machines: peak rate divided by measured per-node capacity, then headroom for one node and one zone failing. Repeat per resource (CPU, memory, disk IOPS, network) and keep the largest count.",
+            "The decider: name the resource that runs out first and the one assumption that, if off by a factor of ten, changes the architecture."
+          ],
+          "cites": [
+            "s8",
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The per-node capacity figures in the machines step are the weakest link in any estimate, because they depend on the code, the hardware and the request mix. They come from a load test or a production dashboard, not from a reference table, and the estimate should say which. Where neither exists yet, use a conservative placeholder and flag it, as the SRE workbook does by rounding each log entry up to 2 KB.",
+          "cites": [
+            "s8"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Headroom is where estimates are quietly wrong. A fleet sized to carry the peak at full utilisation has no room for a node failure, a deployment that takes capacity out of rotation, or the queueing growth described above. Size for the peak at a target utilisation well below saturation, then add the capacity of the largest failure domain you intend to survive: for three zones, a third more machines than the arithmetic alone suggests.",
+          "cites": [
+            "s7"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "tip",
+          "text": "Carry units on every line. Most estimation errors are a day divided into the wrong number of seconds, bytes confused with bits, or a replication factor forgotten.",
+          "cites": [
+            "s8"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "checking-an-estimate",
+      "title": "Checking an estimate and the mistakes to look for",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "An estimate is only useful if a reader can check it, so the output is a short table with one row per quantity, its formula and its source, not a paragraph of numbers. A reviewer should be able to disagree with one row without redoing the sheet. Three checks catch most errors: the units reconcile on every line, each derived number is within a factor of ten of a known system of similar shape, and the bottleneck resource is named rather than implied."
+        },
+        {
+          "type": "table",
+          "caption": "The errors reviewers find most often, and what to do about each.",
+          "columns": [
+            "mistake",
+            "what it looks like",
+            "fix"
+          ],
+          "rows": [
+            [
+              "Mixing per-day and per-second",
+              "a daily total used as a rate",
+              "carry units; divide by 86,400 exactly once"
+            ],
+            [
+              "Bits versus bytes",
+              "an egress figure that is 8 times off",
+              "write B or b on every line"
+            ],
+            [
+              "Forgetting the peak",
+              "machines sized for the average",
+              "state the peak factor and the evidence for it"
+            ],
+            [
+              "Forgetting replication",
+              "storage three times too small",
+              "multiply by the replication factor, then add indexes and headroom"
+            ],
+            [
+              "Averaging percentiles",
+              "a fleet p99 that looks better than any host's",
+              "merge histograms and read the percentile from the merged one"
+            ],
+            [
+              "Treating fan-out as free",
+              "a p99 budget met by every backend but missed by the request",
+              "compute the slow share from the backend's slow fraction and the fan-out width; measure the chain end to end"
+            ],
+            [
+              "Sizing at full utilisation",
+              "queues that explode at the first burst",
+              "plan for a target utilisation well below saturation at peak"
+            ]
+          ],
+          "cites": [
+            "s4",
+            "s7",
+            "s12"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The review question that matters most is not whether the multiplication is right but whether the assumptions are. A design that assumes 10 reads per user per day when the product shows 100 is wrong by an order of magnitude before any arithmetic, and that is the error an experienced reviewer looks for first: the one input that decides the shape. The second question is which number the design is most sensitive to, because that is the number to measure first once the system exists."
+        },
+        {
+          "type": "p",
+          "text": "The same sheet outlives the design review. Once the system is live, its rows become the capacity plan: the assumptions are replaced by measurements, the per-node capacities by load test results, and the peak factor by the observed one. A row whose measured value disagrees with the estimate by more than a factor of a few is the first thing to investigate, because either the model of the system or the system itself is not what the team believes.",
+          "cites": [
+            "s9"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Present the estimate as a table of assumptions and derived quantities, each with its formula and source. A paragraph of numbers hides the one that matters."
+        }
+      ]
     }
   ],
+  "worked_example": {
+    "title": "Worked example: sizing a photo-sharing backend from 20 million daily users",
+    "blocks": [
+      {
+        "type": "p",
+        "text": "A photo-sharing product wants to know how many application servers it needs, how fast its metadata store grows, and whether the read path fits a 200 ms budget. Every input is an assumption chosen to make the arithmetic concrete; the script at the end recomputes everything when you change one."
+      },
+      {
+        "type": "steps",
+        "title": "From 20 million users to a machine count",
+        "items": [
+          "Users: 20 million daily active users (assumption).",
+          "Reads: each user makes 30 read requests a day (assumption), so 600 million reads per day.",
+          "Average read rate: 600 million divided by 86,400 seconds is about 7,000 requests per second.",
+          "Peak read rate: a peak factor of 4 (consumer traffic with a strong evening peak, assumption) gives 28,000 requests per second.",
+          "Writes: each user uploads 5 items a day with 2 kB of metadata each (assumption; the media itself goes to object storage and is sized separately), so 100 million writes per day.",
+          "Write rate: 100 million a day is about 1,200 writes per second on average and 4,600 at the same peak factor.",
+          "Concurrency: at 50 ms per read (assumption, from a load test), Little's law gives 28,000 times 0.05, which is 1,400 reads in flight at peak across the fleet.",
+          "Servers: one application node sustains 1,500 requests per second at that latency in the load test (assumption), so 28,000 divided by 1,500 is about 19 nodes to carry the peak with no headroom.",
+          "Headroom: 50 percent headroom gives 28 nodes; round up to 30 across 3 zones. Losing a zone leaves 20 nodes, or 30,000 requests per second, still above the peak.",
+          "Egress: 28,000 requests per second times 10 kB per response (assumption) is 280 MB/s, about 2.2 Gbit/s at peak, inside one 10 Gbit/s uplink.",
+          "Storage: 100 million writes times 2 kB is 200 GB of metadata per day, 73 TB per year raw and 219 TB per year with 3 replicas.",
+          "Hot set: the last 2 days of writes is 400 GB, which fits a small memory tier, so nearly every feed read is a cache hit and the 200 ms budget is comfortable.",
+          "The decider: storage. Servers and egress are cheap and scale by adding nodes; metadata grows by over 200 TB a year, so the storage engine, its replication factor and the retention policy are the decisions to make first."
+        ],
+        "cites": [
+          "s5",
+          "s8",
+          "s1"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "The estimate as a reviewer should receive it: one row per quantity, with its formula.",
+        "columns": [
+          "quantity",
+          "value",
+          "derived from"
+        ],
+        "rows": [
+          [
+            "Reads per day",
+            "600 million",
+            "20 million users times 30 reads"
+          ],
+          [
+            "Average read rate",
+            "7,000 per second",
+            "600 million divided by 86,400"
+          ],
+          [
+            "Peak read rate",
+            "28,000 per second",
+            "average times a peak factor of 4"
+          ],
+          [
+            "Writes per day",
+            "100 million",
+            "20 million users times 5 uploads"
+          ],
+          [
+            "Peak write rate",
+            "4,600 per second",
+            "100 million divided by 86,400, times 4"
+          ],
+          [
+            "Reads in flight at peak",
+            "1,400",
+            "28,000 times 0.05 s (Little's law)"
+          ],
+          [
+            "Application nodes",
+            "30",
+            "28,000 divided by 1,500 per node, plus 50 percent headroom, rounded to 3 zones"
+          ],
+          [
+            "Peak egress",
+            "2.2 Gbit/s",
+            "28,000 times 10 kB times 8"
+          ],
+          [
+            "Metadata per year",
+            "219 TB",
+            "200 GB per day times 365 times 3 replicas"
+          ],
+          [
+            "Hot set (2 days)",
+            "400 GB",
+            "200 GB per day times 2"
+          ]
+        ]
+      },
+      {
+        "type": "code",
+        "lang": "python",
+        "code": "dau = 20_000_000\nreads_per_user, writes_per_user = 30, 5\npeak_factor = 4\nlatency_s = 0.05            # measured in a load test\nper_node_rps = 1_500        # measured in a load test\nwrite_bytes, response_bytes = 2_000, 10_000\nreplicas, retention_days = 3, 365\n\navg_rps = dau * reads_per_user / 86_400\npeak_rps = avg_rps * peak_factor\nin_flight = peak_rps * latency_s                    # Little's law: L = lambda * W\nnodes = -(-peak_rps * 1.5 // per_node_rps)          # 50 percent headroom, rounded up\negress_gbit = peak_rps * response_bytes * 8 / 1e9\nstorage_tb = dau * writes_per_user * write_bytes * retention_days * replicas / 1e12\n\nprint(f\"avg {avg_rps:,.0f} rps, peak {peak_rps:,.0f} rps, {in_flight:,.0f} in flight\")\nprint(f\"{nodes:.0f} nodes, {egress_gbit:.1f} Gbit/s egress, {storage_tb:.0f} TB per year\")",
+        "caption": "The same estimate as a script: change one assumption and every derived number follows."
+      }
+    ]
+  },
+  "diagram": null,
+  "code": [],
   "technologies": [
     "Prometheus",
     "Grafana",
@@ -91,30 +783,142 @@
   ],
   "sources": [
     {
-      "kind": "article",
-      "title": "The Tail at Scale (Dean and Barroso)",
-      "url": "https://research.google/pubs/the-tail-at-scale/"
+      "id": "s1",
+      "title": "Jeff Dean, Building Software Systems at Google and Lessons Learned, Stanford CS295 slides (PDF, 2010): the Numbers Everyone Should Know slide and the back-of-the-envelope thumbnail example",
+      "url": "https://static.googleusercontent.com/media/research.google.com/en//people/jeff/stanford-295-talk.pdf",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Numbers Everyone Should Know"
+      }
     },
     {
+      "id": "s2",
+      "title": "Latency Numbers Every Programmer Should Know (jboner gist, maintained; the Dean and Norvig numbers with SSD rows and, since 2026, model inference rows)",
+      "url": "https://gist.github.com/jboner/2841832",
       "kind": "article",
-      "title": "Latency Numbers Every Programmer Should Know",
-      "url": "https://gist.github.com/jboner/2841832"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Read 4K randomly from SSD"
+      }
     },
     {
+      "id": "s3",
+      "title": "Latency Numbers Every Programmer Should Know By Year (Colin Scott, interactive)",
+      "url": "https://colin-scott.github.io/personal_website/research/interactive_latency.html",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Latency Numbers Every Programmer Should Know By Year"
+      }
+    },
+    {
+      "id": "s4",
+      "title": "Jeffrey Dean and Luiz Andre Barroso, The Tail at Scale, Communications of the ACM 56(2), February 2013 (author's copy, PDF)",
+      "url": "https://barroso.org/publications/TheTailAtScale.pdf",
+      "kind": "paper",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "63% of user requests will take more than one second"
+      }
+    },
+    {
+      "id": "s5",
+      "title": "Little's law (Wikipedia): the statement L = lambda W and its independence from the arrival and service distributions",
+      "url": "https://en.wikipedia.org/wiki/Little%27s_law",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "L = λW"
+      }
+    },
+    {
+      "id": "s6",
+      "title": "Marc Brooker, Telling Stories About Little's Law (2018-06-20)",
+      "url": "https://brooker.co.za/blog/2018/06/20/littles-law.html",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Little's Law is widely used as a tool for understanding the behavior of distributed systems"
+      }
+    },
+    {
+      "id": "s7",
+      "title": "Marc Brooker, Latency Sneaks Up On You (2021-08-05): utilisation, the M/M/1 queue and why the tail returns after efficiency work",
+      "url": "https://brooker.co.za/blog/2021/08/05/utilization.html",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "E[N] = ⍴/(1-p)"
+      }
+    },
+    {
+      "id": "s8",
+      "title": "The Site Reliability Workbook, chapter 12, Non-Abstract Large System Design (Google, 2018, free online)",
+      "url": "https://sre.google/workbook/non-abstract-design/",
       "kind": "book",
-      "title": "Non-Abstract Large System Design (SRE workbook)",
-      "url": "https://sre.google/workbook/non-abstract-design/"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "500,000 search queries per second and 10,000 ad clicks per second"
+      }
     },
     {
+      "id": "s9",
+      "title": "Site Reliability Engineering, chapter 18, Software Engineering in SRE: the Auxon case study of intent-based capacity planning (Google, 2016, free online)",
+      "url": "https://sre.google/sre-book/software-engineering-in-sre/",
+      "kind": "book",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Auxon Case Study"
+      }
+    },
+    {
+      "id": "s10",
+      "title": "Site Reliability Engineering, chapter 6, Monitoring Distributed Systems: Worrying About Your Tail (Google, 2016, free online)",
+      "url": "https://sre.google/sre-book/monitoring-distributed-systems/",
+      "kind": "book",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Worrying About Your Tail"
+      }
+    },
+    {
+      "id": "s11",
+      "title": "Amazon Builders' Library, Instrumenting distributed systems for operational visibility (David Yanacek)",
+      "url": "https://builder.aws.com/content/3EuxPBdIiiUhB5IK47p3O3fxhy7/instrumenting-distributed-systems-for-operational-visibility",
       "kind": "article",
-      "title": "Little's law",
-      "url": "https://en.wikipedia.org/wiki/Little%27s_law"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "99.9th and 99.99th percentile"
+      }
+    },
+    {
+      "id": "s12",
+      "title": "HdrHistogram: a High Dynamic Range histogram (README; histograms are additive and record percentiles at configurable precision)",
+      "url": "https://github.com/HdrHistogram/HdrHistogram",
+      "kind": "repo",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Histogram objects are additive"
+      }
     }
   ],
   "practice": null,
   "provenance": {
-    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
-    "generated_on": "2026-10-13",
+    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center, format v2 exemplar",
+    "generated_on": "2026-10-15",
     "reviewed_by": null,
     "reviewed_on": null
   },
@@ -123,6 +927,11 @@
       "version": 1,
       "date": "2026-10-13",
       "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-15",
+      "change": "rewritten by hand from primary sources as a format v2 exemplar: 7 subtopics with the latency ladder, percentile, fan-out and utilisation tables, Little's law and fan-out as worked steps, a sizing worked example with the script after the teaching, cited in-practice blocks, 12 verified sources with ids"
     }
   ]
 }

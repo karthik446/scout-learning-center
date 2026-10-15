@@ -1,8 +1,8 @@
 {
-  "schema_version": "learning-center-lesson:1",
+  "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-news-feed",
-  "version": 2,
+  "version": 3,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: news feed",
@@ -21,7 +21,9 @@
   ],
   "summary": "A classic design exercise: the home feed of a social product with a heavy-tailed follower graph. The reference answer sizes fan-out from stated assumptions, chooses hybrid fan-out (on write for most authors, on read for celebrities), keeps a bounded timeline cache of post ids per user, ranks at read time behind a deadline, and treats fan-out lag as the freshness SLI.",
   "detail": [],
-  "in_practice": "",
+  "in_practice": {
+    "blocks": []
+  },
   "subtopics": [],
   "diagram": null,
   "code": [],
@@ -36,262 +38,708 @@
   ],
   "sources": [
     {
-      "kind": "talk",
-      "title": "InfoQ: Timelines at Scale (Raffi Krikorian; video, further viewing)",
-      "url": "https://www.infoq.com/presentations/Twitter-Timeline-Scalability/"
+      "id": "s1",
+      "title": "InfoQ: Timelines at Scale (Raffi Krikorian, QCon San Francisco 2012; video published 2013-04-03, further viewing)",
+      "url": "https://www.infoq.com/presentations/Twitter-Timeline-Scalability/",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Raffi Krikorian explains the architecture used by Twitter"
+      }
     },
     {
-      "kind": "blog",
-      "title": "LinkedIn Engineering: FollowFeed, LinkedIn's feed made faster and smarter",
-      "url": "https://www.linkedin.com/blog/engineering/feed/followfeed-linkedin-s-feed-made-faster-and-smarter"
+      "id": "s2",
+      "title": "LinkedIn Engineering: FollowFeed, LinkedIn's feed made faster and smarter (2016-03-31)",
+      "url": "https://www.linkedin.com/blog/engineering/feed/followfeed-linkedin-s-feed-made-faster-and-smarter",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "fan-out-on-read model is more efficient for our use case"
+      }
     },
     {
+      "id": "s3",
+      "title": "TAO: Facebook's distributed data store for the social graph (Bronson et al., USENIX ATC 2013)",
+      "url": "https://www.usenix.org/conference/atc13/technical-sessions/presentation/bronson",
       "kind": "paper",
-      "title": "TAO: Facebook's distributed data store for the social graph (USENIX ATC 2013)",
-      "url": "https://www.usenix.org/conference/atc13/technical-sessions/presentation/bronson"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "TAO can process a billion reads and millions of writes each second"
+      }
     },
     {
+      "id": "s4",
+      "title": "System Design Primer: Twitter timeline and search worked solution",
+      "url": "https://github.com/donnemartin/system-design-primer/blob/master/solutions/system_design/twitter/README.md",
       "kind": "repo",
-      "title": "System Design Primer: Twitter timeline worked solution",
-      "url": "https://github.com/donnemartin/system-design-primer/blob/master/solutions/system_design/twitter/README.md"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Keep only several hundred tweets for each home timeline in the Memory Cache"
+      }
     },
     {
-      "kind": "doc",
-      "title": "Latency numbers every programmer should know",
-      "url": "https://gist.github.com/jboner/2841832"
+      "id": "s5",
+      "title": "Latency Numbers Every Programmer Should Know (jboner gist, maintained)",
+      "url": "https://gist.github.com/jboner/2841832",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Round trip within same datacenter"
+      }
     },
     {
+      "id": "s6",
+      "title": "Jeffrey Dean and Luiz Andre Barroso, The Tail at Scale, Communications of the ACM, February 2013",
+      "url": "https://research.google/pubs/the-tail-at-scale/",
       "kind": "paper",
-      "title": "The Tail at Scale (Dean and Barroso)",
-      "url": "https://research.google/pubs/the-tail-at-scale/"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "It is challenging to keep the tail of the latency distribution short"
+      }
+    },
+    {
+      "id": "s7",
+      "title": "Twitter Snowflake README (snowflake-2010 branch): the 64-bit time-ordered id layout",
+      "url": "https://github.com/twitter-archive/snowflake",
+      "kind": "repo",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "time - 41 bits"
+      }
+    },
+    {
+      "id": "s8",
+      "title": "Redis documentation: Lists, including capped lists with LTRIM",
+      "url": "https://redis.io/docs/latest/develop/data-types/lists/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Capped lists"
+      }
     }
   ],
   "practice": null,
   "exercise": {
     "prompt": "Design the home feed of a social product: a user follows other users and sees their recent posts, newest or best first, every time they open the app. Posting must feel instant and the feed must open fast even for people who follow thousands of accounts.",
-    "constraints": [
-      {
-        "heading": "Functional",
-        "body": "Create a post (text, optional media reference); follow and unfollow; read the home feed with paging; a post appears in followers' feeds within seconds; an unfollow removes the author's future posts from the feed."
-      },
-      {
-        "heading": "Scale (assumption)",
-        "body": "50 million registered users, 10 million daily active (assumption). Each user follows 200 accounts on average; a few thousand accounts have more than 1 million followers. 2 million posts per day; each active user opens the feed 10 times a day. Peak rates are 10x the daily average. Derive the per-second rates, the fan-out volume and the timeline cache size yourself."
-      },
-      {
-        "heading": "Targets (assumption)",
-        "body": "Feed open p99 under 200 ms from the service; a post visible to followers within 5 s at p99; 99.9 percent availability for reads; posting may be less available than reading. A feed holds the latest 800 post ids per user (assumption; the public Twitter talk describes a bounded in-memory timeline per user)."
-      },
-      {
-        "heading": "Non-goals",
-        "body": "Search, direct messages, ads, media transcoding, the ranking model itself (treated as a service with a known latency)."
-      }
-    ],
+    "constraints": {
+      "type": "table",
+      "caption": "Constraints and numbers.",
+      "columns": [
+        "kind",
+        "constraint",
+        "note"
+      ],
+      "rows": [
+        [
+          "Functional",
+          "Create a post (text, optional media reference); follow and unfollow; read the home feed with paging.",
+          ""
+        ],
+        [
+          "Functional",
+          "A post appears in followers' feeds within seconds; an unfollow removes the author's future posts from the feed.",
+          ""
+        ],
+        [
+          "Scale (assumption)",
+          "50 million registered users, 10 million daily active.",
+          ""
+        ],
+        [
+          "Scale (assumption)",
+          "Each user follows 200 accounts on average; a few thousand accounts have more than 1 million followers.",
+          "heavy-tailed follower graph"
+        ],
+        [
+          "Scale (assumption)",
+          "2 million posts per day; each active user opens the feed 10 times a day.",
+          ""
+        ],
+        [
+          "Scale (assumption)",
+          "Peak rates are 10 times the daily average.",
+          "derive the per-second rates, the fan-out volume and the timeline cache size yourself"
+        ],
+        [
+          "Target (assumption)",
+          "Feed open p99 under 200 ms from the service.",
+          ""
+        ],
+        [
+          "Target (assumption)",
+          "A post visible to followers within 5 s at p99.",
+          ""
+        ],
+        [
+          "Target (assumption)",
+          "99.9 percent availability for reads; posting may be less available than reading.",
+          ""
+        ],
+        [
+          "Target (assumption)",
+          "A feed holds the latest 800 post ids per user.",
+          "the public Twitter talk describes a bounded in-memory timeline per user"
+        ],
+        [
+          "Non-goals",
+          "Search, direct messages, ads, media transcoding, the ranking model itself.",
+          "ranking is a service with a known latency"
+        ]
+      ],
+      "cites": [
+        "s1"
+      ]
+    },
     "clarifying_questions": [
       {
-        "question": "Chronological or ranked?",
-        "answer": "Ranked, but the candidate set is chronological: the last few hundred posts from followed accounts, re-ordered by a ranking service at read time."
+        "q": "Chronological or ranked?",
+        "a": "Ranked, but the candidate set is chronological: the last few hundred posts from followed accounts, re-ordered by a ranking service at read time."
       },
       {
-        "question": "How fresh must the feed be?",
-        "answer": "A new post should be visible within 5 s; a few seconds of staleness in the ranked order is fine."
+        "q": "How fresh must the feed be?",
+        "a": "A new post should be visible within 5 s; a few seconds of staleness in the ranked order is fine."
       },
       {
-        "question": "What is the follower distribution?",
-        "answer": "Heavy-tailed: a median user has a few hundred followers; a few thousand accounts have millions."
+        "q": "What is the follower distribution?",
+        "a": "Heavy-tailed: a median user has a few hundred followers; a few thousand accounts have millions."
       },
       {
-        "question": "Do deletes and unfollows have to be immediate?",
-        "answer": "A deleted post must never render; it may stay in cached id lists and be filtered at read time. Unfollow stops future posts; past ones may linger until they age out."
+        "q": "Do deletes and unfollows have to be immediate?",
+        "a": "A deleted post must never render; it may stay in cached id lists and be filtered at read time. Unfollow stops future posts; past ones may linger until they age out."
       },
       {
-        "question": "Is the feed read when the user is offline?",
-        "answer": "No; feeds are computed for active users only. A user inactive for 30 days (assumption) has no cached timeline and gets one rebuilt on return."
+        "q": "Is the feed read when the user is offline?",
+        "a": "No; feeds are computed for active users only. A user inactive for 30 days (assumption) has no cached timeline and gets one rebuilt on return."
       },
       {
-        "question": "Can a reader see a post the author later restricts?",
-        "answer": "Visibility is checked at render time against the current setting, never baked into the cache."
+        "q": "Can a reader see a post the author later restricts?",
+        "a": "Visibility is checked at render time against the current setting, never baked into the cache."
       }
     ],
     "reference_answer": [
       {
         "id": "requirements-and-estimates",
         "title": "Requirements and estimates",
-        "body": [
+        "blocks": [
           {
-            "heading": "Derived numbers: writes and reads",
-            "body": "Posts: 2 million per day is about 23 per second average, 230 at peak. Feed reads: 10 million users times 10 opens is 100 million per day, about 1,160 per second average and 11,600 at peak. Fan-out on write: each user follows 200 accounts, and in a closed graph every follow edge has one follower and one followee, so the average follower count equals the average followee count, 200; 2 million posts times 200 followers is 400 million timeline inserts per day, 4,600 per second average and 46,000 at peak, each an append of a 16-byte entry (post id plus timestamp) to a list. The write amplification of 200 is the price of a cheap read."
+            "type": "p",
+            "text": "Every number below follows from the stated assumptions: 10 million daily active users who each follow 200 accounts and open the feed 10 times a day, 2 million posts a day, and a peak at ten times the daily average. The tables carry the arithmetic; the paragraphs carry the assumptions."
           },
           {
-            "heading": "Derived numbers: storage and cache",
-            "body": "Timeline cache: 800 entries times 16 bytes is 12.8 kB per user; 10 million active users is 128 GB, a small cluster of memory nodes. Post content: 2 million posts times 1 kB is 2 GB per day, 730 GB per year in the post store before media; a content cache of the last two days (4 GB) serves nearly all feed renders."
+            "type": "table",
+            "caption": "Rates and daily volumes derived from the assumptions.",
+            "columns": [
+              "quantity",
+              "per day",
+              "average per second",
+              "peak per second",
+              "note"
+            ],
+            "rows": [
+              [
+                "Posts",
+                "2 million",
+                "23",
+                "230",
+                "peak is 10 times the average (assumption)"
+              ],
+              [
+                "Feed opens (reads)",
+                "100 million",
+                "1,160",
+                "11,600",
+                "10 million active users times 10 opens"
+              ],
+              [
+                "Timeline appends (fan-out on write)",
+                "400 million",
+                "4,600",
+                "46,000",
+                "2 million posts times 200 followers; each append is one 16-byte entry (post id plus timestamp) onto a per-user list"
+              ],
+              [
+                "Appends per active user",
+                "40",
+                "",
+                "",
+                "400 million divided by 10 million; the unit the cost line is priced in"
+              ],
+              [
+                "Post content written",
+                "2 GB",
+                "",
+                "",
+                "2 million posts times 1 kB, before media; 730 GB per year in the post store"
+              ]
+            ]
           },
           {
-            "heading": "The latency argument",
-            "body": "Reading a feed from the cache is one memory lookup of a few hundred ids (main memory reference 100 ns, one datacenter round trip 500 us, both from the latency reference numbers) plus a batched fetch of post content: well inside 200 ms. Assembling a feed at read time from 200 followed accounts instead means 200 lookups whose slowest one sets the latency; the tail-at-scale argument says the p99 of a fan-out is dominated by its worst member, which is why the answer precomputes."
+            "type": "p",
+            "text": "The fan-out row rests on one piece of graph arithmetic: in a closed graph every follow edge has one follower and one followee, so the mean follower count equals the mean followee count, 200. The row also assumes posts are spread evenly over authors; posts by accounts with millions of followers would raise the post-weighted average, and the celebrity exception below is what keeps them out of the fan-out path. The write amplification of 200 is the price of a cheap read."
           },
           {
-            "heading": "Cost per daily active user (assumptions)",
-            "body": "Per active user per day the design spends 25.6 kB of memory (the 12.8 kB timeline and one replica), 40 timeline appends (400 million appends divided by 10 million active users) and 10 feed reads with their content fetches. At an assumed 10 dollars per GB-month for replicated memory and 1 dollar per million appends including the fan-out workers' compute (both assumptions, chosen to make the arithmetic concrete), memory is about 0.0003 dollars per user per month and fan-out about 0.0012, so fan-out compute, not the cache, is the larger line and the celebrity threshold is the lever on it. That sum per daily active user per month is the number the team is held to, and it should be set before the design, not read off the bill afterwards."
+            "type": "table",
+            "caption": "Sizes: the timeline cache and the post store.",
+            "columns": [
+              "quantity",
+              "size",
+              "derived from"
+            ],
+            "rows": [
+              [
+                "Timeline entry",
+                "16 bytes",
+                "an 8-byte post id plus an 8-byte timestamp; with time-ordered ids the timestamp is redundant and the entry could be halved, so 16 bytes is conservative"
+              ],
+              [
+                "Timeline per active user",
+                "12.8 kB",
+                "800 entries times 16 bytes"
+              ],
+              [
+                "Timeline cache",
+                "128 GB",
+                "12.8 kB times 10 million active users: a small cluster of memory nodes"
+              ],
+              [
+                "Memory per active user with one replica",
+                "25.6 kB",
+                "two copies of the 12.8 kB timeline"
+              ],
+              [
+                "Post content cache (last two days)",
+                "4 GB",
+                "2 GB per day times 2; serves nearly every feed render"
+              ],
+              [
+                "Post store growth",
+                "730 GB per year",
+                "2 GB per day times 365, before media"
+              ]
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Reading a feed from the cache is one lookup of a few hundred ids plus one batched fetch of post content. A main memory reference costs about 100 ns and a round trip inside the datacenter about 500 microseconds, so the read path sits far inside the 200 ms budget.",
+            "cites": [
+              "s5"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Assembling the feed at read time from 200 followed accounts instead means 200 lookups whose slowest reply sets the latency. The Tail at Scale shows that the p99 of such a fan-out is dominated by its worst member, which is why this answer precomputes the timeline for most users and reserves read-time assembly for the few celebrity accounts.",
+            "cites": [
+              "s6"
+            ]
+          },
+          {
+            "type": "table",
+            "caption": "Cost per daily active user. Both unit prices are assumptions chosen to make the arithmetic concrete.",
+            "columns": [
+              "cost line",
+              "unit price (assumption)",
+              "per active user per month",
+              "note"
+            ],
+            "rows": [
+              [
+                "Replicated memory for the timeline",
+                "10 dollars per GB-month",
+                "0.0003 dollars",
+                "25.6 kB per user, the timeline and one replica"
+              ],
+              [
+                "Fan-out appends and the workers' compute",
+                "1 dollar per million appends",
+                "0.0012 dollars",
+                "40 appends a day, about 1,200 a month"
+              ],
+              [
+                "Total",
+                "",
+                "about 0.0015 dollars",
+                "fan-out compute, not the cache, is the larger line; the celebrity threshold is the lever on it"
+              ]
+            ]
+          },
+          {
+            "type": "p",
+            "text": "That total per daily active user per month is the number the team is held to. It is set before the design, not read off the bill afterwards, and the table shows which line the design can move."
           }
         ]
       },
       {
         "id": "high-level-design",
         "title": "High-level design",
-        "body": [
+        "blocks": [
           {
-            "heading": "Container view",
-            "body": "A post is stored once and its id is pushed, asynchronously, into the timeline cache of every follower (fan-out on write). The feed service reads the user's cached ids, merges in recent posts from the few celebrity accounts the user follows (fan-out on read for those only), asks the ranking service to order the candidates, and renders content from a post cache. The primer's Twitter worked solution describes this shape in text: a fan-out service that stores each tweet in the home timeline of every follower in a memory cache, several hundred entries kept per timeline, a timeline rebuilt for a user inactive for 30 days, and the advice to avoid fanning out tweets from highly followed users and merge them at serve time instead; the public Twitter talk is the first-hand account of the same hybrid (further viewing); LinkedIn's FollowFeed describes the opposite default, fan-out on read over a timeline index, which this answer uses only for celebrities."
+            "type": "p",
+            "text": "A post is stored once and its id is pushed, asynchronously, into the timeline cache of every follower: fan-out on write. The feed service reads the user's cached ids, merges in recent posts from the few celebrity accounts the user follows (fan-out on read for those only), asks the ranking service to order the candidates, and renders content from a post cache."
+          },
+          {
+            "type": "diagram",
+            "mermaid": "flowchart TB\n  subgraph Write path\n    A[Authors] --> PS[Post service]\n    PS --> PDB[(Posts, sharded by post id)]\n    PS --> Q[[post events]]\n    Q --> FO[Fan-out workers]\n    FO --> G[(Social graph: follows)]\n    FO --> TL[(Timeline cache: post ids per user)]\n  end\n  subgraph Read path\n    R[Readers] --> FS[Feed service]\n    FS --> TL\n    FS -->|celebrity posts| PDB\n    FS --> RK[Ranking service]\n    FS --> PC[(Post content cache)]\n  end",
+            "legend": "Boxes are containers; the two frames are the write and read paths; cylinders are stores; double brackets are logs."
+          },
+          {
+            "type": "p",
+            "text": "The primer's Twitter worked solution describes this shape in text: a fan-out service stores each tweet in the home timeline of every follower in a memory cache, keeps several hundred entries per timeline, rebuilds the timeline of a user inactive for 30 days from the database, and advises against fanning out tweets from highly followed users, merging them at serve time instead.",
+            "cites": [
+              "s4"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "The public Twitter talk is the first-hand account of the same hybrid: fan-out on write into bounded in-memory timelines, with highly followed accounts handled differently. LinkedIn's FollowFeed chose the opposite default, fan-out on read over a timeline index, after measuring that materialised feeds made the stored data 62 times larger than the pull model; this answer uses that shape only for celebrities.",
+            "cites": [
+              "s1",
+              "s2"
+            ]
           }
-        ],
-        "diagram": {
-          "source": "flowchart TB\n  subgraph Write path\n    A[Authors] --> PS[Post service]\n    PS --> PDB[(Posts, sharded by post id)]\n    PS --> Q[[post events]]\n    Q --> FO[Fan-out workers]\n    FO --> G[(Social graph: follows)]\n    FO --> TL[(Timeline cache: post ids per user)]\n  end\n  subgraph Read path\n    R[Readers] --> FS[Feed service]\n    FS --> TL\n    FS -->|celebrity posts| PDB\n    FS --> RK[Ranking service]\n    FS --> PC[(Post content cache)]\n  end",
-          "legend": "Boxes are containers; the two frames are the write and read paths; cylinders are stores; double brackets are logs."
-        }
+        ]
       },
       {
         "id": "data-model",
         "title": "The data model",
-        "body": [
+        "blocks": [
           {
-            "heading": "Entities",
-            "body": "Post {post_id (time-ordered 64-bit, Snowflake layout), author_id, created_at, text, media_ref, visibility, deleted}. Follow {follower_id, followee_id, created_at} indexed both ways: followers of X for fan-out, followees of Y for celebrity merge. Timeline {user_id -> list of (post_id, created_at), capped at 800, newest first}. The social graph is the read-hottest table in the system; the TAO paper describes a read-optimised, cached graph store for exactly this shape of workload."
+            "type": "table",
+            "caption": "Entities.",
+            "columns": [
+              "entity",
+              "fields",
+              "key or partition",
+              "notes"
+            ],
+            "rows": [
+              [
+                "Post",
+                "post_id, author_id, created_at, text, media_ref, visibility, deleted",
+                "post_id, a time-ordered 64-bit id in the Snowflake layout (41 bits of milliseconds, 10 bits of worker id, 12 bits of sequence); sharded by post_id",
+                "visibility and deleted are read at render time, never baked into a cache"
+              ],
+              [
+                "Follow",
+                "follower_id, followee_id, created_at",
+                "indexed both ways: by followee_id (followers of X, for fan-out) and by follower_id (followees of Y, for the celebrity merge)",
+                "the read-hottest table in the system; TAO is a cached, read-optimised graph store built for exactly this workload"
+              ],
+              [
+                "Timeline",
+                "user_id, then a list of (post_id, created_at)",
+                "partitioned by user_id across memory nodes",
+                "capped at 800 entries, newest first; a derived view that can be rebuilt; a capped list (push, then trim) is a native pattern in Redis"
+              ],
+              [
+                "CelebrityFollows",
+                "user_id, then the list of celebrity ids the user follows",
+                "by user_id",
+                "small, cached per user, read on every feed open for the merge"
+              ]
+            ],
+            "cites": [
+              "s7",
+              "s3",
+              "s8"
+            ]
           },
           {
-            "heading": "API",
-            "body": "POST /posts {text, media_ref?} returns {post_id}; POST /follows/{followee}; DELETE /follows/{followee}; GET /feed?cursor=&limit=50 returns {items[], next_cursor}. The cursor is the smallest post id on the page: time-ordered ids make paging stable while new posts arrive at the top."
+            "type": "table",
+            "caption": "The API.",
+            "columns": [
+              "method",
+              "path",
+              "request",
+              "response",
+              "notes"
+            ],
+            "rows": [
+              [
+                "POST",
+                "/posts",
+                "{text, media_ref?}",
+                "{post_id}",
+                "returns once the post is durable; fan-out is asynchronous"
+              ],
+              [
+                "POST",
+                "/follows/{followee}",
+                "",
+                "204",
+                "backfill of the followee's recent posts is lazy, on the follower's next read"
+              ],
+              [
+                "DELETE",
+                "/follows/{followee}",
+                "",
+                "204",
+                "stops future posts; past ones age out of the timeline"
+              ],
+              [
+                "GET",
+                "/feed?cursor=&limit=50",
+                "cursor: the smallest post id on the previous page",
+                "{items[], next_cursor}",
+                "time-ordered ids make paging stable while new posts arrive at the top"
+              ]
+            ]
+          },
+          {
+            "type": "p",
+            "text": "The cursor is the smallest post id on the page. Because ids are time-ordered, a page boundary is also a time boundary, so new posts arriving at the top never shift the pages below it, and a client can resume from a cursor after any delay."
           }
         ]
       },
       {
         "id": "core-flow",
         "title": "The core flow, step by step",
-        "body": [
+        "blocks": [
           {
-            "body": "Posting and reading, in the order a request sees them."
+            "type": "p",
+            "text": "Posting and reading, in the order a request sees them."
+          },
+          {
+            "type": "steps",
+            "title": "Post, fan out, read, merge, rank, render",
+            "items": [
+              "Post: the post service writes the post to the post store and emits a post event; it returns as soon as the write is durable, so posting feels instant regardless of follower count.",
+              "Fan-out: a worker consumes the event, reads the author's follower list in pages of 10,000, and appends the post id to each follower's timeline list, trimming to 800. For an author above the celebrity threshold (1 million followers, assumption) the worker skips fan-out and marks the post as celebrity-only.",
+              "Read: the feed service fetches the user's timeline ids from the cache (a miss means a rebuild from the followees' recent posts, bounded to the last 48 hours).",
+              "Celebrity merge: for the few celebrities the user follows (cached per user), fetch their recent post ids from the post store and merge by time.",
+              "Rank: send the candidate ids with features to the ranking service with a deadline of 50 ms (assumption); on timeout, fall back to chronological order and mark the response as unranked.",
+              "Render: batch-fetch content from the post cache, drop deleted or now-restricted posts, page by cursor, return."
+            ]
           }
-        ],
-        "steps": [
-          "Post: the post service writes the post to the post store and emits a post event; it returns as soon as the write is durable, so posting feels instant regardless of follower count.",
-          "Fan-out: a worker consumes the event, reads the author's follower list in pages of 10,000, and appends the post id to each follower's timeline list, trimming to 800. For an author above the celebrity threshold (1 million followers, assumption) the worker skips fan-out and marks the post as celebrity-only.",
-          "Read: the feed service fetches the user's timeline ids from the cache (a miss means a rebuild from the followees' recent posts, bounded to the last 48 hours).",
-          "Celebrity merge: for the few celebrities the user follows (cached per user), fetch their recent post ids from the post store and merge by time.",
-          "Rank: send the candidate ids with features to the ranking service with a deadline of 50 ms (assumption); on timeout, fall back to chronological order and mark the response as unranked.",
-          "Render: batch-fetch content from the post cache, drop deleted or now-restricted posts, page by cursor, return."
         ]
       },
       {
         "id": "scaling-and-the-bottleneck",
         "title": "Scaling and the bottleneck",
-        "body": [
+        "blocks": [
           {
-            "heading": "Fan-out volume and the celebrity threshold",
-            "body": "The bottleneck is fan-out write volume: 46,000 appends per second at peak, bursting to millions when a popular author posts. The timeline cache is partitioned by user id across memory nodes; appends are batched per target node, so one post to 10,000 followers becomes a few dozen batched calls, not 10,000. Fan-out lag (post event time to last append) is the freshness SLI; the 5 s target bounds the queue depth, and workers scale on lag, not on CPU. The celebrity exception keeps the worst case out of the write path entirely: without it, one post by an account with 10 million followers is 10 million appends, or about 3.6 minutes of the whole fleet's peak capacity."
+            "type": "p",
+            "text": "The bottleneck is fan-out write volume: 46,000 appends per second at peak, bursting far higher when a popular author posts. The timeline cache is partitioned by user id across memory nodes, and appends are batched per target node, so one post to 10,000 followers becomes a few dozen batched calls rather than 10,000 separate ones."
           },
           {
-            "heading": "Keeping reads cheap and backfill lazy",
-            "body": "Reads are cheap by construction (one cached list plus one batched content fetch), so the read path scales by adding feed service replicas and cache replicas. The ranking call is the only expensive step; it is bounded by a deadline and degrades to chronological. Backfill for new followers is lazy: on follow, the followee's last 48 hours of post ids are merged into the follower's timeline on the next read, not pushed at follow time, so a wave of follows after a viral moment does not become a write storm."
+            "type": "p",
+            "text": "Fan-out lag, from the post event to the last append, is the freshness SLI. The 5 s target bounds the queue depth, and the workers scale on lag, not on CPU."
+          },
+          {
+            "type": "steps",
+            "title": "Why the celebrity exception exists",
+            "items": [
+              "An account with 10 million followers posts.",
+              "Without the exception, that is 10 million appends from a single post.",
+              "At the whole fleet's peak capacity of 46,000 appends per second, that one post takes about 217 seconds, or 3.6 minutes, of everything.",
+              "The exception skips fan-out above 1 million followers (assumption), marks the post as celebrity-only, and merges it at read time for the followers who open their feed."
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Reads are cheap by construction, one cached list plus one batched content fetch, so the read path scales by adding feed service replicas and cache replicas. The ranking call is the only expensive step; it is bounded by a deadline and degrades to chronological order."
+          },
+          {
+            "type": "p",
+            "text": "Backfill for new followers is lazy: on follow, the followee's last 48 hours of post ids are merged into the follower's timeline on the next read, not pushed at follow time, so a wave of follows after a viral moment does not become a write storm."
           }
         ]
       },
       {
         "id": "failure-modes",
         "title": "Failure modes and what degrades",
-        "body": [
+        "blocks": [
           {
-            "body": "Each row names the failure, what the reader sees, and the mitigation."
-          }
-        ],
-        "table": {
-          "columns": [
-            "Failure",
-            "Effect",
-            "Mitigation"
-          ],
-          "rows": [
-            [
-              "Timeline cache node lost",
-              "feeds on that shard rebuild from the graph and post store",
-              "replicate timelines to a second node; rebuild bounded to 48 hours; rate-limit rebuilds"
+            "type": "p",
+            "text": "Each row names the failure, what the reader sees, and the mitigation."
+          },
+          {
+            "type": "table",
+            "caption": "Failure modes.",
+            "columns": [
+              "Failure",
+              "Effect",
+              "Mitigation"
             ],
-            [
-              "Fan-out lag grows past 5 s",
-              "new posts appear late",
-              "lag-based autoscaling of workers; alert on lag; posts still visible via rebuild"
-            ],
-            [
-              "Ranking service slow or down",
-              "chronological feed",
-              "deadline of 50 ms then fallback; response marked unranked"
-            ],
-            [
-              "Post store primary down",
-              "no new posts; feeds still render from cache",
-              "replicas serve reads; posting returns a clear error"
-            ],
-            [
-              "Viral post by a non-celebrity",
-              "a burst of up to a million appends from one post",
-              "batched appends per node; a dynamic celebrity threshold on follower count at post time"
-            ],
-            [
-              "Deleted post still in cached lists",
-              "would render stale content",
-              "filter against the post record at render time; tombstone in the content cache"
+            "rows": [
+              [
+                "Timeline cache node lost",
+                "feeds on that shard rebuild from the graph and post store",
+                "replicate timelines to a second node; rebuild bounded to 48 hours; rate-limit rebuilds"
+              ],
+              [
+                "Fan-out lag grows past 5 s",
+                "new posts appear late",
+                "lag-based autoscaling of workers; alert on lag; posts still visible via rebuild"
+              ],
+              [
+                "Ranking service slow or down",
+                "chronological feed",
+                "deadline of 50 ms then fallback; response marked unranked"
+              ],
+              [
+                "Post store primary down",
+                "no new posts; feeds still render from cache",
+                "replicas serve reads; posting returns a clear error"
+              ],
+              [
+                "Viral post by a non-celebrity",
+                "a burst of up to a million appends from one post",
+                "batched appends per node; a dynamic celebrity threshold on follower count at post time"
+              ],
+              [
+                "Deleted post still in cached lists",
+                "would render stale content",
+                "filter against the post record at render time; tombstone in the content cache"
+              ]
             ]
-          ]
-        }
+          }
+        ]
       },
       {
         "id": "trade-offs",
         "title": "Trade-offs and the alternative not taken",
-        "body": [
+        "blocks": [
           {
-            "body": "The decisions a reviewer reads first."
-          }
-        ],
-        "table": {
-          "columns": [
-            "Decision",
-            "Options",
-            "Chosen",
-            "Why"
-          ],
-          "rows": [
-            [
-              "Fan-out strategy",
-              "on write for all, on read for all, hybrid",
-              "hybrid: write for most, read for celebrities",
-              "cheap p99 reads for the 99 percent; the celebrity exception caps write amplification"
+            "type": "p",
+            "text": "The decisions a reviewer reads first."
+          },
+          {
+            "type": "table",
+            "caption": "Trade-offs.",
+            "columns": [
+              "Decision",
+              "Options",
+              "Chosen",
+              "Why"
             ],
-            [
-              "Timeline storage",
-              "memory cache of ids versus durable per-user tables",
-              "memory cache of ids, rebuildable",
-              "a derived view; losing it costs a rebuild, not data"
+            "rows": [
+              [
+                "Fan-out strategy",
+                "on write for all, on read for all, hybrid",
+                "hybrid: write for most, read for celebrities",
+                "cheap p99 reads for the 99 percent; the celebrity exception caps write amplification"
+              ],
+              [
+                "Timeline storage",
+                "memory cache of ids versus durable per-user tables",
+                "memory cache of ids, rebuildable",
+                "a derived view; losing it costs a rebuild, not data"
+              ],
+              [
+                "Ranking placement",
+                "rank at fan-out time versus at read time",
+                "at read time with a deadline",
+                "ranking changes faster than posts; stale scores would need re-fan-out"
+              ],
+              [
+                "Backfill on follow",
+                "push at follow time versus lazy merge at read",
+                "lazy merge",
+                "follows are bursty after viral moments; the read path already merges"
+              ]
             ],
-            [
-              "Ranking placement",
-              "rank at fan-out time versus at read time",
-              "at read time with a deadline",
-              "ranking changes faster than posts; stale scores would need re-fan-out"
-            ],
-            [
-              "Backfill on follow",
-              "push at follow time versus lazy merge at read",
-              "lazy merge",
-              "follows are bursty after viral moments; the read path already merges"
+            "cites": [
+              "s2"
             ]
-          ]
-        }
+          }
+        ]
       },
       {
         "id": "at-10x",
         "title": "What changes at 10x",
-        "body": [
+        "blocks": [
           {
-            "body": "At 100 million daily active users the timeline cache is 1.3 TB and fan-out peaks near 500,000 appends per second: the cache becomes cells of users (the cells lesson) so a cell failure costs 1 percent of feeds (100 cells, assumption), not all; fan-out workers are partitioned by target cell. Ranking moves to a two-stage design (cheap pre-filter in the feed service, heavy model on the top 200). The celebrity threshold drops, and more of the feed is assembled at read time from per-author recent-post lists, moving the design toward the FollowFeed shape. A feed freshness SLO and a cost per daily active user become the numbers the team is held to."
+            "type": "table",
+            "caption": "The numbers at 10x.",
+            "columns": [
+              "quantity",
+              "at 10 million daily active users",
+              "at 100 million daily active users",
+              "note"
+            ],
+            "rows": [
+              [
+                "Timeline cache",
+                "128 GB",
+                "1.3 TB",
+                "cells of users, so a cell failure costs a fraction of feeds, not all"
+              ],
+              [
+                "Cells (assumption)",
+                "1",
+                "100 cells of 1 million users",
+                "a cell failure costs 1 percent of feeds; fan-out workers are partitioned by target cell"
+              ],
+              [
+                "Posts per day",
+                "2 million",
+                "20 million",
+                "posts scale with users"
+              ],
+              [
+                "Fan-out appends at peak",
+                "46,000 per second",
+                "about 500,000 per second",
+                "the design's bottleneck grows linearly"
+              ],
+              [
+                "Ranking",
+                "one stage with a deadline",
+                "two stages: a cheap pre-filter in the feed service, the heavy model on the top 200",
+                ""
+              ],
+              [
+                "Celebrity threshold",
+                "1 million followers",
+                "lower",
+                "more of the feed is assembled at read time from per-author recent-post lists, moving toward the FollowFeed shape"
+              ]
+            ],
+            "cites": [
+              "s2"
+            ]
+          },
+          {
+            "type": "table",
+            "caption": "Cost at 10x, at the same assumed unit prices.",
+            "columns": [
+              "cost line",
+              "at 10 million daily active users",
+              "at 100 million daily active users",
+              "note"
+            ],
+            "rows": [
+              [
+                "Replicated memory",
+                "2,560 dollars per month",
+                "25,600 dollars per month",
+                "256 GB and 2.56 TB at 10 dollars per GB-month"
+              ],
+              [
+                "Fan-out appends",
+                "12,000 dollars per month",
+                "120,000 dollars per month",
+                "12 billion and 120 billion appends a month at 1 dollar per million"
+              ],
+              [
+                "Total",
+                "about 14,600 dollars per month",
+                "about 146,000 dollars per month",
+                "the same 0.0015 dollars per active user per month; the per-user number is what the team is held to"
+              ]
+            ]
+          },
+          {
+            "type": "p",
+            "text": "At this scale a feed freshness SLO and the cost per daily active user become the numbers the team is held to, and the celebrity threshold becomes a tuning knob rather than a constant: lowering it moves cost from fan-out compute to read-time merging, and the right setting is the one that keeps the feed-open p99 inside its budget at the lowest total."
           }
         ]
       }
@@ -314,54 +762,29 @@
         "What the cache must never decide: visibility and deletion are checked at render time, not at fan-out time."
       ]
     },
-    "interview_frame": [
-      {
-        "time": "0:00 to 0:05",
-        "text": "Requirements: ask about ranking, freshness, the follower distribution, deletes and offline users. Say the numbers aloud: 230 posts per second at peak, 11,600 feed reads per second at peak, 46,000 timeline appends per second at peak, a 128 GB timeline cache."
-      },
-      {
-        "time": "0:05 to 0:10",
-        "text": "Entities and API: Post, Follow (indexed both ways), Timeline; the four endpoints; cursor paging on time-ordered ids."
-      },
-      {
-        "time": "0:10 to 0:20",
-        "text": "High-level design with the diagram: write path (post store, event, fan-out workers, timeline cache) and read path (feed service, celebrity merge, ranking, content cache). Name the hybrid fan-out as the central decision."
-      },
-      {
-        "time": "0:20 to 0:40",
-        "text": "Two deep dives: fan-out volume and the celebrity threshold (batched appends, lag-based scaling, the 10-million-follower arithmetic), then the read path (one cached list, the ranking deadline and fallback, lazy backfill, render-time visibility checks)."
-      },
-      {
-        "time": "0:40 to 0:45",
-        "text": "Failure modes from the table, the 10x plan (cells, two-stage ranking, a lower celebrity threshold), and the L3 sentence: the timeline cache is a derived view; the SLO that matters is fan-out lag, and the cost that matters is per daily active user."
-      }
-    ],
-    "design_doc_frame": [
-      {
-        "section": "Context and scope",
-        "text": "The product's follow graph, the current feed implementation if any, the ranking service's contract, and the freshness complaints or cost that motivate the design."
-      },
-      {
-        "section": "Goals and non-goals",
-        "text": "Feed open p99 of 200 ms, visibility within 5 s, read availability of 99.9 percent; search, messaging, media and the ranking model are out of scope."
-      },
-      {
-        "section": "Design",
-        "text": "This answer fills it: the hybrid fan-out, the timeline cache, the read path with ranking deadline, the data model and cursor paging."
-      },
-      {
-        "section": "Alternatives considered",
-        "text": "Fan-out on read for everyone (FollowFeed shape), ranking at fan-out time, push-at-follow backfill, with the trade-off table."
-      },
-      {
-        "section": "Cross-cutting concerns",
-        "text": "Observability (fan-out lag, cache hit ratio, unranked response rate), privacy (visibility checked at render), cost per daily active user, rollout by user cohort with the old feed as fallback."
-      },
-      {
-        "section": "Review questions the doc must answer",
-        "text": "What happens when an account crosses the celebrity threshold mid-day, and how a deleted or restricted post is kept out of every reader's feed."
-      }
-    ],
+    "interview_frame": {
+      "type": "steps",
+      "title": "A 45-minute interview",
+      "items": [
+        "0:00 to 0:05: Requirements: ask about ranking, freshness, the follower distribution, deletes and offline users. Say the numbers aloud: 230 posts per second at peak, 11,600 feed reads per second at peak, 46,000 timeline appends per second at peak, a 128 GB timeline cache.",
+        "0:05 to 0:10: Entities and API: Post, Follow (indexed both ways), Timeline; the four endpoints; cursor paging on time-ordered ids.",
+        "0:10 to 0:20: High-level design with the diagram: write path (post store, event, fan-out workers, timeline cache) and read path (feed service, celebrity merge, ranking, content cache). Name the hybrid fan-out as the central decision.",
+        "0:20 to 0:40: Two deep dives: fan-out volume and the celebrity threshold (batched appends, lag-based scaling, the 10-million-follower arithmetic), then the read path (one cached list, the ranking deadline and fallback, lazy backfill, render-time visibility checks).",
+        "0:40 to 0:45: Failure modes from the table, the 10x plan (cells, two-stage ranking, a lower celebrity threshold), and the L3 sentence: the timeline cache is a derived view; the SLO that matters is fan-out lag, and the cost that matters is per daily active user."
+      ]
+    },
+    "design_doc_frame": {
+      "type": "list",
+      "items": [
+        "Context and scope: The product's follow graph, the current feed implementation if any, the ranking service's contract, and the freshness complaints or cost that motivate the design.",
+        "Goals and non-goals: Feed open p99 of 200 ms, visibility within 5 s, read availability of 99.9 percent; search, messaging, media and the ranking model are out of scope.",
+        "Design: This answer fills it: the hybrid fan-out, the timeline cache, the read path with ranking deadline, the data model and cursor paging.",
+        "Alternatives considered: Fan-out on read for everyone (FollowFeed shape), ranking at fan-out time, push-at-follow backfill, with the trade-off table.",
+        "Cross-cutting concerns: Observability (fan-out lag, cache hit ratio, unranked response rate), privacy (visibility checked at render), cost per daily active user, rollout by user cohort with the old feed as fallback.",
+        "Review questions the doc must answer: What happens when an account crosses the celebrity threshold mid-day, and how a deleted or restricted post is kept out of every reader's feed."
+      ],
+      "ordered": true
+    },
     "depth_notes": {
       "L1": "Fan-out on write with a timeline cache and the celebrity exception.",
       "L2": "Ranking as a separate service, cache sizing, backfill for new followers, pagination semantics.",
@@ -371,8 +794,8 @@
   "provenance": {
     "generated_by": "Claude (Fable 5.1) by hand, Scout learning center M4a",
     "generated_on": "2026-10-12",
-    "reviewed_by": "a second reader (Claude Fable 5.1), Scout learning center M4b",
-    "reviewed_on": "2026-10-12"
+    "reviewed_by": null,
+    "reviewed_on": null
   },
   "changelog": [
     {
@@ -384,6 +807,11 @@
       "version": 2,
       "date": "2026-10-12",
       "change": "writer follow-up on the second reader's items (M4c)"
+    },
+    {
+      "version": 3,
+      "date": "2026-10-15",
+      "change": "format v2 restructure: estimates, sizes, cost, entities, API and the 10x numbers as tables, the core flow and the celebrity arithmetic as steps, cites on the claims about real systems, sources with ids (Snowflake and Redis lists added); one assumption made explicit (posts spread evenly over authors), so reviewed_by is cleared for a second read"
     }
   ]
 }
