@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -339,12 +340,21 @@ class Pages(Fixture):
         self.assertIn("<ol><li>an ordered item", self.lesson)
         self.assertIn("<ul><li>an unordered item", self.lesson)
         self.assertIn('<div class="steps-block"><p class="steps-title">Size it</p><ol>', self.lesson)
-        self.assertIn('<table class="decision"><caption>A synthetic choice</caption><thead><tr><th scope="col">Option</th><th scope="col">Pick when</th>'
+        self.assertIn('<table class="decision"><caption>A synthetic choice<sup class="cite"><a href="#source-s6" aria-label="Source 6">[6]</a></sup></caption><thead><tr><th scope="col">Option</th><th scope="col">Pick when</th>'
                       '<th scope="col">Avoid when</th><th scope="col">Example</th></tr></thead><tbody><tr><th scope="row">Option A</th>', self.lesson)
         self.assertIn('<pre><code class="language-python" data-lang="python">', self.lesson)
         self.assertIn('<pre class="mermaid">flowchart LR', self.lesson)
         self.assertIn("/_assets/hljs/highlight.min.js", self.lesson)
         self.assertIn("/_assets/mermaid/mermaid.min.js", self.lesson)
+
+    def test_table_cites_print_once_in_the_caption(self) -> None:
+        for page in (self.lesson, self.exercise):
+            self.assertIsNone(re.search(r'</table></div>\s*<p class="cite-row">', page))
+        self.assertRegex(self.lesson, r'<caption>[^<]*<sup class="cite"><a href="#source-s\d+"')
+
+    def test_sidebar_lessons_are_a_closed_disclosure(self) -> None:
+        self.assertIn('<details class="sidebar-disclosure">\n<summary>Lessons in this module</summary>', self.lesson)
+        self.assertIn(".sidebar-disclosure", (self.site / "_assets" / "site.css").read_text(encoding="utf-8"))
 
     def test_exercise_page(self) -> None:
         ids = ["prompt", "constraints", "clarifying-questions", "reference-answer", "requirements-and-estimates", "high-level-design", "data-model", "core-flow",

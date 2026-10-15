@@ -136,6 +136,15 @@ def ext(url: str, text: str) -> str:
     return f'<a href="{esc(url)}" target="_blank" rel="noopener noreferrer">{text}</a>'
 
 
+# The module sidebar's lesson list is a <details> that is closed below the stacking breakpoint (820px, course.css) and always shown above it; no JavaScript.
+SIDEBAR_CSS = """
+nav.sidebar details.sidebar-disclosure > summary { cursor: pointer; font-weight: 600; padding: 0.3rem 0; }
+@media (min-width: 821px) {
+  nav.sidebar details.sidebar-disclosure > summary { display: none; }
+  nav.sidebar details.sidebar-disclosure::details-content { content-visibility: visible; display: block; }
+}
+"""
+
 SIM_CSS = '<link rel="stylesheet" href="/_assets/sim/sim.css">\n'
 SIM_JS = "/_assets/sim/sim.js"
 
@@ -234,6 +243,8 @@ def sidebar(lib: Library, mid: str | None, current: str) -> str:
     groups = ([(f"{p['id']}. {p['title']}", [e for e in published if e["part"] == p["id"]]) for p in m["parts"]]
               if m.get("parts") else [("Lessons", published)])
     n = 0
+    # closed on narrow screens (site-extra.css shows the list and hides the summary above the stacking breakpoint)
+    parts.append('<details class="sidebar-disclosure">\n<summary>Lessons in this module</summary>')
     for gi, (gtitle, entries) in enumerate(groups, 1):
         if not entries:
             continue
@@ -255,6 +266,7 @@ def sidebar(lib: Library, mid: str | None, current: str) -> str:
                 f'<span class="lesson-dot"></span><span>{esc(title)}</span></a>{pr}</li>'
             )
         parts.append("</ul>\n</details>")
+    parts.append("</details>")
     parts.append("</nav>")
     return "\n".join(parts)
 
@@ -417,8 +429,8 @@ def cite_marks(pg: Page, cites: list[str] | None) -> str:
     return f'<sup class="cite">{links}</sup>'
 
 
-def table_html(columns: list[str], rows: list[list[str]], caption: str | None, *, first_col_head: bool = False) -> str:
-    cap = f"<caption>{esc(caption)}</caption>" if caption else ""
+def table_html(columns: list[str], rows: list[list[str]], caption: str | None, *, first_col_head: bool = False, cites: str = "") -> str:
+    cap = f"<caption>{esc(caption or '')}{cites}</caption>" if (caption or cites) else ""
     head_ = "".join(f'<th scope="col">{esc(c)}</th>' for c in columns)
     def cells(r):
         return "".join((f'<th scope="row">{esc(c)}</th>' if i == 0 and first_col_head else f"<td>{esc(c)}</td>") for i, c in enumerate(r))
@@ -438,7 +450,7 @@ def render_block(pg: Page, b: dict) -> str:
         tag = "ol" if b.get("ordered") else "ul"
         return f"<{tag}>" + "".join(f"<li>{esc(i)}</li>" for i in b["items"]) + f"</{tag}>{row}"
     if t == "table":
-        return table_html(b["columns"], b["rows"], b.get("caption")) + row
+        return table_html(b["columns"], b["rows"], b.get("caption"), cites=cites)
     if t == "code":
         pg.code = True
         cap = f'<p class="muted block-caption">{esc(b["caption"])}</p>' if b.get("caption") else ""
@@ -451,7 +463,7 @@ def render_block(pg: Page, b: dict) -> str:
         return f'<div class="steps-block">{title}<ol>' + "".join(f"<li>{esc(i)}</li>" for i in b["items"]) + f"</ol>{row}</div>"
     if t == "decision":
         rows = [[r["option"], r["pick_when"], r["avoid_when"], r.get("example", "")] for r in b["rows"]]
-        return table_html(list(DECISION_COLUMNS), rows, b.get("caption"), first_col_head=True) + row
+        return table_html(list(DECISION_COLUMNS), rows, b.get("caption"), first_col_head=True, cites=cites)
     if t == "diagram":
         pg.diagram = True
         src = esc(b["mermaid"])
@@ -1156,7 +1168,7 @@ def build(content: Path, out: Path) -> dict:
     # assets, once, at the root (shared by / and /learn/)
     assets = out / "_assets"
     assets.mkdir()
-    (assets / "site.css").write_text((ROOT / "assets/course.css").read_text(encoding="utf-8") + "\n" + (ROOT / "assets/site-extra.css").read_text(encoding="utf-8"), encoding="utf-8")
+    (assets / "site.css").write_text((ROOT / "assets/course.css").read_text(encoding="utf-8") + "\n" + (ROOT / "assets/site-extra.css").read_text(encoding="utf-8") + SIDEBAR_CSS, encoding="utf-8")
     for name in ("course.js", "theme-init.js", "search.js", "favicon.svg"):
         shutil.copy2(ROOT / "assets" / name, assets / name)
     for d in ("mermaid", "hljs"):

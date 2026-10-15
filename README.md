@@ -71,7 +71,7 @@ index once with matching counts. The 12 topic modules have published entries onl
 
 Pages: `/learn/` (13 module cards and the search box), `/learn/modules/` (the index of all modules), `/learn/modules/<id>/` (summary,
 intro, lessons in order with Practice links, changes). A lesson's breadcrumb is Learning center > module > lesson (a practice page's adds the
-lesson) and its sidebar lists its module's lessons. `/learn/keys/<key>/` lists the lessons with that concept and the module of each.
+lesson) and its sidebar lists its module's lessons. `/learn/keys/<key>/` lists the lessons with that concept and the module of each. Below 820 px the sidebar's lesson list is a closed `<details class="sidebar-disclosure">` ("Lessons in this module"); above it the list is always shown (CSS only, no JavaScript); the filter box and the All modules link stay outside it. On :2 pages a table's cites print once, in its caption.
 Lesson URLs are unchanged.
 
 ## Removed: role pathways and families

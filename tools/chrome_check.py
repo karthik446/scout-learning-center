@@ -201,6 +201,14 @@ def check_page(ch: Chrome, base: str, name: str, path: str, width: int, shots: P
             "tables_overflowing_their_box": ev("[...document.querySelectorAll('.table-scroll')].filter((t) => t.scrollWidth > t.clientWidth).length"),
             "boxes_wider_than_column": ev("[...document.querySelectorAll('.table-scroll')].filter((t) => t.getBoundingClientRect().right > document.documentElement.clientWidth + 1).length"),
             "callouts": ev("document.querySelectorAll('.callout').length"), "cite_marks": ev("document.querySelectorAll('sup.cite a').length"),
+            "sidebar_disclosure_open": ev("(() => { const d = document.querySelector('details.sidebar-disclosure'); return d ? d.open : null; })()"),
+            "sidebar_list_visible": ev("(() => { const l = document.querySelector('nav.sidebar a.lesson-link'); return l ? l.checkVisibility({contentVisibilityAuto: true, visibilityProperty: true}) && l.getBoundingClientRect().height > 0 : null; })()"),
+            "sidebar_current_visible_when_open": ev("!!document.querySelector('nav.sidebar a.lesson-link.current')"),
+            "search_input_visible": ev("document.getElementById('sidebar-search-input').getBoundingClientRect().height > 0"),
+            "all_modules_link_visible": ev("[...document.querySelectorAll('nav.sidebar a')].some((a) => a.textContent === 'All modules' && a.getBoundingClientRect().height > 0)"),
+            "h1_top_px": ev("Math.round(document.querySelector('main h1').getBoundingClientRect().top + window.scrollY)"),
+            "table_cite_rows": ev("document.querySelectorAll('.table-scroll + p.cite-row').length"),
+            "captions_without_cites": ev("[...document.querySelectorAll('.table-scroll caption')].filter((c) => !c.querySelector('sup.cite')).length"),
             "broken_cite_links": ev("[...document.querySelectorAll('sup.cite a')].filter((a) => !document.getElementById(a.getAttribute('href').slice(1))).length"),
         }
     if name == "search":
@@ -275,6 +283,18 @@ def check_page(ch: Chrome, base: str, name: str, path: str, width: int, shots: P
             errors.append(f"page scrolls sideways: scrollWidth {facts['scroll_width']} > clientWidth {facts['client_width']}")
         if facts["mermaid_svg"] < facts["mermaid_blocks"]:
             errors.append(f"{facts['mermaid_blocks']} diagram block(s), {facts['mermaid_svg']} rendered as svg")
+        v = facts["v2"]
+        if width <= 820:  # the sidebar's list is a closed disclosure, so the lesson title is within the first screen (844 px, a phone)
+            if v["sidebar_disclosure_open"] is not False or v["h1_top_px"] >= 844:
+                errors.append(f"390 rule: disclosure open={v['sidebar_disclosure_open']}, h1 top {v['h1_top_px']} px (must be < 844 with the disclosure closed)")
+            if v["sidebar_list_visible"]:
+                errors.append("390 rule: the sidebar lesson list is visible while the disclosure is closed")
+        elif not v["sidebar_list_visible"]:
+            errors.append("1280 rule: the sidebar lesson list is not visible")
+        if not (v["search_input_visible"] and v["all_modules_link_visible"]):
+            errors.append(f"sidebar search input / All modules link not reachable: {json.dumps(v)}")
+        if v["table_cite_rows"]:
+            errors.append(f"{v['table_cite_rows']} bare cite row(s) after a table")
         if facts["v2"]["broken_cite_links"] or facts["v2"]["boxes_wider_than_column"]:
             errors.append(f"v2 page facts: {json.dumps(facts['v2'])}")
     return {"name": name, "path": path, "width": width, "reduced_motion": reduced, "nav_frame": nav.get("frameId", ""), "facts": facts, "console_errors": errors,
