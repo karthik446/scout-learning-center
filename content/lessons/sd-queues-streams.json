@@ -380,9 +380,9 @@
         },
         {
           "type": "p",
-          "text": "Outside the broker the word changes meaning. SQS FIFO queues offer what the documentation calls exactly-once processing, meaning that duplicates are not introduced into the queue and a delivered message stays unavailable until deleted; it says nothing about what the consumer does with it. The design document's own general advice is the one that applies everywhere: let the consumer store its offset in the same place as its output, so that the two are updated together or not at all, as a connector writing files with their offsets does.",
+          "text": "Outside the broker the word changes meaning, and a queue's promise ends at the queue. SQS FIFO queues order messages strictly within a message group, and the AWS decision guide describes SQS delivery as at-least-once with the possibility of duplicates; neither statement says anything about what the consumer does with a message. The design document's own general advice is the one that applies everywhere: let the consumer store its offset in the same place as its output, so that the two are updated together or not at all, as a connector writing files with their offsets does.",
           "cites": [
-            "s6",
+            "s9",
             "s2"
           ]
         },
@@ -459,7 +459,7 @@
         },
         {
           "type": "p",
-          "text": "Poison messages need their own exit. A message that fails every time blocks a partition or cycles for ever through a queue; the answer is a bounded number of retries with backoff and then a dead-letter queue or topic, alarmed on, with a way to replay after the fix. SQS attaches that policy to the queue and recommends it for persistent failures; RabbitMQ dead-letters on rejection, expiry or queue overflow; Amazon's teams alarm on any message in a dead-letter queue because it means a bug.",
+          "text": "Poison messages need their own exit. A message that fails every time blocks a partition or cycles for ever through a queue; the answer is a bounded number of retries with backoff and then a dead-letter queue or topic, alarmed on, with a way to replay after the fix. SQS attaches that policy to the queue and recommends it for persistent failures; RabbitMQ routes a rejected delivery to a dead-letter exchange when one is configured; Amazon's teams alarm on any message in a dead-letter queue because it means a bug.",
           "cites": [
             "s5",
             "s4",
@@ -482,7 +482,7 @@
       "blocks": [
         {
           "type": "p",
-          "text": "A message is durable when the broker will not lose it after acknowledging it, and the acknowledgement is a dial. In Kafka a message is committed only when every replica in the in-sync set has applied it; the producer chooses whether to wait for that, with acks set to all, to wait for the leader only, or not to wait at all, and the design document notes that waiting for the commit costs on the order of ten milliseconds. Two topic settings turn durability up further: a minimum in-sync replica count, so that a write cannot succeed on a lone surviving replica, and disabling unclean leader election, so that a partition stays unavailable rather than elect a replica that may lack committed messages.",
+          "text": "A message is durable when the broker will not lose it after acknowledging it, and the acknowledgement is a dial. In Kafka a message is committed only when every replica in the in-sync set has applied it; the producer chooses whether to wait for that, with acks set to all, to wait for the leader only, or not to wait at all. Two topic settings turn durability up further: a minimum in-sync replica count, so that a write cannot succeed on a lone surviving replica, and disabling unclean leader election, so that a partition stays unavailable rather than elect a replica that may lack committed messages.",
           "cites": [
             "s2"
           ]
@@ -597,9 +597,9 @@
         },
         {
           "type": "p",
-          "text": "Two combinations recur. A topic or bus in front of a queue gives fan-out plus a durable buffer per consumer, which is how the AWS guide describes routing events to a queue for downstream consumers. A log behind a thin gateway gives a durable, replayable buffer in front of an older system, which is what Slack built when its Redis-backed job queue ran out of memory: Kafka absorbs the enqueue rate and a relay drains it into Redis at a configured rate.",
+          "text": "Two combinations recur. A topic or bus in front of a queue gives fan-out plus a durable buffer per consumer, which is how the AWS application-integration guide describes sending events to a queue as a buffer for downstream consumers. A log behind a thin gateway gives a durable, replayable buffer in front of an older system, which is what Slack built when its Redis-backed job queue ran out of memory: Kafka absorbs the enqueue rate and a relay drains it into Redis at a configured rate.",
           "cites": [
-            "s9",
+            "s10",
             "s8"
           ]
         },
@@ -691,7 +691,7 @@
           "rows": [
             [
               "ordering",
-              "classic bus none; the newer custom bus ordered",
+              "none",
               "within a shard",
               "within a partition"
             ],
@@ -711,7 +711,7 @@
               "throughput",
               "elastic per event",
               "1 MB/s or 1,000 records per second written per shard, 2 MB/s read; on-demand scales further",
-              "brokers per Availability Zone"
+              "not stated in the cited guides; see the Amazon MSK documentation"
             ],
             [
               "retention",
@@ -723,7 +723,7 @@
               "cost basis",
               "events and target invocations",
               "shards or on-demand throughput",
-              "broker capacity"
+              "see the Amazon MSK pricing page"
             ]
           ],
           "cites": [
@@ -1051,8 +1051,8 @@
   "provenance": {
     "generated_by": "Claude (Fable 5.1) by hand, Scout learning center, format v2",
     "generated_on": "2026-10-15",
-    "reviewed_by": null,
-    "reviewed_on": null
+    "reviewed_by": "a second reader (Claude Fable 5.1), Scout learning center, format v2 C2",
+    "reviewed_on": "2026-10-15"
   },
   "changelog": [
     {

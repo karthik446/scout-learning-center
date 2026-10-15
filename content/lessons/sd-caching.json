@@ -373,7 +373,7 @@
         },
         {
           "type": "p",
-          "text": "Amazon adds two refinements. Entries created together expire together, so a random jitter on each expiry spreads the misses out. And a soft time to live that triggers a refresh attempt, separate from a hard one past which the stale value is no longer used, lets a downstream brownout be survived on cached data; the IAM client uses that pair.",
+          "text": "Two refinements follow. The first is the lesson's own guidance, not the article's: entries created together expire together, so a random jitter on each expiry spreads the misses out. The second is Amazon's: a soft time to live that triggers a refresh attempt, separate from a hard one past which the stale value is no longer used, lets a downstream brownout be survived on cached data; the IAM client uses that pair.",
           "cites": [
             "s1"
           ]
@@ -395,8 +395,8 @@
               "the same limit for shared caches only, overriding max-age and Expires there"
             ],
             [
-              "no heuristic header at all",
-              "a cache may guess a lifetime from Last-Modified; the RFC suggests at most about a tenth of the interval since that time"
+              "no explicit freshness (no max-age or Expires)",
+              "a cache may guess a lifetime from Last-Modified; the RFC's typical setting for that fraction is 10% of the interval since that time"
             ],
             [
               "no-cache",
@@ -477,7 +477,7 @@
               "noeviction",
               "none",
               "writes that need memory fail",
-              "the instance holds durable data; the default when nothing is set"
+              "the instance holds durable data"
             ],
             [
               "allkeys-lru",
@@ -516,7 +516,7 @@
         },
         {
           "type": "p",
-          "text": "LRU is the default because it is simple and good enough for skewed workloads, but it has a known failure: a scan of many keys read once evicts the whole working set. The Caffeine library's evaluation against real traces shows the alternatives, ARC, LIRS and Window TinyLFU, all beating LRU, and chose Window TinyLFU because it reaches a near-optimal hit rate with a frequency sketch of a few bits per entry, admitting a new key only when it is likely to be used more than the key it would evict.",
+          "text": "LRU is the default because it is simple and good enough for skewed workloads, but it has a known failure: a scan of many keys read once evicts the whole working set. The Caffeine library's evaluation against real traces shows the alternatives, ARC, LIRS and Window TinyLFU, all beating LRU, and chose Window TinyLFU because it reaches a near-optimal hit rate with a 4-bit frequency sketch that costs about 8 bytes per entry, admitting a new key only when it is likely to be used more than the key it would evict.",
           "cites": [
             "s11"
           ]
@@ -554,7 +554,7 @@
         },
         {
           "type": "p",
-          "text": "The remedy for the herd is to let one caller fill the key while the others wait or take the old value. Amazon calls it request coalescing, HTTP caches call it request collapsing, and Cloudflare implements it as a cache lock: one request per asset per data centre goes to the origin and the response is streamed to everyone waiting. Facebook's lease does the same at the key level, handing out one fill token per key every ten seconds and telling other missers to wait a few milliseconds and retry.",
+          "text": "The remedy for the herd is to let one caller fill the key while the others wait or take the old value. Amazon calls it request coalescing, HTTP caches call it request collapsing, and Cloudflare implements it as a cache lock: one request per asset per data centre goes to the origin and the response is streamed to everyone waiting. Facebook's lease does the same at the key level, handing out one fill token per key every ten seconds and telling other missers to wait a short time and retry, by which point the holder has usually filled the key.",
           "cites": [
             "s1",
             "s9",
@@ -950,8 +950,8 @@
   "provenance": {
     "generated_by": "Claude (Fable 5.1) by hand, Scout learning center, format v2",
     "generated_on": "2026-10-15",
-    "reviewed_by": null,
-    "reviewed_on": null
+    "reviewed_by": "a second reader (Claude Fable 5.1), Scout learning center, format v2 C2",
+    "reviewed_on": "2026-10-15"
   },
   "changelog": [
     {

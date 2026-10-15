@@ -252,10 +252,10 @@
         {
           "type": "callout",
           "kind": "pitfall",
-          "text": "The SQL keyword SERIALIZABLE is not a promise of strict serializability, and in some engines not even of serializability: PostgreSQL's level is a true serializable implementation built on snapshot isolation, while other products have shipped snapshot isolation under the same name. Read the engine's own definition before relying on the word.",
+          "text": "The SQL keyword SERIALIZABLE is not a promise of strict serializability, and in some engines not even of serializability: PostgreSQL's level is a true serializable implementation built on snapshot isolation, while Kleppmann notes that Oracle's level provides neither serializability nor linearizability. Read the engine's own definition before relying on the word.",
           "cites": [
             "s4",
-            "s2"
+            "s3"
           ]
         }
       ]
@@ -377,10 +377,10 @@
         {
           "type": "callout",
           "kind": "pitfall",
-          "text": "Repeatable Read means something different in every major engine, and one widely used engine has shipped snapshot isolation under the name Serializable. Test the anomaly you care about against the engine you run; the name of the level is not evidence.",
+          "text": "Repeatable Read is not the same level in every engine: PostgreSQL's documentation notes that some other systems offer Repeatable Read and Snapshot Isolation as distinct levels with different behaviour, and Kleppmann notes that Oracle's Serializable level is not serializable. Test the anomaly you care about against the engine you run; the name of the level is not evidence.",
           "cites": [
             "s4",
-            "s2"
+            "s3"
           ]
         }
       ]
@@ -511,7 +511,7 @@
               "7",
               "4",
               "3",
-              "more fault tolerance, slower writes; rarely worth it for one cluster"
+              "the general rule applied; not a size the chapter discusses"
             ],
             [
               "2f + 1",
@@ -718,7 +718,7 @@
           "Write latency: one round trip to a majority plus a durable log write on each member; with a cross-zone round trip of about 2 ms and a disk write of about 2 ms (assumptions), a write completes in about 5 ms.",
           "Write ceiling: if a durable log write took 10 ms, unbatched consensus would be limited to about 100 operations per second, the SRE book's figure; batching proposals is what lifts it.",
           "Load: 20 writes per second steady with bursts of 500 during deploys (assumption) fits under that ceiling with batching, and the reads, far more numerous, are served without consensus.",
-          "Election timing: a broadcast of about 5 ms needs an election timeout an order of magnitude longer, so the cluster runs with timeouts drawn from 150 to 300 ms and a leader is replaced within about a second of failing.",
+          "Election timing: a broadcast of about 5 ms needs an election timeout an order of magnitude longer, so the cluster runs with timeouts drawn from 150 to 300 ms; the paper's own statement is that the group is unavailable for roughly one election timeout when the leader fails, so well under a second.",
           "Job lock: each worker takes a lease of 10 seconds (assumption) on the key for its job and refreshes it every 3 seconds; a crashed worker frees the job within the lease.",
           "Fencing: the grant returns the store's revision, and every write the job makes to the shared bucket carries it; the bucket's writer rejects a revision lower than its highest seen.",
           "The decider: the fencing check, not the lease length. A paused worker with an expired 10-second lease is harmless because its revision is stale; without the check, no lease length would make the job safe."
@@ -951,8 +951,8 @@
   "provenance": {
     "generated_by": "Claude (Fable 5.1) by hand, Scout learning center, format v2",
     "generated_on": "2026-10-15",
-    "reviewed_by": null,
-    "reviewed_on": null
+    "reviewed_by": "a second reader (Claude Fable 5.1), Scout learning center, format v2 C2",
+    "reviewed_on": "2026-10-15"
   },
   "changelog": [
     {
