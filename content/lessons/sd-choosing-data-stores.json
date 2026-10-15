@@ -1,0 +1,1181 @@
+{
+  "schema_version": "learning-center-lesson:2",
+  "id": "sd-choosing-data-stores",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Choosing a data store",
+  "area": "data",
+  "primary_key": "data-stores",
+  "secondary_keys": [
+    "data-systems",
+    "storage-engines",
+    "system-design"
+  ],
+  "keys": [
+    "data-stores",
+    "data-systems",
+    "storage-engines",
+    "system-design"
+  ],
+  "summary": "The data store is the decision a design cannot easily revisit. This lesson reads an access pattern into a kind of store, puts eight criteria against relational, key-value, wide-column, document, search, time-series, graph and object stores in one decision, explains the guarantees that separate them, prices the case where one store is not enough, warns about the migration a wrong choice forces, maps each kind to its AWS managed service from the AWS database decision guide, and walks the news feed through the whole choice.",
+  "detail": [],
+  "in_practice": {
+    "blocks": [
+      {
+        "type": "p",
+        "text": "Amazon built Dynamo, and later DynamoDB, because it measured its own access patterns: about 70 percent of operations were key-value lookups by primary key returning one row, and services such as the shopping cart needed a store that stayed writeable through disk, network and data-centre failures. The Dynamo paper lists the services that need only primary-key access and states that a relational database would have limited their scale and availability.",
+        "cites": [
+          "s4",
+          "s5"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "Discord's message store across three generations, from its two engineering posts.",
+        "columns": [
+          "",
+          "MongoDB (2015)",
+          "Cassandra (2017)",
+          "ScyllaDB (2023)"
+        ],
+        "rows": [
+          [
+            "chosen because",
+            "fastest to iterate on; a single replica set",
+            "linear scalability, automatic failover, no manual resharding",
+            "same model without the garbage-collection toil; hot partitions still possible"
+          ],
+          [
+            "left because",
+            "at about 100 million messages the data and index no longer fit in RAM and latency became unpredictable",
+            "177 nodes, frequent pages, hot partitions that slowed the whole cluster",
+            "current"
+          ],
+          [
+            "key",
+            "compound index on channel and created time",
+            "partition (channel, 10-day bucket) sized under 100 MB, clustered by message id",
+            "the same, behind data services with request coalescing"
+          ],
+          [
+            "scale",
+            "100 million messages",
+            "12 nodes in 2017, 177 by 2022, trillions of messages",
+            "72 nodes at 9 TB each"
+          ],
+          [
+            "tail latency for history reads",
+            "unpredictable",
+            "p99 of 40 to 125 ms",
+            "p99 of 15 ms"
+          ]
+        ],
+        "cites": [
+          "s6",
+          "s7"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Discord's search is a derived store by design: Elasticsearch was chosen over Solr for its self-contained discovery and automatic shard rebalancing, messages are indexed lazily only when a server is first searched, and the mapping from servers to index shards is stored in Cassandra, the primary store, as the source of truth with a cache in front of it.",
+        "cites": [
+          "s8"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Stripe migrated hundreds of millions of Subscriptions objects to a new data model with every service at full traffic, using the four-step dual-writing pattern: dual write to the old and new tables, backfill the history, switch every read path, then stop writing to the old table and remove the old data.",
+        "cites": [
+          "s9"
+        ]
+      }
+    ]
+  },
+  "subtopics": [
+    {
+      "id": "the-store-is-the-decision",
+      "title": "Why the data store is the decision",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Most architecture decisions can be revisited in a sprint. The data store cannot: it fixes the data model, the queries that are cheap, the guarantees the application may assume, and the migration that will one day be needed to leave it. For decades the choice was not made at all, because the only option was a relational database and every application's data was modelled as relational whether it fitted or not; Werner Vogels's account of why Amazon built purpose-built stores makes the point that the database was driving the data model rather than the use case driving the database.",
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The original evidence is in the same account and in the Dynamo paper. Amazon found that about 70 percent of its operations were key-value lookups that used only a primary key and returned a single row, and the paper lists the services that need only primary-key access, from shopping carts to session management and best-seller lists, for which a relational database would limit scale and availability. A store that offers only that access path can promise what those services need, including staying writeable while disks fail and network routes flap.",
+          "cites": [
+            "s4",
+            "s5"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The eight kinds of store this lesson chooses between, by the shape of the question each answers best.",
+          "columns": [
+            "store kind",
+            "unit of data",
+            "the question it answers best",
+            "examples"
+          ],
+          "rows": [
+            [
+              "Relational",
+              "rows in tables with a schema",
+              "any query over several tables, with transactions and joins",
+              "PostgreSQL, MySQL, Aurora"
+            ],
+            [
+              "Key-value",
+              "a value by its key",
+              "get or put one item by key, at any scale",
+              "DynamoDB, Redis, Dynamo-style stores"
+            ],
+            [
+              "Wide-column",
+              "rows grouped in a partition, sorted by a clustering key",
+              "a range within one partition, writes at high rate",
+              "Cassandra, ScyllaDB, Bigtable, Keyspaces"
+            ],
+            [
+              "Document",
+              "a JSON-like document",
+              "fetch or update one document and query its fields",
+              "MongoDB, DocumentDB, PostgreSQL jsonb"
+            ],
+            [
+              "Search index",
+              "an inverted index over text and fields",
+              "full-text and faceted search, relevance ranking",
+              "Elasticsearch, OpenSearch"
+            ],
+            [
+              "Time series",
+              "samples labelled by metric and tags",
+              "ranges over time, aggregation, downsampling",
+              "Prometheus, Timestream, TimescaleDB"
+            ],
+            [
+              "Graph",
+              "nodes and typed, directed relationships",
+              "traversals across many relationships",
+              "Neo4j, Neptune"
+            ],
+            [
+              "Object store",
+              "an immutable object by key",
+              "put and get large blobs cheaply and durably",
+              "Amazon S3 and other object stores"
+            ]
+          ],
+          "cites": [
+            "s1",
+            "s12",
+            "s11"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The lesson on storage engines explained the mechanism under each kind; this lesson is about the choice. It reads an access pattern into a store kind, puts the criteria against the kinds in one decision, prices the case where one store is not enough, warns about the migration that a wrong choice forces, and maps each kind to the managed service that runs it on AWS. The worked example walks the news feed from this module through the decision.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Choose the store from the queries, not from the data. Two products with the same entities but different questions belong on different stores; the questions are what the store has to make cheap.",
+          "cites": [
+            "s2",
+            "s3"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "reading-an-access-pattern",
+      "title": "Reading an access pattern into a store",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The DynamoDB design guide states the discipline for every non-relational store in one sentence: do not start designing the schema until you know the questions it will need to answer. A relational schema can be normalised first and queried later; a key-value, wide-column or document schema is the queries, so the queries come first. Cassandra's documentation says the same of its model: modelling is query-driven, each query is best served by a single table, and entities are duplicated across tables to make that true.",
+          "cites": [
+            "s2",
+            "s3"
+          ]
+        },
+        {
+          "type": "steps",
+          "title": "Writing down an access pattern",
+          "items": [
+            "List every read and write the product makes, as a sentence: fetch a user's timeline, append a post to each follower's timeline, search posts by text.",
+            "For each one, name the key it arrives with: a user id, a post id, a text query, a time range. A query with no key is a scan or a search, which alone narrows the store.",
+            "Estimate its peak rate per second and the size of what it reads or writes.",
+            "State what it must see: its own last write, every write before it, or anything recent.",
+            "Mark the ones that must happen together or not at all. Those are the transactions, and they decide whether one store can hold the data.",
+            "Sort by rate times size. The top two or three are the dominant paths; the store is chosen for them."
+          ],
+          "cites": [
+            "s2",
+            "s3"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The DynamoDB guide names three properties to know before modelling: the size of the data stored and requested at once, its shape, and its velocity. Those three plus the consistency need sort most patterns into a kind. A key with a small value at a high rate is key-value. A key that owns a growing sorted list is wide-column. A text query is a search index. A time range over labelled samples is time series. A question that walks relationships several hops deep is a graph. A question that joins entities in ways nobody predicted is relational, and so is any set of writes that must be atomic across entities.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The news feed's access patterns, as the next steps need them. Rates are the estimates from the news feed exercise in this module (assumptions, not measurements).",
+          "columns": [
+            "query",
+            "key",
+            "peak rate",
+            "must see",
+            "sorts into"
+          ],
+          "rows": [
+            [
+              "create a post",
+              "post id",
+              "230 per second",
+              "its own write",
+              "any durable store"
+            ],
+            [
+              "read my home timeline",
+              "user id, newest first",
+              "11,600 per second",
+              "recent",
+              "a sorted list per key: wide-column or an in-memory list"
+            ],
+            [
+              "append a post to each follower's timeline",
+              "follower id",
+              "46,000 per second",
+              "eventually",
+              "the same list per key, write-heavy"
+            ],
+            [
+              "list who I follow and who follows me",
+              "user id",
+              "low",
+              "recent",
+              "key-value or relational"
+            ],
+            [
+              "search posts by text",
+              "text",
+              "low",
+              "recent",
+              "search index"
+            ],
+            [
+              "store and serve media",
+              "media id",
+              "high bytes, low count",
+              "immutable",
+              "object store"
+            ]
+          ],
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "The pattern missing from the list is the one that forces the second store or the migration. Ask for the reporting queries, the admin screens and the search box before choosing; a key-value model cannot answer them.",
+          "cites": [
+            "s2"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "the-decision",
+      "title": "The decision: which store for which workload",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The decision block is the centre of the lesson: one row per kind of store, the workload it is built for, the workload that breaks it, and named examples with the AWS managed service after them, mapped from the AWS database decision guide and taken up again at the end.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "decision",
+          "caption": "Choosing a data store. Products are examples of the kind; the AWS service after the semicolon is the decision guide's mapping.",
+          "rows": [
+            {
+              "option": "Relational",
+              "pick_when": "queries are varied and will change, writes must be atomic across entities, and the data fits one primary with replicas, which is most products",
+              "avoid_when": "the dominant path is a single-key lookup at a rate one primary cannot serve, or a sorted list per key that grows without bound",
+              "example": "PostgreSQL, MySQL; Aurora or RDS, Aurora DSQL for multi-region"
+            },
+            {
+              "option": "Key-value",
+              "pick_when": "almost every access is get or put by a known key, the rate or size is beyond one machine, and the store must stay writeable through failures",
+              "avoid_when": "the product needs ad hoc queries, joins or transactions across many items, or the questions are not yet known",
+              "example": "Redis, Dynamo-style stores; DynamoDB"
+            },
+            {
+              "option": "Wide-column",
+              "pick_when": "each key owns a sorted, growing list read by range, writes dominate, and the partition can be bounded, as a chat channel or a timeline is",
+              "avoid_when": "queries cross partitions, a partition can become hot, or the team has nobody to run the cluster",
+              "example": "Cassandra, ScyllaDB, Bigtable; Keyspaces"
+            },
+            {
+              "option": "Document",
+              "pick_when": "each entity is read and written whole, its fields vary by record, and queries are on the fields of one document",
+              "avoid_when": "data is relational underneath and the joins are hidden in application code, or multi-document transactions are common",
+              "example": "MongoDB; DocumentDB, or jsonb columns in PostgreSQL"
+            },
+            {
+              "option": "Search index",
+              "pick_when": "the question is a text query or a faceted filter ranked by relevance, over data owned by another store",
+              "avoid_when": "it would be the only copy of the data; it is a derived index and must be rebuildable",
+              "example": "Elasticsearch; OpenSearch Service"
+            },
+            {
+              "option": "Time series",
+              "pick_when": "samples arrive at a high rate with a timestamp and labels, are queried by range and aggregated, and age out",
+              "avoid_when": "every sample must be exact and complete, as for per-request billing, or the queries are not over time",
+              "example": "Prometheus, TimescaleDB; Timestream"
+            },
+            {
+              "option": "Graph",
+              "pick_when": "the questions traverse many relationships several hops deep: fraud rings, social paths, recommendations, knowledge graphs",
+              "avoid_when": "the graph is shallow and the questions are one hop, which a join or a key lookup answers",
+              "example": "Neo4j; Neptune, Neptune Analytics"
+            },
+            {
+              "option": "Object store",
+              "pick_when": "objects are large, written once, read whole or by range, and durability per byte must be cheap",
+              "avoid_when": "the application needs small updates, listing by attributes or transactions across objects; keep those in a metadata store",
+              "example": "Amazon S3 and other object stores; S3"
+            }
+          ],
+          "cites": [
+            "s1",
+            "s2",
+            "s3",
+            "s5",
+            "s10",
+            "s11",
+            "s12"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Start from relational unless a dominant path proves otherwise. Leave it for a key-value or wide-column store when one path's rate or growth exceeds one primary; add a search, time-series or graph store beside it when a question has that shape; never let a derived store become the only copy.",
+          "cites": [
+            "s1",
+            "s4"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "the-criteria",
+      "title": "The criteria, store by store",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The decision rows compress eight criteria. The two tables expand them so that a reviewer can disagree with one cell rather than a row; the cells follow the AWS decision guide, the vendor documentation cited in the captions, and the mechanism taught in the storage-engines lesson.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The criteria against the four row-shaped stores.",
+          "columns": [
+            "criterion",
+            "relational",
+            "key-value",
+            "wide-column",
+            "document"
+          ],
+          "rows": [
+            [
+              "access pattern",
+              "any; joins across tables",
+              "one item by key",
+              "a range inside one partition",
+              "one document by key, filters on its fields"
+            ],
+            [
+              "read to write ratio",
+              "either; reads scale with replicas",
+              "either; both scale by partition",
+              "write-heavy; appends are cheap",
+              "read-mostly, whole documents"
+            ],
+            [
+              "consistency need",
+              "transactions across rows and tables",
+              "per item; always writeable in Dynamo-style stores",
+              "tunable per query; per partition",
+              "per document; multi-document transactions are the exception"
+            ],
+            [
+              "data shape",
+              "regular, normalised",
+              "opaque value",
+              "sorted rows per partition",
+              "nested, varying fields"
+            ],
+            [
+              "scale and growth",
+              "one primary; shard by hand past it",
+              "linear by partition",
+              "linear by partition; bound the partition size",
+              "shard by key"
+            ],
+            [
+              "query flexibility",
+              "highest; ad hoc SQL",
+              "lowest; by key only",
+              "by partition and clustering key only",
+              "fields of one document; secondary indexes"
+            ],
+            [
+              "operational cost",
+              "well understood; managed forms everywhere",
+              "lowest when managed",
+              "a cluster to run and repair unless managed",
+              "moderate; managed forms exist"
+            ],
+            [
+              "team familiarity",
+              "nearly universal",
+              "common",
+              "specialist",
+              "common"
+            ]
+          ],
+          "cites": [
+            "s1",
+            "s2",
+            "s3",
+            "s5"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The criteria against the four special-purpose stores.",
+          "columns": [
+            "criterion",
+            "search index",
+            "time series",
+            "graph",
+            "object store"
+          ],
+          "rows": [
+            [
+              "access pattern",
+              "text and faceted queries ranked by relevance",
+              "ranges over time per metric and label set",
+              "traversals across relationships",
+              "put and get whole objects, range reads"
+            ],
+            [
+              "read to write ratio",
+              "read-heavy; indexing is batched",
+              "write-heavy ingest, range reads",
+              "read-heavy traversals",
+              "write once, read many"
+            ],
+            [
+              "consistency need",
+              "near real time; a derived copy",
+              "approximate is acceptable; not for billing",
+              "per transaction in most engines",
+              "per object; immutable"
+            ],
+            [
+              "data shape",
+              "documents with analysed text fields",
+              "samples with timestamps and labels",
+              "nodes, typed directed relationships, properties",
+              "opaque bytes with a few metadata fields"
+            ],
+            [
+              "scale and growth",
+              "shards and replicas",
+              "retention and downsampling bound it",
+              "grows with relationships; traversals get costly",
+              "effectively unbounded, cheap per byte"
+            ],
+            [
+              "query flexibility",
+              "high for text; weak for joins",
+              "high over time; weak across metrics",
+              "high for paths; weak for scans",
+              "none beyond key and prefix listing"
+            ],
+            [
+              "operational cost",
+              "a cluster and its reindexing",
+              "retention management",
+              "specialist",
+              "lowest when managed"
+            ],
+            [
+              "team familiarity",
+              "common",
+              "common for monitoring",
+              "rare",
+              "universal"
+            ]
+          ],
+          "cites": [
+            "s1",
+            "s8",
+            "s11",
+            "s12"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Two cells deserve a sentence. Query flexibility is the hidden price of every non-relational choice: the DynamoDB guide describes data that can be queried efficiently in a limited number of ways, outside of which queries are expensive, against relational data that can be queried flexibly at a cost that does not scale under high traffic. The time-series consistency cell is the Prometheus project's own warning: where every sample must be exact, as in per-request billing, another store must hold the record.",
+          "cites": [
+            "s2",
+            "s11"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "guarantees-and-query-shapes",
+      "title": "Guarantees, transactions and the shape of the answer",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Three guarantees separate the kinds more sharply than throughput does. The first is atomicity across entities: a relational store commits several rows in one transaction as a matter of course, while a key-value or document store makes a single item the unit of atomicity and offers cross-item transactions, where it offers them at all, as a bounded special case. A product whose core operation moves value between two records, a ledger or an inventory, has this guarantee as its dominant path.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The second is what a read may see. The Dynamo paper's design target is an always-writeable store: a shopping cart must accept an add even while servers and network paths fail, and the price is that two replicas may hold divergent versions to be reconciled later. The relational default is the opposite: one primary accepts writes and a read on it sees every committed write. Neither is better; the question is which failure the product would rather have, a rejected write or a stale read.",
+          "cites": [
+            "s5"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The third is exactness of the answer. A search index ranks by relevance, which is a judgement rather than a match; a vector index returns approximate neighbours, and pgvector's documentation states the trade plainly: exact search by default with perfect recall, or an approximate index, HNSW or IVFFlat, that trades some recall for speed and changes the results a query returns. A time-series store may drop or round samples by design. Each is the right answer for its question and the wrong one for a question that needs the exact row.",
+          "cites": [
+            "s10",
+            "s11"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "What each kind promises, and what a product must not ask of it.",
+          "columns": [
+            "kind",
+            "unit of atomicity",
+            "what a read sees",
+            "exactness of the answer"
+          ],
+          "rows": [
+            [
+              "relational",
+              "a transaction over many rows and tables",
+              "every committed write, on the primary",
+              "exact"
+            ],
+            [
+              "key-value, document",
+              "one item or document; bounded multi-item transactions where offered",
+              "configurable; eventually consistent reads are the cheap default in many stores",
+              "exact for the item"
+            ],
+            [
+              "wide-column",
+              "one partition",
+              "tunable per query",
+              "exact"
+            ],
+            [
+              "search index",
+              "one document",
+              "after the next refresh",
+              "ranked, not exact"
+            ],
+            [
+              "vector index",
+              "one row",
+              "after indexing",
+              "approximate unless exact search is chosen"
+            ],
+            [
+              "time series",
+              "one sample",
+              "recent",
+              "approximate by design in monitoring stores"
+            ],
+            [
+              "object store",
+              "one object",
+              "the object as written",
+              "exact bytes"
+            ]
+          ],
+          "cites": [
+            "s5",
+            "s10",
+            "s11",
+            "s2"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Put the guarantee next to the query when sorting patterns. A query that needs atomicity across entities or an exact, strongly consistent answer stays on the relational store even if its rate would fit a cheaper one.",
+          "cites": [
+            "s5",
+            "s2"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "when-one-store-is-not-enough",
+      "title": "When one store is not enough, and what two cost",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Most products end up with a primary store plus derived ones: a cache for the hot reads, a search index for the text queries, a time-series store for the metrics, an analytics copy for the reports, an object store for the files. The rule that keeps this sane is that exactly one of them is the source of truth and every other is rebuildable from it. Discord's search is the pattern done right: messages live in Cassandra, Elasticsearch holds an index that is built lazily, only when someone first searches a server, and even the mapping of servers to index shards is kept in Cassandra as the source of truth with the index as a derived copy.",
+          "cites": [
+            "s8"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "What a second store adds and what it costs.",
+          "columns": [
+            "second store",
+            "what it adds",
+            "what it costs"
+          ],
+          "rows": [
+            [
+              "cache",
+              "cheap repeated reads",
+              "invalidation, cold starts, a stale-read story"
+            ],
+            [
+              "search index",
+              "text and faceted queries",
+              "a pipeline that feeds it, a lag, and a reindex when the mapping changes"
+            ],
+            [
+              "time series",
+              "metrics over time at high ingest",
+              "retention policy, cardinality limits, a second query language"
+            ],
+            [
+              "analytics copy",
+              "reports without loading the primary",
+              "a batch or change-data pipeline and a freshness lag"
+            ],
+            [
+              "object store",
+              "cheap, durable blobs",
+              "a metadata table to keep in step; orphaned objects"
+            ],
+            [
+              "any of them",
+              "the right shape for one query",
+              "two systems to run, two failure modes, two skill sets, and a dual-write path that can disagree"
+            ]
+          ],
+          "cites": [
+            "s8",
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The cost is rarely in the software. It is in the pipeline between the stores, which is a second write path that can fail half-way; in the lag, which the product must tolerate and the support team must explain; in the on-call surface, which doubles; and in the people, since each kind of store has its own failure modes and tuning. The AWS decision guide's advice on vector search generalises: a team that already runs a hundred PostgreSQL databases should first evaluate the vector extension on the engine it knows, because the same engine lets developers use the skills and tools they have rather than learn a new system.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "So the second store has to earn its place with a query the first cannot serve at the required rate or shape, not with a preference. The order of preference is: the primary store's own feature, such as a JSON column, full-text search or a vector extension in PostgreSQL; a managed derived store fed by change capture; and only then a second primary with its own writes.",
+          "cites": [
+            "s1",
+            "s10"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "Two sources of truth is the expensive mistake. If the application writes the same fact to two stores directly, every failure between the two writes leaves them disagreeing, and no rebuild can decide which is right. Derive the second store from the first, through its log or change stream, so that the first can always regenerate it.",
+          "cites": [
+            "s8"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "the-migration-trap",
+      "title": "The migration trap",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The wrong store is not discovered at design time; it is discovered when the dataset outgrows it, and leaving it then means migrating live data under full traffic. Discord's message store shows both halves. The first version was a single MongoDB replica set, chosen for speed of iteration, and the team planned from the start for an easy migration out. At about 100 million messages the data and its index no longer fitted in RAM, latency became unpredictable, and the messages moved to Cassandra with a partition key of channel and time bucket sized to stay under 100 MB. Six years later the Cassandra cluster had grown from 12 nodes to 177, was high toil with hot partitions that hurt the whole cluster, and was migrated again, to ScyllaDB, behind a new data-services layer.",
+          "cites": [
+            "s6",
+            "s7"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Stripe's account of moving hundreds of millions of subscription objects states the method most teams use and the constraint that makes it hard: the migration had to run with every service at full traffic and with users expecting consistency throughout. The four-step dual-writing pattern is the answer, and it is slow by design, because each step is reversible until the last.",
+          "cites": [
+            "s9"
+          ]
+        },
+        {
+          "type": "steps",
+          "title": "The four-step dual-writing migration, as Stripe describes it",
+          "items": [
+            "Dual write: every write goes to the old table and the new one, so the new table stays in step from the moment it exists.",
+            "Backfill: copy the historical records into the new table, in Stripe's case hundreds of millions of subscription objects, while the dual writes continue.",
+            "Switch reads: change every read path in the codebase to the new table, one caller at a time, verifying that the two sources agree before each switch.",
+            "Stop writing to the old table and remove the data that depends on the old model; before this step, every earlier step can be reversed."
+          ],
+          "cites": [
+            "s9"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The trap is the cost of the choice that forces this, not the migration itself. A store chosen by preference rather than by the access pattern tends to be left at the worst time, when the dataset is largest and the product busiest. The defence is Discord's: choose the store for the questions you have, but from day one keep the application's data access behind a narrow interface, keep ids and keys that any store can use, and know what the next store will be and what number triggers the move.",
+          "cites": [
+            "s6",
+            "s9"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Write the exit before the entry. When a store is chosen, record the limit at which it stops fitting, the store that replaces it, and the dual-write plan. A migration that was planned costs a quarter; one that was not costs a year.",
+          "cites": [
+            "s6",
+            "s9"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "on-aws",
+      "title": "On AWS: the managed service for each store",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The neutral decision comes first; the product mapping is the last step. On AWS the database decision guide gives it in one table: each managed engine, its data model, when to use it and what it is optimised for. The table below carries that mapping for the eight kinds of this lesson, with the alternative the guide offers where there is one; the exercises in this module link back here when they take a design down to AWS.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The AWS managed service for each kind of store, from the AWS database decision guide. The use-when column paraphrases the guide.",
+          "columns": [
+            "store kind",
+            "AWS service",
+            "the guide's use-when",
+            "alternative on AWS"
+          ],
+          "rows": [
+            [
+              "Relational",
+              "Amazon Aurora (MySQL and PostgreSQL compatible)",
+              "migrating or modernising a relational workload, or less predictable query patterns",
+              "Amazon RDS for six engines; Aurora DSQL for active-active multi-region with strong consistency; Aurora PostgreSQL Limitless for writes beyond one instance"
+            ],
+            [
+              "Key-value",
+              "Amazon DynamoDB",
+              "session stores and shopping carts; very high throughput for millions of simultaneous users; serverless",
+              "ElastiCache or MemoryDB for in-memory latency"
+            ],
+            [
+              "Wide-column",
+              "Amazon Keyspaces (for Apache Cassandra)",
+              "Cassandra workloads, heavy reads and writes at single-digit-millisecond latency with linear scalability",
+              "DynamoDB, when the Cassandra model is not required"
+            ],
+            [
+              "Document",
+              "Amazon DocumentDB (with MongoDB compatibility)",
+              "JSON-like documents with rich querying across their fields",
+              "jsonb in Aurora PostgreSQL"
+            ],
+            [
+              "Search index",
+              "Amazon OpenSearch Service",
+              "search and log analytics; native k-NN for vectors at scale",
+              "none in the guide; OpenSearch is the search service"
+            ],
+            [
+              "Time series",
+              "Amazon Timestream",
+              "large amounts of time series data from many sources: IoT, metrics, asset tracking",
+              "a managed Prometheus for monitoring metrics"
+            ],
+            [
+              "Graph",
+              "Amazon Neptune",
+              "complex networks of objects: social graphs, fraud detection, recommendations",
+              "Neptune Analytics for graph analytics and GraphRAG"
+            ],
+            [
+              "Object store",
+              "Amazon S3",
+              "large, immutable objects at low cost per byte",
+              "none; the metadata belongs in one of the stores above"
+            ]
+          ],
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Vector search is where the guide argues most clearly from team familiarity. Rather than a separate vector database, it lists vector capability inside the existing services, ranked by latency and fit, and advises a team that already runs relational databases to evaluate the vector extension on the engine it has before adding a new system.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Vector search options on AWS, from the decision guide's capability table.",
+          "columns": [
+            "service",
+            "vector capability",
+            "latency, per the guide",
+            "best for, per the guide"
+          ],
+          "rows": [
+            [
+              "OpenSearch Service",
+              "native k-NN",
+              "low to medium",
+              "retrieval-augmented generation at scale, hybrid search, log analytics"
+            ],
+            [
+              "Aurora PostgreSQL",
+              "pgvector extension",
+              "low",
+              "relational applications that need vectors and transactional data in one database"
+            ],
+            [
+              "MemoryDB",
+              "native vector search",
+              "sub-millisecond",
+              "semantic caching, real-time inference, lowest-latency retrieval"
+            ],
+            [
+              "Neptune Analytics",
+              "vector similarity plus graph analytics",
+              "medium",
+              "GraphRAG and knowledge-graph-enhanced retrieval"
+            ],
+            [
+              "DocumentDB",
+              "native vector search with HNSW and IVFFlat indexes",
+              "low",
+              "MongoDB-compatible applications with vectors"
+            ]
+          ],
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Map, do not re-decide. The store kind was chosen from the access pattern above; on AWS pick the managed form of that kind, prefer the engine the team already runs for a new capability, and treat the guide's use-when text as the citation for the choice in a design review.",
+          "cites": [
+            "s1"
+          ]
+        }
+      ]
+    }
+  ],
+  "worked_example": {
+    "title": "Worked example: choosing the stores for the news feed",
+    "blocks": [
+      {
+        "type": "p",
+        "text": "The news feed exercise in this module sizes a product with 10 million daily active users, where each user follows about 200 accounts. Its estimates are the inputs here; every number is an assumption from that exercise, not a measurement. The decision is made per access pattern, and the stores are then counted.",
+        "cites": [
+          "s2"
+        ]
+      },
+      {
+        "type": "steps",
+        "title": "From the access patterns to the stores",
+        "items": [
+          "Posts: 230 creates per second at peak. Any durable store serves this; the posts table and its author index stay relational, because posts are also read by id, edited, deleted and joined to their authors.",
+          "Home timeline reads: 11,600 per second at peak, each wanting the newest entries for one user. A sorted list per key, read by range: a wide-column partition or an in-memory capped list, not a relational query that sorts at read time.",
+          "Fan-out appends: 46,000 per second at peak, each adding one entry to one follower's list. Write-heavy, by key, eventually consistent: the same per-key list, on a store that makes appends cheap.",
+          "Timeline size: 800 entries per user at 16 bytes is 12.8 kB, and the cache for all active users is about 128 GB; an in-memory store holds it, with the wide-column store or a rebuild from the posts table behind it.",
+          "Social graph: who follows whom, read when a post is created to find its followers and when a timeline is rebuilt. One hop, by user id: a key-value or relational table, not a graph database, because no question walks further than one hop.",
+          "Search: posts by text, low rate, ranked by relevance. A search index derived from the posts table through its change stream, rebuildable, never the only copy.",
+          "Media: images and video, large and immutable. An object store, with the media id and attributes in the posts row.",
+          "Metrics: the fan-out lag, the cache hit ratio and the request latencies, at a high ingest rate and queried by range. A monitoring time-series store, approximate by design.",
+          "Count: one relational primary as the source of truth, one in-memory timeline cache, one wide-column or list store for timelines, one derived search index, one object store and one metrics store, each with a query the primary could not serve at that rate or shape."
+        ],
+        "cites": [
+          "s2",
+          "s3",
+          "s5",
+          "s11"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "The news feed's stores, one row per decision.",
+        "columns": [
+          "data",
+          "store kind",
+          "on AWS, per the decision guide",
+          "why this kind"
+        ],
+        "rows": [
+          [
+            "posts, users, follows",
+            "relational, the source of truth",
+            "Aurora PostgreSQL",
+            "varied queries, joins, transactions across entities; the rates fit one primary with replicas"
+          ],
+          [
+            "home timelines",
+            "a sorted list per user: in-memory cache in front of a wide-column store",
+            "ElastiCache in front of Keyspaces or DynamoDB",
+            "46,000 appends and 11,600 range reads per second at peak, eventually consistent"
+          ],
+          [
+            "post search",
+            "search index, derived",
+            "OpenSearch Service",
+            "text queries ranked by relevance; rebuildable from the posts table"
+          ],
+          [
+            "media",
+            "object store",
+            "S3",
+            "large immutable blobs, cheap per byte; metadata stays in the posts row"
+          ],
+          [
+            "service metrics",
+            "time series",
+            "a managed Prometheus or Timestream",
+            "high ingest of labelled samples, range queries, approximate is acceptable"
+          ]
+        ],
+        "cites": [
+          "s1",
+          "s2"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "The decision that changes the architecture is the timeline. If it were kept relational, every home timeline read would sort and merge posts from about 200 followed accounts at 11,600 requests per second, and the choice of fan-out on write would be pointless. Everything else in the table is a derived store that earns its place with one query shape; the relational primary stays the only source of truth, and each derived store can be rebuilt from it.",
+        "cites": [
+          "s2",
+          "s3"
+        ]
+      }
+    ]
+  },
+  "diagram": null,
+  "code": [],
+  "technologies": [
+    "PostgreSQL",
+    "Amazon DynamoDB",
+    "Apache Cassandra",
+    "MongoDB",
+    "Elasticsearch",
+    "Prometheus",
+    "Neo4j",
+    "pgvector",
+    "Amazon S3",
+    "Redis"
+  ],
+  "related": [
+    "sd-storage-engines",
+    "sd-data-modelling",
+    "sd-replication-partitioning",
+    "sd-consistency-consensus",
+    "sd-caching",
+    "sd-aws-well-architected",
+    "sd-ex-news-feed"
+  ],
+  "sources": [
+    {
+      "id": "s1",
+      "title": "AWS Decision Guides, Choosing an AWS database service (docs.aws.amazon.com, read 2026-10-15): the table of engines by data model with when to use each, the vector-capability table, and the team-familiarity guidance",
+      "url": "https://docs.aws.amazon.com/decision-guides/latest/databases-on-aws-how-to-choose/databases-on-aws-how-to-choose.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Database engine Data model When would you use it?"
+      }
+    },
+    {
+      "id": "s2",
+      "title": "Amazon DynamoDB Developer Guide, NoSQL design for DynamoDB: access-pattern-first modelling, know the questions before the schema, as few tables as possible",
+      "url": "https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/bp-general-nosql-design.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "you shouldn't start designing your schema for DynamoDB until you know the questions it will need to answer"
+      }
+    },
+    {
+      "id": "s3",
+      "title": "Apache Cassandra documentation, Data modeling, Introduction: query-driven modelling, one table per query, denormalisation",
+      "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/data-modeling/intro.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "In Cassandra, data modeling is query-driven"
+      }
+    },
+    {
+      "id": "s4",
+      "title": "Werner Vogels, A one size fits all database doesn't fit anyone (All Things Distributed, 2018-06-21): the use case drives the database; about 70 percent of Amazon's operations were key-value lookups",
+      "url": "https://www.allthingsdistributed.com/2018/06/purpose-built-databases-in-aws.html",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "about 70 percent of our operations were key-value lookups"
+      }
+    },
+    {
+      "id": "s5",
+      "title": "Giuseppe DeCandia et al., Dynamo: Amazon's Highly Available Key-value Store, SOSP 2007 (PDF): services that only need primary-key access, the always-writeable shopping cart",
+      "url": "https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf",
+      "kind": "paper",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "There are many services on Amazon's platform that only need primary-key access to a data store"
+      }
+    },
+    {
+      "id": "s6",
+      "title": "Discord Engineering, How Discord Stores Billions of Messages (2017): MongoDB until the data and index outgrew RAM, the move to Cassandra, the (channel, bucket) partition key sized to stay under 100 MB",
+      "url": "https://discord.com/blog/how-discord-stores-billions-of-messages",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "the data and the index could no longer fit in RAM"
+      }
+    },
+    {
+      "id": "s7",
+      "title": "Discord Engineering, How Discord Stores Trillions of Messages (Bo Ingram, 2023-03-06): 177 Cassandra nodes, hot partitions, the move to 72 ScyllaDB nodes, the data services layer with request coalescing, before-and-after tail latencies",
+      "url": "https://discord.com/blog/how-discord-stores-trillions-of-messages",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "going from running 177 Cassandra nodes to just 72 ScyllaDB nodes"
+      }
+    },
+    {
+      "id": "s8",
+      "title": "Discord Engineering, How Discord Indexes Billions of Messages (2017): Elasticsearch chosen over Solr, lazily indexed, Cassandra kept as the source of truth",
+      "url": "https://discord.com/blog/how-discord-indexes-billions-of-messages",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "our primary data store for persistent data, as the source of truth"
+      }
+    },
+    {
+      "id": "s9",
+      "title": "Stripe Engineering, Online migrations at scale (2017): the four-step dual-writing pattern applied to hundreds of millions of Subscriptions objects with every service at full traffic",
+      "url": "https://stripe.com/blog/online-migrations",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "There's a common 4 step dual writing pattern"
+      }
+    },
+    {
+      "id": "s10",
+      "title": "pgvector README (GitHub, maintained): exact search by default with perfect recall, HNSW and IVFFlat approximate indexes that trade recall for speed, vectors beside the rest of the data",
+      "url": "https://github.com/pgvector/pgvector",
+      "kind": "repo",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "By default, pgvector performs exact nearest neighbor search, which provides perfect recall"
+      }
+    },
+    {
+      "id": "s11",
+      "title": "Prometheus documentation, Overview: the multi-dimensional time series model, designed for reliability, and when it does not fit (per-request billing)",
+      "url": "https://prometheus.io/docs/introduction/overview/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "If you need 100% accuracy, such as for per-request billing, Prometheus is not a good choice"
+      }
+    },
+    {
+      "id": "s12",
+      "title": "Neo4j documentation, What is a graph database: nodes, relationships with a type and a direction, properties on both",
+      "url": "https://neo4j.com/docs/getting-started/graph-database/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "stores data as nodes, relationships, and properties instead of in tables or documents"
+      }
+    }
+  ],
+  "practice": null,
+  "provenance": {
+    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center, format v2",
+    "generated_on": "2026-10-15",
+    "reviewed_by": null,
+    "reviewed_on": null
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-15",
+      "change": "new lesson, written by hand from primary sources at format v2 (learning-center-lesson:2): 8 subtopics with the eight store kinds, the access-pattern, criteria, guarantees, second-store and AWS mapping tables, a decision block over the eight kinds with the AWS service per option, a worked example that walks the news feed through the choice, cited in-practice blocks (Amazon, Discord, Stripe), 12 verified sources with ids"
+    }
+  ]
+}
