@@ -1,7 +1,7 @@
 {
-  "schema_version": "learning-center-lesson:1",
+  "schema_version": "learning-center-lesson:2",
   "id": "sd-replication-partitioning",
-  "version": 1,
+  "version": 2,
   "status": "published",
   "superseded_by": null,
   "title": "Replication and partitioning",
@@ -20,78 +20,837 @@
     "postgres",
     "distributed-systems"
   ],
-  "summary": "Replication keeps copies of the same data on several machines for availability and read scale; partitioning splits data across machines so that no single node must hold or serve all of it. This lesson covers the replication modes and their durability tradeoffs, then how to choose a shard key and operate a sharded database.",
+  "summary": "Replication keeps copies of the same data on several machines for durability, availability and read scale; partitioning splits data across machines so that no single node must hold or serve all of it. This lesson compares leader-follower, multi-leader and leaderless replication, prices synchronous against asynchronous commits and the failover each allows, routes reads around replication lag, explains logical replication, chooses a shard key and a mapping with a decision table, shows what consistent hashing and virtual nodes move and how to handle a hot key, and ends with the four-step online migration, with a worked topology and shard plan for a stated RPO and RTO.",
   "detail": [],
-  "in_practice": "Most teams start with one primary and two or more streaming standbys across availability zones, with one synchronous standby and automated failover managed by a cluster manager that handles leader election and fencing. Read replicas absorb reporting and read-heavy endpoints, with lag monitored and alerted. Sharding is deferred until a single primary can no longer handle write volume or storage growth, then introduced by tenant key with many logical shards, application-level routing and a double-write, backfill, verify and cut-over migration rehearsed in staging.",
+  "in_practice": {
+    "blocks": [
+      {
+        "type": "p",
+        "text": "Notion sharded its PostgreSQL by workspace id, because every sharded row belongs to exactly one workspace and users query within one workspace at a time. The team chose 480 logical shards as PostgreSQL schemas across 32 physical databases, and migrated with a double-write audit log and catch-up process, a backfill, verification and an incremental switch-over, after finding that logical replication could not keep up with its block table's write volume during the initial snapshot.",
+        "cites": [
+          "s10"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Two years later, with shards above 90 percent CPU at peak and nearing their provisioned IOPS, Notion tripled the fleet from 32 to 96 machines with no downtime. This time logical replication copied the data, the synchronisation fell from three days to twelve hours once indexes were built after the copy instead of during it, dark reads compared the new shards' answers with the primary's on a sample of requests, and the PgBouncer connection-pooling layer itself had to be sharded to carry the connections.",
+        "cites": [
+          "s11"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Figma's database stack grew nearly a hundredfold from 2020. The team partitioned vertically first, moving groups of related tables onto their own databases, then sharded horizontally when tables approached the IOPS limit of a managed instance. It grouped tables into colos that share a shard key and layout, separated logical sharding at the application layer from physical sharding at the database, built a DBProxy that parses and routes the application's SQL, verified with shadow reads, and kept every migration reversible, including after a physical shard split.",
+        "cites": [
+          "s12"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Amazon's Dynamo ran its production instances with N, R and W of three, two and two, placed each key on a consistent-hash ring with virtual nodes so that a departing node sheds load evenly, and handled temporary failures with a sloppy quorum and hinted handoff so that the shopping cart stayed writeable through node and network failures.",
+        "cites": [
+          "s7"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "GitHub's October 2018 incident, from the post-incident analysis: how an automated cross-site failover over asynchronous replication played out.",
+        "columns": [
+          "",
+          "value"
+        ],
+        "rows": [
+          [
+            "duration of the network partition",
+            "43 seconds"
+          ],
+          [
+            "duration of the degraded service",
+            "24 hours 11 minutes"
+          ],
+          [
+            "unreplicated writes on one busy cluster",
+            "954"
+          ],
+          [
+            "why failing back was unsafe",
+            "both data centres held writes the other lacked"
+          ],
+          [
+            "why staying failed over hurt",
+            "east-coast applications could not tolerate a cross-country round trip per database call"
+          ]
+        ],
+        "cites": [
+          "s4"
+        ]
+      }
+    ]
+  },
   "subtopics": [
     {
-      "body": [
+      "id": "two-problems",
+      "title": "Two problems: copies and pieces",
+      "blocks": [
         {
-          "body": "In PostgreSQL physical replication, a standby continuously replays the primary's write-ahead log, either from archived segment files or over a streaming connection that delivers records as they are generated. A hot standby also serves read-only queries. The standby is a byte-level copy of the whole cluster, so it must run the same major version and cannot be written to.",
-          "heading": "Standbys that replay the log"
+          "type": "p",
+          "text": "Replication and partitioning answer different questions and are often confused because production databases do both. Replication keeps several copies of the same data on different machines so that the data survives a machine, a disk or a zone, so that reads can be served from more than one place, and so that a failover has somewhere to go. Partitioning, also called sharding, splits the data into pieces that live on different machines so that no single machine must hold all of it or serve all of its traffic. A replicated system has every byte in several places; a partitioned system has every byte in one place and many such places.",
+          "cites": [
+            "s1",
+            "s5"
+          ]
         },
         {
-          "body": "Failover means promoting a standby to primary when the old primary is lost. The database does not decide this itself; external tooling must detect failure, pick the most advanced standby, redirect clients and make sure the old primary cannot keep accepting writes, a step called fencing. Without fencing, two primaries can diverge. The old primary must be rebuilt or rewound before rejoining as a standby.",
-          "heading": "Promoting a standby"
+          "type": "table",
+          "caption": "What each mechanism buys and what it costs.",
+          "columns": [
+            "",
+            "replication",
+            "partitioning (sharding)"
+          ],
+          "rows": [
+            [
+              "solves",
+              "durability, availability, read scale",
+              "write scale, storage beyond one machine"
+            ],
+            [
+              "the unit",
+              "a whole copy of the dataset, or of a shard",
+              "a subset of rows chosen by a key"
+            ],
+            [
+              "what fails",
+              "a copy; the others continue",
+              "a shard; its keys are unavailable, the rest continue"
+            ],
+            [
+              "the hard question",
+              "what a commit means, and what a read may see",
+              "which key, and how to move data when the key's layout changes"
+            ],
+            [
+              "the operational cost",
+              "lag to watch, failover to rehearse",
+              "cross-shard queries, schema changes on every shard, resharding"
+            ],
+            [
+              "usually added",
+              "from day one",
+              "when one primary can no longer take the writes or hold the data"
+            ]
+          ],
+          "cites": [
+            "s1",
+            "s5"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The two are combined in a fixed shape: each shard is itself a small replicated cluster with its own primary and standbys, and a routing layer in front sends each request to the shard that owns its key. The diagram shows that shape for two shards, with a synchronous standby for durability and an asynchronous replica for reads on each, and a logical replication feed out to an analytics store. Every subtopic below is about one arrow in it."
+        },
+        {
+          "type": "diagram",
+          "mermaid": "flowchart LR\n  A[Application] --> RT[Shard router by tenant key]\n  RT --> P1[Shard 1 primary]\n  RT --> P2[Shard 2 primary]\n  P1 -->|synchronous WAL stream| S1A[Shard 1 standby A]\n  P1 -->|asynchronous WAL stream| S1B[Shard 1 read replica]\n  P2 -->|synchronous WAL stream| S2A[Shard 2 standby A]\n  P2 -->|asynchronous WAL stream| S2B[Shard 2 read replica]\n  P1 -->|logical replication| AN[Analytics store]\n  P2 -->|logical replication| AN",
+          "legend": "Two shards, each a replicated cluster: a router picks the shard by tenant key; each primary streams its log synchronously to one standby and asynchronously to a read replica; logical replication feeds an analytics store."
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Replicate first, partition last. Replication is cheap insurance that every production database needs; partitioning changes the data model and the operations, so it is deferred until one primary measurably cannot carry the writes or the data.",
+          "cites": [
+            "s5",
+            "s12"
+          ]
         }
-      ],
-      "id": "physical-replication-and-failover",
-      "title": "Log shipping, streaming replication and failover"
+      ]
     },
     {
-      "body": [
+      "id": "replication-topologies",
+      "title": "Leader-follower, multi-leader and leaderless",
+      "blocks": [
         {
-          "body": "With asynchronous replication the primary acknowledges a commit once it is durable locally, and standbys catch up shortly after. Commits are fast, but a failover can lose the most recent transactions, and reads from a replica may be stale by the replication lag. With synchronous replication the primary waits until one or more standbys confirm receipt before acknowledging, so an acknowledged commit survives loss of the primary, at the price of added commit latency and of writes stalling if no synchronous standby is reachable. Teams commonly name several candidates and require any one or a quorum to confirm. Applications that read from replicas must handle staleness, for example by routing a user's reads to the primary shortly after that user writes.",
-          "heading": "Choosing what a commit means"
+          "type": "p",
+          "text": "Three topologies cover the replicated systems a designer meets. In leader-follower replication one node, the primary, accepts all writes and streams its change log to followers that replay it; PostgreSQL's streaming replication is the canonical form, sending write-ahead log records to standbys as they are generated. In multi-leader replication several nodes accept writes, typically one per region, and exchange changes, which buys write availability in each region at the price of conflicts when two leaders change the same row. In leaderless replication any replica accepts a write and reads consult several replicas; the Dynamo paper is the reference design.",
+          "cites": [
+            "s1",
+            "s7"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The three topologies.",
+          "columns": [
+            "",
+            "leader-follower",
+            "multi-leader",
+            "leaderless (Dynamo-style)"
+          ],
+          "rows": [
+            [
+              "who takes writes",
+              "one primary",
+              "one leader per region or site",
+              "any of N replicas in the key's preference list"
+            ],
+            [
+              "conflicts",
+              "none; one writer orders everything",
+              "yes; two leaders may change one row, resolved by rules or by hand",
+              "yes; versions are reconciled on read"
+            ],
+            [
+              "what a read may see",
+              "the primary: everything committed; a follower: everything up to its lag",
+              "its own leader's state plus whatever has arrived",
+              "the newest of the R replicas it asked"
+            ],
+            [
+              "failover",
+              "promote a follower; the lag at that moment is the data at risk",
+              "the other leaders keep taking writes",
+              "none needed; sloppy quorum and hinted handoff cover absent nodes"
+            ],
+            [
+              "fits",
+              "most transactional systems",
+              "multi-region write availability where conflicts are rare or resolvable",
+              "always-writeable key-value stores"
+            ]
+          ],
+          "cites": [
+            "s1",
+            "s7"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Leaderless systems make the durability and consistency choice explicit with three numbers. N is how many replicas hold each key; W is how many must acknowledge a write; R is how many a read must consult. With R plus W greater than N the read set and the write set overlap, so a read sees the latest acknowledged write; the latency of a get or put is set by the slowest of the R or W replicas, which is why both are kept below N. Dynamo's common configuration balanced durability, consistency, availability and latency.",
+          "cites": [
+            "s7"
+          ]
+        },
+        {
+          "type": "steps",
+          "title": "Reading the quorum arithmetic",
+          "items": [
+            "N = 3 replicas hold each key.",
+            "W = 2: a write is acknowledged once 2 of the 3 replicas have it.",
+            "R = 2: a read asks 2 replicas and takes the newest version.",
+            "Any 2 of 3 overlap with any other 2 of 3 in at least 1 replica, so R + W = 4 > N = 3 and the read sees the write.",
+            "With W = 1 and R = 1 the sum is 2, below N, and a read may miss the latest write; writes and reads are faster and the store accepts stale reads as the price."
+          ],
+          "cites": [
+            "s7"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "tip",
+          "text": "Choose leader-follower unless you have a reason not to. One writer orders everything, which makes transactions, uniqueness and read-your-writes tractable; the other two topologies trade that order for write availability and must say how they resolve the conflicts they create.",
+          "cites": [
+            "s1",
+            "s7"
+          ]
         }
-      ],
+      ]
+    },
+    {
       "id": "sync-vs-async",
-      "title": "Synchronous versus asynchronous replication"
-    },
-    {
-      "body": [
+      "title": "Synchronous versus asynchronous, and what failover loses",
+      "blocks": [
         {
-          "body": "Logical replication sends row-level changes decoded from the write-ahead log rather than raw disk blocks. A publisher defines publications over chosen tables, and a subscriber creates subscriptions that copy the initial data and then apply changes in commit order. Because it works on logical rows, the subscriber can run a different major version, hold a subset of tables, carry extra indexes and accept its own writes. This makes it the standard tool for near-zero-downtime major upgrades, for consolidating several databases into one, and for moving data during a shard split. Limits to plan for: schema changes are not replicated automatically, tables need a replica identity such as a primary key for updates and deletes, and conflicting local writes halt the apply process.",
-          "heading": "Publish and subscribe at table level"
-        }
-      ],
-      "id": "logical-replication",
-      "title": "Logical replication"
-    },
-    {
-      "body": [
-        {
-          "body": "The sharding pattern describes three strategies. Lookup keeps a directory mapping each key, such as a tenant, to a shard, which gives full control and easy rebalancing at the cost of an extra lookup. Range places contiguous key ranges together, which makes range queries efficient but risks hot shards when keys are sequential. Hash spreads keys evenly by hashing them, which removes hotspots but scatters range scans.",
-          "heading": "Three ways to map data to shards"
+          "type": "p",
+          "text": "Streaming replication in PostgreSQL is asynchronous by default: a commit returns once the primary has written the record to its own log, and the standby receives it a little later. If the primary then fails, the transactions committed in that window are gone; the documentation states that the data loss is proportional to the replication delay at the time of failover. Synchronous replication closes the window by making each commit wait until the standby confirms the record is on its disk, and a stricter level waits until the standby has replayed it.",
+          "cites": [
+            "s1"
+          ]
         },
         {
-          "body": "The key should be immutable, present in nearly every query, and should keep related rows that are read or changed together on one shard, because cross-shard joins and transactions are slow and complex. A tenant or workspace identifier is a common choice. Watch for skew from very large tenants, and avoid keys that force most queries to fan out to every shard.",
-          "heading": "What makes a good shard key"
+          "type": "table",
+          "caption": "What a commit means at each level, and what it costs.",
+          "columns": [
+            "level",
+            "commit returns when",
+            "lost on primary failure",
+            "price per commit"
+          ],
+          "rows": [
+            [
+              "asynchronous",
+              "the primary's log has the record",
+              "everything after the standby's last received record: the lag",
+              "none"
+            ],
+            [
+              "synchronous, written",
+              "the standby's log has the record on disk",
+              "nothing committed",
+              "one round trip to the standby plus its disk write"
+            ],
+            [
+              "synchronous, applied",
+              "the standby has replayed the record",
+              "nothing committed, and standby reads see every commit",
+              "the round trip plus replay time"
+            ]
+          ],
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The cluster manager decides what the arithmetic means in practice. Patroni's documentation describes asynchronous mode as allowing the cluster to lose some committed transactions to ensure availability, bounds the loss by a maximum lag beyond which it will not promote a standby, and offers a synchronous mode that promotes a standby only when it is certain the standby holds every transaction the application was told had committed. Even then the manual is careful: synchronous replication does not guarantee zero loss under every sequence of failures, and with no healthy standby a synchronous cluster must choose between refusing writes and dropping to asynchronous.",
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "steps",
+          "title": "How a 43-second partition became a 24-hour incident at GitHub",
+          "items": [
+            "A 43-second loss of connectivity between a network hub and the primary data centre on the US East Coast.",
+            "The failover orchestrator, built on Raft, lost its quorum in the east and the west-coast nodes formed one; they promoted primaries on the West Coast.",
+            "The east-coast databases held a few seconds of writes not yet replicated west; one busy cluster had 954 such writes.",
+            "Now both sides held writes the other lacked, so failing back was unsafe, and the team chose data integrity over a shorter incident.",
+            "Applications on the East Coast could not tolerate a cross-country round trip to their new primaries, so the service stayed degraded for 24 hours and 11 minutes while replicas were rebuilt and the topology restored."
+          ],
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "An RPO of zero demands a synchronous standby and an RTO of seconds demands automated failover, but automated failover over asynchronous replication across a slow link is a decision to lose data under partition. Make the cross-site link synchronous, which costs every commit the round trip, or make the failover manual or fenced so that a brief partition cannot create two primaries with different histories.",
+          "cites": [
+            "s4",
+            "s3"
+          ]
         }
-      ],
-      "id": "sharding-strategies",
-      "title": "Sharding strategies and shard keys"
+      ]
     },
     {
-      "body": [
+      "id": "reading-from-replicas",
+      "title": "Reading from replicas: lag and read-your-writes",
+      "blocks": [
         {
-          "body": "A widely used approach, described in Notion's account of sharding Postgres, is to create many more logical shards than physical hosts, for example as separate schemas, and map groups of them onto each database. Growth is then handled by moving whole logical shards to new hosts instead of re-hashing every row. Routing lives in the application or a proxy layer that computes the shard from the key. Migrating a live monolith typically follows four steps: write to both old and new stores, backfill historical data, verify that the two agree, then switch reads and writes over. Operational costs remain: schema changes must roll across every shard, unique constraints only hold within a shard, and cross-shard reporting usually moves to a separate analytics store.",
-          "heading": "Logical shards and online migration"
+          "type": "p",
+          "text": "A standby that accepts read-only queries, a hot standby in PostgreSQL's terms, is how a leader-follower system scales reads: reporting, search backfills and read-heavy endpoints move off the primary. The price is that the standby is behind by its replication lag, which is usually milliseconds and occasionally much more, during a long transaction on the primary, a burst of writes, or a network stall. Every read routed to a replica is a read of the past, and the application has to decide where that is acceptable.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The anomaly users notice is a missing own write: a user saves a profile, the next page reads from a replica that has not applied the change, and the edit appears lost. The fix is read-your-writes routing: send a user's reads to the primary for a short window after that user has written, or carry the primary's log position with the session and read only from a replica that has reached it. A second anomaly is going backwards in time when two consecutive reads land on replicas with different lag; routing one user's reads consistently to one replica gives monotonic reads.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Where a read may go.",
+          "columns": [
+            "the read",
+            "route to",
+            "why"
+          ],
+          "rows": [
+            [
+              "anything right after the same user's write",
+              "the primary, or a replica known to have applied the write",
+              "read-your-writes"
+            ],
+            [
+              "a sequence of reads one user sees as a timeline",
+              "one replica, consistently",
+              "monotonic reads"
+            ],
+            [
+              "a read that feeds a write (check then act)",
+              "the primary",
+              "a stale read here corrupts data"
+            ],
+            [
+              "dashboards, reports, search indexing, exports",
+              "replicas",
+              "tolerate lag; keep load off the primary"
+            ],
+            [
+              "cross-region reads of slowly changing data",
+              "a regional replica",
+              "a round trip saved beats seconds of staleness"
+            ]
+          ],
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Lag is also an operational signal. Alert on it; it rises when the primary writes faster than a standby can replay, when a long query on the standby conflicts with replay and is delayed or cancelled, and before a standby silently drops out of synchronous status. The lesson on consistency explains the models that these routing rules implement; here it is enough to know that each row of the table above is a promise the application makes, not one the database makes on its own.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Decide per endpoint whether a stale read is acceptable, route the rest to the primary, and measure replication lag as a first-class health signal with an alert before it reaches the staleness the product can tolerate.",
+          "cites": [
+            "s1"
+          ]
         }
-      ],
-      "id": "operating-shards",
-      "title": "Operating and migrating to shards"
-    }
-  ],
-  "diagram": {
-    "source": "flowchart LR\n  A[Application] --> RT[Shard router by tenant key]\n  RT --> P1[Shard 1 primary]\n  RT --> P2[Shard 2 primary]\n  P1 -->|synchronous WAL stream| S1A[Shard 1 standby A]\n  P1 -->|asynchronous WAL stream| S1B[Shard 1 read replica]\n  P2 -->|synchronous WAL stream| S2A[Shard 2 standby A]\n  P2 -->|asynchronous WAL stream| S2B[Shard 2 read replica]\n  P1 -->|logical replication| AN[Analytics store]\n  P2 -->|logical replication| AN"
-  },
-  "code": [
+      ]
+    },
     {
-      "code": "import hashlib\n\nLOGICAL_SHARDS = 480\nHOSTS = ['db-00', 'db-01', 'db-02', 'db-03']\nPER_HOST = LOGICAL_SHARDS // len(HOSTS)\n\ndef logical_shard(tenant_id: str) -> int:\n    digest = hashlib.sha1(tenant_id.encode()).digest()\n    return int.from_bytes(digest[:8], 'big') % LOGICAL_SHARDS\n\ndef route(tenant_id: str) -> tuple[str, str]:\n    shard = logical_shard(tenant_id)\n    host = HOSTS[shard // PER_HOST]\n    return host, f'schema_{shard:03d}'\n\nprint(route('tenant-8f2c'))",
-      "lang": "python"
+      "id": "logical-replication",
+      "title": "Logical replication: rows, not blocks",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Physical replication ships the primary's log blocks, so the standby is a byte-for-byte copy: same major version, same tables, read-only. Logical replication decodes the log into row changes and ships those. In PostgreSQL a publisher defines publications over chosen tables and a subscriber creates subscriptions; the subscriber first copies the existing data, then applies changes in the order the publisher committed them, so transactional consistency holds within a subscription. Because it moves rows rather than blocks, the subscriber may run a different major version, hold a subset of the tables, carry its own indexes and accept its own writes.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Physical against logical replication.",
+          "columns": [
+            "",
+            "physical (streaming) replication",
+            "logical replication"
+          ],
+          "rows": [
+            [
+              "ships",
+              "write-ahead log blocks",
+              "decoded row changes per table"
+            ],
+            [
+              "the copy is",
+              "identical and read-only",
+              "a database of its own with the published tables"
+            ],
+            [
+              "versions",
+              "the same major version",
+              "may differ; used for major upgrades"
+            ],
+            [
+              "schema changes",
+              "replicated with the blocks",
+              "not replicated; applied by hand on both sides"
+            ],
+            [
+              "fits",
+              "standbys for failover and read scale",
+              "upgrades, consolidation, selective copies, feeding other systems, moving data between shards"
+            ]
+          ],
+          "cites": [
+            "s1",
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The restrictions are the design constraints. Schema and DDL commands are not replicated, so a migration must apply them to the subscriber separately and in an order that keeps apply working; tables need a replica identity, normally the primary key, for updates and deletes to be applied; and the initial copy of a large table can take longer than the write volume allows the subscriber to catch up. Notion hit that last limit: logical replication struggled to keep up with its block table during the initial snapshot, so the first sharding migration used an application-level audit log and catch-up process instead, while the second, two years later, used logical replication and cut the synchronisation from three days to twelve hours by building the indexes after the copy rather than during it.",
+          "cites": [
+            "s2",
+            "s10",
+            "s11"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "tip",
+          "text": "Use physical replication for the standbys and logical replication for everything that is not a standby: a major-version upgrade with a short cutover, a consolidation of several databases into one, a feed to a search or analytics store, and the copy step of a reshard.",
+          "cites": [
+            "s2",
+            "s11"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sharding-strategies",
+      "title": "Sharding strategies and the shard key",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Partitioning starts with two choices: the key that decides where a row lives, and the function from key to shard. The Azure architecture guidance calls the shard key the most critical design decision in a sharded system, because changing it later means migrating all the data to a new layout on a live system. A good key is immutable, has high cardinality, spreads data and load evenly, and appears in the dominant queries so that most requests resolve on one shard; monotonically increasing values, low-cardinality attributes and volatile attributes are the ones to avoid, because they create hotspots or force rows to move.",
+          "cites": [
+            "s5"
+          ]
+        },
+        {
+          "type": "decision",
+          "caption": "The three mappings from key to shard, as the sharding pattern describes them.",
+          "rows": [
+            {
+              "option": "Lookup (directory)",
+              "pick_when": "you need full control over placement, such as keeping each tenant on one shard and moving a large tenant on its own",
+              "avoid_when": "the directory becomes a hot dependency on every request and a single point of failure unless cached and replicated",
+              "example": "a tenant-to-shard table; Vitess lookup vindexes"
+            },
+            {
+              "option": "Range",
+              "pick_when": "queries fetch contiguous ranges of the key, such as orders by month, and must stay on one shard",
+              "avoid_when": "keys are sequential, so new writes all land on the last shard and it runs hot",
+              "example": "time-bucketed partitions; range-based shards in MongoDB"
+            },
+            {
+              "option": "Hash",
+              "pick_when": "the load must spread evenly and queries are by exact key",
+              "avoid_when": "queries scan ranges of the key, which now span every shard",
+              "example": "hash of the tenant or user id; Dynamo-style rings; hashed shard keys in MongoDB"
+            }
+          ],
+          "cites": [
+            "s5",
+            "s7"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Notion's choice shows the reasoning. Every sharded row was a block or something related to one, every block belongs to exactly one workspace, and users query within one workspace at a time, so the workspace id became the partition key and most queries avoid cross-shard joins. Figma reached the same shape from the other end: it grouped related tables into colocations that share one shard key and one physical layout, and almost every table could be sharded by one of two keys, so that joins and foreign keys keep working inside a colo.",
+          "cites": [
+            "s10",
+            "s12"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "What the key costs on either side.",
+          "columns": [
+            "",
+            "a key in nearly every query (tenant, workspace, user)",
+            "a key in few queries"
+          ],
+          "rows": [
+            [
+              "single-shard requests",
+              "most",
+              "few; most requests fan out to every shard"
+            ],
+            [
+              "joins and constraints",
+              "work within the key's rows",
+              "cross-shard, in the application"
+            ],
+            [
+              "hot keys",
+              "a very large tenant is one hot shard; plan to isolate it",
+              "spread, but no locality"
+            ],
+            [
+              "resharding",
+              "move whole tenants",
+              "move key ranges"
+            ]
+          ],
+          "cites": [
+            "s5",
+            "s10",
+            "s12"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "The shard key is the one decision you cannot cheaply reverse. Choose the key that appears in the dominant queries and keeps related rows together, confirm it is immutable and high-cardinality, and write down how the largest single key will be handled before the first row is written.",
+          "cites": [
+            "s5"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "consistent-hashing-and-hot-keys",
+      "title": "Consistent hashing, virtual nodes and hot keys",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Hashing a key to a shard with a modulus has a fatal property: when the number of shards changes, almost every key maps somewhere else. Consistent hashing, introduced by Karger and colleagues for web caches, is a hash whose output changes minimally as its range changes: nodes and keys are placed on a ring, a key belongs to the first node clockwise from it, and adding or removing a node moves only the keys between it and its neighbour. The Dynamo paper adopted the ring and added virtual nodes: each physical node owns many points on the ring, so a node that leaves sheds its load evenly over all the others and a bigger machine can own more points.",
+          "cites": [
+            "s6",
+            "s7"
+          ]
+        },
+        {
+          "type": "steps",
+          "title": "What moves when a shard is added",
+          "items": [
+            "Modulus hashing over 8 shards: shard = hash(key) mod 8. Add a ninth and about 8 keys in 9 change shard, nearly 89 percent.",
+            "Consistent hashing over 8 nodes on a ring: a ninth node takes over the arc between itself and its clockwise neighbour, about 1 key in 9, and no other key moves.",
+            "With 200 virtual nodes per physical node the new node takes 200 small arcs from across the ring, so the 1 in 9 it takes comes evenly from all 8 existing nodes rather than from one neighbour."
+          ],
+          "cites": [
+            "s6",
+            "s7"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Even spread across shards does not protect a single key. A partition in DynamoDB is designed to deliver at most 3,000 read units and 1,000 write units per second, and a table whose traffic concentrates on one partition key value hits that limit while the rest idles. The documented remedies are the toolkit for any store: a key with many distinct values and even access, a hot key's writes sharded across a calculated or random suffix so that they land on several partitions, and the store's adaptive capacity for short imbalances. The same problem appears as a hot shard when one tenant is far larger than the rest, and the remedy is a shard of its own.",
+          "cites": [
+            "s8",
+            "s5"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Hot-key remedies, in the order to try them.",
+          "columns": [
+            "remedy",
+            "what it does",
+            "what it costs"
+          ],
+          "rows": [
+            [
+              "a better key",
+              "spreads the keys evenly in the first place",
+              "a migration if the data already exists"
+            ],
+            [
+              "write sharding with a suffix",
+              "splits one hot key over several partitions",
+              "reads must query every suffix and merge"
+            ],
+            [
+              "cache or coalesce in front",
+              "serves repeated reads of the hot key without touching the store",
+              "staleness; a cache to run"
+            ],
+            [
+              "isolate the big tenant",
+              "gives the largest key its own shard",
+              "a lookup directory and a special case to operate"
+            ],
+            [
+              "the store's adaptive capacity",
+              "absorbs short bursts on one partition",
+              "not a design; it buys time"
+            ]
+          ],
+          "cites": [
+            "s8",
+            "s5"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "Uniform hashing is not uniform load. A perfect hash spreads keys evenly and still puts all of one celebrity's, one tenant's or one device's traffic on one shard. Size for the largest key, not the average one.",
+          "cites": [
+            "s8"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "resharding-and-migration",
+      "title": "Resharding and the online migration",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Growth eventually forces a change of layout: more shards, a new key, or a move from one database to many. The pattern that makes this safe online is the same whether the tool is a sharding proxy or hand-written code; Notion, Figma and the Vitess manual describe it in nearly the same words. Vitess's Reshard workflow copies the data to the target shards and keeps them in sync, VDiff compares source and target, traffic switches for replica reads first and then for writes, and the workflow is reversible until it is completed.",
+          "cites": [
+            "s9",
+            "s10",
+            "s12"
+          ]
+        },
+        {
+          "type": "steps",
+          "title": "The online migration, step by step",
+          "items": [
+            "Double write: every write goes to the old layout and the new one. Notion did this with an audit log of writes and a catch-up process.",
+            "Backfill: copy the existing rows into the new layout while double writes continue; Notion's second reshard used logical replication for this.",
+            "Verify: compare the two layouts. Vitess runs VDiff; Notion issued dark reads, parallel queries against the new shards compared with the primary on a sample of requests.",
+            "Switch reads: replica reads to the new layout first, watch, then primary reads, as Vitess does by tablet type.",
+            "Switch writes: cut over the write path; every step before this is reversible, and Figma kept the ability to roll back even after a physical shard split.",
+            "Clean up: remove the old shards and the double-write code; Vitess completes the workflow and deletes the source shards."
+          ],
+          "cites": [
+            "s9",
+            "s10",
+            "s11",
+            "s12"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Two design choices make resharding cheap. The first is many more logical shards than physical databases, so that growth is handled by moving whole logical shards to new hosts rather than rehashing rows; Notion's layout in the table below is the canonical example, and its second reshard tripled the fleet without changing the logical layout. The second is a routing layer that owns the mapping: Figma's DBProxy intercepts the application's SQL and routes it, which also let the team run shadow reads against the new layout before trusting it.",
+          "cites": [
+            "s10",
+            "s11",
+            "s12"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Notion's shard layout across its two migrations.",
+          "columns": [
+            "",
+            "2021 sharding",
+            "2023 re-shard"
+          ],
+          "rows": [
+            [
+              "logical shards (PostgreSQL schemas)",
+              "480",
+              "480, unchanged"
+            ],
+            [
+              "physical databases",
+              "32",
+              "96"
+            ],
+            [
+              "self-imposed bounds",
+              "500 GB per table, 10 TB per database",
+              "the same"
+            ],
+            [
+              "copy mechanism",
+              "audit log and catch-up process",
+              "logical replication"
+            ],
+            [
+              "time to synchronise",
+              "",
+              "3 days, then 12 hours with indexes built after the copy"
+            ]
+          ],
+          "cites": [
+            "s10",
+            "s11"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Figma's order of operations is the general one: vertical partitioning first, moving groups of related tables onto their own databases, bought years of runway; horizontal sharding came when single tables approached the IOPS a managed instance could deliver; and the team sharded logically at the application layer, behind views, before it split anything physically, so that the risky distributed failover happened last and could be undone.",
+          "cites": [
+            "s12"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Reshard by moving logical shards, never by rehashing rows. Keep far more logical shards than hosts, put the key-to-shard mapping in one routing layer, and make every migration step reversible until the last.",
+          "cites": [
+            "s10",
+            "s12",
+            "s9"
+          ]
+        }
+      ]
     }
   ],
+  "worked_example": {
+    "title": "Worked example: a replication topology and a shard plan for a stated RPO and RTO",
+    "blocks": [
+      {
+        "type": "p",
+        "text": "A multi-tenant SaaS product states its requirements: no committed write may be lost on a single failure, service must be back within one minute of a primary failing, and the database must carry three years of growth. Every input below is an assumption chosen to make the arithmetic concrete; the limits come from the Notion post, the quorum rule from Dynamo, and the migration steps from Vitess and Notion.",
+        "cites": [
+          "s10",
+          "s7",
+          "s9"
+        ]
+      },
+      {
+        "type": "steps",
+        "title": "From requirements to a topology",
+        "items": [
+          "RPO of zero: one synchronous standby in a second availability zone, so a commit waits for its disk; the price is one in-zone round trip per commit, about 1 ms (assumption from the datacentre round-trip figure in the numbers lesson).",
+          "RTO of 60 seconds: a cluster manager with automated failover and a lag bound, so promotion is automatic and never chooses a standby that is behind.",
+          "Read scale: one asynchronous replica per shard for reports and exports; application reads after a write go to the primary for 5 seconds (assumption) to preserve read-your-writes.",
+          "Data today: 2 TB, growing 1 TB per year (assumption), so about 5 TB in three years, under Notion's bound of 10 TB per database; one shard would hold the data.",
+          "Writes today: 4,000 per second at peak, doubling yearly (assumption), so about 32,000 per second in three years, beyond what one primary with a synchronous standby comfortably takes (assumption: 10,000 per second per primary from a load test).",
+          "Shard count: 32,000 divided by 10,000 is about 3.2, so 4 physical shards at the three-year point, each a replicated cluster of primary, synchronous standby and read replica: 12 database instances.",
+          "Shard key: tenant id. It is immutable, has 50,000 distinct values (assumption), appears in every query, and keeps a tenant's rows together for joins.",
+          "Logical shards: 256 schemas keyed by hash of tenant id, 64 per physical shard at 4 shards, so growth to 8 or 16 shards moves whole schemas without rehashing rows.",
+          "The hot tenant: the largest tenant generates 3 percent of all writes (assumption), about 1,000 per second at the three-year point, well under one shard's 10,000; a tenant above about 30 percent would need a shard of its own through the lookup directory.",
+          "Start: 1 physical shard holding all 256 logical shards today, because 4,000 writes per second fit one primary; the first split is scheduled when a primary passes 70 percent of its measured capacity, which at a yearly doubling is in about 15 months.",
+          "The decider: the shard key and the logical shard count, because they are the two choices this plan cannot cheaply reverse; everything else, including the number of physical shards, moves with the four-step migration."
+        ],
+        "cites": [
+          "s10",
+          "s3",
+          "s1",
+          "s5"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "The plan as a reviewer should receive it.",
+        "columns": [
+          "quantity",
+          "value",
+          "derived from"
+        ],
+        "rows": [
+          [
+            "Synchronous standbys per shard",
+            "1, in a second zone",
+            "RPO of zero"
+          ],
+          [
+            "Cost per commit",
+            "about 1 ms",
+            "one in-zone round trip (assumption)"
+          ],
+          [
+            "Data at three years",
+            "about 5 TB",
+            "2 TB plus 1 TB per year"
+          ],
+          [
+            "Writes at three years",
+            "about 32,000 per second",
+            "4,000 per second doubling yearly"
+          ],
+          [
+            "Physical shards at three years",
+            "4",
+            "32,000 divided by 10,000 per primary, rounded up"
+          ],
+          [
+            "Database instances at three years",
+            "12",
+            "4 shards times primary, synchronous standby, read replica"
+          ],
+          [
+            "Logical shards",
+            "256",
+            "far more than hosts; 64 per shard at 4, 16 per shard at 16"
+          ],
+          [
+            "First split",
+            "in about 15 months",
+            "when a primary passes 70 percent of 10,000 writes per second"
+          ]
+        ],
+        "cites": [
+          "s10"
+        ]
+      },
+      {
+        "type": "code",
+        "lang": "python",
+        "code": "import hashlib\n\nLOGICAL_SHARDS = 256\nHOSTS = ['db-00']                    # today: one physical shard holds every logical shard\n# HOSTS = ['db-00', 'db-01', 'db-02', 'db-03']   # after the first splits: 64 logical shards each\n\ndef logical_shard(tenant_id: str) -> int:\n    digest = hashlib.sha1(tenant_id.encode()).digest()\n    return int.from_bytes(digest[:8], 'big') % LOGICAL_SHARDS\n\ndef route(tenant_id: str) -> tuple[str, str]:\n    shard = logical_shard(tenant_id)\n    host = HOSTS[shard * len(HOSTS) // LOGICAL_SHARDS]   # contiguous ranges of logical shards per host\n    return host, f'schema_{shard:03d}'\n\nprint(route('tenant-8f2c'))",
+        "caption": "The routing layer in one function: the logical shard never changes for a tenant; only the mapping from logical shards to hosts does, and a split edits that mapping after the four-step migration has moved the schemas."
+      }
+    ]
+  },
+  "diagram": null,
+  "code": [],
   "technologies": [
     "PostgreSQL",
     "Patroni",
@@ -112,35 +871,142 @@
   ],
   "sources": [
     {
+      "id": "s1",
+      "title": "PostgreSQL 18 documentation, chapter 26, High Availability, Load Balancing, and Replication: streaming replication (26.2.5), synchronous replication (26.2.8), failover (26.3) and hot standby (26.4)",
+      "url": "https://www.postgresql.org/docs/current/high-availability.html",
       "kind": "doc",
-      "title": "PostgreSQL high availability and replication",
-      "url": "https://www.postgresql.org/docs/current/high-availability.html"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Synchronous Replication"
+      }
     },
     {
+      "id": "s2",
+      "title": "PostgreSQL 18 documentation, chapter 29, Logical Replication: publications and subscriptions, the initial copy and change apply in commit order, restrictions (29.8)",
+      "url": "https://www.postgresql.org/docs/current/logical-replication.html",
       "kind": "doc",
-      "title": "PostgreSQL log-shipping standby servers",
-      "url": "https://www.postgresql.org/docs/current/warm-standby.html"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "publish and subscribe model"
+      }
     },
     {
+      "id": "s3",
+      "title": "Patroni documentation, Replication modes: what asynchronous mode may lose at failover, maximum_lag_on_failover, and what synchronous_mode guarantees",
+      "url": "https://patroni.readthedocs.io/en/latest/replication_modes.html",
       "kind": "doc",
-      "title": "PostgreSQL logical replication",
-      "url": "https://www.postgresql.org/docs/current/logical-replication.html"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "In asynchronous mode the cluster is allowed to lose some committed transactions to ensure availability"
+      }
     },
     {
-      "kind": "doc",
-      "title": "Sharding pattern (Azure Architecture Center)",
-      "url": "https://learn.microsoft.com/en-us/azure/architecture/patterns/sharding"
-    },
-    {
+      "id": "s4",
+      "title": "GitHub, October 21 post-incident analysis (2018-10-30): a 43-second network partition, an automated MySQL failover across data centres, and 24 hours 11 minutes of degraded service",
+      "url": "https://github.blog/news-insights/company-news/oct21-post-incident-analysis/",
       "kind": "article",
-      "title": "Sharding Postgres at Notion",
-      "url": "https://www.notion.com/blog/sharding-postgres-at-notion"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Connectivity between these locations was restored in 43 seconds"
+      }
+    },
+    {
+      "id": "s5",
+      "title": "Azure Architecture Center, Sharding pattern: lookup, range and hash strategies, what makes a good shard key, rebalancing and hot shards",
+      "url": "https://learn.microsoft.com/en-us/azure/architecture/patterns/sharding",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "The shard key is the most critical design decision in a sharded system"
+      }
+    },
+    {
+      "id": "s6",
+      "title": "David Karger et al., Consistent Hashing and Random Trees: Distributed Caching Protocols for Relieving Hot Spots on the World Wide Web, STOC 1997 (PDF): a hash function that changes minimally as its range changes",
+      "url": "https://www.cs.princeton.edu/courses/archive/fall09/cos518/papers/chash.pdf",
+      "kind": "paper",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "a consistent hash function is one which changes minimally as the range of the function changes"
+      }
+    },
+    {
+      "id": "s7",
+      "title": "Giuseppe DeCandia et al., Dynamo: Amazon's Highly Available Key-value Store, SOSP 2007 (PDF): consistent hashing with virtual nodes, the preference list, N, R and W with R + W > N, the (3,2,2) configuration, sloppy quorum and hinted handoff",
+      "url": "https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf",
+      "kind": "paper",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "The common (N,R,W) configuration used by several instances of Dynamo is (3,2,2)"
+      }
+    },
+    {
+      "id": "s8",
+      "title": "Amazon DynamoDB Developer Guide, Designing partition keys to distribute your workload: the per-partition limits, hot partitions, write sharding with suffixes, adaptive capacity",
+      "url": "https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/bp-partition-key-design.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "3,000 read units per second and 1,000 write units per second"
+      }
+    },
+    {
+      "id": "s9",
+      "title": "Vitess 24 documentation, Resharding: the Reshard workflow, VDiff verification, switching replica reads before writes, reversibility and completion",
+      "url": "https://vitess.io/docs/24.0/user-guides/configuration-advanced/resharding/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "SwitchTraffic"
+      }
+    },
+    {
+      "id": "s10",
+      "title": "Notion Engineering, Herding elephants: lessons learned from sharding Postgres at Notion (2021-10-06): workspace id as the partition key, 480 logical shards on 32 databases, double-write with an audit log, backfill, verification, switch-over",
+      "url": "https://www.notion.com/blog/sharding-postgres-at-notion",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "480 logical shards evenly distributed across 32 physical databases"
+      }
+    },
+    {
+      "id": "s11",
+      "title": "Notion Engineering, The Great Re-shard: adding Postgres capacity (again) with zero downtime (2023-07-17): 32 to 96 machines, logical replication for the copy, dark reads for verification, PgBouncer sharding",
+      "url": "https://www.notion.com/blog/the-great-re-shard",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "tripling the number of instances in our fleet from 32 to 96 machines"
+      }
+    },
+    {
+      "id": "s12",
+      "title": "Figma Engineering, How Figma's databases team lived to tell the scale (Sammy Steele, 2024-03-14): vertical partitioning first, colos, logical before physical sharding, the DBProxy query engine, shadow reads, no one-way migrations",
+      "url": "https://www.figma.com/blog/how-figmas-databases-team-lived-to-tell-the-scale/",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "We separated the concept of “logical sharding” at the application layer from “physical sharding” at the Postgres layer"
+      }
     }
   ],
   "practice": "practice/sd-replication-partitioning",
   "provenance": {
-    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
-    "generated_on": "2026-10-13",
+    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center, format v2",
+    "generated_on": "2026-10-15",
     "reviewed_by": null,
     "reviewed_on": null
   },
@@ -149,6 +1015,11 @@
       "version": 1,
       "date": "2026-10-13",
       "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-15",
+      "change": "rewritten by hand from primary sources at format v2 (learning-center-lesson:2): 8 subtopics with the replication-versus-partitioning, topology, commit-level, read-routing, physical-versus-logical, shard-key and hot-key tables, a decision block over lookup, range and hash sharding, the quorum arithmetic, the GitHub failover and the online migration as steps, the shard diagram in its subtopic, a topology and shard plan for a stated RPO and RTO as the worked example with the routing code after the teaching, cited in-practice blocks (Notion, Figma, Amazon, GitHub), 12 verified sources with ids"
     }
   ]
 }
