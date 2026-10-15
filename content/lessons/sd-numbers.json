@@ -185,7 +185,7 @@
             [
               "Main memory reference",
               "100 ns",
-              "20 times L2"
+              "about 14 times L2 (the maintained list rounds this to 20)"
             ],
             [
               "Compress 1 KB with Zippy (now Snappy)",
@@ -195,7 +195,7 @@
             [
               "Send 1 KB over a 1 Gbps network",
               "10,000 ns",
-              ""
+              "2 KB in 20,000 ns on Dean's slide"
             ],
             [
               "Read 4 KB at random from SSD",
@@ -571,7 +571,7 @@
         },
         {
           "type": "p",
-          "text": "Headroom is where estimates are quietly wrong. A fleet sized to carry the peak at full utilisation has no room for a node failure, a deployment that takes capacity out of rotation, or the queueing growth described above. Size for the peak at a target utilisation well below saturation, then add the capacity of the largest failure domain you intend to survive: for three zones, a third more machines than the arithmetic alone suggests.",
+          "text": "Headroom is where estimates are quietly wrong. A fleet sized to carry the peak at full utilisation has no room for a node failure, a deployment that takes capacity out of rotation, or the queueing growth described above. Size for the peak at a target utilisation well below saturation, then add the capacity of the largest failure domain you intend to survive: for three zones, half as many again as the arithmetic alone suggests, so that the two remaining zones still carry the peak.",
           "cites": [
             "s7"
           ]
@@ -759,7 +759,7 @@
       {
         "type": "code",
         "lang": "python",
-        "code": "dau = 20_000_000\nreads_per_user, writes_per_user = 30, 5\npeak_factor = 4\nlatency_s = 0.05            # measured in a load test\nper_node_rps = 1_500        # measured in a load test\nwrite_bytes, response_bytes = 2_000, 10_000\nreplicas, retention_days = 3, 365\n\navg_rps = dau * reads_per_user / 86_400\npeak_rps = avg_rps * peak_factor\nin_flight = peak_rps * latency_s                    # Little's law: L = lambda * W\nnodes = -(-peak_rps * 1.5 // per_node_rps)          # 50 percent headroom, rounded up\negress_gbit = peak_rps * response_bytes * 8 / 1e9\nstorage_tb = dau * writes_per_user * write_bytes * retention_days * replicas / 1e12\n\nprint(f\"avg {avg_rps:,.0f} rps, peak {peak_rps:,.0f} rps, {in_flight:,.0f} in flight\")\nprint(f\"{nodes:.0f} nodes, {egress_gbit:.1f} Gbit/s egress, {storage_tb:.0f} TB per year\")",
+        "code": "dau = 20_000_000\nreads_per_user, writes_per_user = 30, 5\npeak_factor = 4\nlatency_s = 0.05            # measured in a load test\nper_node_rps = 1_500        # measured in a load test\nwrite_bytes, response_bytes = 2_000, 10_000\nreplicas, retention_days = 3, 365\n\navg_rps = dau * reads_per_user / 86_400\npeak_rps = avg_rps * peak_factor\nin_flight = peak_rps * latency_s                    # Little's law: L = lambda * W\nnodes = -(-peak_rps * 1.5 // per_node_rps)          # 50 percent headroom, rounded up: 28; the text rounds to 30 for 3 zones\negress_gbit = peak_rps * response_bytes * 8 / 1e9\nstorage_tb = dau * writes_per_user * write_bytes * retention_days * replicas / 1e12\n\nprint(f\"avg {avg_rps:,.0f} rps, peak {peak_rps:,.0f} rps, {in_flight:,.0f} in flight\")\nprint(f\"{nodes:.0f} nodes, {egress_gbit:.1f} Gbit/s egress, {storage_tb:.0f} TB per year\")",
         "caption": "The same estimate as a script: change one assumption and every derived number follows."
       }
     ]
@@ -919,8 +919,8 @@
   "provenance": {
     "generated_by": "Claude (Fable 5.1) by hand, Scout learning center, format v2 exemplar",
     "generated_on": "2026-10-15",
-    "reviewed_by": null,
-    "reviewed_on": null
+    "reviewed_by": "a second reader (Claude Fable 5.1), Scout learning center, format v2 1B",
+    "reviewed_on": "2026-10-15"
   },
   "changelog": [
     {
