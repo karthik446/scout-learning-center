@@ -822,6 +822,9 @@ def exercise_checks(l: dict) -> list[str]:
     return out
 
 
+SCRIPT_BODY = re.compile(r"<script\b[^>]*>(.*?)</script>", re.S | re.I)
+
+
 def scan_built(site: Path) -> list[str]:
     problems: list[str] = []
     pages = sorted(site.rglob("*.html"))
@@ -837,8 +840,15 @@ def scan_built(site: Path) -> list[str]:
             problems.append(f"{rel}: analytics or tracker string {TRACKERS.search(text).group(0)!r}")
         if CSS_URL.search(text):
             problems.append(f"{rel}: CSS url()/@import to another origin")
-        if "set-cookie" in text.lower() or "document.cookie" in text.lower():
-            problems.append(f"{rel}: cookie code")
+        # Cookie CODE, not cookie prose: a lesson may teach the Set-Cookie header; only a script that touches
+        # document.cookie or the cookieStore API is a problem (the response headers are checked once below).
+        for body in SCRIPT_BODY.findall(text):
+            if "document.cookie" in body or "cookieStore" in body:
+                problems.append(f"{rel}: cookie code in a script")
+                break
+    headers = site / "_headers"
+    if headers.is_file() and "set-cookie" in headers.read_text(encoding="utf-8", errors="ignore").lower():
+        problems.append("_headers: a Set-Cookie header is set")
     for p in sorted(site.rglob("*.css")):
         if p.stat().st_size and CSS_URL.search(p.read_text(encoding="utf-8", errors="ignore")):
             # a font or image from another origin; @import is not used by any shipped sheet
