@@ -5,7 +5,7 @@
   "lesson": "idi-saml",
   "tool": "Keycloak as IdP and node-saml as SP",
   "tool_key": null,
-  "why_this_tool": "A SAML integration has two sides and the free way to hold both is Keycloak as the identity provider and a small node-saml service provider you can read in full: every option of the SP (signatures wanted, audience, clock skew, InResponseTo) is one line, every IdP field is a console switch, and a scripted browser lets you replay and tamper on purpose. The spike ran this path end to end and the step outcomes are its outputs.",
+  "why_this_tool": "A SAML integration has two sides and the free way to hold both is Keycloak as the identity provider and a small node-saml service provider you can read in full: every option of the SP (signatures wanted, audience, clock skew, InResponseTo) is one line, every IdP field is a console switch, and a scripted browser lets you replay and tamper on purpose. The learning center ran this path end to end against Keycloak 26.4 and node-saml 5, and the step outcomes are its outputs.",
   "alternatives": "python3-saml is the Python SP toolkit and its settings file has the same fields, but it needs libxmlsec1 from the system package manager (a global install, so reader-only here); pysaml2 can play both SP and IdP in tests; Keycloak can also act as the SP through identity brokering against a second realm; a free Okta or Entra tenant gives a real customer-side IdP, covered in the Okta and Entra lesson; samltool.com decodes messages when you have no script.",
   "setup": [
     {
@@ -24,7 +24,7 @@
       "n": 1
     },
     {
-      "do": "In a scratch folder, npm install express and @node-saml/node-saml (no global install) and save the lesson's 40-line service provider as sp.js, reading the IdP certificate PEM from a file you extract in step 1. No-Docker alternative for the IdP: a second node-saml-based IdP or samlify; python3-saml as the SP needs libxmlsec1 from the system package manager and is reader-only here.",
+      "do": "In a scratch folder, npm install express and @node-saml/node-saml (no global install) and save the lesson's 40-line service provider as sp.js, reading the IdP certificate PEM from a file you extract in step 1. No-Docker alternative for the IdP: samlify (Node) or pysaml2 (Python) as a scripted IdP, since node-saml is an SP library only; python3-saml as the SP needs libxmlsec1 from the system package manager and is reader-only here.",
       "done_when": "node sp.js prints that the SP listens on 127.0.0.1:18082 and GET /saml/metadata returns an EntityDescriptor.",
       "source": {
         "title": "node-saml README",
@@ -132,7 +132,7 @@
     },
     {
       "do": "POST the captured SAMLResponse and RelayState to the ACS.",
-      "done_when": "The SP answers 200 with ok true, the NameID, the email and the groups attribute; the spike's output was exactly that.",
+      "done_when": "The SP answers 200 with ok true, the NameID, the email and the groups attribute; the learning center's run produced exactly that.",
       "source": {
         "title": "OWASP SAML Security Cheat Sheet",
         "url": "https://cheatsheetseries.owasp.org/cheatsheets/SAML_Security_Cheat_Sheet.html",
@@ -176,7 +176,7 @@
       "n": 8
     },
     {
-      "do": "Switch the SP to wantAssertionsSigned only (response signature not required) and in Keycloak turn off 'Sign documents' but keep 'Sign assertions'; repeat the login, the replay and the tampering. (Read in the spike, not run.)",
+      "do": "Switch the SP to wantAssertionsSigned only (response signature not required) and in Keycloak turn off 'Sign documents' but keep 'Sign assertions'; repeat the login, the replay and the tampering. (Read, not run by the learning center.)",
       "done_when": "The genuine login still passes, the two attacks still fail, and you can say which element each signature covered in both configurations.",
       "source": {
         "title": "node-saml README",
@@ -191,7 +191,7 @@
       "n": 9
     },
     {
-      "do": "Rotate the IdP's signing key: in Keycloak's realm keys add a new RSA key provider with a higher priority, log in again and watch the SP reject the response; then replace the SP's certificate with the new one from the descriptor and log in again. (Read in the spike, not run.)",
+      "do": "Rotate the IdP's signing key: in Keycloak's realm keys add a new RSA key provider with a higher priority, log in again and watch the SP reject the response; then replace the SP's certificate with the new one from the descriptor and log in again. (Read, not run by the learning center.)",
       "done_when": "The SP fails with a signature error until its idpCert is updated, then succeeds, and your runbook note has the rotation steps and where the expiry date is recorded.",
       "source": {
         "title": "Microsoft Entra: Manage certificates for federated single sign-on",
@@ -338,7 +338,7 @@
   ],
   "verified": {
     "checked": "2026-10-14",
-    "by": "identity spike, scripts/verify_sources.py (HTTP 200 and the section phrase found on the page)"
+    "by": "the learning center's source check (HTTP 200 and the section phrase found on the page)"
   },
   "provenance": {
     "generated_by": "Claude (Fable 5.1) by hand from the identity and integration ops spike, Scout learning center",

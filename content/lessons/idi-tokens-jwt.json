@@ -58,7 +58,7 @@
         },
         {
           "heading": "In code",
-          "body": "Libraries do this in one call when configured; the defaults are the risk. PyJWT's decode takes algorithms, audience and issuer and a require list, and raises a distinct exception per failure (InvalidSignatureError, InvalidAudienceError, ExpiredSignatureError, ImmatureSignatureError, MissingRequiredClaimError). The identity spike's client validated an ID token that way against a local Keycloak and node-oidc-provider and then confirmed that a token with one payload byte changed fails on the signature and a token presented with the wrong audience fails on aud. A verifier that passes those two tests and refuses alg none has the three checks attackers test for first."
+          "body": "Libraries do this in one call when configured; the defaults are the risk. PyJWT's decode takes algorithms, audience and issuer and a require list, and raises a distinct exception per failure (InvalidSignatureError, InvalidAudienceError, ExpiredSignatureError, ImmatureSignatureError, MissingRequiredClaimError). The learning center's test client validated an ID token that way against a local Keycloak and node-oidc-provider and then confirmed that a token with one payload byte changed fails on the signature and a token presented with the wrong audience fails on aud. A verifier that passes those two tests and refuses alg none has the three checks attackers test for first."
         }
       ]
     },
@@ -68,7 +68,7 @@
       "body": [
         {
           "heading": "Where the key comes from",
-          "body": "A provider publishes its public signing keys as a JSON Web Key Set (RFC 7517) at the jwks_uri named in its discovery document. Each key has a kid, a kty (RSA or EC), a use (sig) and the public parameters. The verifier reads the token's kid from the header, finds the matching key in the set, and verifies with it. The identity spike's run against Keycloak shows the shape: the ID token header named alg RS256 and a kid, and the JWKS held an RSA key with that kid; the Newman collection later asserted the same thing by fetching the JWKS and checking the kid was listed."
+          "body": "A provider publishes its public signing keys as a JSON Web Key Set (RFC 7517) at the jwks_uri named in its discovery document. Each key has a kid, a kty (RSA or EC), a use (sig) and the public parameters. The verifier reads the token's kid from the header, finds the matching key in the set, and verifies with it. The learning center's run against Keycloak 26.4 shows the shape: the ID token header named alg RS256 and a kid, and the JWKS held an RSA key with that kid; the Newman collection later asserted the same thing by fetching the JWKS and checking the kid was listed."
         },
         {
           "heading": "Rotation without an outage",
@@ -86,7 +86,7 @@
         },
         {
           "heading": "Lifetimes and the limits of revocation",
-          "body": "Because a JWT validates locally, revoking it means waiting for exp. That is the argument for short access tokens (five to fifteen minutes is common; the spike's Keycloak realm used five) paired with a refresh token that the issuer can refuse, with refresh token rotation so a stolen refresh token is detected when both copies try to use it. When a customer needs immediate revocation (an employee leaves, a device is lost), the options are introspection on every call (back to opaque semantics, at the cost of a round trip), a short-lived cache of a revocation list, or back-channel logout, which the OpenID Connect lesson covers. Say which of these the integration does in the design doc; 'tokens are revoked at logout' is not true of a JWT unless one of them is in place."
+          "body": "Because a JWT validates locally, revoking it means waiting for exp. That is the argument for short access tokens (five to fifteen minutes is common; the practice realm uses five) paired with a refresh token that the issuer can refuse, with refresh token rotation so a stolen refresh token is detected when both copies try to use it. When a customer needs immediate revocation (an employee leaves, a device is lost), the options are introspection on every call (back to opaque semantics, at the cost of a round trip), a short-lived cache of a revocation list, or back-channel logout, which the OpenID Connect lesson covers. Say which of these the integration does in the design doc; 'tokens are revoked at logout' is not true of a JWT unless one of them is in place."
         }
       ]
     },
@@ -111,7 +111,7 @@
   "code": [
     {
       "lang": "python",
-      "code": "# Validate an ID token against the provider's JWKS with PyJWT (the identity spike's check, trimmed)\nimport jwt, requests\nfrom jwt import PyJWKClient\n\ndisc = requests.get(ISSUER + \"/.well-known/openid-configuration\").json()\nhdr = jwt.get_unverified_header(id_token)              # {'alg': 'RS256', 'typ': 'JWT', 'kid': '...'}\nkey = PyJWKClient(disc[\"jwks_uri\"]).get_signing_key_from_jwt(id_token)   # kid lookup, cached\nclaims = jwt.decode(\n    id_token, key.key,\n    algorithms=[\"RS256\"],                               # the verifier pins the algorithm, never the token\n    audience=CLIENT_ID, issuer=disc[\"issuer\"],\n    options={\"require\": [\"exp\", \"iat\", \"iss\", \"aud\", \"sub\"]},\n)\nassert claims[\"nonce\"] == nonce_we_sent\n# a changed payload byte -> jwt.InvalidSignatureError; the wrong audience -> jwt.InvalidAudienceError\n"
+      "code": "# Validate an ID token against the provider's JWKS with PyJWT (the learning center's check, trimmed)\nimport jwt, requests\nfrom jwt import PyJWKClient\n\ndisc = requests.get(ISSUER + \"/.well-known/openid-configuration\").json()\nhdr = jwt.get_unverified_header(id_token)              # {'alg': 'RS256', 'typ': 'JWT', 'kid': '...'}\nkey = PyJWKClient(disc[\"jwks_uri\"]).get_signing_key_from_jwt(id_token)   # kid lookup, cached\nclaims = jwt.decode(\n    id_token, key.key,\n    algorithms=[\"RS256\"],                               # the verifier pins the algorithm, never the token\n    audience=CLIENT_ID, issuer=disc[\"issuer\"],\n    options={\"require\": [\"exp\", \"iat\", \"iss\", \"aud\", \"sub\"]},\n)\nassert claims[\"nonce\"] == nonce_we_sent\n# a changed payload byte -> jwt.InvalidSignatureError; the wrong audience -> jwt.InvalidAudienceError\n"
     },
     {
       "lang": "python",
@@ -265,8 +265,8 @@
   "provenance": {
     "generated_by": "Claude (Fable 5.1) by hand from the identity and integration ops spike, Scout learning center",
     "generated_on": "2026-10-14",
-    "reviewed_by": null,
-    "reviewed_on": null
+    "reviewed_by": "a second reader (Claude Fable 5.1), Scout learning center",
+    "reviewed_on": "2026-10-14"
   },
   "changelog": [
     {

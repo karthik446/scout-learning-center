@@ -58,7 +58,7 @@
         },
         {
           "heading": "Reading the status",
-          "body": "A SAML Response whose StatusCode is not Success often carries a second-level StatusCode and a StatusMessage; read them before anything else, because a Requester code means the IdP thinks the SP's request was wrong (which value, the IdP's log says) and a Responder code means the IdP failed on its side (policy, the user, the certificate). The spike's evidence has the two SP-side errors ('InResponseTo is not valid', 'Invalid document signature') with the exact requests that produced them."
+          "body": "A SAML Response whose StatusCode is not Success often carries a second-level StatusCode and a StatusMessage; read them before anything else, because a Requester code means the IdP thinks the SP's request was wrong (which value, the IdP's log says) and a Responder code means the IdP failed on its side (policy, the user, the certificate). The SAML practice path produces the two SP-side errors ('InResponseTo is not valid', 'Invalid document signature') with the exact requests that produce them."
         }
       ]
     },
@@ -68,11 +68,11 @@
       "body": [
         {
           "heading": "From the token endpoint (RFC 6749 section 5.2)",
-          "body": "invalid_request: a required parameter is missing or repeated (often the code_verifier, or a scope the server does not know). invalid_client: client authentication failed, which means the client id or secret is wrong or the authentication method does not match (Basic versus form body, secret versus private_key_jwt); Keycloak answers 401 unauthorized_client with 'Invalid client or Invalid client credentials' in this case, as the spike's wrong-secret test showed. invalid_grant: the code is expired, already used, issued to another client, or the code_verifier does not match (the spike's replay with a wrong verifier), or the redirect_uri in the token request differs from the one in the authorization request, or the refresh token is revoked. unauthorized_client: this client may not use this grant (client credentials not enabled, the device grant switched off). unsupported_grant_type and invalid_scope are what they say. Read error and error_description from the JSON body; the UI's message is a paraphrase."
+          "body": "invalid_request: a required parameter is missing or repeated (often the code_verifier, or a scope the server does not know). invalid_client: client authentication failed, which means the client id or secret is wrong or the authentication method does not match (Basic versus form body, secret versus private_key_jwt); Keycloak answers 401 unauthorized_client with 'Invalid client or Invalid client credentials' in this case, as the OAuth practice path's wrong-secret step shows. invalid_grant: the code is expired, already used, issued to another client, or the code_verifier does not match (the OAuth practice path's replay with a wrong verifier), or the redirect_uri in the token request differs from the one in the authorization request, or the refresh token is revoked. unauthorized_client: this client may not use this grant (client credentials not enabled, the device grant switched off). unsupported_grant_type and invalid_scope are what they say. Read error and error_description from the JSON body; the UI's message is a paraphrase."
         },
         {
           "heading": "From the authorization endpoint and the relying party",
-          "body": "A redirect_uri mismatch never reaches the token endpoint: Keycloak shows 'Invalid parameter: redirect_uri' on its own page, Okta returns a 400 with a description naming the redirect URI, Entra returns AADSTS50011; the fix is an exact-match registration including scheme, host, port, path and trailing slash. 'User is not assigned' (Okta access_denied, Entra AADSTS50105) is an assignment. On the relying party side: 'state mismatch' is the state cookie not surviving the redirect (the SameSite problem from the web sessions lesson) or two login tabs; 'nonce mismatch' is the same for the ID token; 'invalid audience' is a token for another client; 'unknown kid' is a JWKS cache that has not refreshed after a rotation; a 403 from userinfo is a token without the openid scope (the spike's finding); a 401 from an API with a valid-looking token is usually the audience, the issuer (v1 versus v2 endpoints in Entra), or the typ."
+          "body": "A redirect_uri mismatch never reaches the token endpoint: Keycloak shows 'Invalid parameter: redirect_uri' on its own page, Okta returns a 400 with a description naming the redirect URI, Entra returns AADSTS50011; the fix is an exact-match registration including scheme, host, port, path and trailing slash. 'User is not assigned' (Okta access_denied, Entra AADSTS50105) is an assignment. On the relying party side: 'state mismatch' is the state cookie not surviving the redirect (the SameSite problem from the web sessions lesson) or two login tabs; 'nonce mismatch' is the same for the ID token; 'invalid audience' is a token for another client; 'unknown kid' is a JWKS cache that has not refreshed after a rotation; a 403 from userinfo is a token without the openid scope (the API testing lesson's finding); a 401 from an API with a valid-looking token is usually the audience, the issuer (v1 versus v2 endpoints in Entra), or the typ."
         }
       ]
     },
@@ -96,7 +96,7 @@
       "body": [
         {
           "heading": "SFTP",
-          "body": "'Permission denied (publickey)': the public key is not in the account's authorized keys, the key file permissions on the client are too open, or the key type is not accepted; the server's auth log names which. 'Connection closed' right after authentication with a chroot: the chroot directory is not owned by root or is group- or world-writable, which sshd refuses silently; the server log says 'bad ownership or modes for chroot directory'. 'Failure' on a rename: the target exists (version-3 RENAME) or the account cannot write the target folder. A partial file in the inbox that is hours old: the producer died mid-upload; never process it, and alert. A batch with a manifest mismatch: a truncated transfer or an edited file; reject the batch and ask for a re-send. A re-sent batch ingested twice: the idempotency key is the ciphertext hash rather than the content hash (the spike's own first bug)."
+          "body": "'Permission denied (publickey)': the public key is not in the account's authorized keys, the key file permissions on the client are too open, or the key type is not accepted; the server's auth log names which. 'Connection closed' right after authentication with a chroot: the chroot directory is not owned by root or is group- or world-writable, which sshd refuses silently; the server log says 'bad ownership or modes for chroot directory'. 'Failure' on a rename: the target exists (version-3 RENAME) or the account cannot write the target folder. A partial file in the inbox that is hours old: the producer died mid-upload; never process it, and alert. A batch with a manifest mismatch: a truncated transfer or an edited file; reject the batch and ask for a re-send. A re-sent batch ingested twice: the idempotency key is the ciphertext hash rather than the content hash (the file feed lesson's own first bug)."
         },
         {
           "heading": "Webhooks",
@@ -129,7 +129,7 @@
     },
     {
       "lang": "sh",
-      "code": "# Keycloak: raise the log level for the SAML and OIDC protocol classes to see why a message was rejected (dev only)\ndocker run -d --name idspike-keycloak --memory 1g -p 127.0.0.1:18080:8080 \\\n  -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=\"$KC_ADMIN_PASSWORD\" \\\n  quay.io/keycloak/keycloak:26.4 start-dev \\\n  --log-level=INFO,org.keycloak.protocol.saml:DEBUG,org.keycloak.protocol.oidc:DEBUG,org.keycloak.events:DEBUG\ndocker logs -f idspike-keycloak | grep -iE 'saml|oidc|error|invalid'\n"
+      "code": "# Keycloak: raise the log level for the SAML and OIDC protocol classes to see why a message was rejected (dev only)\ndocker run -d --name learn-keycloak --memory 1g -p 127.0.0.1:18080:8080 \\\n  -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=\"$KC_ADMIN_PASSWORD\" \\\n  quay.io/keycloak/keycloak:26.4 start-dev \\\n  --log-level=INFO,org.keycloak.protocol.saml:DEBUG,org.keycloak.protocol.oidc:DEBUG,org.keycloak.events:DEBUG\ndocker logs -f learn-keycloak | grep -iE 'saml|oidc|error|invalid'\n"
     }
   ],
   "technologies": [
@@ -278,8 +278,8 @@
   "provenance": {
     "generated_by": "Claude (Fable 5.1) by hand from the identity and integration ops spike, Scout learning center",
     "generated_on": "2026-10-14",
-    "reviewed_by": null,
-    "reviewed_on": null
+    "reviewed_by": "a second reader (Claude Fable 5.1), Scout learning center",
+    "reviewed_on": "2026-10-14"
   },
   "changelog": [
     {

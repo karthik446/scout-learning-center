@@ -40,11 +40,11 @@
       "body": [
         {
           "heading": "What SameSite does to a login flow",
-          "body": "A single sign-on flow is a chain of cross-site redirects: your app sends the browser to the identity provider, the provider authenticates and sends the browser back to your app with a code (OIDC) or a signed response (SAML). Whether your app's cookies arrive on that return trip depends on SameSite. Lax, the browser default since 2020, sends the cookie on top-level navigations that use a safe method, so a GET redirect back with a code carries it. It does not send the cookie on a cross-site POST, and the SAML HTTP-POST binding is exactly that: the provider's page auto-submits a form to your assertion consumer service. If the cookie your app uses to remember the login attempt (the OAuth state or the SAML request id) is SameSite=Lax, it is missing on the POST and the app reports 'state mismatch' or 'unsolicited response' even though the provider did everything right."
+          "body": "A single sign-on flow is a chain of cross-site redirects: your app sends the browser to the identity provider, the provider authenticates and sends the browser back to your app with a code (OIDC) or a signed response (SAML). Whether your app's cookies arrive on that return trip depends on SameSite. Lax, which Chrome applies by default since 2020 when a cookie sets no SameSite attribute (Firefox and Safari still treat a missing attribute as None, so set it explicitly), sends the cookie on top-level navigations that use a safe method, so a GET redirect back with a code carries it. It does not send the cookie on a cross-site POST, and the SAML HTTP-POST binding is exactly that: the provider's page auto-submits a form to your assertion consumer service. If the cookie your app uses to remember the login attempt (the OAuth state or the SAML request id) is SameSite=Lax, it is missing on the POST and the app reports 'state mismatch' or 'unsolicited response' even though the provider did everything right."
         },
         {
           "heading": "The rules of thumb",
-          "body": "A cookie that must survive a cross-site POST callback needs SameSite=None, and the browser only honours None together with Secure, so the callback has to be HTTPS. Keep that cookie separate from the real session cookie, short-lived, and bound to the one request it tracks. The session cookie set after the callback can stay Lax. Two more browser facts a practitioner trips over: a redirect chain through more than one host counts as cross-site at each hop, and browsers treat localhost and 127.0.0.1 as secure contexts, so a Secure cookie is set and sent on plain http to 127.0.0.1 in a browser while a scripted client such as Python requests will not send it. The identity spike's first run against a local Keycloak hit exactly this: Keycloak sets its cookies Secure and SameSite=None, the browser logs in fine, and the script had to clear the Secure flag on its cookie jar to get past the login page."
+          "body": "A cookie that must survive a cross-site POST callback needs SameSite=None, and the browser only honours None together with Secure, so the callback has to be HTTPS. Keep that cookie separate from the real session cookie, short-lived, and bound to the one request it tracks. The session cookie set after the callback can stay Lax. Two more browser facts a practitioner trips over: a redirect chain through more than one host counts as cross-site at each hop, and browsers treat localhost and 127.0.0.1 as secure contexts, so a Secure cookie is set and sent on plain http to 127.0.0.1 in a browser while a scripted client such as Python requests will not send it. The learning center's first scripted run against a local Keycloak hit exactly this: Keycloak sets its cookies Secure and SameSite=None, the browser logs in fine, and the script had to clear the Secure flag on its cookie jar to get past the login page."
         }
       ]
     },
@@ -58,7 +58,7 @@
         },
         {
           "heading": "Where it bites an integration",
-          "body": "A single-page app that calls the identity provider's token endpoint or your API directly from the browser needs the provider or the API to list the app's exact origin. Wildcards do not work together with credentials: when a request carries cookies or an Authorization header, Access-Control-Allow-Credentials must be true and Allow-Origin must name the origin, not '*'. Every provider has a field for this (Okta calls it Trusted Origins, Keycloak calls it Web Origins), and a missing entry shows up as a CORS error in the console: on the preflight for some providers, on the actual response for others (Keycloak answers any preflight and applies Web Origins to the real response), and in both cases before the page ever sees a token. A scripted client or a server-side backend never sees CORS because CORS is enforced by the browser alone; that difference is the fastest way to tell a CORS problem from an authentication problem. The MDN guide has the error messages; the Fetch Standard has the normative rules."
+          "body": "A single-page app that calls the identity provider's token endpoint or your API directly from the browser needs the provider or the API to list the app's exact origin. Wildcards do not work together with credentials: when a request is sent with credentials (cookies, or HTTP authentication the browser itself holds), Access-Control-Allow-Credentials must be true and Allow-Origin must name the origin, not '*'; an Authorization header that the page's script sets itself is not a credential in this sense, but it does trigger a preflight and must be listed in Allow-Headers. Every provider has a field for this (Okta calls it Trusted Origins, Keycloak calls it Web Origins), and a missing entry shows up as a CORS error in the console: on the preflight for some providers, on the actual response for others (Keycloak answers any preflight and applies Web Origins to the real response), and in both cases before the page ever sees a token. A scripted client or a server-side backend never sees CORS because CORS is enforced by the browser alone; that difference is the fastest way to tell a CORS problem from an authentication problem. The MDN guide has the error messages; the Fetch Standard has the normative rules."
         }
       ]
     },
@@ -115,7 +115,7 @@
     },
     {
       "lang": "python",
-      "code": "# A scripted client on plain http never sends a Secure cookie; a browser treats 127.0.0.1 as a secure context.\n# The identity spike's test client had to clear the flag to get past a local Keycloak login page.\nimport requests\ns = requests.Session()\nr = s.get(\"http://127.0.0.1:18080/realms/idspike/protocol/openid-connect/auth\", params={...})\nfor c in s.cookies:\n    c.secure = False   # dev only, and only against 127.0.0.1\n"
+      "code": "# A scripted client on plain http never sends a Secure cookie; a browser treats 127.0.0.1 as a secure context.\n# The learning center's test client had to clear the flag to get past a local Keycloak login page.\nimport requests\ns = requests.Session()\nr = s.get(\"http://127.0.0.1:18080/realms/learn/protocol/openid-connect/auth\", params={...})\nfor c in s.cookies:\n    c.secure = False   # dev only, and only against 127.0.0.1\n"
     }
   ],
   "technologies": [
@@ -276,8 +276,8 @@
   "provenance": {
     "generated_by": "Claude (Fable 5.1) by hand from the identity and integration ops spike, Scout learning center",
     "generated_on": "2026-10-14",
-    "reviewed_by": null,
-    "reviewed_on": null
+    "reviewed_by": "a second reader (Claude Fable 5.1), Scout learning center",
+    "reviewed_on": "2026-10-14"
   },
   "changelog": [
     {

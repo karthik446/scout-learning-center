@@ -16,7 +16,7 @@
     "apis",
     "rest-apis"
   ],
-  "summary": "A saved collection of requests is how an integration engineer proves an API works, hands the proof to a customer, and keeps it working in CI. This lesson is the craft: collections, environments and the variable scopes that decide which value wins; the auth helpers (basic, bearer, API key, OAuth 2.0) and inheritance from collection to request; pre-request and test scripts with the pm API; chaining requests by storing values from one response for the next; running the collection headless with Newman in CI with secrets passed as environment variables; the same collection as plain-text Bruno files in git; curl as the ground truth when a tool hides something; the negative tests every auth integration needs; and collection hygiene so nothing secret is ever exported. The practice is the identity spike's run: a seven-request collection against a local Keycloak with 17 assertions and 0 failures under Newman, and the same two requests in the Bruno CLI, 4 of 4.",
+  "summary": "A saved collection of requests is how an integration engineer proves an API works, hands the proof to a customer, and keeps it working in CI. This lesson is the craft: collections, environments and the variable scopes that decide which value wins; the auth helpers (basic, bearer, API key, OAuth 2.0) and inheritance from collection to request; pre-request and test scripts with the pm API; chaining requests by storing values from one response for the next; running the collection headless with Newman in CI with secrets passed as environment variables; the same collection as plain-text Bruno files in git; curl as the ground truth when a tool hides something; the negative tests every auth integration needs; and collection hygiene so nothing secret is ever exported. The practice is the learning center's run: a seven-request collection against a local Keycloak with 17 assertions and 0 failures under Newman, and the same two requests in the Bruno CLI, 4 of 4.",
   "detail": [],
   "in_practice": "At the start of an integration the engineer builds a collection in the vendor's sandbox: discovery, a token request with the OAuth helper or Basic auth, one protected call, and the negative cases (wrong secret, no token). Every value that differs between environments (issuer, client id, base URL) is an environment variable; every secret is a secret-typed variable that stays out of the export. The collection becomes three things at once: the demo for the customer's call ('here is the token request, here is the 401 without it'), the regression suite that Newman runs in CI on every change with the secret passed on the command line, and the documentation a colleague opens six months later. Teams that want the collection reviewed like code keep it as Bruno files in the repository instead. When a request behaves differently in the tool and in production, the engineer reproduces it with curl -v, because the raw request is the only thing both sides can agree on.",
   "subtopics": [
@@ -30,7 +30,7 @@
         },
         {
           "heading": "Which value wins",
-          "body": "Variables resolve by scope, narrowest first: local (set in a script for this run), data (from a CSV or JSON file in a data-driven run), environment, collection, global. A value set with pm.environment.set in a test script overrides the environment file's value for the rest of the run, which is how chaining works and also how a stale token from a previous run lingers; the spike's environment started access_token empty on purpose so each run had to earn one. Put values that describe the target (issuer, client id) in the environment, values that describe the collection (API version, a path prefix) in collection variables, and nothing in globals."
+          "body": "Variables resolve by scope, narrowest first: local (set in a script for this run), data (from a CSV or JSON file in a data-driven run), environment, collection, global. A value set with pm.environment.set in a test script overrides the environment file's value for the rest of the run, which is how chaining works and also how a stale token from a previous run lingers; the practice environment starts access_token empty on purpose so each run had to earn one. Put values that describe the target (issuer, client id) in the environment, values that describe the collection (API version, a path prefix) in collection variables, and nothing in globals."
         }
       ]
     },
@@ -40,11 +40,11 @@
       "body": [
         {
           "heading": "Basic, bearer, API key, OAuth 2.0",
-          "body": "A request's Authorization tab offers helpers that build the header for you: Basic (username and password, base64 into an Authorization header, which is how the spike's token request authenticated as the client with client_id and client_secret), Bearer (an Authorization: Bearer header from a variable), API key (a named header or query parameter), and OAuth 2.0, which runs the grant itself (authorization code with PKCE in a browser window, client credentials, and others), stores the token, and refreshes it. The authorization guide covers the helpers; the OAuth 2.0 page covers the grant types and where the token is kept."
+          "body": "A request's Authorization tab offers helpers that build the header for you: Basic (username and password, base64 into an Authorization header, which is how the practice's token request authenticates as the client with client_id and client_secret), Bearer (an Authorization: Bearer header from a variable), API key (a named header or query parameter), and OAuth 2.0, which runs the grant itself (authorization code with PKCE in a browser window, client credentials, and others), stores the token, and refreshes it. The authorization guide covers the helpers; the OAuth 2.0 page covers the grant types and where the token is kept."
         },
         {
           "heading": "Inherit from parent",
-          "body": "Auth set on the collection or a folder applies to every request below it that is set to 'inherit auth from parent'; a request can override (the spike's discovery, JWKS and negative requests used 'no auth'; the token and introspection requests used Basic as the client; everything else inherited the collection's bearer helper that read access_token). Set the common case once at the collection level and override only the exceptions, so a new request is authenticated by default."
+          "body": "Auth set on the collection or a folder applies to every request below it that is set to 'inherit auth from parent'; a request can override (the practice collection's discovery, JWKS and negative requests use 'no auth'; the token and introspection requests used Basic as the client; everything else inherited the collection's bearer helper that read access_token). Set the common case once at the collection level and override only the exceptions, so a new request is authenticated by default."
         }
       ]
     },
@@ -54,7 +54,7 @@
       "body": [
         {
           "heading": "pm.test and friends",
-          "body": "A test script runs after the response: pm.test(name, fn) records a named assertion; pm.response.to.have.status(200), pm.expect(value).to.eql(expected) and the rest of the chai-style API make the checks; pm.response.json() parses the body; pm.response.headers.get reads a header. A pre-request script runs before the request and can compute values or fetch a token with pm.sendRequest. The Postman JavaScript reference lists the sandbox API. The spike's discovery request asserted the issuer equals the environment's issuer and that S256 is among the supported code challenge methods; the token request asserted a Bearer token with a positive lifetime and no refresh token, and decoded the JWT header to assert alg RS256 and a kid."
+          "body": "A test script runs after the response: pm.test(name, fn) records a named assertion; pm.response.to.have.status(200), pm.expect(value).to.eql(expected) and the rest of the chai-style API make the checks; pm.response.json() parses the body; pm.response.headers.get reads a header. A pre-request script runs before the request and can compute values or fetch a token with pm.sendRequest. The Postman JavaScript reference lists the sandbox API. The learning center's discovery request asserted the issuer equals the environment's issuer and that S256 is among the supported code challenge methods; the token request asserted a Bearer token with a positive lifetime and no refresh token, and decoded the JWT header to assert alg RS256 and a kid."
         },
         {
           "heading": "Chaining",
@@ -68,7 +68,7 @@
       "body": [
         {
           "heading": "The command",
-          "body": "Newman runs a collection from the command line: newman run collection.json -e environment.json with reporters (cli for humans, json and junit for CI systems), and it exits non-zero when any assertion fails, which is what makes it a CI gate. The spike's run (npx newman, no global install) reported 7 requests, 7 test scripts, 17 assertions and 0 failed in 132 ms, and the same command in a pipeline fails the build when the token endpoint changes its behaviour."
+          "body": "Newman runs a collection from the command line: newman run collection.json -e environment.json with reporters (cli for humans, json and junit for CI systems), and it exits non-zero when any assertion fails, which is what makes it a CI gate. The learning center's run (npx newman, no global install) reported 7 requests, 7 test scripts, 17 assertions and 0 failed in 132 ms, and the same command in a pipeline fails the build when the token endpoint changes its behaviour."
         },
         {
           "heading": "Secrets on the command line",
@@ -82,11 +82,11 @@
       "body": [
         {
           "heading": "Plain files",
-          "body": "Bruno stores a collection as a folder of .bru files, one request per file, with a bruno.json at the root and environments as .bru files too: a meta block (name, type, sequence), the method block with the URL, body type and auth type, auth blocks, a body block, and a tests block with the same chai-style assertions (res.getStatus(), res.getBody(), bru.setVar to chain). The files diff and review like code, which is the reason teams choose it over an exported JSON blob. The spike's token request was twelve lines of .bru with Basic auth from {{client_id}} and {{client_secret}} and two tests; the userinfo request used bearer auth from the chained variable."
+          "body": "Bruno stores a collection as a folder of .bru files, one request per file, with a bruno.json at the root and environments as .bru files too: a meta block (name, type, sequence), the method block with the URL, body type and auth type, auth blocks, a body block, and a tests block with the same chai-style assertions (res.getStatus(), res.getBody(), bru.setVar to chain). The files diff and review like code, which is the reason teams choose it over an exported JSON blob. The practice's token request is about twenty lines of .bru with Basic auth from {{client_id}} and {{client_secret}} and two tests; the userinfo request used bearer auth from the chained variable."
         },
         {
           "heading": "The CLI",
-          "body": "The Bruno CLI runs a collection or a folder: bru run --env local, with --env-var client_secret=... for the secret and reporters for CI, and an environment file declares secret variables by name under vars:secret so their values never land in the file. The spike's run reported 2 requests passed and 4 of 4 tests. Bruno's open-source client and CLI cover the same ground as Postman's for an integration team; the differences are in collaboration features, not in what a request can do."
+          "body": "The Bruno CLI runs a collection or a folder: bru run --env local, with --env-var client_secret=... for the secret and reporters for CI, and an environment file declares secret variables by name under vars:secret so their values never land in the file. The learning center's run reported 2 requests passed and 4 of 4 tests. Bruno's open-source client and CLI cover the same ground as Postman's for an integration team; the differences are in collaboration features, not in what a request can do."
         }
       ]
     },
@@ -110,11 +110,11 @@
       "body": [
         {
           "heading": "The three every auth integration needs",
-          "body": "A collection that only proves the happy path proves little. The spike's collection ended with two negative requests: the token request with a wrong secret, asserting 401 and an error of unauthorized_client or invalid_client; and the protected call with no token, asserting 401 and a WWW-Authenticate header that names Bearer. The third, from the OAuth lesson, is a revoked or expired token asserting 401 or an introspection of active false. Each of them failing to fail is a security finding, and each of them is a line in the runbook when a customer's integration breaks ('is it a 401 from the token endpoint or from the API?')."
+          "body": "A collection that only proves the happy path proves little. The practice collection ends with two negative requests: the token request with a wrong secret, asserting 401 and an error of unauthorized_client or invalid_client; and the protected call with no token, asserting 401 and a WWW-Authenticate header that names Bearer. The third, from the OAuth lesson, is a revoked or expired token asserting 401 or an introspection of active false. Each of them failing to fail is a security finding, and each of them is a line in the runbook when a customer's integration breaks ('is it a 401 from the token endpoint or from the API?')."
         },
         {
           "heading": "What the first run taught",
-          "body": "The spike's first Newman run failed request 5 with 403: the protected call (Keycloak's userinfo) refused a client-credentials token until the token request asked for scope=openid. A negative test that expects 401 and gets 403 is a different story (authenticated, not authorized), and the collection's assertions are what turned an afternoon of guessing into a one-line fix. Assert the exact status, not 'not 200'."
+          "body": "The learning center's first Newman run failed request 5 with 403: the protected call (Keycloak's userinfo) refused a client-credentials token until the token request asked for scope=openid. A negative test that expects 401 and gets 403 is a different story (authenticated, not authorized), and the collection's assertions are what turned an afternoon of guessing into a one-line fix. Assert the exact status, not 'not 200'."
         }
       ]
     },
@@ -143,11 +143,11 @@
     },
     {
       "lang": "sh",
-      "code": "# Headless in CI: the environment file holds no secret; the secret comes from the pipeline's store\nnpx -y newman run idspike.postman_collection.json -e idspike.postman_environment.json \\\n  --env-var \"client_secret=$CLIENT_SECRET\" --reporters cli,json --reporter-json-export newman-run.json --bail\n# ... assertions 17 | failed 0 ... exit code 0\n\n# The same two requests as Bruno files, run with the Bruno CLI\nbru run --env local --env-var \"client_secret=$CLIENT_SECRET\"\n# Requests 2 (2 Passed)  Tests 4/4\n\n# The ground truth: the token request by hand\ncurl -sv -u \"$CLIENT_ID:$CLIENT_SECRET\" --data-urlencode grant_type=client_credentials --data-urlencode scope=openid \\\n  http://127.0.0.1:18080/realms/idspike/protocol/openid-connect/token\n"
+      "code": "# Headless in CI: the environment file holds no secret; the secret comes from the pipeline's store\nnpx -y newman run learn.postman_collection.json -e learn.postman_environment.json \\\n  --env-var \"client_secret=$CLIENT_SECRET\" --reporters cli,json --reporter-json-export newman-run.json --bail\n# ... assertions 17 | failed 0 ... exit code 0\n\n# The same two requests as Bruno files, run with the Bruno CLI\nbru run --env local --env-var \"client_secret=$CLIENT_SECRET\"\n# Requests 2 (2 Passed)  Tests 4/4\n\n# The ground truth: the token request by hand\ncurl -sv -u \"$CLIENT_ID:$CLIENT_SECRET\" --data-urlencode grant_type=client_credentials --data-urlencode scope=openid \\\n  http://127.0.0.1:18080/realms/learn/protocol/openid-connect/token\n"
     },
     {
       "lang": "text",
-      "code": "# token.bru: one request per file, auth from variables, a secret declared by name only in the environment file\nmeta { name: token (client credentials)  type: http  seq: 1 }\npost { url: {{issuer}}/protocol/openid-connect/token  body: formUrlEncoded  auth: basic }\nauth:basic { username: {{client_id}}  password: {{client_secret}} }\nbody:form-urlencoded { grant_type: client_credentials  scope: openid }\ntests {\n  test(\"200\", function() { expect(res.getStatus()).to.equal(200); });\n  test(\"bearer with lifetime\", function() { expect(res.getBody().token_type).to.equal(\"Bearer\"); expect(res.getBody().expires_in).to.be.above(0); });\n  bru.setVar(\"access_token\", res.getBody().access_token);\n}\n# environments/local.bru:  vars { issuer: ...  client_id: m2m-batch }   vars:secret [ client_secret ]\n"
+      "code": "# token.bru: one request per file, auth from variables; the secret is declared by name only in the environment file\nmeta {\n  name: token (client credentials)\n  type: http\n  seq: 1\n}\n\npost {\n  url: {{issuer}}/protocol/openid-connect/token\n  body: formUrlEncoded\n  auth: basic\n}\n\nauth:basic {\n  username: {{client_id}}\n  password: {{client_secret}}\n}\n\nbody:form-urlencoded {\n  grant_type: client_credentials\n  scope: openid\n}\n\ntests {\n  test(\"200\", function() { expect(res.getStatus()).to.equal(200); });\n  test(\"bearer with lifetime\", function() { expect(res.getBody().token_type).to.equal(\"Bearer\"); expect(res.getBody().expires_in).to.be.above(0); });\n  bru.setVar(\"access_token\", res.getBody().access_token);\n}\n\n# environments/local.bru\nvars {\n  issuer: http://127.0.0.1:18080/realms/learn\n  client_id: m2m-batch\n}\nvars:secret [\n  client_secret\n]\n"
     }
   ],
   "technologies": [
@@ -307,8 +307,8 @@
   "provenance": {
     "generated_by": "Claude (Fable 5.1) by hand from the identity and integration ops spike, Scout learning center",
     "generated_on": "2026-10-14",
-    "reviewed_by": null,
-    "reviewed_on": null
+    "reviewed_by": "a second reader (Claude Fable 5.1), Scout learning center",
+    "reviewed_on": "2026-10-14"
   },
   "changelog": [
     {

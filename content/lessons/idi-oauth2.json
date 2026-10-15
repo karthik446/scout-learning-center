@@ -16,7 +16,7 @@
     "apis",
     "identity-and-access"
   ],
-  "summary": "OAuth 2.0 is how a client gets a token to call an API on someone's behalf, and most of what was written about it in its first decade is now wrong. This lesson teaches the version that remains under OAuth 2.1 and the 2025 security best current practice (RFC 9700): the four roles, authorization code with PKCE for anything that has a user, client credentials for machines, the device grant for things without a browser, refresh tokens with rotation, token exchange for delegation chains, and introspection and revocation for the resource-server side. The implicit and password grants are taught as history so you recognise them in a customer's old integration and know what to replace them with. Every grant except the device grant was run against a local Keycloak and a local node-oidc-provider in the practice.",
+  "summary": "OAuth 2.0 is how a client gets a token to call an API on someone's behalf, and most of what was written about it in its first decade is now wrong. This lesson teaches the version that remains under OAuth 2.1 and the 2025 security best current practice (RFC 9700): the four roles, authorization code with PKCE for anything that has a user, client credentials for machines, the device grant for things without a browser, refresh tokens with rotation, token exchange for delegation chains, and introspection and revocation for the resource-server side. The implicit and password grants are taught as history so you recognise them in a customer's old integration and know what to replace them with. Every grant except the device grant and token exchange was run against a local Keycloak and a local node-oidc-provider in the practice.",
   "detail": [],
   "in_practice": "On an integration call the solutions engineer's first OAuth question is 'what kind of client is this', because the answer picks the grant: a web app or mobile app with a user gets authorization code with PKCE; a nightly job or a service gets client credentials; a CLI on a developer's laptop gets the device grant or a loopback redirect. The second question is 'who runs the authorization server', because the customer's provider (Okta, Entra, Keycloak, Auth0) decides the exact endpoints, which client authentication it supports and how long tokens live. Then the engineer reads the discovery document, registers the client with an exact redirect URI, runs the flow once with curl or a script to see every response, and writes the resource server's validation with introspection for opaque tokens or local JWT validation for self-contained ones. When a customer's existing integration uses the implicit grant or sends a username and password to the token endpoint, the engineer names the RFC that retired it and proposes the replacement in the same meeting.",
   "subtopics": [
@@ -40,11 +40,11 @@
       "body": [
         {
           "heading": "The flow",
-          "body": "The client generates a random code_verifier (43 to 128 characters), hashes it with SHA-256 and base64url-encodes the hash as the code_challenge, and sends the browser to the authorization endpoint with response_type=code, its client_id, the exact redirect_uri, the scopes, a random state, and code_challenge with code_challenge_method=S256. The user authenticates and consents; the authorization server redirects the browser back to the redirect_uri with a short-lived code and the same state. The client checks state, then posts the code to the token endpoint together with the original code_verifier (and its client secret if it is confidential); the server hashes the verifier, compares it with the challenge it stored with the code, and returns the tokens. An attacker who intercepts the code cannot exchange it, because they do not hold the verifier. Under OAuth 2.1 and RFC 9700 PKCE is required for every client, public or confidential, and the code may be used once; Keycloak goes further and ends the whole session when a code is replayed."
+          "body": "The client generates a random code_verifier (43 to 128 characters), hashes it with SHA-256 and base64url-encodes the hash as the code_challenge, and sends the browser to the authorization endpoint with response_type=code, its client_id, the exact redirect_uri, the scopes, a random state, and code_challenge with code_challenge_method=S256. The user authenticates and consents; the authorization server redirects the browser back to the redirect_uri with a short-lived code and the same state. The client checks state, then posts the code to the token endpoint together with the original code_verifier (and its client secret if it is confidential); the server hashes the verifier, compares it with the challenge it stored with the code, and returns the tokens. An attacker who intercepts the code cannot exchange it, because they do not hold the verifier. OAuth 2.1 requires PKCE for every client; RFC 9700 requires it for public clients and recommends it for confidential ones, which may instead rely on the OpenID Connect nonce with extra care. A code may be used once: RFC 6749 says a server that sees a code twice must refuse it and should revoke what it already issued for it, and Keycloak also detaches that client's session from the user's session when a code is reused."
         },
         {
           "heading": "What the proof showed",
-          "body": "The identity spike's scripted client ran this against Keycloak 26.4 with a public client that requires S256: the discovery document listed S256 among code_challenge_methods_supported, the login POST redirected to the callback with a code of 110 characters and the matching state, the token endpoint returned access, ID and refresh tokens for the right verifier and answered 400 invalid_grant to the same code with a wrong verifier. node-oidc-provider refused an authorization request with no PKCE outright ('Authorization Server policy requires PKCE') and added an iss parameter to the redirect back (RFC 9207), which a client should compare with the issuer it started with so a response from one provider cannot be mixed up with another."
+          "body": "The learning center's scripted client ran this against Keycloak 26.4 with a public client that requires S256: the discovery document listed S256 among code_challenge_methods_supported, the login POST redirected to the callback with a code of 110 characters and the matching state, the token endpoint returned access, ID and refresh tokens for the right verifier and answered 400 invalid_grant to the same code with a wrong verifier. node-oidc-provider refused an authorization request with no PKCE outright ('Authorization Server policy requires PKCE') and added an iss parameter to the redirect back (RFC 9207), which a client should compare with the issuer it started with so a response from one provider cannot be mixed up with another."
         }
       ]
     },
@@ -54,11 +54,11 @@
       "body": [
         {
           "heading": "Machines calling APIs",
-          "body": "When there is no user, the client authenticates as itself and asks for a token: a POST to the token endpoint with grant_type=client_credentials, the client id and secret in an HTTP Basic Authorization header (the RFC's preferred form; a form body is also allowed), and optionally a scope. The token represents the client, not a person: in Keycloak the subject is a service account user created for the client, and the spike's token carried azp m2m-batch and preferred_username service-account-m2m-batch. There is no refresh token, because the client can simply ask again; the Newman collection in the API testing lesson asserts exactly that."
+          "body": "When there is no user, the client authenticates as itself and asks for a token: a POST to the token endpoint with grant_type=client_credentials, the client id and secret in an HTTP Basic Authorization header (the RFC's preferred form; a form body is also allowed), and optionally a scope. The token represents the client, not a person: in Keycloak the subject is a service account user created for the client, and the token from the test run carried azp m2m-batch and preferred_username service-account-m2m-batch. There is no refresh token, because the client can simply ask again; the Newman collection in the API testing lesson asserts exactly that."
         },
         {
           "heading": "At a customer",
-          "body": "Okta's service app and Entra's app registration with application permissions are the two flavours you will configure; both require an administrator to grant the permissions (admin consent in Entra) before the token is useful, which is the step customers forget. The secret is a credential: rotate it, keep it out of repositories and collections, and consider private_key_jwt or mTLS instead of a shared secret where the provider supports it (the machine-to-machine lesson covers both). The token lifetime is the only revocation you get for a JWT access token, so keep it short; the spike's realm used five minutes."
+          "body": "Okta's service app and Entra's app registration with application permissions are the two flavours you will configure; both require an administrator to grant the permissions (admin consent in Entra) before the token is useful, which is the step customers forget. The secret is a credential: rotate it, keep it out of repositories and collections, and consider private_key_jwt or mTLS instead of a shared secret where the provider supports it (the machine-to-machine lesson covers both). The token lifetime is the only revocation you get for a JWT access token, so keep it short; the practice realm uses five minutes."
         }
       ]
     },
@@ -82,7 +82,7 @@
       "body": [
         {
           "heading": "Staying logged in without the user",
-          "body": "An access token should be short-lived; a refresh token lets the client obtain a fresh access token by sending grant_type=refresh_token to the token endpoint, with client authentication for a confidential client. The spike's run refreshed the user token against Keycloak and received a new access token that differed from the first. Refresh tokens are long-lived credentials, so OAuth 2.1 and RFC 9700 require that for public clients they are either sender-constrained or rotated: each refresh returns a new refresh token and invalidates the old one, and a reuse of an old one (two parties holding the same token) invalidates the whole family. Providers expose this as a switch (Keycloak: 'Revoke Refresh Token'; Okta: refresh token rotation on the app; Entra: rotation is the default for SPAs)."
+          "body": "An access token should be short-lived; a refresh token lets the client obtain a fresh access token by sending grant_type=refresh_token to the token endpoint, with client authentication for a confidential client. The learning center's run refreshed the user token against Keycloak and received a new access token that differed from the first. Refresh tokens are long-lived credentials, so OAuth 2.1 and RFC 9700 require that for public clients they are either sender-constrained or rotated: each refresh returns a new refresh token and invalidates the old one, and a reuse of an old one (two parties holding the same token) invalidates the whole family. Providers expose this as a switch (Keycloak: 'Revoke Refresh Token' in the realm's token settings; Okta: refresh token rotation on the app integration)."
         },
         {
           "heading": "Lifetimes to write down",
@@ -96,11 +96,11 @@
       "body": [
         {
           "heading": "Token exchange (RFC 8693)",
-          "body": "In a chain of services, service A received a token for itself and needs to call service B on the same user's behalf. Forwarding A's token is wrong (B is not its audience) and minting a new one from nothing loses the user. Token exchange is a token endpoint grant (urn:ietf:params:oauth:grant-type:token-exchange) where A presents its subject_token and asks for a token with a different audience or scope, optionally with an actor_token to record that A acted for the user (delegation) rather than as the user (impersonation). Keycloak and Entra (as the on-behalf-of flow) support it; it was read, not run."
+          "body": "In a chain of services, service A received a token for itself and needs to call service B on the same user's behalf. Forwarding A's token is wrong (B is not its audience) and minting a new one from nothing loses the user. Token exchange is a token endpoint grant (urn:ietf:params:oauth:grant-type:token-exchange) where A presents its subject_token and asks for a token with a different audience or scope, optionally with an actor_token to record that A acted for the user (delegation) rather than as the user (impersonation). Keycloak supports it; Entra's on-behalf-of flow solves the same problem with a different grant type (the jwt-bearer grant, not RFC 8693). It was read, not run."
         },
         {
           "heading": "Introspection (RFC 7662) and revocation (RFC 7009)",
-          "body": "A resource server that holds an opaque token, or that wants to know whether a JWT has been revoked, posts the token to the introspection endpoint with its own client authentication and gets back a JSON object with active true or false and, when active, the claims (client_id, scope, exp, username). Revocation is the mirror image: the client posts a token to the revocation endpoint and the server stops honouring it. The spike ran both against Keycloak and node-oidc-provider: a fresh client-credentials token introspected as active with the right client_id, a token with five characters changed introspected as active false, a wrong client secret at the token endpoint answered 401 unauthorized_client, and after revocation the same token introspected as active false. Those four results are the resource-server side of the lesson, and the Newman collection repeats two of them."
+          "body": "A resource server that holds an opaque token, or that wants to know whether a JWT has been revoked, posts the token to the introspection endpoint with its own client authentication and gets back a JSON object with active true or false and, when active, the claims (client_id, scope, exp, username). Revocation is the mirror image: the client posts a token to the revocation endpoint and the server stops honouring it. The learning center ran both against Keycloak and node-oidc-provider: a fresh client-credentials token introspected as active with the right client_id, a token with five characters changed introspected as active false, a wrong client secret at the token endpoint answered 401 unauthorized_client, and after revocation the same token introspected as active false. Those four results are the resource-server side of the lesson, and the Newman collection repeats two of them."
         }
       ]
     },
@@ -114,7 +114,7 @@
         },
         {
           "heading": "Resource owner password credentials",
-          "body": "The password grant let a client collect the user's username and password and post them to the token endpoint. It trained users to type their password into third-party apps, bypassed MFA and single sign-on, and gave the client the password itself. It is removed in OAuth 2.1 and the device grant or a loopback redirect replaces it for CLIs. You will meet it in customers' older integrations and in Keycloak's 'Direct Access Grants' switch (off in the spike's clients); the conversation is 'this is retired by the standard your security team follows, here is the grant that replaces it'. Bearer tokens in query strings go the same way: OAuth 2.1 allows them only in the Authorization header or the body."
+          "body": "The password grant let a client collect the user's username and password and post them to the token endpoint. It trained users to type their password into third-party apps, bypassed MFA and single sign-on, and gave the client the password itself. It is removed in OAuth 2.1 and the device grant or a loopback redirect replaces it for CLIs. You will meet it in customers' older integrations and in Keycloak's 'Direct Access Grants' switch (off on the practice clients); the conversation is 'this is retired by the standard your security team follows, here is the grant that replaces it'. Bearer tokens in query strings go the same way: OAuth 2.1 allows them only in the Authorization header or the body."
         }
       ]
     },
@@ -124,7 +124,7 @@
       "body": [
         {
           "heading": "What a scope is",
-          "body": "A scope is a string the client asks for and the authorization server may grant, carried in the token's scope claim and checked by the resource server. OpenID Connect defines openid, profile, email, address, phone and offline_access; APIs define their own (read, write, a resource name). The server may grant fewer scopes than requested and reports what it granted in the token response; a client has to read that field rather than assume. The spike's Keycloak returned 'profile email' for a client-credentials request that asked for nothing, and only served userinfo to a token that carried openid, which is the kind of provider-specific rule a lesson has to say out loud."
+          "body": "A scope is a string the client asks for and the authorization server may grant, carried in the token's scope claim and checked by the resource server. OpenID Connect defines openid, profile, email, address, phone and offline_access; APIs define their own (read, write, a resource name). The server may grant fewer scopes than requested and reports what it granted in the token response; a client has to read that field rather than assume. In the test run Keycloak returned 'profile email' for a client-credentials request that asked for nothing, and Keycloak serves userinfo only to a token that carries openid, which is the kind of provider-specific rule a lesson has to say out loud."
         },
         {
           "heading": "Consent at a customer",
@@ -143,7 +143,7 @@
     },
     {
       "lang": "python",
-      "code": "# Client credentials, introspection and revocation (the identity spike's run, trimmed; the secret comes from the environment)\nimport os, requests\ncid, secret = os.environ[\"CLIENT_ID\"], os.environ[\"CLIENT_SECRET\"]\nt = requests.post(disc[\"token_endpoint\"], auth=(cid, secret), data={\"grant_type\": \"client_credentials\"}).json()\n# {'token_type': 'Bearer', 'expires_in': 300, 'scope': 'profile email', 'access_token': '...'}  no refresh_token\ni = requests.post(disc[\"introspection_endpoint\"], auth=(cid, secret), data={\"token\": t[\"access_token\"]}).json()\n# {'active': True, 'client_id': 'm2m-batch', 'username': 'service-account-m2m-batch', ...}\nrequests.post(disc[\"revocation_endpoint\"], auth=(cid, secret), data={\"token\": t[\"access_token\"]})\n# introspect again -> {'active': False}\n"
+      "code": "# Client credentials, introspection and revocation (the learning center's run, trimmed; the secret comes from the environment)\nimport os, requests\ncid, secret = os.environ[\"CLIENT_ID\"], os.environ[\"CLIENT_SECRET\"]\nt = requests.post(disc[\"token_endpoint\"], auth=(cid, secret), data={\"grant_type\": \"client_credentials\"}).json()\n# {'token_type': 'Bearer', 'expires_in': 300, 'scope': 'profile email', 'access_token': '...'}  no refresh_token\ni = requests.post(disc[\"introspection_endpoint\"], auth=(cid, secret), data={\"token\": t[\"access_token\"]}).json()\n# {'active': True, 'client_id': 'm2m-batch', 'username': 'service-account-m2m-batch', ...}\nrequests.post(disc[\"revocation_endpoint\"], auth=(cid, secret), data={\"token\": t[\"access_token\"]})\n# introspect again -> {'active': False}\n"
     }
   ],
   "technologies": [
@@ -250,7 +250,7 @@
       "kind": "spec",
       "title": "RFC 9700: Best Current Practice for OAuth 2.0 Security",
       "url": "https://datatracker.ietf.org/doc/html/rfc9700",
-      "why": "The January 2025 BCP that retires implicit and ROPC and mandates PKCE and exact redirect URIs.",
+      "why": "The January 2025 BCP that retires implicit and ROPC and mandates PKCE for public clients and exact redirect URIs.",
       "verified": {
         "checked": "2026-10-14",
         "http": 200,
@@ -317,8 +317,8 @@
   "provenance": {
     "generated_by": "Claude (Fable 5.1) by hand from the identity and integration ops spike, Scout learning center",
     "generated_on": "2026-10-14",
-    "reviewed_by": null,
-    "reviewed_on": null
+    "reviewed_by": "a second reader (Claude Fable 5.1), Scout learning center",
+    "reviewed_on": "2026-10-14"
   },
   "changelog": [
     {

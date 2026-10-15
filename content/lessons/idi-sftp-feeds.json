@@ -16,7 +16,7 @@
     "apis",
     "identity-and-access"
   ],
-  "summary": "The file feed predates APIs and will outlive them: a nightly CSV dropped on an SFTP server is still how payroll, claims, orders and reference data move between a great many enterprises and the products they buy. Done carelessly it is the integration that silently ingests half a file, double-counts a re-sent batch, or leaks a customer's data in a world-readable folder. This lesson is the whole pattern: key pairs and key-only accounts, a chrooted internal-sftp server, the drop-then-rename convention, manifests and control files, OpenPGP encryption with gpg, idempotent ingest keyed on content, archiving, the CSV contract (RFC 4180), and the managed endpoints customers put in front of their cloud storage. The practice is the identity spike's feed proof on atmoz/sftp: key-only login, chroot checks, two batches, a dead partial upload ignored, a duplicate skipped by content hash, and the two findings that became steps.",
+  "summary": "The file feed predates APIs and will outlive them: a nightly CSV dropped on an SFTP server is still how payroll, claims, orders and reference data move between a great many enterprises and the products they buy. Done carelessly it is the integration that silently ingests half a file, double-counts a re-sent batch, or leaks a customer's data in a world-readable folder. This lesson is the whole pattern: key pairs and key-only accounts, a chrooted internal-sftp server, the drop-then-rename convention, manifests and control files, OpenPGP encryption with gpg, idempotent ingest keyed on content, archiving, the CSV contract (RFC 4180), and the managed endpoints customers put in front of their cloud storage. The practice is the learning center's feed test run on atmoz/sftp: key-only login, chroot checks, two batches, a dead partial upload ignored, a duplicate skipped by content hash, and the two findings that became steps.",
   "detail": [],
   "in_practice": "A customer says 'we will drop a file every night at two'. The implementation engineer turns that sentence into a contract: who hosts the server (theirs, yours, or a managed endpoint in their cloud), the account and its key (ed25519, key-only, a chrooted home with inbox, outbox and archive), the file naming and the drop-then-rename rule, the manifest that travels with each batch (file names, sizes, SHA-256 of the bytes on the wire, row counts), whether files are encrypted to the product's public key, the CSV rules (header, delimiter, quoting, encoding, line endings, date and number formats), and what the consumer does on a re-sent batch, a missing manifest or a partial file. They write a consumer that ignores partial files, verifies the manifest, decrypts, counts rows, ingests once per content hash, archives with a unique name and alerts when the two o'clock file has not arrived by three. The schedule, the alert and the contract go in the runbook; the keys go in the secrets manager.",
   "subtopics": [
@@ -44,7 +44,7 @@
         },
         {
           "heading": "The account",
-          "body": "One account per feed partner, with its own home directory, no shell, no password (the spike's atmoz/sftp user was created with an empty password field and a mounted public key, and a password login was refused with an authentication failure), and a known uid so file ownership is predictable. Ask the customer's server owner for the host key fingerprint out of band and pin it in the client (paramiko's host key policy, the known_hosts file for the CLI), so a changed host key is an alarm and not a silently accepted new server."
+          "body": "One account per feed partner, with its own home directory, no shell, no password (the practice's atmoz/sftp user is created with an empty password field and a mounted public key, and a password login was refused with an authentication failure), and a known uid so file ownership is predictable. Ask the customer's server owner for the host key fingerprint out of band and pin it in the client (paramiko's host key policy, the known_hosts file for the CLI), so a changed host key is an alarm and not a silently accepted new server."
         }
       ]
     },
@@ -54,7 +54,7 @@
       "body": [
         {
           "heading": "The sshd_config lines",
-          "body": "A locked-down feed account on OpenSSH is three directives in a Match block for the user or group: ChrootDirectory (the account sees nothing above its home; the directory itself must be owned by root and not writable by the account, which is why the account can only write inside subfolders such as inbox and archive), ForceCommand internal-sftp (no shell, no scp, no port forwarding, only the SFTP subsystem), and the Subsystem sftp internal-sftp line that makes the in-process server available. The spike read these from the container's configuration: Subsystem sftp internal-sftp, ForceCommand internal-sftp, ChrootDirectory %h. Add AllowTcpForwarding no and X11Forwarding no in the same block."
+          "body": "A locked-down feed account on OpenSSH is three directives in a Match block for the user or group: ChrootDirectory (the account sees nothing above its home; the directory itself must be owned by root and not writable by the account, which is why the account can only write inside subfolders such as inbox and archive), ForceCommand internal-sftp (no shell, no scp, no port forwarding, only the SFTP subsystem), and the Subsystem sftp internal-sftp line that makes the in-process server available. The learning center's run read these from the container's configuration: Subsystem sftp internal-sftp, ForceCommand internal-sftp, ChrootDirectory %h. Add AllowTcpForwarding no and X11Forwarding no in the same block."
         },
         {
           "heading": "What the proof saw",
@@ -68,11 +68,11 @@
       "body": [
         {
           "heading": "The convention",
-          "body": "An SFTP upload is not atomic: a consumer that lists the inbox during an upload sees a file that exists and is incomplete. The convention that fixes it is drop-then-rename: the producer writes to a temporary name (orders-1.csv.pgp.part, or a dot-prefixed name, or a separate upload folder), and when the write has finished and been flushed, renames it to the final name. RENAME is a single operation on the server, so the consumer sees either no file or a complete file under the final name. The consumer's rule is the mirror image: never touch a .part file, however old; the spike left a dead partial upload in the inbox across two consumer runs and the consumer listed it as skipped both times."
+          "body": "An SFTP upload is not atomic: a consumer that lists the inbox during an upload sees a file that exists and is incomplete. The convention that fixes it is drop-then-rename: the producer writes to a temporary name (orders-1.csv.pgp.part, or a dot-prefixed name, or a separate upload folder), and when the write has finished and been flushed, renames it to the final name. RENAME is a single operation on the server, so the consumer sees either no file or a complete file under the final name. The consumer's rule is the mirror image: never touch a .part file, however old; the learning center's run left a dead partial upload in the inbox across two consumer runs and the consumer listed it as skipped both times."
         },
         {
           "heading": "Which rename your client sends",
-          "body": "The SFTP protocol every server speaks is version 3 (the draft-ietf-secsh-filexfer-02 document), and its RENAME must fail if the target name already exists. OpenSSH adds a posix-rename@openssh.com extension that overwrites, documented in its PROTOCOL file, and some clients use it when the server advertises it. Know which one your client issues: paramiko's rename is the protocol one and raised 'Failure' in the spike when the archive already held a file of that name, which is why the archive step generates a unique name for a duplicate; paramiko's posix_rename is the overwriting one. A producer should never rely on overwriting a final name; a new batch gets a new name."
+          "body": "The SFTP protocol every server speaks is version 3 (the draft-ietf-secsh-filexfer-02 document), and its RENAME must fail if the target name already exists. OpenSSH adds a posix-rename@openssh.com extension that overwrites, documented in its PROTOCOL file, and some clients use it when the server advertises it. Know which one your client issues: paramiko's rename is the protocol one and raised 'Failure' in the learning center's run when the archive already held a file of that name, which is why the archive step generates a unique name for a duplicate; paramiko's posix_rename is the overwriting one. A producer should never rely on overwriting a final name; a new batch gets a new name."
         }
       ]
     },
@@ -82,11 +82,11 @@
       "body": [
         {
           "heading": "What travels with the batch",
-          "body": "A manifest is a small file dropped after the data files that says what the batch contains: each file's name, its size in bytes and the SHA-256 of the bytes as uploaded, the row count, the batch id and date, and optionally the producer's version. A control file (a zero-length orders-1.done, or the manifest itself, dropped last) is the signal that the batch is complete, which handles the multi-file case that drop-then-rename alone does not. The consumer waits for the manifest, reads it, checks every listed file exists with the stated size and hash, and only then processes any of them. The spike's manifest carried, per file, the name, the sha256 of the ciphertext, the sha256 of the plaintext, the row count and the byte count."
+          "body": "A manifest is a small file dropped after the data files that says what the batch contains: each file's name, its size in bytes and the SHA-256 of the bytes as uploaded, the row count, the batch id and date, and optionally the producer's version. A control file (a zero-length orders-1.done, or the manifest itself, dropped last) is the signal that the batch is complete, which handles the multi-file case that drop-then-rename alone does not. The consumer waits for the manifest, reads it, checks every listed file exists with the stated size and hash, and only then processes any of them. The practice manifest carries, per file, the name, the sha256 of the ciphertext, the sha256 of the plaintext, the row count and the byte count."
         },
         {
           "heading": "Why two hashes",
-          "body": "The hash of the bytes on the wire proves the transfer was complete and unaltered. It is not an identity for the content when files are encrypted, because OpenPGP output differs on every run (a fresh session key and random padding each time), so the same CSV encrypted twice has two different ciphertext hashes. The spike's first consumer keyed idempotency on the ciphertext hash and ingested a re-sent batch twice; the fix was a second field with the hash of the plaintext, which the consumer verifies after decryption and uses as the idempotency key. Put both in the contract."
+          "body": "The hash of the bytes on the wire proves the transfer was complete and unaltered. It is not an identity for the content when files are encrypted, because OpenPGP output differs on every run (a fresh session key and random padding each time), so the same CSV encrypted twice has two different ciphertext hashes. The learning center's first consumer keyed idempotency on the ciphertext hash and ingested a re-sent batch twice; the fix was a second field with the hash of the plaintext, which the consumer verifies after decryption and uses as the idempotency key. Put both in the contract."
         }
       ]
     },
@@ -96,7 +96,7 @@
       "body": [
         {
           "heading": "The exchange",
-          "body": "When the files hold personal or financial data, the customer will ask for encryption at rest on the server, and the long-standing answer is OpenPGP: the consumer generates a key pair and gives the producer the public key; the producer encrypts each file to it; only the consumer's private key decrypts. gpg is the tool: gpg --full-generate-key (or --quick-generate-key) makes the pair, gpg --export --armor exports the public key to hand over, gpg --import takes the partner's, gpg --encrypt --recipient consumer@example.test orders-1.csv writes orders-1.csv.gpg, and gpg --decrypt reads it back. The GNU Privacy Handbook's chapter on encrypting and decrypting documents is the reference; signing with --sign as well lets the consumer verify the producer. (The spike's proof used a pure-Python OpenPGP library because gpg was not installed on that machine; the library is no longer maintained and the lesson teaches gpg.)"
+          "body": "When the files hold personal or financial data, the customer will ask for encryption at rest on the server, and the long-standing answer is OpenPGP: the consumer generates a key pair and gives the producer the public key; the producer encrypts each file to it; only the consumer's private key decrypts. gpg is the tool: gpg --full-generate-key (or --quick-generate-key) makes the pair, gpg --export --armor exports the public key to hand over, gpg --import takes the partner's, gpg --encrypt --recipient consumer@example.test orders-1.csv writes orders-1.csv.gpg, and gpg --decrypt reads it back. The GNU Privacy Handbook's chapter on encrypting and decrypting documents is the reference; signing with --sign as well lets the consumer verify the producer. (The learning center's test run used a pure-Python OpenPGP library because gpg was not installed on the machine it ran on; the library is no longer maintained and the lesson teaches gpg.)"
         },
         {
           "heading": "Operational rules",
@@ -110,11 +110,11 @@
       "body": [
         {
           "heading": "Ingest once per content",
-          "body": "A producer will re-send a batch: their job retried, an operator re-ran it, the manifest was late. The consumer keeps a ledger of what it has ingested, keyed on the content hash (the plaintext hash from the manifest, verified after decryption), and a batch whose hash is in the ledger is skipped and archived with a note. The spike's second run dropped batch 1 again next to batch 2: the consumer reported batch 1 as already ingested and skipped it, ingested batch 2, and archived both. Inside the batch, make the row-level writes idempotent too (an upsert on the row's business key), so a crash halfway through a file can be retried without duplicates."
+          "body": "A producer will re-send a batch: their job retried, an operator re-ran it, the manifest was late. The consumer keeps a ledger of what it has ingested, keyed on the content hash (the plaintext hash from the manifest, verified after decryption), and a batch whose hash is in the ledger is skipped and archived with a note. The learning center's second run dropped batch 1 again next to batch 2: the consumer reported batch 1 as already ingested and skipped it, ingested batch 2, and archived both. Inside the batch, make the row-level writes idempotent too (an upsert on the row's business key), so a crash halfway through a file can be retried without duplicates."
         },
         {
           "heading": "Archive and retention",
-          "body": "After ingest, move the data file and the manifest out of the inbox to an archive folder with a rename (the same operation, so it is atomic), and because version-3 RENAME refuses an existing target, give a duplicate a unique archive name (the spike appended a timestamp and .dup). Keep the archive for the agreed retention, then delete; the contract says how long and whether the archive is on the server, in your object store, or both. Alert when the expected batch has not arrived by the deadline, when a manifest check fails, when a .part file is older than the longest plausible upload, and when the ledger skips a batch, because a skipped batch is sometimes a producer bug."
+          "body": "After ingest, move the data file and the manifest out of the inbox to an archive folder with a rename (the same operation, so it is atomic), and because version-3 RENAME refuses an existing target, give a duplicate a unique archive name (the practice consumer appends a timestamp and .dup). Keep the archive for the agreed retention, then delete; the contract says how long and whether the archive is on the server, in your object store, or both. Alert when the expected batch has not arrived by the deadline, when a manifest check fails, when a .part file is older than the longest plausible upload, and when the ledger skips a batch, because a skipped batch is sometimes a producer bug."
         }
       ]
     },
@@ -128,7 +128,7 @@
         },
         {
           "heading": "Validate at the boundary",
-          "body": "Parse with a real CSV reader (Python's csv module handles the quoting rules; a split on commas does not), validate every row against the contract before the first write, reject the whole batch on a header mismatch, and report row-level errors with the row number and the field. Keep a sample file with every edge case (an embedded comma, a quoted newline, an empty last field, a non-ASCII name) in the test suite and ask the producer to run it through their export. The spike's batches were five rows of order id, amount and currency; a real feed has forty columns and three of them will surprise you."
+          "body": "Parse with a real CSV reader (Python's csv module handles the quoting rules; a split on commas does not), validate every row against the contract before the first write, reject the whole batch on a header mismatch, and report row-level errors with the row number and the field. Keep a sample file with every edge case (an embedded comma, a quoted newline, an empty last field, a non-ASCII name) in the test suite and ask the producer to run it through their export. The practice batches are five rows of order id, amount and currency; a real feed has forty columns and three of them will surprise you."
         }
       ]
     },
@@ -153,7 +153,7 @@
   "code": [
     {
       "lang": "sh",
-      "code": "# The server used in the practice: atmoz/sftp, key-only user 'feed' (uid 1001) with three folders, bound to 127.0.0.1\nssh-keygen -t ed25519 -f feed_ed25519 -N ''          # the producer's key pair; the public half goes to the server\ndocker run -d --name idspike-sftp -p 127.0.0.1:12222:22 \\\n  -v \"$PWD/feed_ed25519.pub:/home/feed/.ssh/keys/feed_ed25519.pub:ro\" \\\n  atmoz/sftp:alpine 'feed::1001::inbox,outbox,archive'\nsftp -P 12222 -i feed_ed25519 feed@127.0.0.1            # 'ls' shows .ssh inbox outbox archive; 'cd /etc' fails: chrooted\n\n# OpenPGP with gpg: the consumer's key pair, the producer encrypts to the public key\ngpg --quick-generate-key 'Feed Consumer <consumer@example.test>' ed25519 cert 2y   # consumer side\ngpg --export --armor consumer@example.test > consumer.pub.asc                     # hand this to the producer\ngpg --import consumer.pub.asc && gpg --encrypt --recipient consumer@example.test orders-1.csv   # producer side\ngpg --decrypt orders-1.csv.gpg > orders-1.csv                                     # consumer side\n"
+      "code": "# The server used in the practice: atmoz/sftp, key-only user 'feed' (uid 1001) with three folders, bound to 127.0.0.1\nssh-keygen -t ed25519 -f feed_ed25519 -N ''          # the producer's key pair; the public half goes to the server\ndocker run -d --name learn-sftp -p 127.0.0.1:12222:22 \\\n  -v \"$PWD/feed_ed25519.pub:/home/feed/.ssh/keys/feed_ed25519.pub:ro\" \\\n  atmoz/sftp:alpine 'feed::1001::inbox,outbox,archive'\nsftp -P 12222 -i feed_ed25519 feed@127.0.0.1            # 'ls' shows .ssh inbox outbox archive; 'cd /etc' fails: chrooted\n\n# OpenPGP with gpg: the consumer's key pair, the producer encrypts to the public key\ngpg --quick-generate-key 'Feed Consumer <consumer@example.test>' default default 2y   # consumer side: primary key plus an encryption subkey (a bare 'ed25519 cert' would be certify-only and could not receive files)\ngpg --export --armor consumer@example.test > consumer.pub.asc                     # hand this to the producer\ngpg --import consumer.pub.asc && gpg --encrypt --recipient consumer@example.test orders-1.csv   # producer side\ngpg --decrypt orders-1.csv.gpg > orders-1.csv                                     # consumer side\n"
     },
     {
       "lang": "python",
@@ -318,8 +318,8 @@
   "provenance": {
     "generated_by": "Claude (Fable 5.1) by hand from the identity and integration ops spike, Scout learning center",
     "generated_on": "2026-10-14",
-    "reviewed_by": null,
-    "reviewed_on": null
+    "reviewed_by": "a second reader (Claude Fable 5.1), Scout learning center",
+    "reviewed_on": "2026-10-14"
   },
   "changelog": [
     {

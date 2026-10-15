@@ -5,7 +5,7 @@
   "lesson": "idi-tokens-jwt",
   "tool": "PyJWT",
   "tool_key": null,
-  "why_this_tool": "PyJWT does the whole validation checklist in one decode call, has a JWKS client that performs the kid lookup and caching, and raises a distinct exception for each failed check, so breaking a token on purpose shows you exactly which check caught it. It is the validator the identity spike used to verify real tokens from Keycloak and node-oidc-provider.",
+  "why_this_tool": "PyJWT does the whole validation checklist in one decode call, has a JWKS client that performs the kid lookup and caching, and raises a distinct exception for each failed check, so breaking a token on purpose shows you exactly which check caught it. It is the validator the learning center used to verify real tokens from Keycloak and node-oidc-provider.",
   "alternatives": "panva/jose in Node and the browser does the same with a remote JWKS helper; auth0/node-jsonwebtoken is the most installed Node library (read its defaults); lestrrat-go/jwx in Go; the jwt.io debugger for reading a token; jwt_tool and the step CLI for attacking or inspecting tokens from the shell.",
   "setup": [
     {
@@ -72,7 +72,7 @@
     },
     {
       "do": "Validate the token with PyJWT: PyJWKClient for the key, algorithms pinned to the header's RS256 (or the provider's ES256), audience set to the client id, issuer set to the discovery document's issuer, and a require list of exp, iat, iss, aud and sub. Compare the returned nonce with the one you sent.",
-      "done_when": "jwt.decode returns the claims dictionary and the nonce matches; the identity spike's run printed 'id_token VALID' at this point.",
+      "done_when": "jwt.decode returns the claims dictionary and the nonce matches; the learning center's run printed 'id_token VALID' at this point.",
       "source": {
         "title": "PyJWT usage: validating tokens and fetching keys from a JWKS endpoint",
         "url": "https://pyjwt.readthedocs.io/en/stable/usage.html",
@@ -116,8 +116,8 @@
       "n": 5
     },
     {
-      "do": "Validate the genuine token with algorithms=['none'], and then with algorithms=['HS256'] and the public key's PEM as the secret.",
-      "done_when": "Both calls fail: PyJWT refuses none for a signed token and refuses an HMAC algorithm with an asymmetric key, and you can name the two attacks (alg none, key confusion) these refusals prevent.",
+      "do": "Validate the genuine token with algorithms=['none'], and then with algorithms=['HS256'] and the public key's PEM as the secret. Then forge a key-confusion token: an HS256 header, the same payload, and an HMAC-SHA256 over them with the public key's PEM bytes as the secret; validate it with algorithms=['HS256'] and the PEM.",
+      "done_when": "The first two calls raise InvalidAlgorithmError ('The specified alg value is not allowed'): the verifier's allow-list, not the token's header, picks the algorithm. The forged token raises InvalidKeyError ('The specified key is an asymmetric key or x509 certificate and should not be used as an HMAC secret'). You can name the two attacks (alg none, key confusion) these refusals prevent.",
       "source": {
         "title": "RFC 8725: JSON Web Token Best Current Practices",
         "url": "https://datatracker.ietf.org/doc/html/rfc8725",
@@ -131,7 +131,7 @@
       "n": 6
     },
     {
-      "do": "In the Keycloak admin console set the public client's access token lifespan to 60 seconds, log in again, wait past expiry and validate the new token; then validate once more with leeway=120.",
+      "do": "In the Keycloak admin console set the public client's access token lifespan to 60 seconds, log in again, wait a little past expiry (but less than two minutes) and validate the new token; then validate once more with leeway=120.",
       "done_when": "The first validation raises ExpiredSignatureError and the second passes, and you can say what leeway a production verifier should allow (a minute or two, not more).",
       "source": {
         "title": "Microsoft Entra: Secure applications and APIs by validating claims",
@@ -147,7 +147,7 @@
     },
     {
       "do": "Rotate the provider's key: in the realm's key providers add a new RSA generated key with a higher priority, log in again and compare the new token's kid with the old. Validate the new token with a PyJWKClient instance created before the rotation, then with a fresh one.",
-      "done_when": "The old kid and the new kid differ; the stale client fails to find the key until it refetches and the fresh client succeeds, and you can describe the cache-and-refetch rule a verifier needs.",
+      "done_when": "The old kid and the new kid differ; both validations succeed, because PyJWKClient in current PyJWT refetches the JWKS once when a kid is missing from its cache, with a cooldown so a flood of bad tokens cannot become a flood of fetches; you can describe that cache-and-refetch rule and say what a verifier that caches forever would have done.",
       "source": {
         "title": "RFC 7517: JSON Web Key (JWK)",
         "url": "https://datatracker.ietf.org/doc/html/rfc7517",
@@ -318,7 +318,7 @@
   ],
   "verified": {
     "checked": "2026-10-14",
-    "by": "identity spike, scripts/verify_sources.py (HTTP 200 and the section phrase found on the page)"
+    "by": "the learning center's source check (HTTP 200 and the section phrase found on the page)"
   },
   "provenance": {
     "generated_by": "Claude (Fable 5.1) by hand from the identity and integration ops spike, Scout learning center",
