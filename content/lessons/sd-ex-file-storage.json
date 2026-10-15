@@ -1,8 +1,8 @@
 {
-  "schema_version": "learning-center-lesson:1",
+  "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-file-storage",
-  "version": 2,
+  "version": 3,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: file storage and sync",
@@ -21,7 +21,9 @@
   ],
   "summary": "A classic design exercise: a folder-sync service at hundreds of petabytes with version history, sharing and resumable uploads. The reference answer splits files into content-addressed 4 MB blocks, keeps a strongly consistent metadata namespace per account, runs a commit protocol that reports missing blocks, stores hot blocks replicated and cold blocks erasure coded, and treats repair time, soft deletion and restore tests as part of durability.",
   "detail": [],
-  "in_practice": "",
+  "in_practice": {
+    "blocks": []
+  },
   "subtopics": [],
   "diagram": null,
   "code": [],
@@ -35,259 +37,708 @@
   ],
   "sources": [
     {
-      "kind": "blog",
-      "title": "Dropbox Tech: Inside the Magic Pocket",
-      "url": "https://dropbox.tech/infrastructure/inside-the-magic-pocket"
+      "id": "s1",
+      "title": "Dropbox Tech: Inside the Magic Pocket (James Cowling, 2016-05-06)",
+      "url": "https://dropbox.tech/infrastructure/inside-the-magic-pocket",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "up to 4MB in size"
+      }
     },
     {
+      "id": "s2",
+      "title": "Ghemawat, Gobioff and Leung, The Google File System (SOSP 2003)",
+      "url": "https://static.googleusercontent.com/media/research.google.com/en//archive/gfs-sosp2003.pdf",
       "kind": "paper",
-      "title": "The Google File System (SOSP 2003)",
-      "url": "https://static.googleusercontent.com/media/research.google.com/en//archive/gfs-sosp2003.pdf"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "We have chosen 64 MB"
+      }
     },
     {
-      "kind": "blog",
-      "title": "All Things Distributed: Building and operating a pretty big storage system called S3",
-      "url": "https://www.allthingsdistributed.com/2023/07/building-and-operating-a-pretty-big-storage-system.html"
+      "id": "s3",
+      "title": "All Things Distributed: Building and operating a pretty big storage system called S3 (Werner Vogels, 2023-07-27)",
+      "url": "https://www.allthingsdistributed.com/2023/07/building-and-operating-a-pretty-big-storage-system.html",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "balancing the heat of each workload"
+      }
     },
     {
+      "id": "s4",
+      "title": "Site Reliability Engineering (2016), chapter 26: Data Integrity",
+      "url": "https://sre.google/sre-book/data-integrity/",
       "kind": "book",
-      "title": "Site Reliability Engineering: Data integrity",
-      "url": "https://sre.google/sre-book/data-integrity/"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "soft deletion"
+      }
     },
     {
-      "kind": "doc",
-      "title": "Latency numbers every programmer should know",
-      "url": "https://gist.github.com/jboner/2841832"
+      "id": "s5",
+      "title": "Latency Numbers Every Programmer Should Know (jboner gist, maintained)",
+      "url": "https://gist.github.com/jboner/2841832",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Round trip within same datacenter"
+      }
     }
   ],
   "practice": null,
   "exercise": {
     "prompt": "Design a file storage and sync service: users install a client that keeps a folder in sync across their devices and the web, share folders with other users, and can recover earlier versions of a file. Uploads must survive flaky connections and the service must never lose a file it has acknowledged.",
-    "constraints": [
-      {
-        "heading": "Functional",
-        "body": "Upload, download and delete files and folders; sync changes to every device of the account within seconds; version history for 30 days (assumption); share a folder with other accounts; resumable uploads; web access."
-      },
-      {
-        "heading": "Scale (assumption)",
-        "body": "50 million users, 10 million active per day; an average of 5 GB stored per user, so 250 PB of logical data; 100 million file changes per day with an average file of 1 MB; 30 percent of uploaded bytes are duplicates of blocks already stored (assumption). Chosen for the exercise; derive the ingest rate, the physical storage per durability scheme and the metadata volume yourself."
-      },
-      {
-        "heading": "Targets (assumption)",
-        "body": "Durability designed so that losing a file requires several simultaneous disk or node failures, with a stated repair time; 99.9 percent availability for sync; a change visible on other devices within 10 s at p95; a 1 MB file uploads in under 2 s at p95 on a good connection."
-      },
-      {
-        "heading": "Non-goals",
-        "body": "Collaborative editing of file contents, search inside files, virus scanning, end-to-end encryption (server-side encryption at rest is assumed)."
-      }
-    ],
+    "constraints": {
+      "type": "table",
+      "caption": "Constraints and numbers.",
+      "columns": [
+        "kind",
+        "constraint",
+        "note"
+      ],
+      "rows": [
+        [
+          "Functional",
+          "Upload, download and delete files and folders; sync changes to every device of the account within seconds; version history for 30 days (assumption).",
+          ""
+        ],
+        [
+          "Functional",
+          "Share a folder with other accounts; resumable uploads; web access.",
+          ""
+        ],
+        [
+          "Scale (assumption)",
+          "50 million users, 10 million active per day; an average of 5 GB stored per user, so 250 PB of logical data.",
+          "chosen for the exercise"
+        ],
+        [
+          "Scale (assumption)",
+          "100 million file changes per day with an average file of 1 MB; 30 percent of uploaded bytes are duplicates of blocks already stored (assumption).",
+          "derive the ingest rate, the physical storage per durability scheme and the metadata volume yourself"
+        ],
+        [
+          "Targets (assumption)",
+          "Durability designed so that losing a file requires several simultaneous disk or node failures, with a stated repair time; 99.9 percent availability for sync.",
+          ""
+        ],
+        [
+          "Targets (assumption)",
+          "A change visible on other devices within 10 s at p95; a 1 MB file uploads in under 2 s at p95 on a good connection.",
+          ""
+        ],
+        [
+          "Non-goals",
+          "Collaborative editing of file contents, search inside files, virus scanning, end-to-end encryption (server-side encryption at rest is assumed).",
+          ""
+        ]
+      ]
+    },
     "clarifying_questions": [
       {
-        "question": "What is the unit of storage?",
-        "answer": "A block: files are split into fixed-size blocks of up to 4 MB, each named by its content hash, so identical blocks are stored once. Dropbox's public description of Magic Pocket uses exactly this unit."
+        "q": "What is the unit of storage?",
+        "a": "A block: files are split into fixed-size blocks of up to 4 MB, each named by its content hash, so identical blocks are stored once. Dropbox's public description of Magic Pocket uses exactly this unit."
       },
       {
-        "question": "What happens when two devices edit the same file offline?",
-        "answer": "The second commit sees a version mismatch and the client saves a conflicted copy beside the original; nothing is merged and nothing is lost."
+        "q": "What happens when two devices edit the same file offline?",
+        "a": "The second commit sees a version mismatch and the client saves a conflicted copy beside the original; nothing is merged and nothing is lost."
       },
       {
-        "question": "Is the file namespace strongly consistent?",
-        "answer": "Yes, per account: a rename or a delete is linearizable within the account's metadata shard. Cross-account sharing is eventually consistent (seconds)."
+        "q": "Is the file namespace strongly consistent?",
+        "a": "Yes, per account: a rename or a delete is linearizable within the account's metadata shard. Cross-account sharing is eventually consistent (seconds)."
       },
       {
-        "question": "How long are deleted files kept?",
-        "answer": "30 days in a soft-deleted state, then blocks are unreferenced and garbage collected (assumption)."
+        "q": "How long are deleted files kept?",
+        "a": "30 days in a soft-deleted state, then blocks are unreferenced and garbage collected (assumption)."
       },
       {
-        "question": "Hot or cold data?",
-        "answer": "Most bytes are written once and rarely read; most reads are of recent files. Storage is tiered by age and access."
+        "q": "Hot or cold data?",
+        "a": "Most bytes are written once and rarely read; most reads are of recent files. Storage is tiered by age and access."
       },
       {
-        "question": "Multi-region?",
-        "answer": "Metadata lives in one region per account; blocks are replicated across regions for disaster survival. The reference answer stays single-region for the request paths."
+        "q": "Multi-region?",
+        "a": "Metadata lives in one region per account; blocks are replicated across regions for disaster survival. The reference answer stays single-region for the request paths."
       }
     ],
     "reference_answer": [
       {
         "id": "requirements-and-estimates",
         "title": "Requirements and estimates",
-        "body": [
+        "blocks": [
           {
-            "heading": "Derived numbers: changes and ingest",
-            "body": "Changes: 100 million per day is about 1,160 per second average, 11,600 at peak (10x). Ingest: 100 million files times 1 MB is 100 TB per day, 1.2 GB per second average, 12 GB per second at peak; after 30 percent block deduplication, 70 TB per day of new physical blocks. Metadata: a file version record of about 500 bytes plus a block list of 32-byte hashes per 4 MB block; 100 million versions per day is 50 GB per day of metadata, 18 TB per year, sharded by account."
+            "type": "p",
+            "text": "Every number below follows from the stated assumptions: 100 million file changes a day of 1 MB on average, a peak at ten times the average, 250 PB of logical data, and 30 percent of uploaded bytes already stored. The tables carry the arithmetic; the paragraphs carry the assumptions."
           },
           {
-            "heading": "Derived numbers: durability arithmetic",
-            "body": "Logical data is 250 PB. Three-way replication costs 3 bytes per byte, 750 PB of disk. An erasure code of 10 data fragments plus 4 parity fragments (assumption; the exact parameters are a choice) costs 1.4 bytes per byte, 350 PB, and survives any 4 lost fragments of a stripe; erasure coding of cold data is what both Dropbox's Magic Pocket write-up and the S3 write-up describe, with their own parameters. The difference, 400 PB of disk, is the business case for erasure coding cold data; hot data stays replicated because a replicated block is read from one disk, while an erasure-coded block needs several fragments reassembled."
+            "type": "table",
+            "caption": "Rates and daily volumes derived from the assumptions.",
+            "columns": [
+              "quantity",
+              "per day",
+              "average per second",
+              "peak per second",
+              "note"
+            ],
+            "rows": [
+              [
+                "File changes (commits)",
+                "100 million",
+                "1,160",
+                "11,600",
+                "peak is 10 times the average (assumption); each commit is one transaction on the account's metadata shard"
+              ],
+              [
+                "Bytes ingested",
+                "100 TB",
+                "1.2 GB",
+                "12 GB",
+                "100 million files times 1 MB"
+              ],
+              [
+                "New physical blocks after deduplication",
+                "70 TB",
+                "0.8 GB",
+                "8 GB",
+                "30 percent of uploaded bytes are blocks already stored"
+              ],
+              [
+                "Metadata written",
+                "50 GB",
+                "0.6 MB",
+                "6 MB",
+                "a file version record of about 500 bytes plus 32 bytes of hash per 4 MB block"
+              ]
+            ]
           },
           {
-            "heading": "The latency numbers",
-            "body": "A 4 MB block from SSD is about 4 ms of sequential read (1 ms per MB from the latency reference numbers) and from disk about 80 ms plus a 10 ms seek; serving recent blocks from SSD and old blocks from disk is what makes both the download target and the storage cost work."
+            "type": "table",
+            "caption": "Sizes: logical data, the disk each durability scheme needs, and the metadata.",
+            "columns": [
+              "quantity",
+              "size",
+              "derived from"
+            ],
+            "rows": [
+              [
+                "Logical data",
+                "250 PB",
+                "50 million users times 5 GB"
+              ],
+              [
+                "Disk with three-way replication",
+                "750 PB",
+                "3 bytes per byte"
+              ],
+              [
+                "Disk with a 10-plus-4 erasure code",
+                "350 PB",
+                "1.4 bytes per byte (assumption; the exact parameters are a choice); survives any 4 lost fragments of a stripe"
+              ],
+              [
+                "The difference",
+                "400 PB of disk",
+                "the business case for erasure coding cold data"
+              ],
+              [
+                "Metadata growth",
+                "18 TB per year",
+                "50 GB per day times 365, sharded by account"
+              ]
+            ]
+          },
+          {
+            "type": "table",
+            "caption": "The latency numbers behind the tiers.",
+            "columns": [
+              "read",
+              "time",
+              "derived from"
+            ],
+            "rows": [
+              [
+                "A 4 MB block from SSD",
+                "about 4 ms",
+                "1 ms per MB sequential from the latency reference numbers"
+              ],
+              [
+                "A 4 MB block from disk",
+                "about 80 ms plus a 10 ms seek",
+                "20 ms per MB sequential from the same list"
+              ],
+              [
+                "Upload target",
+                "1 MB in under 2 s at p95",
+                "on a good connection; the block PUT is the only transfer"
+              ],
+              [
+                "Sync target",
+                "a change visible within 10 s at p95",
+                "long poll or push, then one cursor fetch"
+              ]
+            ],
+            "cites": [
+              "s5"
+            ]
+          },
+          {
+            "type": "table",
+            "caption": "Cost of raw disk per month. The unit price is an assumption chosen to make the arithmetic concrete; the version 2 answer named cost per TB as the L3 concern without a figure.",
+            "columns": [
+              "scheme",
+              "disk for 250 PB",
+              "unit price (assumption)",
+              "monthly cost",
+              "cost per logical TB per month"
+            ],
+            "rows": [
+              [
+                "Three-way replication",
+                "750 PB",
+                "$20 per TB-month",
+                "about $15 million",
+                "about $60"
+              ],
+              [
+                "10-plus-4 erasure code",
+                "350 PB",
+                "$20 per TB-month",
+                "about $7 million",
+                "about $28"
+              ],
+              [
+                "Tiered: hot replicated, cold erasure coded",
+                "between the two",
+                "$20 per TB-month",
+                "close to the erasure-coded figure, since most bytes are cold",
+                "the tiering worker's job is to keep it there"
+              ]
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Erasure coding of cold data is what both Dropbox's Magic Pocket write-up and the S3 write-up describe, each with its own parameters. Hot data stays replicated because a replicated block is read from one disk, while an erasure-coded block needs several fragments reassembled.",
+            "cites": [
+              "s1",
+              "s3"
+            ]
           }
         ]
       },
       {
         "id": "high-level-design",
         "title": "High-level design",
-        "body": [
+        "blocks": [
           {
-            "heading": "Container view",
-            "body": "The client does the hard work: it splits files into blocks, hashes them, and computes which blocks the server lacks. The metadata service owns the namespace (files, folders, versions, block lists, sharing) in a strongly consistent store sharded by account. The block service stores immutable, content-addressed blocks in a hot replicated tier and a cold erasure-coded tier, with repair and tiering workers behind it. A change feed per account drives a notification service that tells other devices to sync. The Google File System paper is the ancestor of this split: a small metadata master with chunk servers holding large chunks, three replicas by default."
+            "type": "p",
+            "text": "The client does the hard work: it splits files into blocks, hashes them, and computes which blocks the server lacks. The metadata service owns the namespace (files, folders, versions, block lists, sharing) in a strongly consistent store sharded by account. The block service stores immutable, content-addressed blocks in a hot replicated tier and a cold erasure-coded tier, with repair and tiering workers behind it. A change feed per account drives a notification service that tells other devices to sync."
+          },
+          {
+            "type": "diagram",
+            "mermaid": "flowchart LR\n  C[Desktop and mobile clients: chunk, hash, delta] --> MS[Metadata service]\n  MS --> MD[(Metadata DB: namespaces, files, versions, block lists; sharded by account)]\n  C -->|PUT missing blocks| BS[Block service]\n  BS --> HOT[(Hot block store: replicated, SSD)]\n  BS --> COLD[(Cold block store: erasure coded, disk)]\n  MS --> N[[change feed per account]]\n  N --> NS[Notification service: long poll or push]\n  NS --> C\n  MS --> SH[Sharing and permissions]\n  BS --> REP[Repair and tiering workers]",
+            "legend": "Boxes are containers; cylinders are stores; double brackets are logs. Metadata and blocks are separate systems with separate consistency rules."
+          },
+          {
+            "type": "p",
+            "text": "The Google File System paper is the ancestor of this split: a single master holding the metadata, chunkservers holding large chunks (64 MB in the paper), and three replicas by default. Dropbox's Magic Pocket describes the modern form the answer follows: blocks of up to 4 MB named by their hash, replicated for durability and erasure coded once cold.",
+            "cites": [
+              "s2",
+              "s1"
+            ]
           }
-        ],
-        "diagram": {
-          "source": "flowchart LR\n  C[Desktop and mobile clients: chunk, hash, delta] --> MS[Metadata service]\n  MS --> MD[(Metadata DB: namespaces, files, versions, block lists; sharded by account)]\n  C -->|PUT missing blocks| BS[Block service]\n  BS --> HOT[(Hot block store: replicated, SSD)]\n  BS --> COLD[(Cold block store: erasure coded, disk)]\n  MS --> N[[change feed per account]]\n  N --> NS[Notification service: long poll or push]\n  NS --> C\n  MS --> SH[Sharing and permissions]\n  BS --> REP[Repair and tiering workers]",
-          "legend": "Boxes are containers; cylinders are stores; double brackets are logs. Metadata and blocks are separate systems with separate consistency rules."
-        }
+        ]
       },
       {
         "id": "data-model",
         "title": "The data model",
-        "body": [
+        "blocks": [
           {
-            "heading": "Entities",
-            "body": "Account {account_id, quota, metadata_shard}. Node {account_id, node_id, parent_id, name, type (file or folder), current_version, deleted_at}. Version {node_id, version, size, block_hashes[], modified_at, device_id}. Block {hash (SHA-256 of content), size, tier, locations[], refcount}. Share {folder_node_id, member_account_id, role}. Cursor {account_id, device_id, last_change_seq}. ChangeFeed {account_id, seq, node_id, version}."
+            "type": "table",
+            "caption": "Entities.",
+            "columns": [
+              "entity",
+              "fields",
+              "key or partition",
+              "notes"
+            ],
+            "rows": [
+              [
+                "Account",
+                "account_id, quota, metadata_shard",
+                "account_id",
+                "the shard is chosen once; a namespace split (10x) is the only time it changes"
+              ],
+              [
+                "Node",
+                "account_id, node_id, parent_id, name, type (file or folder), current_version, deleted_at",
+                "(account_id, node_id)",
+                "a rename or a delete is a metadata change on one shard; blocks are untouched"
+              ],
+              [
+                "Version",
+                "node_id, version, size, block_hashes[], modified_at, device_id",
+                "(node_id, version)",
+                "kept 30 days; the block list is the delta-sync unit"
+              ],
+              [
+                "Block",
+                "hash (SHA-256 of content), size, tier, locations[], refcount",
+                "hash",
+                "immutable and content-addressed: identical blocks are stored once"
+              ],
+              [
+                "Share",
+                "folder_node_id, member_account_id, role",
+                "folder_node_id",
+                "membership plus feed fan-out, never a cross-shard write"
+              ],
+              [
+                "Cursor",
+                "account_id, device_id, last_change_seq",
+                "(account_id, device_id)",
+                "what a device has seen; the sync protocol's only state per device"
+              ],
+              [
+                "ChangeFeed",
+                "account_id, seq, node_id, version",
+                "account_id, ordered by seq",
+                "a log with a monotonic sequence; a device asks for everything after its cursor"
+              ]
+            ]
           },
           {
-            "heading": "API",
-            "body": "POST /commit {node_id, parent_version, block_hashes[]} returns 200 {version} or 409 {missing_blocks[]} or 412 (version conflict); PUT /blocks/{hash} with the block body (idempotent: the hash is the name); GET /blocks/{hash}; GET /changes?cursor= returns the account's changes since the cursor; a long-poll GET /notify?cursor= that returns when there is something new. Sharing endpoints change membership and write a change into every member's feed."
+            "type": "table",
+            "caption": "The API.",
+            "columns": [
+              "method",
+              "path",
+              "request",
+              "response",
+              "notes"
+            ],
+            "rows": [
+              [
+                "POST",
+                "/commit",
+                "{node_id, parent_version, block_hashes[]}",
+                "200 {version}, or 409 {missing_blocks[]}, or 412 (version conflict)",
+                "the optimistic check on parent_version detects concurrent edits"
+              ],
+              [
+                "PUT",
+                "/blocks/{hash}",
+                "the block body",
+                "201, or 200 if the block already exists",
+                "idempotent: the hash is the name; an interrupted PUT is simply repeated"
+              ],
+              [
+                "GET",
+                "/blocks/{hash}",
+                "",
+                "the block body",
+                "served from the hot tier or reassembled from the cold tier"
+              ],
+              [
+                "GET",
+                "/changes?cursor=",
+                "the device's cursor",
+                "{changes[], next_cursor}",
+                "the account's changes since the cursor; never the same change twice"
+              ],
+              [
+                "GET",
+                "/notify?cursor=",
+                "the device's cursor",
+                "returns when there is something new",
+                "a long poll; push on mobile; both are hints, the cursor fetch guarantees completeness"
+              ]
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Sharing endpoints change membership and write a change into every member's feed, which is how a shared folder stays eventually consistent across accounts without a transaction across shards."
           }
         ]
       },
       {
         "id": "core-flow",
         "title": "The core flow, step by step",
-        "body": [
+        "blocks": [
           {
-            "body": "A user saves a modified 10 MB file on a laptop; the phone gets it."
+            "type": "p",
+            "text": "A user saves a modified 10 MB file on a laptop; the phone gets it."
+          },
+          {
+            "type": "steps",
+            "title": "Chunk, commit, upload, commit again, sync, tier",
+            "items": [
+              "The client detects the change, splits the file into three 4 MB blocks (the last one smaller), hashes each, and compares with the previous version's block list: one block changed, so only one new hash. This is delta sync; the cost of a small edit is one block, not the file.",
+              "The client calls commit with the new block list and the parent version. The metadata service checks the parent version (the optimistic check that detects conflicts) and the block store for each hash; it answers 409 with the one missing block.",
+              "The client uploads the missing block by its hash. The upload is idempotent and resumable: an interrupted PUT is simply repeated, and a block that already exists (another user uploaded the same bytes) is acknowledged without transfer, which is where the deduplication comes from.",
+              "The client commits again; now every block exists, the service writes the new version and node record in one transaction on the account's shard, appends a change to the account's feed, and returns the version. The acknowledgement means the file is durable: blocks are replicated before the block service acknowledges a PUT, and the metadata write is synchronously replicated.",
+              "The phone's long poll returns; it fetches the change list, sees the new version of the file, and downloads only the block it does not already have.",
+              "Later, a tiering worker moves blocks not read for 30 days (assumption) into erasure-coded stripes; a garbage collector unreferences blocks whose versions passed the retention window and whose refcount is zero."
+            ],
+            "cites": [
+              "s1"
+            ]
           }
-        ],
-        "steps": [
-          "The client detects the change, splits the file into three 4 MB blocks (the last one smaller), hashes each, and compares with the previous version's block list: one block changed, so only one new hash. This is delta sync; the cost of a small edit is one block, not the file.",
-          "The client calls commit with the new block list and the parent version. The metadata service checks the parent version (the optimistic check that detects conflicts) and the block store for each hash; it answers 409 with the one missing block.",
-          "The client uploads the missing block by its hash. The upload is idempotent and resumable: an interrupted PUT is simply repeated, and a block that already exists (another user uploaded the same bytes) is acknowledged without transfer, which is where the deduplication comes from.",
-          "The client commits again; now every block exists, the service writes the new version and node record in one transaction on the account's shard, appends a change to the account's feed, and returns the version. The acknowledgement means the file is durable: blocks are replicated before the block service acknowledges a PUT, and the metadata write is synchronously replicated.",
-          "The phone's long poll returns; it fetches the change list, sees the new version of the file, and downloads only the block it does not already have.",
-          "Later, a tiering worker moves blocks not read for 30 days (assumption) into erasure-coded stripes; a garbage collector unreferences blocks whose versions passed the retention window and whose refcount is zero."
         ]
       },
       {
         "id": "scaling-and-the-bottleneck",
         "title": "Scaling and the bottleneck",
-        "body": [
+        "blocks": [
           {
-            "heading": "Storage scale and repair",
-            "body": "Bytes are the bottleneck, and they scale horizontally: block servers are added by capacity, and placement spreads a block's replicas or fragments across failure domains (disk, rack, zone). Repair is the subtle part: when a disk dies, every stripe or replica set it held must be rebuilt from the survivors before another failure in the same set, so the design states a repair time (hours, not days) and sizes repair bandwidth for it; durability is a function of failure rate and repair time, not of replica count alone. The SRE book's data integrity chapter adds the layer most designs forget: replication protects against hardware loss, not against a bug or an operator deleting the wrong thing, so soft deletion, backups of metadata and regular restore tests are part of the design, and the restore is the real test."
+            "type": "p",
+            "text": "Bytes are the bottleneck, and they scale horizontally: block servers are added by capacity, and placement spreads a block's replicas or fragments across failure domains (disk, rack, zone). Repair is the subtle part: when a disk dies, every stripe or replica set it held must be rebuilt from the survivors before another failure in the same set, so the design states a repair time (hours, not days) and sizes repair bandwidth for it; durability is a function of failure rate and repair time, not of replica count alone."
           },
           {
-            "heading": "Metadata consistency and sync",
-            "body": "Metadata is small but hot and must be consistent: 11,600 commits per second at peak across shards keyed by account, each a transaction on one shard, with no cross-shard transactions because a file belongs to one account's namespace; sharing is modelled as a membership record plus feed fan-out, not as a cross-shard write. The change feed per account is a log with a monotonic sequence, which makes the sync cursor simple: a device asks for everything after its cursor and is never told the same change twice. Notification is long poll by default and push on mobile; both are hints, since the cursor fetch is what guarantees completeness."
+            "type": "table",
+            "caption": "The durability schemes side by side.",
+            "columns": [
+              "scheme",
+              "bytes per byte",
+              "disk for 250 PB",
+              "tolerates",
+              "read cost",
+              "used for"
+            ],
+            "rows": [
+              [
+                "Three-way replication",
+                "3",
+                "750 PB",
+                "two simultaneous losses of a block's copies",
+                "one disk read",
+                "the hot tier: recent and frequently read blocks"
+              ],
+              [
+                "10-plus-4 erasure code (assumption)",
+                "1.4",
+                "350 PB",
+                "any 4 lost fragments of a stripe",
+                "several fragments reassembled",
+                "the cold tier: blocks not read for 30 days"
+              ]
+            ],
+            "cites": [
+              "s1",
+              "s3"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "The SRE book's data integrity chapter adds the layer most designs forget: replication protects against hardware loss, not against a bug or an operator deleting the wrong thing, so soft deletion, backups of metadata and regular restore tests are part of the design, and the restore is the real test. The S3 write-up adds the operational detail that heat must be balanced across disks so that popular blocks do not sit on a few spindles.",
+            "cites": [
+              "s4",
+              "s3"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Metadata is small but hot and must be consistent: 11,600 commits per second at peak across shards keyed by account, each a transaction on one shard, with no cross-shard transactions because a file belongs to one account's namespace; sharing is modelled as a membership record plus feed fan-out, not as a cross-shard write. The change feed per account is a log with a monotonic sequence, which makes the sync cursor simple: a device asks for everything after its cursor and is never told the same change twice. Notification is long poll by default and push on mobile; both are hints, since the cursor fetch is what guarantees completeness."
           }
         ]
       },
       {
         "id": "failure-modes",
         "title": "Failure modes and what degrades",
-        "body": [
+        "blocks": [
           {
-            "body": "Each row names the failure, what the user sees, and the mitigation."
-          }
-        ],
-        "table": {
-          "columns": [
-            "Failure",
-            "Effect",
-            "Mitigation"
-          ],
-          "rows": [
-            [
-              "Disk or block node lost",
-              "no user-visible effect if repair is on time",
-              "replicas or fragments across failure domains; repair workers with a stated time budget; alert on under-replicated blocks"
+            "type": "p",
+            "text": "Each row names the failure, what the user sees, and the mitigation."
+          },
+          {
+            "type": "table",
+            "caption": "Failure modes.",
+            "columns": [
+              "Failure",
+              "Effect",
+              "Mitigation"
             ],
-            [
-              "Metadata shard primary down",
-              "that account group cannot commit; downloads still work",
-              "synchronous replica promoted; clients retry commits with the same block list (idempotent by parent version)"
+            "rows": [
+              [
+                "Disk or block node lost",
+                "no user-visible effect if repair is on time",
+                "replicas or fragments across failure domains; repair workers with a stated time budget; alert on under-replicated blocks"
+              ],
+              [
+                "Metadata shard primary down",
+                "that account group cannot commit; downloads still work",
+                "synchronous replica promoted; clients retry commits with the same block list (idempotent by parent version)"
+              ],
+              [
+                "Upload interrupted",
+                "nothing",
+                "blocks are idempotent PUTs by hash; the client resumes block by block"
+              ],
+              [
+                "Concurrent edits on two devices",
+                "a conflicted copy appears",
+                "optimistic version check on commit (412); never silently overwrite"
+              ],
+              [
+                "Client bug deletes a folder",
+                "files gone from devices",
+                "soft delete for 30 days; versions restorable; the delete is a metadata change, blocks remain"
+              ],
+              [
+                "Corrupted block",
+                "wrong bytes served",
+                "verify the hash on read and on repair; a mismatch quarantines the copy and re-reads another. A genuine SHA-256 collision (two different blocks with one hash) is outside the threat model: a hash check cannot detect it by definition, and the design rests on the collision resistance of the hash"
+              ]
             ],
-            [
-              "Upload interrupted",
-              "nothing",
-              "blocks are idempotent PUTs by hash; the client resumes block by block"
-            ],
-            [
-              "Concurrent edits on two devices",
-              "a conflicted copy appears",
-              "optimistic version check on commit (412); never silently overwrite"
-            ],
-            [
-              "Client bug deletes a folder",
-              "files gone from devices",
-              "soft delete for 30 days; versions restorable; the delete is a metadata change, blocks remain"
-            ],
-            [
-              "Corrupted block",
-              "wrong bytes served",
-              "verify the hash on read and on repair; a mismatch quarantines the copy and re-reads another. A genuine SHA-256 collision (two different blocks with one hash) is outside the threat model: a hash check cannot detect it by definition, and the design rests on the collision resistance of the hash"
+            "cites": [
+              "s4"
             ]
-          ]
-        }
+          }
+        ]
       },
       {
         "id": "trade-offs",
         "title": "Trade-offs and the alternative not taken",
-        "body": [
+        "blocks": [
           {
-            "body": "The decisions a reviewer reads first."
-          }
-        ],
-        "table": {
-          "columns": [
-            "Decision",
-            "Options",
-            "Chosen",
-            "Why"
-          ],
-          "rows": [
-            [
-              "Storage unit",
-              "whole files versus fixed-size content-addressed blocks",
-              "4 MB blocks named by hash",
-              "deduplication, delta sync and resumable uploads all fall out of it"
+            "type": "p",
+            "text": "The decisions a reviewer reads first."
+          },
+          {
+            "type": "table",
+            "caption": "Trade-offs.",
+            "columns": [
+              "Decision",
+              "Options",
+              "Chosen",
+              "Why"
             ],
-            [
-              "Durability scheme",
-              "three replicas everywhere versus erasure coding everywhere versus tiered",
-              "replicated hot tier, erasure-coded cold tier",
-              "1.4 versus 3 bytes per byte on 250 PB; reads of cold data tolerate reassembly"
+            "rows": [
+              [
+                "Storage unit",
+                "whole files versus fixed-size content-addressed blocks",
+                "4 MB blocks named by hash",
+                "deduplication, delta sync and resumable uploads all fall out of it"
+              ],
+              [
+                "Durability scheme",
+                "three replicas everywhere versus erasure coding everywhere versus tiered",
+                "replicated hot tier, erasure-coded cold tier",
+                "1.4 versus 3 bytes per byte on 250 PB; reads of cold data tolerate reassembly"
+              ],
+              [
+                "Metadata consistency",
+                "eventually consistent namespace versus linearizable per account",
+                "linearizable per account shard",
+                "renames, deletes and version checks need it; sharing is eventual on purpose"
+              ],
+              [
+                "Conflict handling",
+                "last writer wins versus conflicted copies versus merging",
+                "conflicted copies",
+                "no data loss, no false merges; users resolve"
+              ],
+              [
+                "Sync signal",
+                "polling on a timer versus long poll or push plus a cursor",
+                "long poll or push, cursor-driven fetch",
+                "seconds of latency without a request storm; the cursor guarantees completeness"
+              ]
             ],
-            [
-              "Metadata consistency",
-              "eventually consistent namespace versus linearizable per account",
-              "linearizable per account shard",
-              "renames, deletes and version checks need it; sharing is eventual on purpose"
-            ],
-            [
-              "Conflict handling",
-              "last writer wins versus conflicted copies versus merging",
-              "conflicted copies",
-              "no data loss, no false merges; users resolve"
-            ],
-            [
-              "Sync signal",
-              "polling on a timer versus long poll or push plus a cursor",
-              "long poll or push, cursor-driven fetch",
-              "seconds of latency without a request storm; the cursor guarantees completeness"
+            "cites": [
+              "s1",
+              "s2"
             ]
-          ]
-        }
+          }
+        ]
       },
       {
         "id": "at-10x",
         "title": "What changes at 10x",
-        "body": [
+        "blocks": [
           {
-            "body": "At 2.5 exabytes the storage is a platform: geographic placement of stripes across regions, lifecycle policies that move data between tiers by age and access and delete by policy, continuous repair as steady-state load with a measured cost per TB per month, and heat management across disks so that popular blocks do not sit on a few spindles (the S3 write-up describes this). Metadata grows to petabytes and gets its own tiering (old versions to cheaper stores). Large accounts (an enterprise with millions of files) outgrow one shard and need a namespace split by folder subtree. Verification becomes a background job that reads every block on a schedule and compares hashes, because at that size silent corruption is a certainty, not a risk."
+            "type": "table",
+            "caption": "The numbers at 10x.",
+            "columns": [
+              "quantity",
+              "at 250 PB",
+              "at 2.5 EB",
+              "note"
+            ],
+            "rows": [
+              [
+                "Placement",
+                "failure domains in one region",
+                "geographic placement of stripes across regions",
+                "the consistency contract per data class: metadata per account, blocks everywhere, sharing eventual"
+              ],
+              [
+                "Lifecycle",
+                "a tiering worker at 30 days",
+                "policies that move data between tiers by age and access and delete by policy",
+                "continuous repair as steady-state load with a measured cost per TB per month"
+              ],
+              [
+                "Heat",
+                "placement by capacity",
+                "heat management across disks",
+                "popular blocks must not sit on a few spindles, as the S3 write-up describes"
+              ],
+              [
+                "Metadata",
+                "18 TB per year on account shards",
+                "petabytes, with its own tiering (old versions to cheaper stores)",
+                "large accounts (an enterprise with millions of files) outgrow one shard and need a namespace split by folder subtree"
+              ],
+              [
+                "Verification",
+                "hash checks on read and repair",
+                "a background job that reads every block on a schedule and compares hashes",
+                "at that size silent corruption is a certainty, not a risk"
+              ]
+            ],
+            "cites": [
+              "s3"
+            ]
+          },
+          {
+            "type": "table",
+            "caption": "Cost at 10x, at the same assumed unit price.",
+            "columns": [
+              "cost line",
+              "at 250 PB logical",
+              "at 2.5 EB logical",
+              "note"
+            ],
+            "rows": [
+              [
+                "Three-way replication everywhere",
+                "about $15 million per month",
+                "about $150 million per month",
+                "750 PB and 7.5 EB of disk at $20 per TB-month"
+              ],
+              [
+                "10-plus-4 erasure code everywhere",
+                "about $7 million per month",
+                "about $70 million per month",
+                "350 PB and 3.5 EB of disk"
+              ],
+              [
+                "Tiered, most bytes cold",
+                "close to the erasure-coded figure",
+                "close to the erasure-coded figure",
+                "the gap between the rows is the lifecycle policy's worth, which is why it becomes a platform concern"
+              ]
+            ]
+          },
+          {
+            "type": "p",
+            "text": "At this scale the storage is a platform, and the number the team is held to is the cost per logical TB per month by tier: every lifecycle, placement and repair decision moves it, and the restore test is still the only proof that the bytes are there."
           }
         ]
       }
@@ -310,54 +761,29 @@
         "Background verification of every block, and the namespace split for accounts that outgrow a shard."
       ]
     },
-    "interview_frame": [
-      {
-        "time": "0:00 to 0:05",
-        "text": "Requirements: the storage unit, offline conflicts, namespace consistency, retention, hot versus cold, regions. Say the numbers aloud: 11,600 commits per second at peak, 100 TB ingested per day, 250 PB logical, 350 PB on disk with a 10-plus-4 code versus 750 PB replicated."
-      },
-      {
-        "time": "0:05 to 0:10",
-        "text": "Entities and API: Node, Version with a block list, Block by hash, Share, Cursor and ChangeFeed; the commit, block PUT, changes and notify endpoints."
-      },
-      {
-        "time": "0:10 to 0:20",
-        "text": "High-level design with the diagram: clients that chunk and hash, the metadata service on account shards, the block service with hot and cold tiers, the change feed and notification path."
-      },
-      {
-        "time": "0:20 to 0:40",
-        "text": "Two deep dives: the sync protocol (commit with missing blocks, idempotent block uploads, delta sync, version conflicts, the cursor), then durability (replication versus erasure coding arithmetic, placement, repair time, soft delete and restores)."
-      },
-      {
-        "time": "0:40 to 0:45",
-        "text": "Failure modes from the table, the 10x plan (lifecycle, geography, verification, namespace splits), and the L3 sentence: durability is a function of failure rate and repair time, and the restore test is the only proof."
-      }
-    ],
-    "design_doc_frame": [
-      {
-        "section": "Context and scope",
-        "text": "The client platforms, the existing object store if any, the retention and sharing requirements, and the incident or cost that motivates the design."
-      },
-      {
-        "section": "Goals and non-goals",
-        "text": "Never lose an acknowledged file, sync within 10 s, 30-day history, resumable uploads; no collaborative editing, no content search, no end-to-end encryption."
-      },
-      {
-        "section": "Design",
-        "text": "This answer fills it: the block and metadata split, the commit protocol, the tiers, the change feed."
-      },
-      {
-        "section": "Alternatives considered",
-        "text": "Whole-file storage, replication everywhere, an eventually consistent namespace, last-writer-wins conflicts, timer polling, with the trade-off table."
-      },
-      {
-        "section": "Cross-cutting concerns",
-        "text": "Security (per-account authorization on every node, sharing roles, encryption at rest), privacy (hash-based dedupe across accounts and what it reveals), observability (under-replicated blocks, repair backlog, commit latency, sync lag per device), cost per TB per month by tier, rollout by account cohort with the old store as fallback."
-      },
-      {
-        "section": "Review questions the doc must answer",
-        "text": "How long a block may be under-replicated after a disk failure and what bandwidth repair needs, and what two devices see after editing the same file offline."
-      }
-    ],
+    "interview_frame": {
+      "type": "steps",
+      "title": "A 45-minute interview",
+      "items": [
+        "0:00 to 0:05: Requirements: the storage unit, offline conflicts, namespace consistency, retention, hot versus cold, regions. Say the numbers aloud: 11,600 commits per second at peak, 100 TB ingested per day, 250 PB logical, 350 PB on disk with a 10-plus-4 code versus 750 PB replicated.",
+        "0:05 to 0:10: Entities and API: Node, Version with a block list, Block by hash, Share, Cursor and ChangeFeed; the commit, block PUT, changes and notify endpoints.",
+        "0:10 to 0:20: High-level design with the diagram: clients that chunk and hash, the metadata service on account shards, the block service with hot and cold tiers, the change feed and notification path.",
+        "0:20 to 0:40: Two deep dives: the sync protocol (commit with missing blocks, idempotent block uploads, delta sync, version conflicts, the cursor), then durability (replication versus erasure coding arithmetic, placement, repair time, soft delete and restores).",
+        "0:40 to 0:45: Failure modes from the table, the 10x plan (lifecycle, geography, verification, namespace splits), and the L3 sentence: durability is a function of failure rate and repair time, and the restore test is the only proof."
+      ]
+    },
+    "design_doc_frame": {
+      "type": "list",
+      "items": [
+        "Context and scope: The client platforms, the existing object store if any, the retention and sharing requirements, and the incident or cost that motivates the design.",
+        "Goals and non-goals: Never lose an acknowledged file, sync within 10 s, 30-day history, resumable uploads; no collaborative editing, no content search, no end-to-end encryption.",
+        "Design: This answer fills it: the block and metadata split, the commit protocol, the tiers, the change feed.",
+        "Alternatives considered: Whole-file storage, replication everywhere, an eventually consistent namespace, last-writer-wins conflicts, timer polling, with the trade-off table.",
+        "Cross-cutting concerns: Security (per-account authorization on every node, sharing roles, encryption at rest), privacy (hash-based dedupe across accounts and what it reveals), observability (under-replicated blocks, repair backlog, commit latency, sync lag per device), cost per TB per month by tier, rollout by account cohort with the old store as fallback.",
+        "Review questions the doc must answer: How long a block may be under-replicated after a disk failure and what bandwidth repair needs, and what two devices see after editing the same file offline."
+      ],
+      "ordered": true
+    },
     "depth_notes": {
       "L1": "Chunked upload, content-addressed blocks, a metadata service and an object store.",
       "L2": "Sync protocol with deltas and conflicts, deduplication, resumable uploads, durability arithmetic (replication versus erasure coding).",
@@ -365,10 +791,10 @@
     }
   },
   "provenance": {
-    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center M4a",
+    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center M4a; format v2 restructure by hand, Claude (Fable 5.1), Scout learning center F2-E1",
     "generated_on": "2026-10-12",
-    "reviewed_by": "a second reader (Claude Fable 5.1), Scout learning center M4b",
-    "reviewed_on": "2026-10-12"
+    "reviewed_by": null,
+    "reviewed_on": null
   },
   "changelog": [
     {
@@ -380,6 +806,11 @@
       "version": 2,
       "date": "2026-10-12",
       "change": "writer follow-up on the second reader's items (M4c)"
+    },
+    {
+      "version": 3,
+      "date": "2026-10-15",
+      "change": "format v2 restructure (batch E1): rates, sizes, the latency numbers, cost of raw disk, entities, API, the durability schemes, failure modes, trade-offs and the 10x numbers as tables, the core flow as steps; sources with ids and cites on every claim about a real system (Magic Pocket, the GFS paper, the S3 write-up, the SRE book's data integrity chapter, the latency numbers); one addition of substance: a cost table with a stated unit-price assumption, where version 2 named cost per TB as the L3 concern without a figure; no Building it on AWS section (held by the operator's decision); reviewed_by cleared for a second read"
     }
   ]
 }
