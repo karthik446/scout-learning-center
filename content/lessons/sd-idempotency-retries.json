@@ -1,7 +1,7 @@
 {
-  "schema_version": "learning-center-lesson:1",
+  "schema_version": "learning-center-lesson:2",
   "id": "sd-idempotency-retries",
-  "version": 1,
+  "version": 2,
   "status": "published",
   "superseded_by": null,
   "title": "Timeouts, retries and idempotency",
@@ -18,86 +18,705 @@
     "distributed-systems",
     "apis"
   ],
-  "summary": "Remote calls fail in ways local calls do not: they can be slow, lost, or completed without the caller learning the outcome. Timeouts bound how long a caller waits, retries hide transient failures, and idempotency makes those retries safe. Applied carelessly, the same tools amplify an outage, so each needs limits: backoff, jitter, retry budgets and circuit breakers.",
+  "summary": "Remote calls fail in ways local calls do not: they can be slow, lost, or completed without the caller learning the outcome. This lesson bounds every wait with timeouts chosen from measured latency, propagates one deadline down the call chain, retries transient failures with capped exponential backoff and full jitter, contains retry amplification with per-request and per-client budgets at a single retrying layer, makes retried writes safe with an idempotency key that commits with the write, places circuit breakers where a fallback exists, and closes the loop with reconciliation, ending with a decision table for where each piece lives in a call graph.",
   "detail": [],
-  "in_practice": "Teams put these policies in a shared client library or a service mesh sidecar rather than in each call site, so every outbound call gets a timeout, a bounded jittered retry and a breaker by default. Timeouts are derived from dashboards of dependency latency and revisited when the dependency changes. Mutating APIs accept an idempotency key, stored in the same database transaction as the business write, with a unique constraint doing the deduplication. Retry counts, breaker state and timeout rates are emitted as metrics, and game days or fault injection confirm that a slow dependency produces fast failures, not a retry storm.",
+  "in_practice": {
+    "blocks": [
+      {
+        "type": "p",
+        "text": "Amazon's service teams set a connection and a request timeout on every remote call, pick the request timeout from the dependency's latency percentile at a chosen false-timeout rate, retry at a single point in the stack, and bound retries locally with a token bucket rather than a circuit breaker; the token bucket has been built into the AWS SDKs since 2016. The team's own simulation of contending clients is why full jitter is the default backoff.",
+        "cites": [
+          "s1",
+          "s2"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Google's RPC stack enforces a per-request budget of three attempts and a per-client budget that stops retrying when retries exceed 10 percent of requests, carries an attempt counter in request metadata so backends can histogram it, propagates one absolute deadline down the whole call tree, and retries only at the layer immediately above the one that rejected the request.",
+        "cites": [
+          "s6",
+          "s7"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Stripe accepts an Idempotency-Key header on every mutating endpoint, saves the response once execution begins and replays it to a retry, including error responses, compares the retry's parameters with the original and rejects a mismatch, prunes keys after at least 24 hours, and ships client libraries that retry with backoff, jitter and the same key automatically.",
+        "cites": [
+          "s3",
+          "s4"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Shopify's payments team lowered every timeout from the Ruby defaults of 60 seconds to about one second to connect and five to read, wraps HTTP, MySQL, Redis and gRPC calls in Semian circuit breakers keyed by endpoint and acquirer country, stores an idempotency key per payment attempt (moving from UUIDv4 to ULID to speed up the insert), and reconciles charges, refunds and balances against its financial partners, recording each mismatch as an anomaly.",
+        "cites": [
+          "s10"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "The IETF HTTPAPI working group is standardising the Stripe-style header as Idempotency-Key, with a recommended UUID value, an optional payload fingerprint, a replay of the stored result for a retry, a conflict error for a concurrent duplicate and a published expiry policy per API.",
+        "cites": [
+          "s5"
+        ]
+      }
+    ]
+  },
   "subtopics": [
     {
-      "body": [
+      "id": "timeouts-everywhere",
+      "title": "Timeouts: bound every wait",
+      "blocks": [
         {
-          "body": "A call without a timeout ties up a thread, a connection and memory for as long as the remote side stays silent. Under a slow dependency those held resources pile up until the caller itself stops serving, which is how one slow service takes down its callers. Set both a connection timeout and a request timeout on every client. A common way to pick the request timeout is to start from the measured latency distribution of the dependency and choose a high percentile, such as p99.9, so that the rate of false timeouts is a known, accepted number rather than a guess.",
-          "heading": "Why every remote call needs a timeout"
+          "type": "p",
+          "text": "A remote call can be slow, lost, or completed without the caller ever learning the outcome, and the first defence against all three is a bound on how long the caller waits. A call with no timeout holds a thread, a connection and memory for as long as the other side stays silent; under a slow dependency those held resources pile up until the caller itself stops serving, which is how one slow service takes down everything above it. Amazon's practice is a timeout on every remote call and generally on every call across processes, with both a connection timeout and a request timeout.",
+          "cites": [
+            "s1"
+          ]
         },
         {
-          "body": "In a chain of services, independent per-hop timeouts waste work: a downstream service keeps computing an answer the original caller has already abandoned. Deadline propagation fixes this. The edge sets an absolute deadline, each hop passes the remaining time along with the request, and each service checks it before starting expensive work and cancels when it expires. Timeouts should also shrink toward the leaves, so an inner call cannot outlive the outer one. Watch for two traps: timeouts set too low cause retry storms when latency rises slightly, and timeouts that exclude DNS or TLS handshake time are not real bounds.",
-          "heading": "Deadlines across a call chain"
+          "type": "p",
+          "text": "Picking the value is the hard part, and the Builders' Library gives a method: decide an acceptable rate of false timeouts, such as one in a thousand, and read the matching latency percentile of the dependency, p99.9 in that case. The article also lists where the method fails: clients with substantial network latency, such as over the internet, need a worst-case network allowance added; and a dependency whose latency is bimodal, fast on a cache hit and slow on a miss, needs a timeout that covers the slow mode or a design that avoids it.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The timeouts a call needs, and how each is chosen.",
+          "columns": [
+            "timeout",
+            "what it bounds",
+            "how to choose it"
+          ],
+          "rows": [
+            [
+              "connection (open)",
+              "the time to establish the connection, including DNS and TLS",
+              "short: the network round trip plus a handshake, not the work"
+            ],
+            [
+              "request (read or write)",
+              "the time from sending the request to the complete response",
+              "a high percentile of the dependency's measured latency, with the false-timeout rate chosen first"
+            ],
+            [
+              "per attempt",
+              "one try inside a retry loop",
+              "the request timeout; the retries must fit inside the overall deadline"
+            ],
+            [
+              "overall deadline",
+              "the whole operation across all attempts and all hops",
+              "set once at the edge from what the user will wait, then propagated (next subtopic)"
+            ]
+          ],
+          "cites": [
+            "s1",
+            "s7"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Shopify's payments team wrote the same lesson from the other side. Ruby's standard HTTP client waits 60 seconds to connect, 60 to write and 60 more to read; the Go and Node clients have no default timeout at all, so an unresponsive server can hold resources indefinitely. Their starting point for a payment call is an open timeout of one second and a read or query timeout of five seconds, with timeouts set in the data stores too, and the question to ask of any value is whether the person on the other end would wait that long for a page or an error.",
+          "cites": [
+            "s10"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Every remote call has a connection timeout and a request timeout, chosen from the dependency's measured latency at a stated false-timeout rate, and the sum of the attempts fits inside the caller's deadline.",
+          "cites": [
+            "s1"
+          ]
         }
-      ],
-      "id": "timeouts-and-deadlines",
-      "title": "Timeouts and deadline propagation"
+      ]
     },
     {
-      "body": [
+      "id": "deadline-propagation",
+      "title": "Deadlines across a call chain",
+      "blocks": [
         {
-          "body": "Retry only failures that are likely transient: connection resets, timeouts, throttling responses and server-side unavailable errors. Do not retry validation or authorization errors, since the result will not change. Immediate retries hit a struggling service at its worst moment, so wait between attempts and grow the wait exponentially, for example base times two to the power of the attempt, up to a cap. Always bound the number of attempts, and stop early when the overall deadline is too close to fit another try.",
-          "heading": "What to retry and how to space it"
+          "type": "p",
+          "text": "In a chain of services, independent per-hop timeouts waste work: a deep service keeps computing an answer that the edge abandoned seconds ago. The SRE book's chapter on cascading failures names the fix. Rather than inventing a deadline at each hop, a server employs deadline propagation: the deadline is set once, high in the stack, and the whole tree of calls that one request spawns shares the same absolute deadline. Each server checks that enough time is left before each expensive stage, and gives up early rather than start work it cannot finish in time.",
+          "cites": [
+            "s7"
+          ]
         },
         {
-          "body": "Plain exponential backoff still synchronizes clients. If a thousand clients fail at the same instant, they all retry at one base interval, then two, then four, producing spikes of load separated by idle gaps. Jitter adds randomness to spread the retries out. With full jitter, the sleep is a uniform random value between zero and the capped exponential delay. Analysis of competing clients shows this cuts both the total number of calls and the time to complete the work compared with unjittered backoff. The same idea applies to any periodic work: timers, cache expiry and scheduled jobs should be jittered too.",
-          "heading": "Why jitter matters"
+          "type": "steps",
+          "title": "The chapter's example of a propagated deadline.",
+          "items": [
+            "The frontend, server A, sets a 30-second deadline on the user's request.",
+            "A works on the request for 7 seconds before it needs server B.",
+            "The call from A to B carries the remaining 23 seconds, not a fresh 30.",
+            "B subtracts its own work before calling C, and a server that finds too little time left for its next stage returns an error at once instead of running it."
+          ],
+          "cites": [
+            "s7"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "gRPC builds this into the protocol. A deadline is a point in time past which the client will not wait; when it passes, the client fails the call with DEADLINE_EXCEEDED, and the server is expected to check the remaining time and stop, because a request with an unrealistically short deadline would otherwise waste its resources or, in the worst case, crash it. When the client gives up, the cancellation travels down the tree: each server stops waiting on its own callees and cleans up. Some language APIs express this as a timeout (a duration) and others as a deadline (a time), and the propagated form is always the absolute time.",
+          "cites": [
+            "s12"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The chapter also warns about the two bad values. No deadline, or a very high one, lets short-lived problems keep consuming server resources long after they have passed; a very short one makes the more expensive requests fail consistently. The deadline therefore shrinks towards the leaves, so no inner call can outlive the outer one, and a timeout that excludes connection setup is not a real bound.",
+          "cites": [
+            "s7"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "A retry loop that does not read the remaining deadline will start an attempt the caller can no longer use. Each attempt checks the time left first, and the last attempt gets whatever remains, not the full per-try timeout.",
+          "cites": [
+            "s7",
+            "s12"
+          ]
         }
-      ],
+      ]
+    },
+    {
       "id": "backoff-and-jitter",
-      "title": "Retries with exponential backoff and jitter"
-    },
-    {
-      "body": [
+      "title": "Retries with exponential backoff and jitter",
+      "blocks": [
         {
-          "body": "Retries are selfish: each client spends more of the server's capacity to raise its own chance of success. When a failure is caused by overload, that makes it worse. The effect compounds across layers. If each of five layers in a call stack retries three times, a failure at the bottom can produce up to 243 times the normal load on the deepest service. The usual fix is to retry at a single layer of the stack, typically the one closest to the failing call or the one that owns the user-facing request, and let other layers pass failures through.",
-          "heading": "How retries multiply load"
+          "type": "p",
+          "text": "A retry is a bet that the failure was transient: a connection reset, a timeout, a throttling response, a server briefly unavailable. The Azure guidance on transient faults frames the choice per fault: cancel when the fault is not transient or a repeat is unlikely to succeed, retry at once for a rare blip, and retry after a growing delay for a fault caused by load. A validation or authorisation error is never retried, because the answer will not change.",
+          "cites": [
+            "s8"
+          ]
         },
         {
-          "body": "A per-request attempt limit does not cap fleet-wide retry load. A retry budget does. One form is a local token bucket: each success adds a fraction of a token, each retry spends one, and when the bucket is empty retries stop. Another is a ratio: retries may be at most a set fraction of total requests. During a real outage the budget drains quickly and the client falls back to roughly normal load, while isolated transient failures still get retried. Servers can help by returning an explicit signal that distinguishes overload from other failures.",
-          "heading": "Budgets instead of fixed counts"
-        }
-      ],
-      "id": "retry-amplification",
-      "title": "Retry amplification and retry budgets"
-    },
-    {
-      "body": [
-        {
-          "body": "When a request times out, the caller cannot tell whether the server never saw it, failed partway, or finished and lost the response. Retrying a read is harmless, but retrying a create or a charge may apply it twice. An idempotent operation is one where repeating it has the same effect as doing it once. Some operations are naturally idempotent, such as setting a value or deleting by identifier. Others, such as appending, incrementing or charging, must be made idempotent by design.",
-          "heading": "The problem"
+          "type": "p",
+          "text": "Immediate retries hit a struggling service at its worst moment, so the delay grows exponentially with the attempt, up to a cap. The Builders' Library points out the flaw in the plain version: once every client reaches the cap, they all retry at the capped rate, and if they failed together they retry together. The remedy for the first problem is to bound the attempts and fail earlier in the architecture; the remedy for the second is jitter, a random amount of time added so that a burst of failures spreads out instead of returning as a burst of retries.",
+          "cites": [
+            "s1"
+          ]
         },
         {
-          "body": "The client generates a unique key, usually a random UUID, and sends it with the mutating request, commonly in a header. The server records the key together with the outcome. If the same key arrives again, the server returns the stored result without redoing the work. Important details: the key lookup and the side effect must commit atomically, or a crash between them breaks the guarantee. A second request arriving while the first is in flight should be rejected or made to wait. The server should check that the parameters match the original request. Keys expire after a retention window, so clients must not retry beyond it.",
-          "heading": "How the key mechanism works"
+          "type": "table",
+          "caption": "The jitter variants from the AWS Architecture Blog's simulation of contending clients. base is the first delay, cap the maximum, n the attempt number.",
+          "columns": [
+            "variant",
+            "sleep before attempt n",
+            "what the simulation found"
+          ],
+          "rows": [
+            [
+              "no jitter",
+              "min(cap, base × 2^n)",
+              "the clear loser: the most calls and the most time; clients retry in lockstep"
+            ],
+            [
+              "full jitter",
+              "random between 0 and min(cap, base × 2^n)",
+              "the fewest calls; with 100 contending clients the call count fell by more than half against no jitter"
+            ],
+            [
+              "equal jitter",
+              "half the capped backoff, plus a random amount up to the other half",
+              "about the same calls as full jitter but much longer to finish; the loser among the jittered variants"
+            ],
+            [
+              "decorrelated jitter",
+              "random between base and 3 × the previous sleep, capped",
+              "slightly more calls than full jitter, slightly less time; the choice between the two is a toss-up"
+            ]
+          ],
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The simulation modelled clients updating one row with optimistic concurrency against a remote store, which is the worst case because every success is another client's failure. Full jitter is the default to reach for: the sleep is a uniform random value between zero and the capped exponential delay, which cuts both the total number of calls and the time to drain the contention. Stripe's client libraries retry with increasing backoff and jitter and an idempotency key, which is the combination the next subtopics complete.",
+          "cites": [
+            "s2",
+            "s3"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Retry only the failures that can succeed on a repeat, bound the attempts, grow the delay exponentially to a cap, add full jitter, and never let the attempts outlive the deadline.",
+          "cites": [
+            "s1",
+            "s2"
+          ]
         }
-      ],
+      ]
+    },
+    {
+      "id": "amplification-and-budgets",
+      "title": "Retry amplification and retry budgets",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Retries are selfish, in the words of the Builders' Library: a retrying client spends more of the server's time to raise its own chance of success. When failures are rare that is a good trade; when the failure is overload, the extra load makes it worse and can delay recovery. The effect compounds across layers. The article's example is a five-deep stack of calls ending in a database, each layer retrying three times: when the database starts failing under load, the load on it rises 243 times, because the tries at each layer multiply. The best practice that follows is to retry at a single point in the stack.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The SRE book's overload chapter gives the two budgets that contain the same arithmetic at Google. A per-request budget allows up to three attempts; after the third failure the error bubbles up, on the reasoning that a request that has landed on overloaded tasks three times is unlikely to find a healthy one. A per-client budget tracks the ratio of retries to requests and retries only while it stays below 10 percent; in the chapter's worst case that limits the load growth to about 1.1 times. And in a deep stack, a request is retried only at the layer immediately above the one that rejected it; the layers above pass the error on.",
+          "cites": [
+            "s6"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Four forms of retry budget, and the limit each one puts on fleet-wide retry load.",
+          "columns": [
+            "budget",
+            "mechanism",
+            "limits",
+            "where it is described"
+          ],
+          "rows": [
+            [
+              "per request",
+              "at most 3 attempts; an attempt counter travels in the request metadata",
+              "how long one request can hammer the service",
+              "SRE book, overload"
+            ],
+            [
+              "per client, as a ratio",
+              "retry only while retries are under 10 percent of requests",
+              "fleet-wide amplification, to about 1.1 times",
+              "SRE book, overload"
+            ],
+            [
+              "per process, as a rate",
+              "for example 60 retries per minute, then fail",
+              "a capacity shortfall becoming a cascade",
+              "SRE book, cascading failures; Azure guidance"
+            ],
+            [
+              "token bucket",
+              "a retry spends a token, successes refill; when empty, retry at a fixed low rate",
+              "the same, with smooth recovery; built into the AWS SDKs",
+              "Builders' Library"
+            ]
+          ],
+          "cites": [
+            "s6",
+            "s7",
+            "s8",
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The token bucket is Amazon's answer to a related worry. Circuit breakers stop calls to a failing dependency entirely once an error threshold is crossed, which the Builders' Library calls modal behaviour: hard to test and slow to recover from. Limiting retries locally with a token bucket lets every call retry while tokens remain and then retries at a fixed rate when they run out, so the service under stress sees a bounded trickle rather than nothing or everything. The AWS SDKs have carried this behaviour since 2016.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "A per-request attempt limit does not cap fleet-wide retry load. Three attempts per request at every layer of a five-layer stack is the 243x case; the budget that prevents it is a ratio or a bucket shared across requests, enforced at one layer.",
+          "cites": [
+            "s1",
+            "s6"
+          ]
+        }
+      ]
+    },
+    {
       "id": "idempotency-keys",
-      "title": "Idempotency keys for safe retries"
+      "title": "Idempotency keys: making the retry safe",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "When a request times out, the caller cannot tell whether the server never saw it, failed partway, or finished and lost the response. HTTP's own rules say which requests may be repeated regardless: PUT, DELETE and the safe methods are idempotent, and a client should not automatically retry a non-idempotent method unless it has some means to know the semantics are idempotent or to detect that the original was never applied. A POST that charges a card or creates an order is exactly the request that must be retried and must not be applied twice, so the API has to supply that means.",
+          "cites": [
+            "s11"
+          ]
+        },
+        {
+          "type": "diagram",
+          "mermaid": "sequenceDiagram\n    participant C as Client\n    participant S as API server\n    participant D as Database\n    C->>S: POST charge, key K1\n    S->>D: begin, insert key K1, apply charge, commit\n    D-->>S: committed\n    S--xC: response lost, client times out\n    Note over C: sleep random 0 to capped backoff\n    C->>S: POST charge, key K1 again\n    S->>D: look up key K1\n    D-->>S: stored result\n    S-->>C: same response, no second charge",
+          "legend": "An idempotency key across a lost response: the key and the charge commit in one transaction, the client retries after a jittered backoff with the same key, and the server returns the stored result. The mechanism follows Stripe's description and the IETF draft (s3, s5)."
+        },
+        {
+          "type": "p",
+          "text": "Stripe's description is the reference. The client generates a unique id for the operation and sends it with the request in an Idempotency-Key header; the server correlates the key with the state of the request on its side. If the client sees a failure it retries with the same key. On a response failure, where the operation ran but the result never arrived, the server replies with the cached result of the successful operation; if the earlier attempt was rolled back by an ACID database it is safe to run the whole operation again, and otherwise the saved state is recovered and the call continued from there.",
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "What the server does with a key, from the IETF Idempotency-Key draft and Stripe's API reference.",
+          "columns": [
+            "case",
+            "server behaviour",
+            "detail"
+          ],
+          "rows": [
+            [
+              "first time (key not seen)",
+              "process normally and store the outcome under the key",
+              "the outcome includes error responses, so a failed attempt is replayed as the same failure"
+            ],
+            [
+              "retry after completion",
+              "return the stored result without redoing the work",
+              "Stripe saves the response once execution begins and replays it, including a 500"
+            ],
+            [
+              "retry while the first is still running",
+              "reply with a conflict error",
+              "the concurrent case; the client backs off and retries the same key"
+            ],
+            [
+              "same key, different parameters",
+              "reject; the draft says 422 Unprocessable Content",
+              "a fingerprint of the payload is compared to the original to prevent accidental reuse"
+            ],
+            [
+              "key missing on an endpoint that requires it",
+              "reply 400 with a pointer to the documentation",
+              "from the draft's error handling"
+            ],
+            [
+              "key older than the retention window",
+              "treat as a new request",
+              "Stripe prunes keys after at least 24 hours and documents it; the draft asks every API to publish its expiry"
+            ]
+          ],
+          "cites": [
+            "s5",
+            "s4"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The key itself is a random value with enough entropy that collisions do not happen: Stripe suggests a version 4 UUID and allows up to 255 characters, and warns against building keys from sensitive data such as an email address. The scope is one logical operation from the client's point of view, so a checkout that calls the payment API three times has three keys, and a client that regenerates the key on each attempt has no idempotency at all.",
+          "cites": [
+            "s4"
+          ]
+        }
+      ]
     },
     {
-      "body": [
+      "id": "storing-the-key",
+      "title": "Where the key lives, and reconciliation as the last line",
+      "blocks": [
         {
-          "body": "A circuit breaker wraps calls to a dependency and tracks failures. In the closed state calls pass through. When failures cross a threshold, the breaker opens and calls fail immediately without touching the dependency, which frees caller resources and gives the dependency room to recover. After a reset timeout the breaker goes half-open and lets a trial call through: success closes it, failure reopens it. Thresholds can be consecutive failures or an error ratio over a window. Decide what the caller does while the breaker is open: return a cached or default value, queue the work, or fail fast with a clear error. Breaker state changes should be logged and exposed as metrics.",
-          "heading": "States and transitions"
+          "type": "p",
+          "text": "The guarantee rests on one detail: the key lookup and the side effect must commit together. If the server records the key, then performs the charge, then stores the result in three separate steps, a crash between any two leaves a key without an outcome or an outcome without a key, and the next retry either repeats the charge or returns nothing. Stripe's rollback remark is the clean case: when the key and the work share an ACID transaction, a failure rolls both back and the retry starts fresh. When the side effect is in another system, the key row records how far the operation got, and the retry resumes from that point rather than from the start.",
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "In a relational store the natural implementation is a table of keys with a unique constraint, inserted in the same transaction as the business write; the constraint does the deduplication and the concurrent case surfaces as a conflict on the insert. Shopify's payments team stores idempotency keys this way for every payment attempt, and reported that switching the key format from a random UUIDv4 to a time-ordered ULID halved the insert duration in one high-throughput system, because a sortable key suits the B-tree index better than random positions.",
+          "cites": [
+            "s10"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Which failure each tool in this lesson handles, and what each one leaves to the next.",
+          "columns": [
+            "tool",
+            "handles",
+            "does not handle"
+          ],
+          "rows": [
+            [
+              "timeout",
+              "a dependency that never answers; bounded resource use",
+              "whether the work happened"
+            ],
+            [
+              "retry with backoff and jitter",
+              "a transient failure",
+              "a duplicate side effect; an overloaded dependency"
+            ],
+            [
+              "retry budget",
+              "retries amplifying an outage",
+              "the individual failed request, which fails"
+            ],
+            [
+              "idempotency key",
+              "the duplicate side effect of a retried write",
+              "a side effect in a third system that completed but was never recorded"
+            ],
+            [
+              "circuit breaker",
+              "a dependency that is down for a while; fast failure",
+              "the state that diverged while it was open"
+            ],
+            [
+              "reconciliation",
+              "everything the others missed, after the fact",
+              "the user who waited; it is a repair, not a defence"
+            ]
+          ],
+          "cites": [
+            "s1",
+            "s3",
+            "s9",
+            "s10"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The last row is the one teams skip. Shopify reconciles its records against its financial partners' records, both individual charges and refunds and aggregates such as the balance not yet paid out, records every mismatch as an anomaly, and prefers fixes that stop the anomaly from being created over fixes that repair it. A reconciliation job is what turns a once-in-a-million duplicate, which at scale happens many times a day, from a silent loss into a ticket with a number on it.",
+          "cites": [
+            "s10"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "The idempotency key is written in the same transaction as the write it protects, with a unique constraint. For side effects outside that transaction, the key row records the progress, and a reconciliation job compares the two systems on a schedule.",
+          "cites": [
+            "s3",
+            "s10"
+          ]
         }
-      ],
-      "id": "circuit-breakers",
-      "title": "Circuit breakers"
-    }
-  ],
-  "diagram": {
-    "source": "sequenceDiagram\n    participant C as Client\n    participant S as API server\n    participant D as Database\n    C->>S: POST charge, key K1\n    S->>D: begin, insert key K1, apply charge, commit\n    D-->>S: committed\n    S--xC: response lost, client times out\n    Note over C: sleep random 0 to capped backoff\n    C->>S: POST charge, key K1 again\n    S->>D: look up key K1\n    D-->>S: stored result\n    S-->>C: same response, no second charge"
-  },
-  "code": [
+      ]
+    },
     {
-      "code": "import random, time\n\nRETRYABLE = (TimeoutError, ConnectionError)\n\ndef call_with_retry(fn, deadline_s=2.0, base=0.05, cap=1.0, attempts=4):\n    start = time.monotonic()\n    for attempt in range(attempts):\n        remaining = deadline_s - (time.monotonic() - start)\n        if remaining <= 0:\n            break\n        try:\n            return fn(timeout=remaining)\n        except RETRYABLE:\n            # full jitter: uniform between 0 and capped exponential delay\n            sleep = random.uniform(0, min(cap, base * 2 ** attempt))\n            time.sleep(min(sleep, max(0.0, remaining)))\n    raise TimeoutError(\"deadline exceeded or retries exhausted\")",
-      "lang": "python"
+      "id": "circuit-breakers",
+      "title": "Circuit breakers, and when to prefer a budget",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Timeouts bound how long one call waits, but a dependency that is down tends to stay down for a while, and paying a full timeout on every call to it wastes the caller's resources on failures that are already known. The circuit breaker, as Martin Fowler describes it, wraps the protected call in an object that counts failures. While the count is under the threshold the breaker is closed and calls pass through; once it trips, every further call returns an error immediately without touching the dependency, and the trip raises a monitoring alert.",
+          "cites": [
+            "s9"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The three states of a circuit breaker.",
+          "columns": [
+            "state",
+            "what happens to a call",
+            "transition"
+          ],
+          "rows": [
+            [
+              "closed",
+              "passes through; failures are counted",
+              "to open when the failure count reaches the threshold"
+            ],
+            [
+              "open",
+              "fails at once with a breaker-open error; the dependency is not called",
+              "to half-open when the reset timeout has elapsed since the last failure"
+            ],
+            [
+              "half-open",
+              "one trial call goes through",
+              "to closed if the trial succeeds; back to open, restarting the timeout, if it fails"
+            ]
+          ],
+          "cites": [
+            "s9"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Two design decisions sit beside the state machine. The first is what the caller does while the breaker is open: return a cached or default value, queue the work for later, or fail fast with a clear error; Shopify's Semian library raises an exception instantly once a service is detected down, and in some cases the caller rescues it to provide a fallback. The second is the scope of the breaker: Semian's guidance is to key the breaker on the host and port of the endpoint, and Shopify's payments team adds the merchant's country to the key because a payment gateway routes to different local acquirers behind one endpoint, so one acquirer failing should not trip the breaker for the others.",
+          "cites": [
+            "s10"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The Builders' Library records Amazon's reservation about the pattern. A breaker introduces modal behaviour, two very different paths through the system, that is hard to test and can add significant time to recovery, because an open breaker sends no traffic and therefore learns nothing until its timeout. Amazon's preference is to limit retries locally with a token bucket so that a dependency under stress keeps receiving a bounded trickle. The Azure transient-fault guidance offers both: a finite retry count or a breaker, plus a retry budget per process. The lesson's reading is that a breaker suits a dependency with a fallback and a long outage profile; a budget suits one that must keep receiving a signal.",
+          "cites": [
+            "s1",
+            "s8"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "tip",
+          "text": "Expose the breaker's state and its transitions as metrics and give operators a way to force it open or closed. A breaker nobody can see is a breaker that will be open during the incident review with nobody knowing why.",
+          "cites": [
+            "s9"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "the-policy-per-call-graph",
+      "title": "Designing the policy for a call graph",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The tools above are applied to a call graph, not to one call, and the design questions are who retries, with what budget, where the idempotency key is checked, and who reconciles. The answers follow from one principle in the sources: retry at a single point, the layer immediately above the failure, and let every other layer pass the error through with its remaining deadline.",
+          "cites": [
+            "s1",
+            "s6"
+          ]
+        },
+        {
+          "type": "decision",
+          "caption": "Where the retry, the key and the breaker live for one dependency in a call graph.",
+          "rows": [
+            {
+              "option": "the edge or the client library retries; inner services pass errors through",
+              "pick_when": "the operation is user-facing and the edge owns the deadline, the inner services are stateless pass-throughs, and the mutating call accepts an idempotency key",
+              "avoid_when": "an inner service calls a dependency the edge cannot see or reach, or the edge cannot carry a key through",
+              "example": "a checkout service retrying a payment call with the order's idempotency key"
+            },
+            {
+              "option": "the service that calls the failing dependency retries, within a budget",
+              "pick_when": "the failure is local to that hop, the hop has its own deadline slice, and the layers above would otherwise multiply the retries",
+              "avoid_when": "the layers above also retry; that is the 243x case",
+              "example": "a feed service retrying a cache read once before falling back to the database"
+            },
+            {
+              "option": "a proxy or mesh retries with a per-try timeout and a retry budget",
+              "pick_when": "the policy must be uniform across many services and languages and operators need to change it without a deploy",
+              "avoid_when": "the request is not idempotent and the proxy cannot know it; a retried POST through a proxy duplicates",
+              "example": "GET traffic between internal services"
+            },
+            {
+              "option": "no automatic retry; fail, record, reconcile",
+              "pick_when": "the side effect lives in a third party that offers no idempotency, or the operation is so expensive that a repeat is worse than a delay",
+              "avoid_when": "the user is waiting and a transient failure is common",
+              "example": "a bank transfer submitted once and reconciled against the statement"
+            }
+          ],
+          "cites": [
+            "s1",
+            "s6",
+            "s11",
+            "s10"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Two numbers belong in the policy document for every dependency: its timeout, with the percentile and false-timeout rate it came from, and its retry budget, as a ratio or a bucket size. A third line names the layer that retries. A review of a design for retry storms is then a walk down the call graph checking that each dependency has exactly one retrying layer and that the attempts at that layer fit inside the propagated deadline; a review for duplicate side effects checks that every mutating call either is idempotent by nature or carries a key that commits with its write.",
+          "cites": [
+            "s1",
+            "s7"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "One retrying layer per dependency, a budget shared across requests at that layer, an idempotency key on every mutating call, a deadline that shrinks towards the leaves, and a reconciliation job for every side effect that crosses a system boundary.",
+          "cites": [
+            "s1",
+            "s6",
+            "s3"
+          ]
+        }
+      ]
     }
   ],
+  "worked_example": {
+    "title": "Worked example: the retry policy for a checkout that calls a payment provider",
+    "blocks": [
+      {
+        "type": "p",
+        "text": "A checkout service takes an order, calls a payment service, which calls an external payment provider. The example sets the timeouts, the deadline, the backoff, the budget and the idempotency key for that chain, and sizes the key table. The cited numbers are the rules from the sources; the traffic figures are assumptions listed in the table after the steps."
+      },
+      {
+        "type": "steps",
+        "title": "Setting the policy",
+        "items": [
+          "Measure the provider: its p99.9 latency is 800 ms (assumption from a month of metrics), so with a false-timeout rate of one in a thousand the request timeout to the provider is 800 ms, rounded to 1 second.",
+          "Set the deadline once at the edge: the checkout page gives the whole payment step 5 seconds, and that absolute deadline is propagated to the payment service and on to the provider call.",
+          "Fit the attempts inside it: with a 1-second per-try timeout, 3 attempts and full-jitter sleeps capped at 1 second, the worst case is 3 seconds of waiting plus 2 seconds of sleeping, which fits the 5-second deadline with nothing to spare, so the third attempt only starts if at least 1 second remains.",
+          "Choose the backoff: base 100 ms, cap 1 second, full jitter, so the sleep before the second attempt is random between 0 and 200 ms and before the third between 0 and 400 ms.",
+          "Pick the retrying layer: the payment service retries the provider; the checkout service does not retry the payment service, it passes the error up with the remaining deadline, so the amplification factor is 3 and not 9.",
+          "Set the budget: the payment service retries while its retry ratio over the last minute is under 10 percent, so at 1,000 payment requests per second it will issue at most about 100 retries per second however badly the provider fails.",
+          "Key the operation: the checkout service generates a UUIDv4 per payment attempt and sends it on every retry; the payment service inserts the key with a unique constraint in the same transaction as the payment record and stores the provider's response beside it.",
+          "Size the key table: 1,000 requests per second for a 24-hour retention window is 86.4 million rows, each about 200 bytes with its stored response, so about 17 GB plus the index before the daily purge runs.",
+          "Close the loop: a breaker on the provider, keyed by provider and acquirer country, opens after 5 consecutive timeouts and probes after 30 seconds; a nightly reconciliation job compares the day's payment records with the provider's settlement file and files every mismatch as an anomaly."
+        ],
+        "cites": [
+          "s1",
+          "s2",
+          "s6",
+          "s7",
+          "s4",
+          "s9",
+          "s10"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "The numbers of the example and where each comes from.",
+        "columns": [
+          "quantity",
+          "value",
+          "source or assumption"
+        ],
+        "rows": [
+          [
+            "provider p99.9 and the request timeout",
+            "800 ms, 1 s",
+            "assumption; the method (false-timeout rate, then the percentile) is from s1"
+          ],
+          [
+            "edge deadline",
+            "5 s",
+            "assumption, the product's limit; propagation per s7 and s12"
+          ],
+          [
+            "attempts per request",
+            "3",
+            "the SRE per-request budget (s6)"
+          ],
+          [
+            "backoff base and cap, jitter",
+            "100 ms, 1 s, full jitter",
+            "assumption for the values; full jitter per s2"
+          ],
+          [
+            "per-client retry ratio",
+            "10 percent",
+            "the SRE per-client budget (s6)"
+          ],
+          [
+            "requests per second and retries per second",
+            "1,000 and about 100",
+            "assumption; 1,000 × 10 percent"
+          ],
+          [
+            "key retention and table size",
+            "24 hours, 86.4 million rows, about 17 GB",
+            "24 hours per s4; 1,000 × 86,400; × 200 bytes (assumption)"
+          ],
+          [
+            "breaker threshold and reset",
+            "5 failures, 30 s",
+            "assumption; the states per s9"
+          ]
+        ]
+      },
+      {
+        "type": "code",
+        "lang": "python",
+        "code": "import random, time, uuid\n\nRETRYABLE = (TimeoutError, ConnectionError)\n\ndef charge_with_policy(call, deadline_s=5.0, per_try_s=1.0, base=0.1, cap=1.0, attempts=3, budget=None):\n    \"\"\"call(key, timeout) performs the POST; budget is a shared RetryBudget (ratio of retries to requests).\"\"\"\n    key = str(uuid.uuid4())              # one key per logical operation, reused on every attempt\n    start = time.monotonic()\n    for attempt in range(attempts):\n        remaining = deadline_s - (time.monotonic() - start)\n        if remaining <= 0:\n            raise TimeoutError(\"deadline exceeded before attempt %d\" % (attempt + 1))\n        try:\n            return call(key, timeout=min(per_try_s, remaining))\n        except RETRYABLE:\n            last = attempt == attempts - 1\n            if last or (budget is not None and not budget.allow_retry()):\n                raise\n            sleep = random.uniform(0, min(cap, base * 2 ** attempt))   # full jitter\n            if sleep > deadline_s - (time.monotonic() - start):\n                raise\n            time.sleep(sleep)\n\n\nclass RetryBudget:\n    \"\"\"Allow a retry while retries stay under `ratio` of requests in the current window.\"\"\"\n    def __init__(self, ratio=0.1):\n        self.ratio, self.requests, self.retries = ratio, 0, 0\n\n    def record_request(self):\n        self.requests += 1\n\n    def allow_retry(self):\n        if self.retries < self.ratio * max(self.requests, 1):\n            self.retries += 1\n            return True\n        return False",
+        "caption": "The client side of the policy: a deadline, a per-try timeout, bounded attempts, full jitter, a shared retry ratio and one idempotency key reused across attempts. The window reset of the budget is left out for brevity."
+      }
+    ]
+  },
+  "diagram": null,
+  "code": [],
   "technologies": [
     "gRPC deadlines",
     "Envoy",
@@ -120,35 +739,142 @@
   ],
   "sources": [
     {
+      "id": "s1",
+      "title": "Amazon Builders' Library, Timeouts, retries, and backoff with jitter (Marc Brooker, 2019-12-05): picking timeouts from a latency percentile, selfish retries, the 243x stack, retry at one point, the token bucket, capped backoff, jitter",
+      "url": "https://builder.aws.com/content/3EumjoZascWd1oZiEgL8ORlv3qE/timeouts-retries-and-backoff-with-jitter",
       "kind": "article",
-      "title": "Timeouts, retries and backoff with jitter (Amazon Builders' Library)",
-      "url": "https://builder.aws.com/content/3EumjoZascWd1oZiEgL8ORlv3qE/timeouts-retries-and-backoff-with-jitter"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "our best practice is to retry at a single point in the stack"
+      }
     },
     {
+      "id": "s2",
+      "title": "AWS Architecture Blog, Exponential Backoff And Jitter (Marc Brooker, 2015): the simulation of contending clients under full, equal and decorrelated jitter",
+      "url": "https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/",
       "kind": "article",
-      "title": "Exponential backoff and jitter (AWS Architecture Blog)",
-      "url": "https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "The no-jitter exponential backoff approach is the clear loser"
+      }
     },
     {
+      "id": "s3",
+      "title": "Stripe engineering blog, Designing robust and predictable APIs with idempotency (Brandur Leach, 2017): keys on mutating endpoints, cached results on response failure, the ACID rollback case, backoff and jitter in the client library",
+      "url": "https://stripe.com/blog/idempotency",
       "kind": "article",
-      "title": "Designing robust and predictable APIs with idempotency (Stripe)",
-      "url": "https://stripe.com/blog/idempotency"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "the server simply replies with a cached result of the successful operation"
+      }
     },
     {
+      "id": "s4",
+      "title": "Stripe API reference, Idempotent requests: key format and length, 24-hour retention, parameter comparison, saved responses including errors",
+      "url": "https://docs.stripe.com/api/idempotent_requests",
       "kind": "doc",
-      "title": "Retry pattern (Azure Architecture Center)",
-      "url": "https://learn.microsoft.com/en-us/azure/architecture/patterns/retry"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "The idempotency layer compares incoming parameters to those of the original request"
+      }
     },
     {
+      "id": "s5",
+      "title": "IETF HTTPAPI working group, The Idempotency-Key HTTP Header Field (Internet-Draft): the header, fingerprints, enforcement for first, retried and concurrent requests, error handling",
+      "url": "https://datatracker.ietf.org/doc/html/draft-ietf-httpapi-idempotency-key-header",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "The request was retried before the original request completed"
+      }
+    },
+    {
+      "id": "s6",
+      "title": "Google SRE book, chapter 21, Handling Overload: the per-request budget of three attempts, the per-client 10 percent budget, retrying only one layer above the rejecting one, the attempt counter",
+      "url": "https://sre.google/sre-book/handling-overload/",
+      "kind": "book",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "we implement a per-request retry budget of up to three attempts"
+      }
+    },
+    {
+      "id": "s7",
+      "title": "Google SRE book, chapter 22, Addressing Cascading Failures: the retry feedback loop, randomized backoff, the server-wide retry budget, picking a deadline, deadline propagation",
+      "url": "https://sre.google/sre-book/addressing-cascading-failures/",
+      "kind": "book",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Rather than inventing a deadline when sending RPCs to backends, servers should employ deadline propagation"
+      }
+    },
+    {
+      "id": "s8",
+      "title": "Azure Architecture Center, Transient fault handling: finite retries, a retry budget per process, the circuit breaker, idempotent steps, the scope of a retry",
+      "url": "https://learn.microsoft.com/en-us/azure/architecture/best-practices/transient-faults",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Implement a retry budget to limit the total number of retries across all requests within a process"
+      }
+    },
+    {
+      "id": "s9",
+      "title": "Martin Fowler, CircuitBreaker (2014): the closed, open and half-open states, the failure threshold, the reset timeout, the trial call, monitoring",
+      "url": "https://martinfowler.com/bliki/CircuitBreaker.html",
       "kind": "article",
-      "title": "CircuitBreaker (Martin Fowler)",
-      "url": "https://martinfowler.com/bliki/CircuitBreaker.html"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Asked to call in the half-open state results in a trial call"
+      }
+    },
+    {
+      "id": "s10",
+      "title": "Shopify engineering blog, 10 Tips for Building Resilient Payment Systems (Bart de Water, 2023): lower timeouts, Semian circuit breakers, idempotency keys, reconciliation, load testing",
+      "url": "https://shopify.engineering/building-resilient-payment-systems",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "an open timeout of one second with a write and read or query timeout of five seconds"
+      }
+    },
+    {
+      "id": "s11",
+      "title": "RFC 9110, HTTP Semantics (June 2022), section 9.2.2 Idempotent Methods: which methods may be repeated automatically and when a client should not retry",
+      "url": "https://www.rfc-editor.org/rfc/rfc9110.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "A client SHOULD NOT automatically retry a request with a non-idempotent method"
+      }
+    },
+    {
+      "id": "s12",
+      "title": "gRPC documentation, Deadlines: deadlines against timeouts, DEADLINE_EXCEEDED, what the server should do, deadline propagation and cancellation down the call tree",
+      "url": "https://grpc.io/docs/guides/deadlines/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "A deadline is used to specify a point in time past which a client is unwilling to wait for a response"
+      }
     }
   ],
   "practice": null,
   "provenance": {
-    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
-    "generated_on": "2026-10-13",
+    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center, format v2",
+    "generated_on": "2026-10-15",
     "reviewed_by": null,
     "reviewed_on": null
   },
@@ -157,6 +883,11 @@
       "version": 1,
       "date": "2026-10-13",
       "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-15",
+      "change": "rewritten by hand from primary sources at format v2 (learning-center-lesson:2): 8 subtopics with the timeout table, the propagated deadline as steps, the jitter-variant table from the AWS simulation, the retry-budget table and the 243x stack, the idempotency-key sequence diagram in its subtopic and the key-handling table, the which-tool-handles-what table, the breaker-state table, a decision block over where the retry, the key and the breaker live in a call graph, a worked checkout-to-payment-provider policy with the client code after the teaching, 5 cited in-practice blocks (Amazon, Google, Stripe, Shopify, IETF), 12 verified sources with ids; the :1 sim block is kept"
     }
   ],
   "sim": {
