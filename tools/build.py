@@ -395,6 +395,147 @@ def render_lesson(lib: Library, l: dict) -> tuple[str, str]:
     return here, page
 
 
+# --- lesson format v2 (learning-center-lesson:2): the block renderer, the cite marks, the numbered source list -----------------
+V2 = scan.V2
+CALLOUT_LABELS = {"rule": "Rule of thumb", "pitfall": "Pitfall", "tip": "Tip"}
+DECISION_COLUMNS = ("Option", "Pick when", "Avoid when", "Example")
+
+
+class Page:
+    """What the blocks of one :2 page need from the page shell: whether it holds code or a diagram, and the numbered sources."""
+
+    def __init__(self, sources: list[dict]) -> None:
+        self.number = {s["id"]: n for n, s in enumerate(sources, 1)}   # scan.py keeps ids s1..sN in order
+        self.code = False
+        self.diagram = False
+
+
+def cite_marks(pg: Page, cites: list[str] | None) -> str:
+    if not cites:
+        return ""
+    links = " ".join(f'<a href="#source-{esc(c)}" aria-label="Source {pg.number[c]}">[{pg.number[c]}]</a>' for c in cites)
+    return f'<sup class="cite">{links}</sup>'
+
+
+def table_html(columns: list[str], rows: list[list[str]], caption: str | None, *, first_col_head: bool = False) -> str:
+    cap = f"<caption>{esc(caption)}</caption>" if caption else ""
+    head_ = "".join(f'<th scope="col">{esc(c)}</th>' for c in columns)
+    def cells(r):
+        return "".join((f'<th scope="row">{esc(c)}</th>' if i == 0 and first_col_head else f"<td>{esc(c)}</td>") for i, c in enumerate(r))
+    body_ = "".join(f"<tr>{cells(r)}</tr>" for r in rows)
+    label = f' aria-label="{esc(caption)}"' if caption else ' aria-label="Table"'
+    cls = ' class="decision"' if first_col_head else ""
+    return f'<div class="table-scroll" role="region" tabindex="0"{label}><table{cls}>{cap}<thead><tr>{head_}</tr></thead><tbody>{body_}</tbody></table></div>'
+
+
+def render_block(pg: Page, b: dict) -> str:
+    t = b["type"]
+    cites = cite_marks(pg, b.get("cites"))
+    row = f'<p class="cite-row">{cites}</p>' if cites else ""
+    if t == "p":
+        return f"<p>{esc(b['text'])}{cites}</p>"
+    if t == "list":
+        tag = "ol" if b.get("ordered") else "ul"
+        return f"<{tag}>" + "".join(f"<li>{esc(i)}</li>" for i in b["items"]) + f"</{tag}>{row}"
+    if t == "table":
+        return table_html(b["columns"], b["rows"], b.get("caption")) + row
+    if t == "code":
+        pg.code = True
+        cap = f'<p class="muted block-caption">{esc(b["caption"])}</p>' if b.get("caption") else ""
+        return cap + code_block(b)
+    if t == "callout":
+        return (f'<aside class="callout callout-{esc(b["kind"])}"><p><strong class="callout-label">{CALLOUT_LABELS[b["kind"]]}.</strong> '
+                f'{esc(b["text"])}{cites}</p></aside>')
+    if t == "steps":
+        title = f'<p class="steps-title">{esc(b["title"])}</p>' if b.get("title") else ""
+        return f'<div class="steps-block">{title}<ol>' + "".join(f"<li>{esc(i)}</li>" for i in b["items"]) + f"</ol>{row}</div>"
+    if t == "decision":
+        rows = [[r["option"], r["pick_when"], r["avoid_when"], r.get("example", "")] for r in b["rows"]]
+        return table_html(list(DECISION_COLUMNS), rows, b.get("caption"), first_col_head=True) + row
+    if t == "diagram":
+        pg.diagram = True
+        src = esc(b["mermaid"])
+        legend = f'<p class="muted">{esc(b["legend"])}</p>' if b.get("legend") else ""
+        return f'<div class="mermaid-wrap"><pre class="mermaid">{src}</pre><pre class="mermaid-fallback">{src}</pre></div>{legend}'
+    raise BuildError(f"unknown block type {t!r}")
+
+
+def render_blocks(pg: Page, blocks) -> str:
+    """Blocks, or one block (an exercise field may hold either), as HTML."""
+    return "\n".join(render_block(pg, b) for b in scan.as_blocks(blocks))
+
+
+def render_sources_v2(sources: list[dict]) -> str:
+    """The numbered source list (ids s1..sN in order): the cite marks of the page link to each item's id."""
+    items = []
+    for s in sources:
+        v = s.get("verified")
+        checked = f' <span class="domain">checked {esc(v["checked"])}</span>' if v and v.get("checked") else ""
+        items.append(
+            f'<li id="source-{esc(s["id"])}"><span class="kind-badge">{esc(s["kind"])}</span>{ext(s["url"], esc(s["title"]))} '
+            f'<span class="domain">({esc(domain_of(s["url"]))})</span>{checked}</li>'
+        )
+    return f'<ol class="sources-list sources-numbered">{"".join(items)}</ol>'
+
+
+def render_lesson_v2(lib: Library, l: dict) -> tuple[str, str]:
+    """Page order of a :2 lesson: title and attribution, summary, on this page; the teaching (subtopics); the worked example;
+    in practice (cited); simulator; technologies, sources, related lessons, the practice link. No 'Read more' box above the teaching."""
+    lid = l["id"]
+    mid, pos, _ = lib.home_of[lid]
+    here = f"/learn/lessons/{lid}/"
+    pg = Page(l["sources"])
+    body = [f"<h1>{esc(l['title'])}</h1>", attribution(l["provenance"])]
+    if l["status"] == "superseded":
+        body.append(f'<p class="banner">This lesson is superseded by {a(f"/learn/lessons/{l["superseded_by"]}/", esc(lib.lessons[l["superseded_by"]]["title"]))}.</p>')
+    krow = ["Concept: " + a(f"/learn/keys/{l['primary_key']}/", esc(lib.keys[l["primary_key"]]["display"]))]
+    if l["secondary_keys"]:
+        krow.append("also covers " + ", ".join(a(f"/learn/keys/{k}/", esc(lib.keys[k]["display"])) for k in l["secondary_keys"]))
+    line = " &middot; ".join(krow)
+    line += f" &middot; Lesson {pos} of {len(lib.module_lessons[mid])} in " + a(f"/learn/modules/{mid}/", esc(lib.modules[mid]["title"]))
+    body.append(f'<p class="key-line">{line} &middot; version {l["version"]}</p>')
+    body.append(f"<p>{esc(l['summary'])}</p>")
+    has_practice_blocks = bool(l["in_practice"]["blocks"])
+    otp = [(s["id"], s["title"]) for s in l["subtopics"]]
+    if "worked_example" in l:
+        otp.append(("worked-example", "Worked example"))
+    if has_practice_blocks:
+        otp.append(("in-practice", "In practice"))
+    body.append('<div class="on-this-page"><p class="otp-title">On this page</p><ul>'
+                + "".join(f'<li>{a("#" + i, esc(t))}</li>' for i, t in otp) + "</ul></div>")
+    for s in l["subtopics"]:
+        body.append(f'<h2 id="{esc(s["id"])}">{esc(s["title"])}</h2>')
+        body.append(render_blocks(pg, s["blocks"]))
+    if "worked_example" in l:
+        we = l["worked_example"]
+        body.append(f'<h2 id="worked-example">Worked example</h2>\n<h3>{esc(we["title"])}</h3>')
+        body.append(render_blocks(pg, we["blocks"]))
+    if has_practice_blocks:
+        body.append('<h2 id="in-practice">In practice</h2>')
+        body.append(render_blocks(pg, l["in_practice"]["blocks"]))
+    if "sim" in l:
+        body.append(render_sim(lib, l))
+    if l["technologies"]:
+        tags = "".join(f"<span>{esc(t)}</span>" for t in l["technologies"])
+        body.append(f'<h2>Technologies</h2>\n<div class="tech-tags">{tags}</div>')
+    body.append('<h2 id="sources">Sources</h2>')
+    body.append(render_sources_v2(l["sources"]))
+    if l["related"]:
+        rel = "".join(f'<li>{a(f"/learn/lessons/{r}/", esc(lib.lessons[r]["title"]))}</li>' for r in l["related"])
+        body.append(f'<h2>Related lessons</h2>\n<ul class="related-list">{rel}</ul>')
+    if lid in lib.practice:
+        body.append(a(f"/learn/practice/{lid}/", "Practice this", "practice-link-button practice-link-button-end"))
+    ids = lib.module_lessons[mid]
+    i = pos - 1
+    prev_ = a(f"/learn/lessons/{ids[i-1]}/", esc(lib.lessons[ids[i-1]]["title"])) if i > 0 else "<span></span>"
+    next_ = a(f"/learn/lessons/{ids[i+1]}/", esc(lib.lessons[ids[i+1]]["title"])) if i + 1 < len(ids) else "<span></span>"
+    body.append(f'<div class="prevnext">{prev_}{next_}</div>')
+    crumbs = [("/learn/", "Learning center"), (f"/learn/modules/{mid}/", lib.modules[mid]["title"]), (here, l["title"])]
+    page = lesson_shell(lib, f"{l['title']} - Learning center", "\n".join(body), mid=mid, current=here, crumbs=crumbs,
+                        description=l["summary"][:200], mermaid=pg.diagram, code=pg.code, sim="sim" in l)
+    return here, page
+
+
 # --- design exercises (kind "design-exercise"; the system design module, outline section 6) -------------------------------
 def render_table(t: dict) -> str:
     head_ = "".join(f"<th>{esc(c)}</th>" for c in t["columns"])
@@ -478,6 +619,74 @@ def render_exercise(lib: Library, l: dict) -> tuple[str, str]:
     page = lesson_shell(lib, f"{l['title']} - Learning center", "\n".join(body), mid=mid, current=here, crumbs=crumbs,
                         description=l["summary"][:200], mermaid=has_diagram, code=False, sim="sim" in l)
     return here, page
+
+
+def render_exercise_v2(lib: Library, l: dict) -> tuple[str, str]:
+    """A :2 design exercise page: the same eight sections and order as :1, every section through the block renderer."""
+    lid, ex = l["id"], l["exercise"]
+    here = f"/learn/lessons/{lid}/"
+    mid, _, entry = lib.home_of[lid]
+    mod_here = f"/learn/modules/{mid}/"
+    pg = Page(l["sources"])
+    body = [f"<h1>{esc(l['title'])}</h1>", exercise_attribution(l["provenance"])]
+    krow = ["Concept: " + a(f"/learn/keys/{l['primary_key']}/", esc(lib.keys[l["primary_key"]]["display"]))]
+    if l["secondary_keys"]:
+        krow.append("also covers " + ", ".join(a(f"/learn/keys/{k}/", esc(lib.keys[k]["display"])) for k in l["secondary_keys"]))
+    mod = lib.modules[mid]
+    if entry.get("part"):
+        part_title = next(p["title"] for p in mod["parts"] if p["id"] == entry["part"])
+        krow.append(f"Part {esc(entry['part'])} ({esc(part_title)}) of the " + a(mod_here, esc(mod["title"]) + " module"))
+    body.append(f'<p class="key-line">{" &middot; ".join(krow)} &middot; design exercise &middot; version {l["version"]}</p>')
+    has_practice_blocks = bool(l["in_practice"]["blocks"])
+    otp = [("prompt", "The prompt"), ("constraints", "Constraints and numbers"), ("clarifying-questions", "Clarifying questions worth asking"),
+           ("reference-answer", "Reference answer")] + [(sec["id"], sec["title"]) for sec in ex["reference_answer"]] + [
+           ("rubric", "Self-check rubric"), ("interview-frame", "The 45-minute interview frame"), ("design-doc-frame", "The design-doc frame"),
+           ("depth", "Depth notes")] + ([("in-practice", "In practice")] if has_practice_blocks else []) + [("sources", "Sources"), ("related", "Related lessons")]
+    if "sim" in l:
+        otp.insert(otp.index(("rubric", "Self-check rubric")), ("simulate", l["sim"].get("heading", "Simulate it")))
+    body.append('<div class="on-this-page"><p class="otp-title">On this page</p><ul>' + "".join(f'<li>{a("#" + i, esc(t))}</li>' for i, t in otp) + "</ul></div>")
+    body.append(f"<p>{esc(l['summary'])}</p>")
+    body.append('<p class="muted">Attempt the design from the prompt, the constraints and the questions before reading the reference answer.</p>')
+    body.append(f'<h2 id="prompt">The prompt</h2>\n<p>{esc(ex["prompt"])}</p>')
+    body.append('<h2 id="constraints">Constraints and numbers</h2>\n' + render_blocks(pg, ex["constraints"]))
+    body.append('<h2 id="clarifying-questions">Clarifying questions worth asking</h2>\n<ul>'
+                + "".join(f'<li><strong>{esc(q["q"])}</strong> {esc(q["a"])}</li>' for q in ex["clarifying_questions"]) + "</ul>")
+    body.append('<h2 id="reference-answer">Reference answer</h2>')
+    for sec in ex["reference_answer"]:
+        body.append(f'<h3 id="{esc(sec["id"])}">{esc(sec["title"])}</h3>')
+        body.append(render_blocks(pg, sec["blocks"]))
+        if sec["id"] == "scaling-and-the-bottleneck" and "sim" in l:
+            body.append(render_sim(lib, l, level=3))
+    body.append('<h2 id="rubric">Self-check rubric</h2>\n<p class="muted">Read, not scored: find the level your answer reached.</p>')
+    for lvl, name in (("L1", "L1, mid-level: applies"), ("L2", "L2, senior: chooses with numbers and defends"), ("L3", "L3, staff: sets the constraint and judges")):
+        body.append(f"<h3>{esc(name)}</h3><ul>" + "".join(f"<li>{esc(x)}</li>" for x in ex["rubric"][lvl]) + "</ul>")
+    body.append('<h2 id="interview-frame">The 45-minute interview frame</h2>\n' + render_blocks(pg, ex["interview_frame"]))
+    body.append('<h2 id="design-doc-frame">The design-doc frame</h2>\n' + render_blocks(pg, ex["design_doc_frame"]))
+    body.append('<h2 id="depth">Depth notes</h2>\n<ul>' + "".join(f'<li><strong>{lvl}.</strong> {esc(ex["depth_notes"][lvl])}</li>' for lvl in ("L1", "L2", "L3")) + "</ul>")
+    if has_practice_blocks:
+        body.append('<h2 id="in-practice">In practice</h2>\n' + render_blocks(pg, l["in_practice"]["blocks"]))
+    body.append('<h2 id="sources">Sources</h2>')
+    body.append(render_sources_v2(l["sources"]))
+    if l["related"]:
+        items = []
+        for r in l["related"]:
+            if r in lib.lessons:
+                items.append(f'<li>{a(f"/learn/lessons/{r}/", esc(lib.lessons[r]["title"]))}</li>')
+            else:  # an outlined system design lesson without a page yet: named, not linked
+                items.append(f'<li>{esc(lib.planned[r]["title"])} <code>{esc(r)}</code> <span class="status">planned</span></li>')
+        body.append(f'<h2 id="related">Related lessons</h2>\n<ul class="related-list">{"".join(items)}</ul>')
+    crumbs = [("/learn/", "Learning center"), (mod_here, mod["title"]), (here, l["title"])]
+    page = lesson_shell(lib, f"{l['title']} - Learning center", "\n".join(body), mid=mid, current=here, crumbs=crumbs,
+                        description=l["summary"][:200], mermaid=pg.diagram, code=pg.code, sim="sim" in l)
+    return here, page
+
+
+def render_lesson_page(lib: Library, l: dict) -> tuple[str, str]:
+    """The renderer for one lesson file: by schema version, then by kind."""
+    exercise = l.get("kind") == "design-exercise"
+    if l["schema_version"] == V2:
+        return render_exercise_v2(lib, l) if exercise else render_lesson_v2(lib, l)
+    return render_exercise(lib, l) if exercise else render_lesson(lib, l)
 
 
 def render_practice_steps(steps: list[dict]) -> str:
@@ -939,7 +1148,7 @@ def build(content: Path, out: Path) -> dict:
     pages: list[tuple[str, str]] = [render_landing(lib), render_home(lib), render_modules_index(lib), render_changelog(lib),
                                     render_search(lib), render_404(lib)]
     pages += [render_module(lib, m) for m in lib.modules.values()]
-    pages += [render_exercise(lib, l) if l.get("kind") == "design-exercise" else render_lesson(lib, l) for l in lib.lessons.values()]
+    pages += [render_lesson_page(lib, l) for l in lib.lessons.values()]
     pages += [render_practice(lib, p) for p in lib.practice.values()]
     pages += [render_key(lib, k) for k in lib.keys.values()]
     for url, text in pages:
