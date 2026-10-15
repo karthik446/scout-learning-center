@@ -500,6 +500,7 @@ LESSON_V2 = {
 DECISION_LESSON_IDS = frozenset("sd-storage-engines sd-queues-streams sd-caching sd-consistency-consensus sd-replication-partitioning sd-load-balancing".split())
 DECISION_KEYS = frozenset("storage-engines message-queues caching consistency replication load-balancing".split())
 MAX_NUMBERS_IN_P = 4
+CITE_COLUMNS = frozenset({"cite", "cites", "source", "sources"})   # a table column of source ids, rendered as linked marks
 # integers (with thousands commas) and decimals; a digit run glued to a letter before it (p99, S3, v4) is a name, not a number
 V2_NUMBER = re.compile(r"(?<![\w.])(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?")
 RESERVED_IDS_V2 = frozenset({"worked-example", "in-practice", "sources", "related", "technologies", "simulate", "prompt", "constraints",
@@ -971,6 +972,13 @@ def lesson2_checks(l: dict) -> list[str]:
             n = len(V2_NUMBER.findall(b["text"]))
             if n > MAX_NUMBERS_IN_P:
                 out.append(f"{path}: a paragraph holds {n} numbers (at most {MAX_NUMBERS_IN_P}); put them in a table or steps block")
+        if t == "table":
+            for ci, col in enumerate(b["columns"]):
+                if col.strip().lower() in CITE_COLUMNS:
+                    for ri, r in enumerate(b["rows"]):
+                        ids = [x.strip() for x in r[ci].split(",")] if ci < len(r) else []
+                        if not ids or not all(re.fullmatch(r"s\d+", x) and x in known for x in ids):
+                            out.append(f"{path}.rows[{ri}]: the {col!r} column holds source ids of this lesson (s1, s2 ...), got {r[ci]!r}")
         if t == "diagram" and exercise and not DIAGRAM_START.match(b["mermaid"]):
             out.append(f"{path}: the diagram must be a Mermaid flowchart (starts with 'flowchart' or 'graph')")
     if not exercise:

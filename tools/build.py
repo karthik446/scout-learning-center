@@ -433,11 +433,25 @@ def cite_marks(pg: Page, cites: list[str] | None) -> str:
     return f'<sup class="cite">{links}</sup>'
 
 
-def table_html(columns: list[str], rows: list[list[str]], caption: str | None, *, first_col_head: bool = False, cites: str = "") -> str:
+CITE_COLUMNS = ("cite", "cites", "source", "sources")   # a table column of source ids: rendered as the linked [n] marks
+SOURCE_IDS = re.compile(r"^\s*s\d+(\s*,\s*s\d+)*\s*$")
+
+
+def table_html(columns: list[str], rows: list[list[str]], caption: str | None, *, first_col_head: bool = False, cites: str = "",
+               pg: "Page | None" = None) -> str:
     cap = f"<caption>{esc(caption or '')}{cites}</caption>" if (caption or cites) else ""
     head_ = "".join(f'<th scope="col">{esc(c)}</th>' for c in columns)
+    cite_cols = {i for i, c in enumerate(columns) if c.strip().lower() in CITE_COLUMNS} if pg is not None else set()
+
+    def cell(i, c):
+        if i in cite_cols and SOURCE_IDS.match(c):
+            ids = [x.strip() for x in c.split(",")]
+            if all(x in pg.number for x in ids):
+                return f"<td>{cite_marks(pg, ids)}</td>"
+        return f"<td>{esc(c)}</td>"
+
     def cells(r):
-        return "".join((f'<th scope="row">{esc(c)}</th>' if i == 0 and first_col_head else f"<td>{esc(c)}</td>") for i, c in enumerate(r))
+        return "".join((f'<th scope="row">{esc(c)}</th>' if i == 0 and first_col_head else cell(i, c)) for i, c in enumerate(r))
     body_ = "".join(f"<tr>{cells(r)}</tr>" for r in rows)
     label = f' aria-label="{esc(caption)}"' if caption else ' aria-label="Table"'
     cls = ' class="decision"' if first_col_head else ""
@@ -454,7 +468,7 @@ def render_block(pg: Page, b: dict) -> str:
         tag = "ol" if b.get("ordered") else "ul"
         return f"<{tag}>" + "".join(f"<li>{esc(i)}</li>" for i in b["items"]) + f"</{tag}>{row}"
     if t == "table":
-        return table_html(b["columns"], b["rows"], b.get("caption"), cites=cites)
+        return table_html(b["columns"], b["rows"], b.get("caption"), cites=cites, pg=pg)
     if t == "code":
         pg.code = True
         cap = f'<p class="muted block-caption">{esc(b["caption"])}</p>' if b.get("caption") else ""

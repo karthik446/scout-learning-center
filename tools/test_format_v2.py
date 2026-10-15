@@ -216,6 +216,16 @@ class Negative(Fixture):
             s = copy.deepcopy(aws); s["blocks"] = s["blocks"][:2]; d["exercise"]["reference_answer"].insert(2, s)
         self.refuses(EXERCISE, too_few_tables, "at least 3 table blocks")
 
+    def test_cite_column_holds_source_ids(self) -> None:
+        def m(d):
+            tb = first(d, "table"); tb["columns"].append("cites")
+            for r in tb["rows"]: r.append("s1, s2")
+        self.assertEqual(self.problems_after(LESSON, m), [])
+        def bad(d):
+            tb = first(d, "table"); tb["columns"].append("source")
+            for r in tb["rows"]: r.append("the whitepaper")
+        self.refuses(LESSON, bad, "holds source ids of this lesson")
+
     def test_too_few_sources(self) -> None:
         def m(d):
             del d["sources"][7]
