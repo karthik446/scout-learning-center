@@ -1,7 +1,7 @@
 {
-  "schema_version": "learning-center-lesson:1",
+  "schema_version": "learning-center-lesson:2",
   "id": "sd-queues-streams",
-  "version": 1,
+  "version": 2,
   "status": "published",
   "superseded_by": null,
   "title": "Queues, streams and delivery guarantees",
@@ -18,76 +18,882 @@
     "batch-and-real-time",
     "distributed-systems"
   ],
-  "summary": "Messaging decouples the service that produces work from the services that process it, in time and in capacity. Queues hand each message to one worker and forget it, while streams keep an ordered, replayable log that many independent consumers read at their own pace. The guarantees that matter are ordering, durability and how many times a message can be processed, and each is a deliberate configuration choice.",
+  "summary": "Messaging decouples the service that produces work from the services that process it, and the design decisions are which model carries each flow and which guarantees it pays for. This lesson separates a queue from a partitioned log, explains partitions, keys and consumer groups, derives at-most-once and at-least-once from the order of two operations, says exactly what exactly-once covers, treats backlogs as the failure mode they are, sets durability from acknowledgements and in-sync replicas, and turns it into two decision blocks: the neutral model per flow, and the AWS service among SQS standard and FIFO, SNS, EventBridge, Kinesis Data Streams and MSK against ordering, replay, fan-out, throughput, retention and cost, with a worked sizing of an order-event log and its backlog plan.",
   "detail": [],
-  "in_practice": "Teams decide first whether the payload is a command for one worker or an event many systems will read, then pick a queue service or a Kafka topic accordingly. For Kafka they choose the record key from the ordering requirement, set a replication factor of three with acks from all in-sync replicas, enable the idempotent producer and agree on a schema with compatibility rules. Consumers are written to be idempotent and commit offsets after processing. Dashboards show consumer lag and dead letter volume per group, with alerts on lag growth, and runbooks describe how to replay a topic or reset offsets.",
+  "in_practice": {
+    "blocks": [
+      {
+        "type": "p",
+        "text": "LinkedIn's Kafka paper describes the deployment the design came from: a cluster in each datacenter receiving batched publishes from the frontends, online consumers in the same datacenter, and a replica cluster next to Hadoop pulling from them, with end-to-end latency of about ten seconds without tuning and close to a billion messages a day at the time. Messages carried an Avro schema id resolved through a lightweight schema registry, and an audit system compared per-producer counts against consumed counts to prove no data was lost.",
+        "cites": [
+          "s1"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "Confluent's measured overhead of exactly-once in Kafka 0.11, from the write-up.",
+        "columns": [
+          "setting",
+          "throughput change"
+        ],
+        "rows": [
+          [
+            "transactional producer against at-least-once in-order (acks all, one in flight)",
+            "about 3 percent lower"
+          ],
+          [
+            "transactional producer against the fastest unordered default",
+            "about 20 percent lower"
+          ],
+          [
+            "idempotent producer alone",
+            "negligible"
+          ],
+          [
+            "Streams exactly-once at a 100 ms commit interval",
+            "15 to 30 percent lower, depending on message size"
+          ]
+        ],
+        "cites": [
+          "s3"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Slack's job queue ran on Redis until a database slowdown filled Redis to its memory limit; with no free memory it could neither enqueue nor, because dequeuing also needed memory, dequeue, and the system stayed locked after the database recovered. The fix put Kafka in front of Redis: a Go gateway writes jobs to Kafka, waiting only for the leader's acknowledgement by choice, and a relay drains each topic into Redis at a rate set in Consul, taking a Consul lock per topic so exactly one relay owns it. The cluster ran sixteen brokers with thirty-two partitions per topic, a replication factor of three and two days of retention; the rollout double-wrote to both systems and compared counts at every hop.",
+        "cites": [
+          "s8"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Amazon's Lambda service does not poll a queue per customer and does not share one queue either: it provisions a fixed set of queues, hashes each customer to a few of them, and enqueues to the emptiest, so a surge backs up only its own queues. AWS IoT measures the age of a message at its first delivery attempt to tell a system-wide backlog from devices reading slowly, and Amazon's teams alarm on any message reaching a dead-letter queue and heartbeat long-running SQS messages so an overloaded consumer does not re-receive its own work.",
+        "cites": [
+          "s7"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "RabbitMQ's own documentation sets the operating defaults for a classic broker: manual acknowledgement with a prefetch in the hundreds, automatic requeue of unacknowledged deliveries when a channel closes so consumers must expect redelivery, publisher confirms rather than transactions, and a quorum queue's confirm sent only once a quorum of replicas holds the message.",
+        "cites": [
+          "s4"
+        ]
+      }
+    ]
+  },
   "subtopics": [
     {
-      "body": [
+      "id": "queue-versus-log",
+      "title": "A queue and a log are different things",
+      "blocks": [
         {
-          "body": "A message queue holds tasks until a worker takes one, processes it and acknowledges it, after which the broker deletes it. Several workers can pull from the same queue, which is the competing consumers pattern: throughput scales by adding workers, and the queue absorbs bursts so the producer is not blocked. A log based stream, as in Kafka, instead appends events to a durable ordered log and keeps them for a retention period regardless of consumption. Consumers track their own position, so new consumers can be added later and can replay history.",
-          "heading": "Two models"
+          "type": "p",
+          "text": "Messaging decouples the service that produces work from the services that process it, in time and in capacity. Two designs do that decoupling, and they behave differently under failure, under backlog and when a new reader arrives. A message queue hands each message to one worker, waits for an acknowledgement, and then forgets the message. A log appends every message to a durable ordered file, keeps it for a retention period whether or not anyone has read it, and lets each reader keep its own position.",
+          "cites": [
+            "s1",
+            "s2"
+          ]
         },
         {
-          "body": "Choose a queue for work distribution: jobs, emails, image processing, where each task is independent, per message acknowledgement and redelivery matter, and order usually does not. Choose a stream when events are facts that several systems need, when order per entity matters, or when replay is valuable for rebuilding state and backfilling a new consumer. A stream can act as a queue through consumer groups, but per message retry and delay are more awkward there because position is a single offset per partition.",
-          "heading": "When to use which"
+          "type": "p",
+          "text": "The Kafka paper states the second design's consequences in one page. A message has no id, only its offset in the partition; the broker keeps no record of what a consumer has read, so the consumer tracks its own offset and acknowledges by position; messages are deleted by a time-based retention policy, typically a week; and because of that a consumer can deliberately rewind to an old offset and read again, which the authors note violates the usual contract of a queue but turned out to be essential, for fixing a consumer bug or reloading a warehouse. The current design document adds why the position is cheap: one integer per partition instead of per-message state on the broker.",
+          "cites": [
+            "s1",
+            "s2"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Queue against log: the same job, different mechanics.",
+          "columns": [
+            "",
+            "message queue",
+            "partitioned log"
+          ],
+          "rows": [
+            [
+              "unit of delivery",
+              "one message to one consumer, then deleted",
+              "a chunk of the log from an offset; nothing is deleted on read"
+            ],
+            [
+              "who tracks progress",
+              "the broker, per message (received, acknowledged)",
+              "the consumer, one offset per partition"
+            ],
+            [
+              "retention",
+              "until acknowledged or expired",
+              "a period or a size, regardless of consumption"
+            ],
+            [
+              "replay",
+              "not possible once deleted",
+              "any consumer can rewind to any retained offset"
+            ],
+            [
+              "ordering",
+              "none across competing consumers, unless groups or sessions",
+              "total order within a partition"
+            ],
+            [
+              "parallelism",
+              "add consumers to the queue",
+              "bounded by the partition count"
+            ],
+            [
+              "per-message retry and delay",
+              "native: redelivery, delay, dead-letter",
+              "awkward: position is a single offset per partition"
+            ],
+            [
+              "new reader of old data",
+              "cannot see the past",
+              "starts from the earliest retained offset"
+            ]
+          ],
+          "cites": [
+            "s1",
+            "s2",
+            "s5"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The queue model is what a task system needs: jobs, emails, image resizes, where each item is independent, must be retried on its own and should disappear when done. The log model is what an event backbone needs: facts that several systems will read, in order per entity, with the right to be replayed. The Kafka design document puts the throughput case for the log, appends and linear reads on cheap disks with the page cache doing the caching, and the paper puts the semantic case, the rewind.",
+          "cites": [
+            "s2",
+            "s1"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Ask what the payload is before picking the transport. A command for one worker belongs on a queue; an event that is a fact many systems will consume belongs on a log. A log can imitate a queue through consumer groups, but per-message retry and delay are where the imitation strains.",
+          "cites": [
+            "s1",
+            "s2"
+          ]
         }
-      ],
-      "id": "queue-vs-log",
-      "title": "Queues versus logs"
+      ]
     },
     {
-      "body": [
+      "id": "partitions-and-groups",
+      "title": "Partitions, keys and consumer groups",
+      "blocks": [
         {
-          "body": "A Kafka topic is split into partitions, each an ordered append only log stored on brokers and replicated for fault tolerance. Each record gets an offset, its position in the partition. Producers choose the partition, normally by hashing the record key, so all events with the same key land in the same partition and stay in order. Order is guaranteed within a partition only, never across the topic. The key is therefore a design decision: use the entity whose events must be ordered, such as an order id or account id.",
-          "heading": "How a stream scales"
+          "type": "p",
+          "text": "A log scales by partitioning a topic. Each partition is an ordered append-only sequence stored on a broker and replicated; the producer chooses the partition, at random for load balancing or by hashing a key, so that every record with the same key lands in the same partition and stays in order. That makes the key the first design decision of a topic: the entity whose events must be ordered, an order id or an account id, not a timestamp and not a random value. Order holds within a partition only, never across the topic.",
+          "cites": [
+            "s2"
+          ]
         },
         {
-          "body": "Consumers that share a group id divide the partitions among themselves, so each partition is read by exactly one member of the group at a time. That gives parallelism up to the partition count; extra consumers sit idle. Different groups read the same topic independently, each with its own committed offsets. When a member joins or dies, the group rebalances and partitions are reassigned, and the new owner resumes from the last committed offset. Partition count caps parallelism and is hard to change later without affecting key to partition mapping.",
-          "heading": "Consumer groups"
+          "type": "diagram",
+          "mermaid": "flowchart LR\n    P1[Producer] -->|key hash| T0[Partition 0]\n    P1 -->|key hash| T1[Partition 1]\n    P1 -->|key hash| T2[Partition 2]\n    T0 --> A1[Group A consumer 1]\n    T1 --> A1\n    T2 --> A2[Group A consumer 2]\n    T0 --> B1[Group B consumer]\n    T1 --> B1\n    T2 --> B1\n    A2 -->|after retries| D[Dead letter topic]",
+          "legend": "One topic, three partitions, two consumer groups. Within a group each partition has exactly one reader; each group reads the whole topic independently. A record that keeps failing is moved to a dead-letter topic so the partition can advance."
+        },
+        {
+          "type": "p",
+          "text": "Consumers that share a group id divide the partitions among themselves. The paper's two decisions still stand: a partition is the unit of parallelism, read by one consumer per group at a time so that no locking is needed between readers; and a topic should have many more partitions than consumers so that load balances, which the authors call over-partitioning. Different groups read the same topic independently with their own offsets and need no coordination with each other. When a member joins or dies the group rebalances and partitions are reassigned; the new owner resumes from the last committed offset, which is the moment duplicates appear.",
+          "cites": [
+            "s1",
+            "s2"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "What the partition count decides.",
+          "columns": [
+            "more partitions",
+            "fewer partitions"
+          ],
+          "rows": [
+            [
+              "more parallel consumers in a group",
+              "consumers beyond the count sit idle"
+            ],
+            [
+              "finer ordering scope (per key), smaller per-partition backlog",
+              "coarser ordering scope, larger backlog per partition"
+            ],
+            [
+              "more files, more leader elections to batch, more rebalance work",
+              "cheaper operations"
+            ],
+            [
+              "changing the count later moves keys between partitions and breaks per-key order during the change",
+              "the same, but it is the number you must get right at the start"
+            ]
+          ],
+          "cites": [
+            "s1",
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Two newer mechanisms soften the sharp edges. Static membership gives a consumer a persistent instance id so that a restart or deploy does not trigger a rebalance and a reshuffle of partitions, which matters for consumers with large local state. Share groups, a second kind of group in the current design, let more consumers than partitions read cooperatively with per-record acknowledgement, a time-limited acquisition lock of thirty seconds by default, and counted delivery attempts, which is the queue model offered on top of the log.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "Pick the key for ordering and the partition count for the parallelism you will need in a year, because changing the count later remaps keys. A hot key, one account producing most of the traffic, defeats both: it serialises on one partition whatever the count.",
+          "cites": [
+            "s2"
+          ]
         }
-      ],
-      "id": "partitions-offsets-groups",
-      "title": "Partitions, offsets and consumer groups"
+      ]
     },
     {
-      "body": [
-        {
-          "body": "The guarantee comes from the order of processing and acknowledging. Acknowledge or commit the offset first, then process: a crash in between loses the message, giving at-most-once. Process first, then acknowledge: a crash in between causes redelivery, giving at-least-once with possible duplicates. At-least-once is the practical default, because lost messages are usually worse than duplicates. On the producer side the same choice exists: a producer that retries after a timeout may write the same message twice unless the broker can detect the duplicate.",
-          "heading": "The three guarantees"
-        },
-        {
-          "body": "Kafka offers two mechanisms. The idempotent producer attaches a producer id and sequence numbers so the broker discards retried duplicates within a partition. Transactions let a producer write to several partitions and commit consumer offsets atomically, so a read, process, write loop inside Kafka takes effect once; consumers must read with isolation level read committed. This covers Kafka to Kafka flows. Any side effect outside Kafka, such as a database write or an API call, still needs an idempotent consumer, typically by recording a message id or using an upsert.",
-          "heading": "Exactly-once in Kafka"
-        }
-      ],
       "id": "delivery-guarantees",
-      "title": "At-most-once, at-least-once and exactly-once"
-    },
-    {
-      "body": [
+      "title": "At-most-once, at-least-once and the order of two operations",
+      "blocks": [
         {
-          "body": "A broker hides overload instead of removing it: if consumers are slower than producers, the backlog grows. On a queue the signal is queue depth and message age; on a stream it is consumer lag, the gap between the latest offset and the committed offset. Scale consumers on these signals, and set retention so that lag cannot outrun it. A message that always fails, a poison message, will block a partition or cycle forever in a queue. Retry a bounded number of times with backoff, then move it to a dead letter queue or topic with the error attached, alert on it and provide a way to replay after the fix.",
-          "heading": "Operating consumers"
+          "type": "p",
+          "text": "The delivery guarantee is not a property of the broker alone; it comes from the order in which a consumer does two things, process the message and record that it has done so. The Kafka design document lays out both orders. Save the position first, then process: a crash between the two loses the messages whose position was saved, which is at-most-once. Process first, then save the position: a crash between the two makes the new owner process those messages again, which is at-least-once. The producer side has the same fork: a producer that retries after a timeout may write the same message twice unless the broker can detect it.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The three guarantees and where each comes from.",
+          "columns": [
+            "guarantee",
+            "consumer order",
+            "producer behaviour",
+            "what the application must do"
+          ],
+          "rows": [
+            [
+              "at-most-once",
+              "commit the position, then process",
+              "no retries",
+              "accept lost messages"
+            ],
+            [
+              "at-least-once",
+              "process, then commit the position",
+              "retry until acknowledged",
+              "make processing idempotent: duplicates will arrive"
+            ],
+            [
+              "exactly-once (within the broker)",
+              "commit position and output atomically",
+              "idempotent producer plus transactions",
+              "keep side effects inside the transaction's reach, or make them idempotent too"
+            ]
+          ],
+          "cites": [
+            "s2",
+            "s3"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Every broker expresses the same choice in its own vocabulary. RabbitMQ's documentation calls automatic acknowledgement, where a message counts as delivered the moment it is written to the socket, unsafe and unsuitable for most workloads, because a closed connection loses it; manual acknowledgement with a bounded prefetch, usually in the range of a hundred to a few hundred, is the normal mode, and any unacknowledged delivery is requeued when the channel closes, so consumers must be written for redelivery. A rejected message is requeued, dead-lettered or discarded, and a loop of requeues on a transient error is a known cost to guard against.",
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "SQS expresses it as a visibility timeout: a received message stays in the queue but is hidden from other consumers for a period, thirty seconds by default, extendable with a heartbeat up to a maximum of twelve hours; delete it before the timeout and it is gone, fail to and it reappears for another consumer. The guide is explicit that the model is at-least-once and that a message may be delivered more than once even inside the timeout. The practical default across all three is therefore the same: at-least-once delivery with an idempotent consumer, because a lost message is usually worse than a duplicate.",
+          "cites": [
+            "s5",
+            "s2"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Write every consumer for duplicates: record the message id or use an upsert, commit the position after the side effect, and bound the retries. The broker's acknowledgement mode decides which failure you get; the consumer's idempotency decides whether it matters.",
+          "cites": [
+            "s2",
+            "s4"
+          ]
         }
-      ],
-      "id": "lag-retries-dead-letters",
-      "title": "Backpressure, lag, retries and dead letters"
-    }
-  ],
-  "diagram": {
-    "source": "flowchart LR\n    P1[Producer] -->|key hash| T0[Partition 0]\n    P1 -->|key hash| T1[Partition 1]\n    P1 -->|key hash| T2[Partition 2]\n    T0 --> A1[Group A consumer 1]\n    T1 --> A1\n    T2 --> A2[Group A consumer 2]\n    T0 --> B1[Group B consumer]\n    T1 --> B1\n    T2 --> B1\n    A2 -->|after retries| D[Dead letter topic]"
-  },
-  "code": [
-    {
-      "code": "# create a topic with 6 partitions, then inspect consumer lag\nbin/kafka-topics.sh --create --topic orders --partitions 6 \\\n  --replication-factor 3 --bootstrap-server HOST:9092\nbin/kafka-consumer-groups.sh --describe --group billing \\\n  --bootstrap-server HOST:9092",
-      "lang": "bash"
+      ]
     },
     {
-      "code": "# at-least-once consumer with an idempotent handler\nfor msg in consumer:                      # auto commit disabled\n    event_id = msg.headers_dict['event-id']\n    with db.transaction() as tx:\n        if tx.seen(event_id):             # duplicate delivery\n            continue\n        apply_event(tx, msg.value)\n        tx.mark_seen(event_id)\n    consumer.commit()                     # commit after processing",
-      "lang": "python"
+      "id": "exactly-once",
+      "title": "What exactly-once really means",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Exactly-once is the guarantee everyone wants and the one most often claimed loosely. The Kafka design document warns that many such claims do not survive the fine print: consumer failures, several consumer processes, or lost disk writes. What Kafka itself provides since version 0.11 rests on two mechanisms. The idempotent producer attaches a producer id and a sequence number to every batch, persisted in the replicated log, so a retried batch is discarded by the broker rather than written twice, within one partition and in order. Transactions let a producer write to several partitions atomically and commit the consumer's position in the same transaction, so that a read-process-write loop that stays inside Kafka takes effect once.",
+          "cites": [
+            "s2",
+            "s3"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "What Kafka's exactly-once covers, from the design document and the Confluent write-up.",
+          "columns": [
+            "scope",
+            "covered",
+            "how"
+          ],
+          "rows": [
+            [
+              "producer retries into one partition",
+              "yes",
+              "idempotent producer: sequence numbers deduplicated by the broker"
+            ],
+            [
+              "writes to several partitions",
+              "yes",
+              "a transaction: all visible or none"
+            ],
+            [
+              "read from Kafka, process, write to Kafka",
+              "yes",
+              "offsets committed inside the same transaction; consumers read with read_committed"
+            ],
+            [
+              "a database write or an API call made by the consumer",
+              "no",
+              "needs an idempotent consumer, an upsert, or the offset stored with the output"
+            ],
+            [
+              "a consumer that rewinds on purpose",
+              "no",
+              "it will receive everything again; the application and the broker must cooperate"
+            ]
+          ],
+          "cites": [
+            "s2",
+            "s3"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The cost is small by the authors' measurement: with a transaction every hundred milliseconds, producer throughput fell by about three percent against an at-least-once producer and by about twenty percent against the fastest, unordered setting, and the idempotent producer alone had negligible overhead. The price that remains is latency, because a read-committed consumer sees a transaction's records only when it commits, so the commit interval sets the end-to-end delay.",
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Outside the broker the word changes meaning. SQS FIFO queues offer what the documentation calls exactly-once processing, meaning that duplicates are not introduced into the queue and a delivered message stays unavailable until deleted; it says nothing about what the consumer does with it. The design document's own general advice is the one that applies everywhere: let the consumer store its offset in the same place as its output, so that the two are updated together or not at all, as a connector writing files with their offsets does.",
+          "cites": [
+            "s6",
+            "s2"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "Exactly-once is a property of a closed loop. The moment the consumer touches a system outside it, the guarantee is whatever that system's write gives you, and the only portable answer is an idempotent write keyed by the message.",
+          "cites": [
+            "s2",
+            "s3"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "backlogs-and-backpressure",
+      "title": "Backlogs, lag, backpressure and dead letters",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "A queue does not remove overload; it moves it in time. Amazon's Builders' Library describes the result as bimodal behaviour: with no backlog, latency is low and the system is in its fast mode; once arrivals exceed the processing rate it flips into a mode where end-to-end latency grows and recovery takes a long time, so the queue that was added for availability now causes the availability loss it was meant to prevent. The arithmetic is unforgiving: an hour's outage needs double the capacity for an hour afterwards, and a backlog ten times the consumer capacity, built in the half hour before anyone notices, takes five hours to drain.",
+          "cites": [
+            "s7"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The metric that catches it is the age of messages, not the error rate. The producer's success rate mirrors the queue service's availability and the consumer's error rate is polluted by retries that then succeed; the age of the oldest message, or the age at first delivery attempt as AWS IoT measures it to filter out slow readers, shows how far behind the system is. On a log the equivalent is consumer lag, the gap between the latest offset and the committed one, and retention must be set so that lag cannot outrun it.",
+          "cites": [
+            "s7",
+            "s2"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Amazon's techniques for a backlog that will not drain, from the Builders' Library.",
+          "columns": [
+            "technique",
+            "what it does"
+          ],
+          "rows": [
+            [
+              "shuffle sharding of queues",
+              "hash each tenant to a few of a fixed set of queues and enqueue to the emptiest, so one tenant's surge does not back up everyone"
+            ],
+            [
+              "sidelining excess or old traffic",
+              "move a noisy tenant's messages, or messages past an age, to a spillover queue worked after the live one"
+            ],
+            [
+              "backpressure upstream",
+              "throttle the producer in proportion to the backlog of its workload"
+            ],
+            [
+              "delay queues",
+              "re-enqueue work to be hidden for minutes, giving fresh messages priority"
+            ],
+            [
+              "dropping old messages",
+              "where a periodic full sync will correct the state anyway"
+            ],
+            [
+              "buffer in polling threads",
+              "keep spare polling capacity so a spike does not become sustained backlog"
+            ],
+            [
+              "heartbeat long messages",
+              "extend the visibility timeout while working, or an overloaded consumer re-receives its own work and forks itself"
+            ]
+          ],
+          "cites": [
+            "s7"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Poison messages need their own exit. A message that fails every time blocks a partition or cycles for ever through a queue; the answer is a bounded number of retries with backoff and then a dead-letter queue or topic, alarmed on, with a way to replay after the fix. SQS attaches that policy to the queue and recommends it for persistent failures; RabbitMQ dead-letters on rejection, expiry or queue overflow; Amazon's teams alarm on any message in a dead-letter queue because it means a bug.",
+          "cites": [
+            "s5",
+            "s4",
+            "s7"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Alert on message age, not on queue depth or error rate. Decide before launch what the system does when the backlog exceeds an hour of capacity: shed at the producer, sideline, or drop, because draining in order is the one answer that never recovers on time.",
+          "cites": [
+            "s7"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "durability-acks-and-replicas",
+      "title": "What durable means: acknowledgements, in-sync replicas and confirms",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "A message is durable when the broker will not lose it after acknowledging it, and the acknowledgement is a dial. In Kafka a message is committed only when every replica in the in-sync set has applied it; the producer chooses whether to wait for that, with acks set to all, to wait for the leader only, or not to wait at all, and the design document notes that waiting for the commit costs on the order of ten milliseconds. Two topic settings turn durability up further: a minimum in-sync replica count, so that a write cannot succeed on a lone surviving replica, and disabling unclean leader election, so that a partition stays unavailable rather than elect a replica that may lack committed messages.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The producer's acknowledgement setting in Kafka and what it buys.",
+          "columns": [
+            "acks",
+            "the producer waits for",
+            "survives"
+          ],
+          "rows": [
+            [
+              "0",
+              "nothing",
+              "no failure; a lost send is never known"
+            ],
+            [
+              "1",
+              "the leader's write",
+              "a follower failure; a leader crash before replication loses the message"
+            ],
+            [
+              "all",
+              "every in-sync replica, at least the minimum configured",
+              "any failure that leaves one in-sync replica alive"
+            ]
+          ],
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Kafka's in-sync-replica design is a deliberate departure from majority quorums: with f plus one replicas it tolerates f failures, where a majority scheme needs two f plus one, at the price of waiting for every in-sync replica rather than the fastest majority. The document argues the saving in disk and throughput is worth it for bulk data, and that a replica that crashed and lost unflushed data must fully resynchronise before it rejoins the in-sync set.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Traditional brokers expose the same dial under other names. RabbitMQ's publisher confirms are the only cheap way to know a publish was not lost; transactions do the same at a two-hundred-and-fifty-fold throughput cost. A confirm for a persistent message to a durable queue is sent after the message is written to disk, batched every few hundred milliseconds, or for a quorum queue once a quorum of replicas has it, and the documentation shows the trap of consuming without confirms: a broker restart loses a message the publisher believed was persistent.",
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Set durability per topic from what losing a message costs: acks all with a minimum of two in-sync replicas and no unclean election for money and orders; leader-only acknowledgement for logs and metrics where a rare loss is cheaper than the latency.",
+          "cites": [
+            "s2",
+            "s8"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "choosing-queue-or-log",
+      "title": "Choosing: queue, log, topic or bus",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The choice is per flow, not per organisation, and it starts with the payload: a command for one worker, an event for many readers, a notification for people, or a stream to be analysed. The decision below is vendor-neutral; the next subtopic maps each option to the AWS services the exercises use. The example column names the flow each option is usually right for.",
+          "cites": [
+            "s1",
+            "s10"
+          ]
+        },
+        {
+          "type": "decision",
+          "caption": "Picking the messaging model for one flow.",
+          "rows": [
+            {
+              "option": "Task queue (competing consumers)",
+              "pick_when": "each message is an independent job for exactly one worker, must be retried and delayed on its own, and can be forgotten once done",
+              "avoid_when": "several systems need the same event, or a reader must be able to replay history",
+              "example": "sending emails; resizing images; running a billing job"
+            },
+            {
+              "option": "Ordered task queue (groups or sessions)",
+              "pick_when": "jobs for one entity must run in order, at a lower throughput per group",
+              "avoid_when": "the per-group ceiling is below the entity's event rate",
+              "example": "the operations on one order; one customer's commands"
+            },
+            {
+              "option": "Partitioned log (stream)",
+              "pick_when": "events are facts that several consumers read at their own pace, order per key matters, replay and backfill are valuable, throughput is high",
+              "avoid_when": "work items need individual retry and delay, or ordering is not needed and a queue is simpler to operate",
+              "example": "order events feeding billing, search, analytics and fraud"
+            },
+            {
+              "option": "Pub/sub topic (fan-out)",
+              "pick_when": "one message must reach several subscribers now, each with its own queue or function, including push to people",
+              "avoid_when": "subscribers need to read the past; the topic does not persist",
+              "example": "an order placed event fanned out to fulfilment, a warehouse and a test environment"
+            },
+            {
+              "option": "Event bus with rules",
+              "pick_when": "many sources route to many targets by content, across accounts or SaaS, with transformation on the way",
+              "avoid_when": "strict ordering or very high throughput per route is required",
+              "example": "integration events between teams and third-party tools"
+            }
+          ],
+          "cites": [
+            "s1",
+            "s2",
+            "s9",
+            "s10"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Two combinations recur. A topic or bus in front of a queue gives fan-out plus a durable buffer per consumer, which is how the AWS guide describes routing events to a queue for downstream consumers. A log behind a thin gateway gives a durable, replayable buffer in front of an older system, which is what Slack built when its Redis-backed job queue ran out of memory: Kafka absorbs the enqueue rate and a relay drains it into Redis at a configured rate.",
+          "cites": [
+            "s9",
+            "s8"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Start from the consumer: one worker that must retry, a queue; many readers that may replay, a log; many targets to notify now, a topic; many sources to route, a bus. Then size the partition or group count from the ordering key and the year's throughput.",
+          "cites": [
+            "s1",
+            "s2",
+            "s9"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "on-aws",
+      "title": "On AWS: SQS, SNS, EventBridge, Kinesis Data Streams and MSK",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "AWS offers the five models as six services: SQS pulls, SNS pushes, EventBridge routes by rule, Kinesis and MSK are logs. Its messaging guide compares the first three on persistence, delivery, ordering and filtering; its application-integration guide separates messaging from streaming and names replay and ordering as the deciding criteria. The tables carry the criteria the exercises need, in documented terms.",
+          "cites": [
+            "s9",
+            "s10"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The messaging services against the criteria.",
+          "columns": [
+            "criterion",
+            "SQS standard",
+            "SQS FIFO",
+            "SNS"
+          ],
+          "rows": [
+            [
+              "ordering",
+              "none",
+              "strict within a message group",
+              "FIFO topics"
+            ],
+            [
+              "replay",
+              "none once deleted",
+              "none",
+              "none: not persisted"
+            ],
+            [
+              "fan-out",
+              "one consumer per message",
+              "one consumer per message",
+              "SQS, Lambda, HTTP, email, SMS, push"
+            ],
+            [
+              "throughput",
+              "nearly unlimited",
+              "300 calls per second per partition, 3,000 messages batched; high-throughput mode far higher",
+              "elastic"
+            ],
+            [
+              "retention",
+              "4 days by default, up to 14",
+              "the same",
+              "none"
+            ],
+            [
+              "cost basis",
+              "API requests",
+              "API requests",
+              "publishes and deliveries"
+            ]
+          ],
+          "cites": [
+            "s9",
+            "s6"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The event bus and the streams against the criteria.",
+          "columns": [
+            "criterion",
+            "EventBridge",
+            "Kinesis Data Streams",
+            "Amazon MSK"
+          ],
+          "rows": [
+            [
+              "ordering",
+              "classic bus none; the newer custom bus ordered",
+              "within a shard",
+              "within a partition"
+            ],
+            [
+              "replay",
+              "from an archive, by minute, not in original order",
+              "any retained offset",
+              "any retained offset"
+            ],
+            [
+              "fan-out",
+              "many targets per rule, cross-account",
+              "up to 20 enhanced fan-out consumers, 50 in one mode",
+              "any number of consumer groups"
+            ],
+            [
+              "throughput",
+              "elastic per event",
+              "1 MB/s or 1,000 records per second written per shard, 2 MB/s read; on-demand scales further",
+              "brokers per Availability Zone"
+            ],
+            [
+              "retention",
+              "not persisted; archives keep what you set",
+              "24 hours to 365 days",
+              "topic retention or compaction"
+            ],
+            [
+              "cost basis",
+              "events and target invocations",
+              "shards or on-demand throughput",
+              "broker capacity"
+            ]
+          ],
+          "cites": [
+            "s9",
+            "s12",
+            "s11",
+            "s10",
+            "s2"
+          ]
+        },
+        {
+          "type": "decision",
+          "caption": "Picking the AWS service for one flow, with the criteria above.",
+          "rows": [
+            {
+              "option": "SQS standard",
+              "pick_when": "a task queue with competing consumers, per-message retry and a dead-letter queue, no ordering need",
+              "avoid_when": "consumers need order, replay, or several readers",
+              "example": "the fan-out workers of a feed; jobs behind an API"
+            },
+            {
+              "option": "SQS FIFO",
+              "pick_when": "jobs per entity in order, no duplicates entering the queue, within the per-group limits",
+              "avoid_when": "the ordered flow exceeds FIFO limits even batched",
+              "example": "the commands for one order"
+            },
+            {
+              "option": "SNS",
+              "pick_when": "one event to several subscribers now, including people",
+              "avoid_when": "subscribers need history",
+              "example": "an order placed topic feeding fulfilment, analytics and a test queue"
+            },
+            {
+              "option": "EventBridge",
+              "pick_when": "many sources to many targets by content, across accounts and SaaS, with archive and replay",
+              "avoid_when": "strict order per key, or a hot path priced per event",
+              "example": "integration events between a platform's teams"
+            },
+            {
+              "option": "Kinesis Data Streams",
+              "pick_when": "a high-volume ordered stream for a few registered consumers, managed shards or on-demand, retention to a year",
+              "avoid_when": "the team needs Kafka's ecosystem or many consumer groups",
+              "example": "click and location streams into analytics and fraud"
+            },
+            {
+              "option": "Amazon MSK",
+              "pick_when": "the organisation runs Kafka or needs its semantics: partitions, groups, transactions, compaction, connectors",
+              "avoid_when": "a small team adopting Kafka operations for one flow",
+              "example": "the event backbone of a platform"
+            }
+          ],
+          "cites": [
+            "s9",
+            "s10",
+            "s11",
+            "s6",
+            "s2"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "tip",
+          "text": "The exercises link back here: read a design's ordering, replay, fan-out and throughput needs off the tables, then name the service in those words.",
+          "cites": [
+            "s9",
+            "s10"
+          ]
+        }
+      ]
     }
   ],
+  "worked_example": {
+    "title": "Worked example: an order-event log at 20,000 events per second, and its backlog plan",
+    "blocks": [
+      {
+        "type": "p",
+        "text": "An e-commerce platform publishes every order change as an event that billing, search, analytics and fraud each consume. The team must size the log, pick the key, set durability, and decide in advance what happens when a consumer falls an hour behind. Every input is an assumption chosen to make the arithmetic concrete; the mechanics are the Kafka design document's and the backlog rules are the Builders' Library's.",
+        "cites": [
+          "s2",
+          "s7"
+        ]
+      },
+      {
+        "type": "steps",
+        "title": "From the event rate to partitions, replicas, retention and a drain plan",
+        "items": [
+          "Events: 5,000 order events per second on average, 20,000 at peak (assumption), of about 1 kB each.",
+          "Peak write bandwidth: 20,000 events of 1 kB is 20 MB/s into the log, before replication.",
+          "Ordering key: the order id, so every change to one order lands in one partition in sequence.",
+          "Consumer capacity: one billing consumer handles 2,000 events per second including its database write (assumption from a load test), so the peak needs 10 consumers in the billing group.",
+          "Partition count: at least 10 for the consumers, over-partitioned to 30 so the group can triple before the count must change and keys move.",
+          "Durability: replication factor 3 with acks set to all and a minimum of 2 in-sync replicas, so a committed order event survives the loss of one broker and a write cannot land on a lone replica.",
+          "Retention: 7 days at 5,000 events per second of 1 kB is about 430 GB a day, 3 TB for the week, 9 TB on disk with three replicas.",
+          "Backlog: a one-hour billing outage leaves 18 million events (5,000 per second times 3,600); the Builders' Library arithmetic says draining it in an hour needs double the capacity, 20 consumers.",
+          "The real limit: 20 consumers would push 40,000 writes per second into the billing database, so the drain is capped at what that database sustains and the recovery time is set by it, not by the log.",
+          "Lag alert: a consumer group whose committed offset is more than 5 minutes behind the latest, about 1.5 million events, pages before the backlog becomes insurmountable.",
+          "Poison events: an event that fails 3 times with backoff is written to a dead-letter topic with the error attached and the partition moves on; the topic is alarmed and replayed after the fix.",
+          "The decider: the billing database's write rate. The log absorbs any burst at 20 MB/s; the time to recover from a consumer outage is the backlog divided by what the slowest dependency can take, so that number goes in the runbook."
+        ],
+        "cites": [
+          "s2",
+          "s7",
+          "s1"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "The design as a reviewer should receive it: one row per decision, with its rule.",
+        "columns": [
+          "decision",
+          "value",
+          "derived from"
+        ],
+        "rows": [
+          [
+            "key",
+            "order id",
+            "the entity whose events must stay in order"
+          ],
+          [
+            "partitions",
+            "30",
+            "10 consumers at peak, room to triple"
+          ],
+          [
+            "replication",
+            "3 replicas, acks all, 2 in sync minimum",
+            "survive one broker; refuse a lone-replica write"
+          ],
+          [
+            "retention",
+            "7 days, about 9 TB on disk",
+            "430 GB a day times 7 times 3 replicas"
+          ],
+          [
+            "one-hour backlog",
+            "18 million events",
+            "5,000 per second times 3,600"
+          ],
+          [
+            "drain plan",
+            "capped by the billing database",
+            "double capacity is only useful if the dependency takes it"
+          ],
+          [
+            "lag alert",
+            "5 minutes behind",
+            "about 1.5 million events"
+          ],
+          [
+            "dead letter",
+            "after 3 failed attempts",
+            "bounded retries then sideline and alarm"
+          ]
+        ],
+        "cites": [
+          "s2",
+          "s7"
+        ]
+      },
+      {
+        "type": "code",
+        "lang": "python",
+        "code": "# at-least-once consumer with an idempotent handler: process, then commit the position\nfor msg in consumer:                        # auto commit disabled\n    event_id = msg.headers[\"event-id\"]\n    with db.transaction() as tx:\n        if tx.seen(event_id):               # duplicate after a rebalance or a retry\n            consumer.commit(msg)\n            continue\n        apply_billing_change(tx, msg.value)\n        tx.mark_seen(event_id)              # the id lands in the same transaction as the side effect\n    consumer.commit(msg)                    # only after the database commit",
+        "caption": "The consumer order that gives at-least-once with no duplicate effects: the side effect and the seen-id commit together, the offset commits last."
+      }
+    ]
+  },
+  "diagram": null,
+  "code": [],
   "technologies": [
     "Apache Kafka",
     "RabbitMQ",
@@ -109,30 +915,142 @@
   ],
   "sources": [
     {
-      "kind": "doc",
-      "title": "Kafka documentation",
-      "url": "https://kafka.apache.org/documentation/"
+      "id": "s1",
+      "title": "Jay Kreps, Neha Narkhede and Jun Rao, Kafka: a Distributed Messaging System for Log Processing, NetDB 2011 (public copy, PDF): the partitioned log, offsets held by the consumer, pull, retention and rewind, consumer groups, at-least-once",
+      "url": "https://notes.stephenholiday.com/Kafka.pdf",
+      "kind": "paper",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Kafka only guarantees at-least-once delivery"
+      }
     },
     {
+      "id": "s2",
+      "title": "Apache Kafka 4.3 documentation, Design: persistence, the producer, push against pull, consumer position, message delivery semantics, transactions, share groups, replication with in-sync replicas, unclean leader election, log compaction, quotas",
+      "url": "https://kafka.apache.org/43/design/design/",
       "kind": "doc",
-      "title": "Kafka introduction",
-      "url": "https://kafka.apache.org/intro/"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "A message is considered committed only when all replicas in the in-sync replicas (ISR) for that partition have applied it to their log"
+      }
     },
     {
+      "id": "s3",
+      "title": "Neha Narkhede and Guozhang Wang, Exactly-Once Semantics Are Possible: Here's How Kafka Does It (Confluent blog, 2017-06-30, updated March 2025): idempotent producer, transactions, read_committed, what the guarantee covers and its measured cost",
+      "url": "https://www.confluent.io/blog/exactly-once-semantics-are-possible-heres-how-apache-kafka-does-it/",
       "kind": "article",
-      "title": "Exactly-once semantics in Apache Kafka (Confluent)",
-      "url": "https://www.confluent.io/blog/exactly-once-semantics-are-possible-heres-how-apache-kafka-does-it/"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "the producer throughput declines only by 3%"
+      }
     },
     {
+      "id": "s4",
+      "title": "RabbitMQ 4.3 documentation, Consumer Acknowledgements and Publisher Confirms: automatic against manual acknowledgement, requeue and dead-lettering, prefetch, automatic requeueing on connection loss, publisher confirms and when they are sent",
+      "url": "https://www.rabbitmq.com/docs/confirms",
       "kind": "doc",
-      "title": "Competing Consumers pattern (Azure Architecture Center)",
-      "url": "https://learn.microsoft.com/en-us/azure/architecture/patterns/competing-consumers"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "automatic message acknowledgement should be considered unsafe"
+      }
+    },
+    {
+      "id": "s5",
+      "title": "Amazon SQS Developer Guide, visibility timeout: the default, the maximum, in-flight limits, heartbeating with ChangeMessageVisibility, dead-letter queues for repeated failures",
+      "url": "https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-visibility-timeout.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "The default visibility timeout for a queue is 30 seconds"
+      }
+    },
+    {
+      "id": "s6",
+      "title": "Amazon SQS Developer Guide, message quotas: retention, message size, standard against FIFO throughput, high-throughput FIFO limits by Region, batching",
+      "url": "https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/quotas-messages.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Each partition in a FIFO queue is limited to 300 transactions per second"
+      }
+    },
+    {
+      "id": "s7",
+      "title": "Amazon Builders' Library, Avoiding insurmountable queue backlogs (David Yanacek, 2019-12-05): bimodal queue behaviour, recovery time arithmetic, message age as the metric, shuffle sharding, sidelining, backpressure, delay queues, the visibility-timeout fork bomb",
+      "url": "https://builder.aws.com/content/3EuRcgkTP1MI0c7zM8W6HL3WIqA/avoiding-insurmountable-queue-backlogs",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "a queue-based system has two modes of operation, or bimodal behavior"
+      }
+    },
+    {
+      "id": "s8",
+      "title": "Slack Engineering, Scaling Slack's Job Queue (2017-12-06, updated 2020-06-25): the Redis memory outage, Kafka in front of Redis, Kafkagate and JQRelay, the cluster configuration and the rollout",
+      "url": "https://slack.engineering/scaling-slacks-job-queue/",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "over 1.4 billion jobs at a peak rate of 33,000 per second"
+      }
+    },
+    {
+      "id": "s9",
+      "title": "AWS Decision Guides, Amazon SQS, Amazon SNS, or Amazon EventBridge? (updated November 2025): communication model, persistence, delivery guarantees, ordering, filtering, subscribers, pricing basis",
+      "url": "https://docs.aws.amazon.com/decision-guides/latest/decision-guides/sns-or-sqs-or-eventbridge.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Messages persist until consumed or expired"
+      }
+    },
+    {
+      "id": "s10",
+      "title": "AWS Decision Guides, Choosing an AWS application integration service (updated April 2025): messaging against streaming, replay and ordering as criteria, pull against push, managed open source (Amazon MQ, Amazon MSK), the service-type table",
+      "url": "https://docs.aws.amazon.com/decision-guides/latest/decision-guides/application-integration-on-aws-how-to-choose.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "The need to have a replay capability can also be an important factor"
+      }
+    },
+    {
+      "id": "s11",
+      "title": "Amazon Kinesis Data Streams Developer Guide, Quotas and limits: on-demand against provisioned, per-shard write and read rates, retention from 24 hours to 365 days, registered consumers",
+      "url": "https://docs.aws.amazon.com/streams/latest/dev/service-sizes-and-limits.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Each shard can support up to 1 MB/sec or 1,000 records/sec write throughput"
+      }
+    },
+    {
+      "id": "s12",
+      "title": "Amazon EventBridge User Guide, Archiving and replaying events: archives with a retention you set, replay to the source bus, replay order by minute, the replay-name field",
+      "url": "https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-archive.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Events aren't necessarily replayed in the same order that they were added to the archive"
+      }
     }
   ],
   "practice": "practice/sd-queues-streams",
   "provenance": {
-    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
-    "generated_on": "2026-10-13",
+    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center, format v2",
+    "generated_on": "2026-10-15",
     "reviewed_by": null,
     "reviewed_on": null
   },
@@ -141,6 +1059,11 @@
       "version": 1,
       "date": "2026-10-13",
       "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-15",
+      "change": "rewritten by hand from primary sources at format v2 (learning-center-lesson:2): 8 subtopics with the queue-against-log table, the partition diagram in its subtopic, the three-guarantee table, the exactly-once scope table, Amazon's backlog techniques, the acks table, a neutral decision block per flow and an AWS decision block over SQS standard, SQS FIFO, SNS, EventBridge, Kinesis Data Streams and MSK with two cited criteria tables, a worked order-event log sizing with the at-least-once consumer as code after the teaching, cited in-practice blocks (LinkedIn, Confluent, Slack, Amazon, RabbitMQ), 12 verified sources with ids"
     }
   ]
 }
