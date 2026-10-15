@@ -1,7 +1,7 @@
 {
-  "schema_version": "learning-center-lesson:1",
+  "schema_version": "learning-center-lesson:2",
   "id": "sd-outbox-cdc",
-  "version": 1,
+  "version": 2,
   "status": "published",
   "superseded_by": null,
   "title": "Outbox and change data capture",
@@ -20,90 +20,671 @@
     "postgres",
     "kafka"
   ],
-  "summary": "A service often needs to change its own database and tell other systems about it, and doing those as two separate writes will eventually leave them out of sync. The outbox pattern makes the message part of the same local transaction, and change data capture reads the database's own log to publish it reliably. Together they turn the database commit log into the single source of ordered truth that everything else derives from.",
+  "summary": "A service that changes its own database and tells other systems about it will, with two separate writes, eventually leave them out of step. This lesson states the dual write problem and its failure orders, gives the transactional outbox table and its relay options, explains log-based change data capture with PostgreSQL logical decoding and what a connector does at start and restart, the operational hazards of replication slots, how events are routed by aggregate and consumed at least once, the log as the source for derived views, a decision block over the options, and a worked sizing of an order-event pipeline.",
   "detail": [],
-  "in_practice": "A team adopting this starts with one service whose events others depend on. They add an outbox table, change the write path to insert the event in the same transaction, and deploy a Debezium connector on Kafka Connect with the outbox event router, capturing only the outbox table. Events get a stable schema in a registry and a version field. Consumers add an inbox table for deduplication. Operations monitor replication slot lag, connector status and end to end delay from commit to consumption, and schedule cleanup of old outbox rows. Raw table CDC is kept for internal uses such as search indexing and warehouse loading.",
+  "in_practice": {
+    "blocks": [
+      {
+        "type": "table",
+        "caption": "Shopify's move from query-based to log-based capture, from its engineering post.",
+        "columns": [
+          "before and after",
+          "figure"
+        ],
+        "rows": [
+          [
+            "Query-based extraction (Longboat)",
+            "a table could be queried at most once an hour, against read replicas, with no joins"
+          ],
+          [
+            "Sources",
+            "100 or more MySQL shards behind the core monolith"
+          ],
+          [
+            "Connectors",
+            "one Debezium connector per shard, with a transform routing each table's events from every shard into one topic"
+          ],
+          [
+            "Latency from MySQL insert to Kafka",
+            "p99 under 10 seconds"
+          ],
+          [
+            "Schemas",
+            "Avro with a schema registry, one domain definition per topic"
+          ],
+          [
+            "Open problem at the time",
+            "initial snapshots of the largest tables took hours and blocked incoming binlog events"
+          ]
+        ],
+        "cites": [
+          "s12"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "The Debezium team's own account of the outbox pattern is the design most teams copy: an outbox table with an id, an aggregate type, an aggregate id and a JSON payload, written in the same transaction as the business rows, captured from the log, with the id used by consumers to detect duplicates after a restart. The post was later superseded in one respect: the custom transform it described became the outbox event router shipped with Debezium.",
+        "cites": [
+          "s2",
+          "s3"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Kafka's designers built log compaction for exactly this traffic. The design document lists database change subscription, event sourcing and journaling for high-availability as the use cases, and explains that in each one a consumer needs the real-time feed most of the time and occasionally a full load, which a compacted topic provides from the same log by keeping the last value per key.",
+        "cites": [
+          "s9"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "AWS's pattern guidance records the operating rules its teams attach to the outbox: make the consuming service idempotent by tracking processed messages, send events in the same order the service updated the database, send nothing for a rolled-back transaction, and use a saga where a transaction must span services' data stores.",
+        "cites": [
+          "s1"
+        ]
+      }
+    ]
+  },
   "subtopics": [
     {
-      "body": [
+      "id": "the-dual-write-problem",
+      "title": "The dual write problem",
+      "blocks": [
         {
-          "body": "A handler that commits to its database and then publishes to a broker has no transaction covering both. If the process crashes after the commit, the event is never sent and downstream systems never learn of the change. If it publishes first and the commit then fails, consumers act on something that did not happen. Retrying does not help, because the crash can occur between the two steps on any attempt. Concurrent requests can also publish in a different order than they committed. The result is silent drift that is found much later through reconciliation.",
-          "heading": "Why two writes fail"
+          "type": "p",
+          "text": "AWS's design pattern catalogue names the problem: a dual write occurs when one operation writes to two systems, a database and a message broker, and the two writes should run atomically but cannot. If the database update succeeds and the notification fails, downstream services never learn of the change and the system is inconsistent; if the notification is sent and the update fails, consumers act on something that never happened. Neither failure is exotic: a process can be killed between any two statements, and a broker call can time out after the broker has in fact accepted the message.",
+          "cites": [
+            "s1"
+          ]
         },
         {
-          "body": "The fix is to write to exactly one system synchronously and derive everything else from it. Since the service's database already provides atomic local transactions and an ordered commit log, it becomes the single place where the decision is recorded. Publishing becomes an asynchronous, retryable step driven from that record. This gives eventual consistency between services with a clear direction of flow, and no distributed transaction across the database and the broker.",
-          "heading": "The principle"
-        }
-      ],
-      "id": "dual-write-problem",
-      "title": "The dual write problem"
-    },
-    {
-      "body": [
-        {
-          "body": "The service adds an outbox table to its own database. In the same transaction that changes business tables, it inserts a row describing the event: a unique event id, the aggregate type and id, an event type and a payload. Either both the state change and the event row commit, or neither does. A separate relay then reads new outbox rows and publishes them to the broker. If the relay crashes after publishing but before recording progress, it publishes again, so delivery is at-least-once and consumers must deduplicate on the event id.",
-          "heading": "How it works"
+          "type": "table",
+          "caption": "What can go wrong when a handler commits and publishes as two steps.",
+          "columns": [
+            "order of operations",
+            "the failure",
+            "what the consumer sees"
+          ],
+          "rows": [
+            [
+              "Commit, then publish",
+              "crash or broker error after the commit",
+              "nothing; the change is invisible downstream until a reconciliation finds it"
+            ],
+            [
+              "Publish, then commit",
+              "the commit fails or the transaction rolls back",
+              "an event for a change that did not happen"
+            ],
+            [
+              "Publish, then commit, under concurrency",
+              "two requests commit in one order and publish in the other",
+              "events out of order against the database's own history"
+            ],
+            [
+              "Either order, with retries",
+              "a timeout on a call that actually succeeded",
+              "the same event twice, so the consumer must deduplicate regardless"
+            ]
+          ],
+          "cites": [
+            "s1"
+          ]
         },
         {
-          "body": "A polling relay queries the table for unpublished rows, publishes and marks or deletes them. It is simple but adds latency and load, and ordering needs care when transactions commit out of sequence order. A log based relay uses change data capture to read the inserts from the database log in commit order with low latency and no polling queries. Either way the outbox table needs cleanup, since it is a transit buffer and not a history store. The payload is a deliberate public contract, decoupled from the internal table schema.",
-          "heading": "Relay options"
-        }
-      ],
-      "id": "transactional-outbox",
-      "title": "The transactional outbox table"
-    },
-    {
-      "body": [
-        {
-          "body": "Every database writes changes to a durable log before applying them: the write ahead log in PostgreSQL, the binlog in MySQL. Change data capture tails that log and emits one event per committed row change, in commit order, without touching application code. Debezium does this as a set of Kafka Connect source connectors. For PostgreSQL it uses logical decoding through a replication slot and an output plugin such as pgoutput, takes an initial snapshot of existing rows, then streams inserts, updates and deletes with before and after images of the row.",
-          "heading": "Reading the database log"
+          "type": "p",
+          "text": "Retrying does not close the gap, because the crash can fall between the two steps on every attempt, and a distributed transaction across the database and the broker is not available in most stacks and is costly where it is. The pattern's applicability statement gives the cases that need a fix: an event-driven application where a database update initiates a notification, atomicity across two services, and event sourcing, where the event store is the point-in-time record and an out-of-order event compromises it.",
+          "cites": [
+            "s1"
+          ]
         },
         {
-          "body": "A replication slot makes the database retain log segments until the connector confirms it has consumed them. If the connector stops, the log accumulates and can fill the disk, so slot lag must be monitored and alerted on. The connector stores its log position as offsets and resumes from there after a restart, which gives at-least-once delivery. Schema changes flow through as changed event shapes, so consumers need a compatibility policy. Raw table CDC exposes internal schema to consumers; routing an outbox table through CDC avoids that coupling.",
-          "heading": "Operational concerns"
-        }
-      ],
-      "id": "log-based-cdc",
-      "title": "Log based change data capture"
-    },
-    {
-      "body": [
-        {
-          "body": "Debezium provides an outbox event router, a single message transform that reshapes captured outbox inserts into clean events. By default it expects columns for the event id, aggregate type, aggregate id, event type and payload. It routes each event to a topic derived from the aggregate type and uses the aggregate id as the record key, so all events for one aggregate go to one partition and keep their order. The event id is carried along so consumers can detect duplicates.",
-          "heading": "From outbox rows to topics"
+          "type": "p",
+          "text": "The principle behind every fix below is to write synchronously to exactly one system and derive the rest. The service's own database already provides atomic local transactions and an ordered commit log, so the decision is recorded once there, and publication becomes an asynchronous, retryable step driven from that record. The result is eventual consistency between services with a clear direction of flow, and no coordination across the database and the broker."
         },
         {
-          "body": "Consumers treat delivery as at-least-once. The standard approach is an inbox: record each processed event id in the consumer's own database in the same transaction as the effect, and skip ids already present. Where possible make the effect naturally idempotent, such as an upsert keyed by aggregate id with a version check that ignores older versions. Because events are ordered per key only, a consumer must not assume order between different aggregates.",
-          "heading": "Consumer side"
+          "type": "callout",
+          "kind": "rule",
+          "text": "Never publish from the request handler. Record the event in the same transaction as the state change, and let a relay publish it from that record, at least once, in commit order.",
+          "cites": [
+            "s1"
+          ]
         }
-      ],
-      "id": "outbox-event-routing",
-      "title": "Routing outbox events and consuming them safely"
+      ]
     },
     {
-      "body": [
+      "id": "the-transactional-outbox",
+      "title": "The transactional outbox table and its relay",
+      "blocks": [
         {
-          "body": "A change stream generalizes beyond service integration. Caches, search indexes, analytics tables and read models are all derived data: each can be seen as a materialized view computed from an ordered log of changes. Instead of the application writing to the database, the cache and the index separately, it writes once, and stream consumers maintain each view. A view that is wrong or needs a new shape can be rebuilt by replaying the log from the start. The cost is that views lag the source, so readers must tolerate or work around staleness, for example by reading their own writes from the primary.",
-          "heading": "Turning the database inside out"
+          "type": "p",
+          "text": "The outbox pattern, as Debezium's blog describes it, adds a table to the service's own database. When a request arrives, the handler inserts the business rows and, as part of the same transaction, a row representing the event to be sent. Either both commit or neither does. The post's table has four columns, and each one does a job downstream.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The outbox table from the Debezium post, and why each column exists.",
+          "columns": [
+            "column",
+            "type",
+            "purpose"
+          ],
+          "rows": [
+            [
+              "id",
+              "uuid, not null",
+              "a unique id per message, generated when the event is created; consumers use it to detect duplicates after a restart"
+            ],
+            [
+              "aggregatetype",
+              "varchar, not null",
+              "the type of the aggregate root the event belongs to, such as Order, used to route the event to a topic"
+            ],
+            [
+              "aggregateid",
+              "varchar, not null",
+              "the id of the affected aggregate root, used as the message key so all events of one aggregate stay in order"
+            ],
+            [
+              "payload",
+              "jsonb, not null",
+              "the event contents: a deliberate public contract, decoupled from the internal table schema"
+            ]
+          ],
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "diagram",
+          "mermaid": "flowchart LR\n    S[Order service] -->|one transaction| DB[(Orders table and outbox table)]\n    DB -->|write ahead log| CDC[Debezium connector]\n    CDC -->|outbox event router| K[Kafka topic keyed by aggregate id]\n    K --> C1[Shipping service with inbox]\n    K --> C2[Search indexer]\n    K --> C3[Cache invalidator]",
+          "legend": "The outbox with a log-based relay: one transaction writes the order and its event; the connector reads the insert from the write-ahead log and the router publishes it keyed by aggregate id (s2, s3, s4)."
+        },
+        {
+          "type": "p",
+          "text": "A relay then moves rows to the broker, and there are two ways to build it. A polling relay queries the table for unpublished rows, publishes them and marks or deletes them; AWS's implementation has an events processing service read the outbox table and send to a queue, seeing only rows of committed transactions. It is simple, but it adds query load and latency, and rows committed out of sequence need care. A log-based relay reads the outbox inserts from the database's own transaction log through change data capture, in commit order and with low latency, with no polling queries at all. Either way, delivery is at least once: if the relay fails after publishing but before recording its progress, it publishes again, so consumers deduplicate on the event id.",
+          "cites": [
+            "s1",
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The outbox is a transit buffer, not a history store, so rows are deleted once captured or dropped by partition; with a log-based relay the row can be deleted in the same transaction, since the connector reads the insert from the log rather than the table."
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "An outbox row that copies the internal table layout exports the schema to every consumer. The payload is a contract: version it, keep it stable, and let the internal tables change underneath.",
+          "cites": [
+            "s2"
+          ]
         }
-      ],
-      "id": "derived-data-views",
-      "title": "The log as source of truth for derived data"
+      ]
+    },
+    {
+      "id": "log-based-change-data-capture",
+      "title": "Log-based change data capture",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Every database writes its changes to a durable log before applying them, and Kleppmann's talk explains why that log is the right thing to read. Of the ways a leader can replicate to a follower, the logical log writes out the effect of each query, which rows were inserted, updated or deleted, with the new value and perhaps the old. An imperative statement to the database has become an event: a fact that at a particular point in time a particular row changed, which is exactly what other systems want to consume.",
+          "cites": [
+            "s8"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Debezium's PostgreSQL connector is the reference implementation. PostgreSQL's logical decoding, introduced in version 9.4, extracts the changes committed to the transaction log and hands them to an output plug-in; pgoutput is the standard plug-in from version 10, and the connector creates its replication slot automatically if it has the privileges, or an operator creates it by hand. On first connection the connector takes a consistent snapshot of the schemas, then continues streaming from the exact point at which the snapshot was made, so that no change made during the snapshot is missed, and thereafter it captures every committed insert, update and delete at row level.",
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "What the connector does, by situation, from the Debezium documentation.",
+          "columns": [
+            "situation",
+            "behaviour"
+          ],
+          "rows": [
+            [
+              "First start, no offsets topic",
+              "consistent snapshot of the schemas, recorded in the offsets, then streaming from the snapshot's point"
+            ],
+            [
+              "Restart with a stored position",
+              "continues streaming from the log position stored in the Kafka offsets topic"
+            ],
+            [
+              "Stopped during a snapshot",
+              "begins a new snapshot on restart"
+            ],
+            [
+              "Stored position no longer available on the server",
+              "cannot resume; the log was discarded, which the operating section below prevents"
+            ],
+            [
+              "Update or delete on a table with a primary key",
+              "the event carries the previous key values; REPLICA IDENTITY FULL adds the previous row"
+            ],
+            [
+              "Table without a primary key at default replica identity",
+              "only create events are emitted"
+            ]
+          ],
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Debezium runs most commonly as a Kafka Connect source connector, with change records landing in Kafka topics from which sink connectors feed search engines, warehouses and caches; it can also run as a standalone server for other brokers. Each change event carries the before and after state as replica identity allows, so a consumer can maintain any view it likes without reading the source database.",
+          "cites": [
+            "s5",
+            "s4"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Capture from the log, not by querying the tables: it is in commit order, it costs the database no queries, and it sees every change including deletes. Set replica identity deliberately for any table whose consumers need the old row.",
+          "cites": [
+            "s4",
+            "s8"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "operating-cdc",
+      "title": "Operating it: slots, lag, disk and schema",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The replication slot is the part that bites in production, and PostgreSQL's own documentation says why. A slot persists independently of the connection using it and is crash-safe; it prevents removal of the write-ahead log and the catalog rows it still needs, even when no connection is using it, and that consumes storage. Its position is persisted only at checkpoints, so after a crash the slot may return to an earlier position and send recent changes again: another reason the consumer is at least once.",
+          "cites": [
+            "s6"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The size of that retention is a setting. The maximum WAL that slots may retain is unlimited by default, and only a configured limit lets the server invalidate a slot that has fallen too far behind instead of filling the disk; a separate timeout can invalidate a slot that has been idle. The design choice is therefore explicit: an unbounded slot trades the risk of a full disk for the guarantee that a stopped connector can always resume; a bounded slot trades the reverse.",
+          "cites": [
+            "s7"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Operational hazards of log-based capture and the control for each.",
+          "columns": [
+            "hazard",
+            "what happens",
+            "control"
+          ],
+          "rows": [
+            [
+              "Connector down, slot alive",
+              "WAL accumulates until the disk fills or the slot is invalidated",
+              "alert on slot lag; set the retention limit and know the resume procedure"
+            ],
+            [
+              "Few changes on captured tables, many elsewhere",
+              "the confirmed position stops advancing and WAL cannot be reclaimed",
+              "Debezium's heartbeat interval with a heartbeat table added to the publication"
+            ],
+            [
+              "Snapshot of a large table",
+              "a long-running read, holding locks on some engines, blocking the stream",
+              "snapshot from replicas or incrementally; Shopify's largest tables took hours"
+            ],
+            [
+              "Schema change on a captured table",
+              "event shapes change under consumers",
+              "a registry with compatibility rules; capture an outbox rather than raw tables"
+            ],
+            [
+              "Re-sent changes after a crash",
+              "duplicates at the consumer",
+              "idempotent consumers keyed on the event id"
+            ]
+          ],
+          "cites": [
+            "s4",
+            "s6",
+            "s12"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The quiet-table case is subtle enough to state. If the database is busy but the captured tables are not, the connector confirms no new position, the slot's restart point lags, and the server retains WAL for changes the connector will never want. Debezium's answer is a periodic heartbeat event written to a table in the publication, which advances the confirmed position and lets the database reclaim space.",
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "Monitor three numbers from day one: slot lag in bytes, connector status, and end-to-end delay from commit to consumption. A connector that has been down for a day and a slot with unlimited retention is a full disk on the primary.",
+          "cites": [
+            "s6",
+            "s7",
+            "s4"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "routing-and-consuming",
+      "title": "Routing outbox events and consuming them safely",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Debezium's outbox event router is a single message transform that turns captured outbox inserts into clean events. With its default configuration it expects the four columns above: the event id becomes a message header that consumers can use to remove duplicates; the aggregate type is appended to a topic name, so inserts with type customers and type orders are emitted to two topics; and the aggregate id becomes the message key, which the documentation calls important for maintaining correct order in Kafka partitions, since all events of one aggregate then land in one partition.",
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "What the router does with each column, from its documentation's default configuration.",
+          "columns": [
+            "column",
+            "becomes",
+            "effect"
+          ],
+          "rows": [
+            [
+              "id",
+              "a message header",
+              "duplicate removal at the consumer"
+            ],
+            [
+              "aggregatetype",
+              "the suffix of the topic name",
+              "one topic per aggregate type"
+            ],
+            [
+              "aggregateid",
+              "the message key",
+              "all events of one aggregate in one partition, in commit order"
+            ],
+            [
+              "payload",
+              "the message value",
+              "the public event, optionally as JSON or Avro"
+            ]
+          ],
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The consumer side works from the guarantee it actually has. Confluent's explanation of Kafka's delivery semantics defines the default: at least once, because a producer whose acknowledgement times out retries a write that may already have succeeded; at most once if it does not retry; and exactly once only when the messaging system and the application cooperate, which Kafka provides within its own topics through idempotent producers and transactions. An event that leaves Kafka for a database or an API is at least once again, so the consumer records each processed event id in its own database in the same transaction as the effect, an inbox, and skips ids it has seen; or it makes the effect naturally idempotent, such as an upsert keyed by aggregate id with a version that ignores older events.",
+          "cites": [
+            "s11"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Ordering is per key, not global. A consumer may assume that the events of one order arrive in order, because they share a partition, and must not assume anything about the order of events across different orders. Where a database offers its own change stream the same rules appear in its terms: DynamoDB Streams records item-level modifications in a time-ordered sequence kept for 24 hours, each record appears exactly once in the stream, and records for one item appear in the sequence of the item's modifications.",
+          "cites": [
+            "s3",
+            "s10"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Key by aggregate id, deduplicate by event id in the same transaction as the effect, and rely on order only within one key.",
+          "cites": [
+            "s3",
+            "s11"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "the-log-as-source-of-truth",
+      "title": "The log as the source of truth for derived data",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Kleppmann's talk generalises the pattern beyond service integration. Replicas, secondary indexes, caches and materialized views are all derived data: each can be computed from the primary table and the log of its changes, and each can be rebuilt by replaying that log. The application that manages its own cache in code, read the cache, miss, read the database, write the cache, is maintaining a derived view by hand, with all the invalidation bugs that implies; a materialized view maintained by the database from the same log does the job without the bugs, and the talk's argument is to build the application's views the same way, from a stream of changes.",
+          "cites": [
+            "s8"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Kafka's design document supplies the piece that makes a replayable feed practical. Log compaction guarantees that the log retains at least the last known value for each message key, so a compacted topic holds a full snapshot of the latest value per key as well as the recent changes. The document names the use cases directly: restoring state after a crash, reloading a cache, and bootstrapping a new consumer, which otherwise needs a separate full load alongside the real-time feed.",
+          "cites": [
+            "s9"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Derived views fed from the change log, and what each needs.",
+          "columns": [
+            "derived view",
+            "fed by",
+            "rebuild",
+            "what the reader must tolerate"
+          ],
+          "rows": [
+            [
+              "Search index",
+              "the after state of each change",
+              "replay the compacted topic",
+              "a lag between commit and searchability"
+            ],
+            [
+              "Cache",
+              "invalidation or the new value per key",
+              "replay or warm on demand",
+              "stale reads within the lag; read your own writes from the primary"
+            ],
+            [
+              "Reporting table or warehouse",
+              "every change, often batched",
+              "replay from the earliest retained offset or a snapshot",
+              "freshness measured in minutes"
+            ],
+            [
+              "Another service's local copy",
+              "the public outbox events",
+              "replay of the aggregate's events",
+              "eventual consistency, ordered per aggregate"
+            ]
+          ],
+          "cites": [
+            "s8",
+            "s9"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The cost of the architecture is staleness: every view lags the source by the pipeline's delay, so a reader that needs its own write back immediately reads the primary, and a view that must never be wrong is checked by a periodic reconciliation against the source. The benefit is that a wrong or new view is a replay away rather than a migration, and that the application writes once."
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Treat every cache, index and read model as a materialized view over the change log: define it by the function that computes it, feed it from the log, and rebuild it by replay rather than by hand.",
+          "cites": [
+            "s8",
+            "s9"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "choosing-the-mechanism",
+      "title": "Choosing the mechanism",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The options differ in what they guarantee, what they couple, and what they cost to operate, and the choice is per system class rather than once for an organisation. The decision block gives each option, the case it fits, the case it does not, and an example; the cites in the caption are the sources each row rests on."
+        },
+        {
+          "type": "decision",
+          "caption": "Mechanisms for telling other systems about a change, from a synchronous dual write to database-native streams (s1, s2, s4, s10, s12).",
+          "rows": [
+            {
+              "option": "Dual write with reconciliation",
+              "pick_when": "the consumer is non-critical, a daily reconciliation is acceptable, and the broker is unreachable from the transaction's scope",
+              "avoid_when": "any consumer whose correctness matters, event sourcing, or anywhere an out-of-order or missing event costs money",
+              "example": "a best-effort analytics ping, repaired nightly from the source"
+            },
+            {
+              "option": "Outbox table with a polling relay",
+              "pick_when": "the team wants no database-level tooling, the event rate is modest, and seconds of latency are fine",
+              "avoid_when": "high rates, where polling load and latency grow, or where commit-order delivery across concurrent transactions is required",
+              "example": "a small service emitting tens of events a second to a queue"
+            },
+            {
+              "option": "Outbox table with a log-based relay",
+              "pick_when": "events are a public contract, order per aggregate matters, and the team can operate a connector and its slot",
+              "avoid_when": "the database has no usable logical log, or nobody will own slot lag and disk",
+              "example": "an order service publishing OrderPlaced and OrderPaid keyed by order id"
+            },
+            {
+              "option": "Raw-table change data capture",
+              "pick_when": "internal consumers such as a search index, a cache or a warehouse that want every row change, including deletes",
+              "avoid_when": "cross-team contracts, since the internal schema leaks to every consumer and changes under them",
+              "example": "feeding a search index and a reporting warehouse from the orders schema"
+            },
+            {
+              "option": "Database-native change stream",
+              "pick_when": "the store offers an ordered, bounded stream and consumers can keep up within its retention",
+              "avoid_when": "replay beyond the retention window, or ordering across items",
+              "example": "DynamoDB Streams with 24 hours of retention, each record once, per-item order"
+            }
+          ],
+          "cites": [
+            "s1",
+            "s2",
+            "s4",
+            "s10",
+            "s12"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Two of the rows combine well: an outbox captured by the log-based relay for the events other teams depend on, and raw-table capture for the team's own derived views, with the connector capturing both from one slot. Shopify's platform shows the operational shape at scale, one connector per database shard with a transform that routes every shard's events for a table into one topic, which is the kind of decision the block leaves to the operating section.",
+          "cites": [
+            "s12"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Outbox for contracts, raw capture for your own views, native streams where the store gives you one, and never a synchronous dual write for anything that must be right.",
+          "cites": [
+            "s1",
+            "s2",
+            "s4"
+          ]
+        }
+      ]
     }
   ],
-  "diagram": {
-    "source": "flowchart LR\n    S[Order service] -->|one transaction| DB[(Orders table and outbox table)]\n    DB -->|write ahead log| CDC[Debezium connector]\n    CDC -->|outbox event router| K[Kafka topic keyed by aggregate id]\n    K --> C1[Shipping service with inbox]\n    K --> C2[Search indexer]\n    K --> C3[Cache invalidator]"
+  "worked_example": {
+    "title": "Worked example: sizing an order-event pipeline at 2,000 orders per second",
+    "blocks": [
+      {
+        "type": "p",
+        "text": "An order service publishes OrderPlaced and OrderPaid events through an outbox captured by a PostgreSQL connector into Kafka, with a shipping service, a search indexer and a cache invalidator consuming. The rates and sizes are assumptions chosen to make the arithmetic concrete; the settings follow the teaching, and the SQL and connector configuration after the steps encode them."
+      },
+      {
+        "type": "steps",
+        "title": "From order rate to slot, topic and consumer settings",
+        "items": [
+          "Orders: 2,000 per second at peak (assumption), each producing 2 events over its life, so 4,000 outbox inserts per second.",
+          "Row size: 1 kB per outbox row including the JSON payload (assumption), so about 4 MB per second of outbox writes into the write-ahead log.",
+          "Outbox growth: 4,000 rows per second is about 346 million rows a day, so rows are deleted in the same transaction after insert, which the log-based relay allows, and the table stays near empty.",
+          "Slot retention: with the server's limit at its unlimited default, a connector outage retains WAL at 4 MB per second plus everything else, about 14 GB an hour at this rate alone.",
+          "Retention limit: a limit of 100 GB (assumption) gives about 7 hours of connector outage before the slot is invalidated; the on-call runbook names the resume procedure and the resnapshot cost.",
+          "Heartbeat: a 10-second heartbeat interval (assumption) with the heartbeat table in the publication, so a quiet weekend never stalls the confirmed position.",
+          "Topic layout: the router emits to one topic per aggregate type, keyed by order id, with 24 partitions (assumption), so about 170 events per second per partition at peak.",
+          "Consumer lag budget: the shipping service must act within 5 seconds of commit (assumption); Shopify's log-based platform reports a p99 under 10 seconds from insert to Kafka, so the budget is plausible but must be measured end to end.",
+          "Deduplication: each consumer keeps an inbox of processed event ids, about 346 million rows a day across all consumers at 36 bytes each, about 12 GB a day, pruned after 7 days (assumption).",
+          "Replay: the search indexer reads a compacted copy of the order-state topic, so a rebuild reads one record per order rather than every event.",
+          "Replica identity: the orders table is set to FULL (design choice) so the cache invalidator sees the old row on an update and can drop the old key.",
+          "The decider: slot lag. Every other number scales by adding partitions or consumers; a stopped connector with an unbounded slot is the one failure that takes the primary down, so it gets the alert and the runbook first."
+        ],
+        "cites": [
+          "s4",
+          "s6",
+          "s7",
+          "s3",
+          "s12"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "The pipeline sheet as a reviewer should receive it.",
+        "columns": [
+          "quantity",
+          "value",
+          "derived from"
+        ],
+        "rows": [
+          [
+            "Outbox inserts per second",
+            "4,000",
+            "2,000 orders times 2 events"
+          ],
+          [
+            "Outbox log volume",
+            "about 4 MB per second",
+            "4,000 times 1 kB"
+          ],
+          [
+            "WAL retained per hour of connector outage",
+            "about 14 GB",
+            "4 MB per second times 3,600"
+          ],
+          [
+            "Outage tolerated by a 100 GB slot limit",
+            "about 7 hours",
+            "100 GB divided by 14 GB per hour"
+          ],
+          [
+            "Events per partition per second",
+            "about 170",
+            "4,000 divided by 24 partitions"
+          ],
+          [
+            "Inbox rows per day",
+            "about 346 million",
+            "4,000 per second times 86,400"
+          ],
+          [
+            "Inbox storage per day",
+            "about 12 GB",
+            "346 million times 36 bytes"
+          ]
+        ]
+      },
+      {
+        "type": "code",
+        "lang": "sql",
+        "code": "BEGIN;\nUPDATE orders SET status = 'PAID', version = version + 1 WHERE id = 4711;\nINSERT INTO outbox (id, aggregatetype, aggregateid, type, payload)\nVALUES (gen_random_uuid(), 'order', '4711', 'OrderPaid',\n        '{\"orderId\": 4711, \"amount\": 99.50, \"version\": 7}');\n-- the relay reads the insert from the write-ahead log, so the row can go at once and the table stays empty\nDELETE FROM outbox WHERE aggregateid = '4711' AND type = 'OrderPaid';\nCOMMIT;",
+        "caption": "One transaction: the state change, the event, and the cleanup. The connector captures the insert from the log; the delete keeps the table a transit buffer."
+      },
+      {
+        "type": "code",
+        "lang": "json",
+        "code": "{\n  \"connector.class\": \"io.debezium.connector.postgresql.PostgresConnector\",\n  \"plugin.name\": \"pgoutput\",\n  \"slot.name\": \"orders_outbox\",\n  \"publication.name\": \"orders_outbox_pub\",\n  \"database.hostname\": \"HOST\",\n  \"database.dbname\": \"orders\",\n  \"topic.prefix\": \"shop\",\n  \"table.include.list\": \"public.outbox,public.debezium_heartbeat\",\n  \"heartbeat.interval.ms\": \"10000\",\n  \"heartbeat.action.query\": \"INSERT INTO public.debezium_heartbeat (ts) VALUES (now()) ON CONFLICT (id) DO UPDATE SET ts = now()\",\n  \"transforms\": \"outbox\",\n  \"transforms.outbox.type\": \"io.debezium.transforms.outbox.EventRouter\",\n  \"transforms.outbox.route.by.field\": \"aggregatetype\",\n  \"transforms.outbox.route.topic.replacement\": \"outbox.event.${routedByValue}\",\n  \"transforms.outbox.table.field.event.key\": \"aggregateid\"\n}",
+        "caption": "The connector for the example: the outbox and the heartbeat table in the publication, a 10-second heartbeat, and the router keyed by aggregate id."
+      }
+    ]
   },
-  "code": [
-    {
-      "code": "BEGIN;\nUPDATE orders SET status = 'PAID' WHERE id = 4711;\nINSERT INTO outbox (id, aggregatetype, aggregateid, type, payload)\nVALUES (gen_random_uuid(), 'order', '4711', 'OrderPaid',\n        '{\"orderId\": 4711, \"amount\": 99.50}');\nCOMMIT;",
-      "lang": "sql"
-    },
-    {
-      "code": "{\n  \"connector.class\": \"io.debezium.connector.postgresql.PostgresConnector\",\n  \"plugin.name\": \"pgoutput\",\n  \"database.hostname\": \"HOST\",\n  \"database.dbname\": \"orders\",\n  \"topic.prefix\": \"shop\",\n  \"table.include.list\": \"public.outbox\",\n  \"transforms\": \"outbox\",\n  \"transforms.outbox.type\": \"io.debezium.transforms.outbox.EventRouter\"\n}",
-      "lang": "json"
-    }
-  ],
+  "diagram": null,
+  "code": [],
   "technologies": [
     "Debezium",
     "Kafka Connect",
@@ -123,30 +704,142 @@
   ],
   "sources": [
     {
+      "id": "s1",
+      "title": "AWS Prescriptive Guidance, Cloud design patterns, Transactional outbox pattern (maintained): the dual write problem, applicability, duplicates, ordering and rollback, the outbox table and CDC implementations",
+      "url": "https://docs.aws.amazon.com/prescriptive-guidance/latest/cloud-design-patterns/transactional-outbox.html",
       "kind": "doc",
-      "title": "Debezium connector for PostgreSQL",
-      "url": "https://debezium.io/documentation/reference/stable/connectors/postgresql.html"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "The transactional outbox pattern resolves the dual write operations issue"
+      }
     },
     {
+      "id": "s2",
+      "title": "Gunnar Morling, Reliable Microservices Data Exchange With the Outbox Pattern (Debezium blog, 2019-02-19): the outbox table, its columns, the same-transaction insert, the event id for duplicates",
+      "url": "https://debezium.io/blog/2019/02/19/reliable-microservices-data-exchange-with-the-outbox-pattern/",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "id: unique id of each message; can be used by consumers to detect any duplicate events"
+      }
+    },
+    {
+      "id": "s3",
+      "title": "Debezium documentation, Outbox Event Router (stable): the assumed columns, routing by aggregate type, the aggregate id as the message key, the event id as a header",
+      "url": "https://debezium.io/documentation/reference/stable/transformations/outbox-event-router.html",
       "kind": "doc",
-      "title": "Debezium outbox event router",
-      "url": "https://debezium.io/documentation/reference/stable/transformations/outbox-event-router.html"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "This is important for maintaining correct order in Kafka partitions."
+      }
     },
     {
-      "kind": "article",
-      "title": "Reliable microservices data exchange with the outbox pattern (Debezium blog)",
-      "url": "https://debezium.io/blog/2019/02/19/reliable-microservices-data-exchange-with-the-outbox-pattern/"
+      "id": "s4",
+      "title": "Debezium documentation, Debezium connector for PostgreSQL (stable): logical decoding and pgoutput, replication slots, the initial snapshot and streaming from its exact point, offsets, replica identity, WAL disk space and heartbeats",
+      "url": "https://debezium.io/documentation/reference/stable/connectors/postgresql.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "After the connector completes the snapshot, it continues streaming changes from the exact point at which the snapshot was made."
+      }
     },
     {
+      "id": "s5",
+      "title": "Debezium documentation, Debezium Architecture (stable): deployment through Kafka Connect, sink connectors downstream",
+      "url": "https://debezium.io/documentation/reference/stable/architecture.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Most commonly, you deploy Debezium by means of Apache Kafka Connect."
+      }
+    },
+    {
+      "id": "s6",
+      "title": "PostgreSQL 18 documentation, Logical Decoding Concepts (current): replication slots, their persistence, the checkpointed position and re-sent changes, resources they retain",
+      "url": "https://www.postgresql.org/docs/current/logicaldecoding-explanation.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Slots persist independently of the connection using them and are crash-safe."
+      }
+    },
+    {
+      "id": "s7",
+      "title": "PostgreSQL 18 documentation, Replication configuration (current): max_slot_wal_keep_size and idle_replication_slot_timeout",
+      "url": "https://www.postgresql.org/docs/current/runtime-config-replication.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "replication slots may retain an unlimited amount of WAL files"
+      }
+    },
+    {
+      "id": "s8",
+      "title": "Martin Kleppmann, Turning the database inside-out with Apache Samza (2015-03-04): the logical log as events, replicas, indexes and caches as derived data, materialized views",
+      "url": "https://martin.kleppmann.com/2015/03/04/turning-the-database-inside-out.html",
       "kind": "article",
-      "title": "Turning the database inside out (Kleppmann)",
-      "url": "https://martin.kleppmann.com/2015/03/04/turning-the-database-inside-out.html"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "is called a logical log"
+      }
+    },
+    {
+      "id": "s9",
+      "title": "Apache Kafka 4.3 documentation, Design: log compaction retains the last value per key, feeding both the change feed and a full reload",
+      "url": "https://kafka.apache.org/43/design/design/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Log compaction ensures that Kafka will always retain at least the last known value for each message key"
+      }
+    },
+    {
+      "id": "s10",
+      "title": "Amazon DynamoDB Developer Guide, Change data capture for DynamoDB Streams (maintained): 24 hours of retention, each record once, per-item order",
+      "url": "https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Streams.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Each stream record appears exactly once in the stream."
+      }
+    },
+    {
+      "id": "s11",
+      "title": "Neha Narkhede, Exactly-once Semantics are Possible: Here's How Kafka Does it (Confluent blog, 2017): at-least-once, at-most-once and exactly-once defined, the failures that must be handled",
+      "url": "https://www.confluent.io/blog/exactly-once-semantics-are-possible-heres-how-apache-kafka-does-it/",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "At-least-once semantics: if the producer receives an acknowledgement (ack) from the Kafka broker"
+      }
+    },
+    {
+      "id": "s12",
+      "title": "Shopify Engineering, Capturing Every Change From Shopify's Sharded Monolith (2021-03-12): from hourly query-based extraction to Debezium on 100+ MySQL shards, one connector per shard, latency, snapshots, schemas",
+      "url": "https://shopify.engineering/capturing-every-change-shopify-sharded-monolith",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "the p99 latency is less than 10 seconds"
+      }
     }
   ],
   "practice": "practice/sd-outbox-cdc",
   "provenance": {
-    "generated_by": "Claude through GigAI (karthik446/gigai-learning-center 4c0cb514)",
-    "generated_on": "2026-10-13",
+    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center, format v2",
+    "generated_on": "2026-10-15",
     "reviewed_by": null,
     "reviewed_on": null
   },
@@ -155,6 +848,11 @@
       "version": 1,
       "date": "2026-10-13",
       "change": "generated by the gigai learning pipeline from tools/curricula/system-design.json and imported into module system-design"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-15",
+      "change": "rewritten by hand at format v2 (version 2): the dual write problem with the failure-order table, the outbox table as a table with the diagram in its subtopic and the relay options, log-based capture with the connector-behaviour table, operating it with the hazards table, routing and consuming with the router table, the log as source of truth with the derived-views table, a decision block over the mechanisms, a worked order-event pipeline sizing with the SQL and connector configuration after the teaching, cited in-practice blocks (Shopify, the Debezium team, Kafka's designers, AWS's rules), 12 verified sources"
     }
   ]
 }
