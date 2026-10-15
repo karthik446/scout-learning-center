@@ -214,11 +214,15 @@ class Negative(Fixture):
         docs["lessons/sd-caching.json"] = lesson
         self.assertTrue(any("about a choice" in p for p in scan.validate(docs)))
 
-    # The AWS section (orchestrator #46): a diagram first and only there, a decision block, at most one cost table.
+    # The AWS section (orchestrator #46, #50): the architecture flowchart first, sequence diagrams after it (the paths), a decision
+    # block, at most one cost table.
+    SEQUENCE = "sequenceDiagram\n  autonumber\n  participant C as client\n  participant S as service\n  C->>S: POST\n  S-->>C: 201\n  opt network failure\n    C->>S: retry with the same id\n  end"
     AWS = {"id": "building-it-on-aws", "title": "Building it on AWS", "blocks": [
         {"type": "diagram", "mermaid": "flowchart TB\n  C[client] -->|HTTPS, sync| ALB[Application Load Balancer]\n  ALB -->|HTTP, sync| S[ECS on Fargate]\n  S -->|PutItem, sync| D[(DynamoDB)]",
          "legend": "The neutral boxes, one AWS service each."},
         {"type": "steps", "title": "The write path", "items": ["The client calls the ALB over HTTPS, sync; it retries with backoff.", "The service writes with PutItem, sync."]},
+        {"type": "diagram", "mermaid": SEQUENCE, "legend": "The write path. Sources: the retry s1, the write s2.", "cites": ["s1", "s2"]},
+        {"type": "p", "text": "The retry carries the same id, so the second write is a no-op."},
         {"type": "list", "items": ["Identity: one task role per service.", "Public: the ALB only."]},
         {"type": "decision", "caption": "Store", "rows": [{"option": "DynamoDB", "pick_when": "key lookups", "avoid_when": "joins", "example": "For this design: chosen, every read is a key lookup."}]},
         {"type": "table", "caption": "Pillars", "columns": ["pillar", "asks", "choice", "risk"], "rows": [["security", "least privilege", "IAM roles", "none"]]},
@@ -244,9 +248,36 @@ class Negative(Fixture):
         def later(s): s["blocks"] = s["blocks"][1:2] + s["blocks"][:1] + s["blocks"][2:]
         self.refuses(EXERCISE, self.with_aws(later), "must start with a diagram block (the AWS architecture, mirroring the high-level-design one); the first block is 'steps'")
 
-    def test_aws_section_with_two_diagrams(self) -> None:
-        def twice(s): s["blocks"].append(copy.deepcopy(s["blocks"][0]))
-        self.refuses(EXERCISE, self.with_aws(twice), "section building-it-on-aws: one diagram block only")
+    def test_aws_section_starts_with_the_flowchart_not_a_sequence(self) -> None:
+        def seq_first(s): s["blocks"][0] = copy.deepcopy(s["blocks"][2])
+        self.refuses(EXERCISE, self.with_aws(seq_first), "section building-it-on-aws: must start with a flowchart (the AWS architecture); a sequence diagram comes after it")
+
+    def test_aws_section_later_diagrams_are_sequence_diagrams(self) -> None:
+        def flowchart_again(s): s["blocks"].append(copy.deepcopy(s["blocks"][0]))
+        self.refuses(EXERCISE, self.with_aws(flowchart_again), "a later diagram (block 9) must be a sequence diagram (the paths through the services)")
+        def two_sequences(s): s["blocks"].insert(4, copy.deepcopy(s["blocks"][2]))
+        self.assertEqual(self.problems_after(EXERCISE, self.with_aws(two_sequences)), [])
+
+    def test_aws_diagram_cites_must_resolve(self) -> None:
+        def bad(s): s["blocks"][2]["cites"] = ["s1", "s9"]
+        self.assertTrue(any("s9" in p for p in self.problems_after(EXERCISE, self.with_aws(bad))))
+
+    def test_core_flow_sequence_diagram_stands_in_for_the_steps(self) -> None:
+        def seq(d): section(d, "core-flow")["blocks"] = [{"type": "diagram", "mermaid": self.SEQUENCE, "legend": "Post, then read."}]
+        self.assertEqual(self.problems_after(EXERCISE, seq), [])
+        def flow(d): section(d, "core-flow")["blocks"] = [copy.deepcopy(section(d, "high-level-design")["blocks"][0])]
+        self.refuses(EXERCISE, flow, "section core-flow: a diagram here is a sequence diagram")
+        self.refuses(EXERCISE, flow, "section core-flow: needs a steps block or a sequence diagram")
+
+    def test_sequence_diagram_in_failure_modes(self) -> None:
+        def m(d): section(d, "failure-modes")["blocks"].append({"type": "diagram", "mermaid": self.SEQUENCE})
+        self.refuses(EXERCISE, m, "section failure-modes: a diagram block belongs in high-level-design only")
+
+    def test_high_level_design_diagram_is_the_flowchart(self) -> None:
+        self.refuses(EXERCISE, lambda d: section(d, "high-level-design")["blocks"][0].update(mermaid=self.SEQUENCE), "section high-level-design: the diagram must be a Mermaid flowchart (the architecture)")
+
+    def test_diagram_kind_unknown(self) -> None:
+        self.refuses(EXERCISE, lambda d: section(d, "high-level-design")["blocks"][0].update(mermaid="gantt\n  title x"), "must be a Mermaid flowchart or sequence diagram")
 
     def test_aws_section_without_a_decision(self) -> None:
         def drop(s): s["blocks"] = [b for b in s["blocks"] if b["type"] != "decision"]
@@ -265,7 +296,7 @@ class Negative(Fixture):
         def m(d):
             self.with_aws()(d)
             section(d, "at-10x")["blocks"].append(copy.deepcopy(self.AWS["blocks"][0]))
-        self.refuses(EXERCISE, m, "section at-10x: a diagram block belongs in high-level-design only (or at the start of building-it-on-aws)")
+        self.refuses(EXERCISE, m, "section at-10x: a diagram block belongs in high-level-design only (or in building-it-on-aws, or a sequence diagram in core-flow)")
 
     def test_cite_column_holds_source_ids(self) -> None:
         def m(d):
@@ -299,12 +330,12 @@ class Negative(Fixture):
 
     def test_sim_digit_rule_still_applies(self) -> None:
         def m(d):
-            d["sim"] = copy.deepcopy(self.docs["lessons/sd-caching.json"]["sim"])
+            d["sim"] = copy.deepcopy(self.docs["lessons/sd-ex-rate-limiter.json"]["sim"])
             d["sim"]["caption"] = d["sim"]["caption"] + " It always lands at 47% for a reason nobody measured."
         self.refuses(LESSON, m, "not covered by a sim_claims entry")
 
     def test_sim_passes_on_v2(self) -> None:
-        def m(d): d["sim"] = copy.deepcopy(self.docs["lessons/sd-caching.json"]["sim"])
+        def m(d): d["sim"] = copy.deepcopy(self.docs["lessons/sd-ex-rate-limiter.json"]["sim"])
         self.assertEqual(self.problems_after(LESSON, m), [])
 
     # --- the exercise rules
@@ -325,7 +356,7 @@ class Negative(Fixture):
         self.refuses(EXERCISE, lambda d: section(d, "data-model")["blocks"][1].update(columns=["method", "path", "body", "reply", "notes"]), "an API table has the columns")
 
     def test_core_flow_needs_steps(self) -> None:
-        self.refuses(EXERCISE, lambda d: section(d, "core-flow").update(blocks=[{"type": "list", "items": ["a"]}]), "section core-flow: needs a steps block")
+        self.refuses(EXERCISE, lambda d: section(d, "core-flow").update(blocks=[{"type": "list", "items": ["a"]}]), "section core-flow: needs a steps block or a sequence diagram")
 
     def test_high_level_design_needs_one_diagram(self) -> None:
         self.refuses(EXERCISE, lambda d: section(d, "high-level-design").update(blocks=[{"type": "p", "text": "No picture."}]), "needs exactly one diagram block, has 0")
@@ -421,6 +452,24 @@ class Pages(Fixture):
         self.assertIn('<pre class="mermaid">flowchart LR', self.lesson)
         self.assertIn("/_assets/hljs/highlight.min.js", self.lesson)
         self.assertIn("/_assets/mermaid/mermaid.min.js", self.lesson)
+
+    def test_decision_header_reads_for_this_design_on_an_exercise(self) -> None:
+        block = {"type": "decision", "rows": [{"option": "A", "pick_when": "x", "avoid_when": "y", "example": "For this design: A."}]}
+        self.assertIn('<th scope="col">Avoid when</th><th scope="col">For this design</th>', build.render_block(build.Page([], exercise=True), block))
+        self.assertIn('<th scope="col">Avoid when</th><th scope="col">Example</th>', build.render_block(build.Page([]), block))
+        self.assertIn('<th scope="col">Example</th>', self.lesson)   # a concept lesson keeps Example
+
+    def test_diagram_legend_source_ids_render_as_marks(self) -> None:
+        pg = build.Page([{"id": "s1"}, {"id": "s2"}, {"id": "s3"}])
+        block = {"type": "diagram", "mermaid": "sequenceDiagram\n  A->>B: hi", "legend": "The retry s1, s3; S3 stays a name.", "cites": ["s1", "s2", "s3"]}
+        html_ = build.render_block(pg, block)
+        self.assertIn('<pre class="mermaid">sequenceDiagram\n  A-&gt;&gt;B: hi</pre>', html_)
+        self.assertIn('<p class="muted diagram-legend">The retry <sup class="cite"><a href="#source-s1" aria-label="Source 1">[1]</a></sup>, '
+                      '<sup class="cite"><a href="#source-s3" aria-label="Source 3">[3]</a></sup>; S3 stays a name.'
+                      '<sup class="cite"><a href="#source-s2" aria-label="Source 2">[2]</a></sup></p>', html_)
+        self.assertEqual(html_.count("[1]"), 1)
+        plain = build.render_block(pg, {"type": "diagram", "mermaid": "flowchart LR\n  A --> B", "legend": "No sources."})
+        self.assertIn('<p class="muted diagram-legend">No sources.</p>', plain)
 
     def test_table_cites_print_once_in_the_caption(self) -> None:
         for page in (self.lesson, self.exercise):

@@ -157,13 +157,17 @@ EXERCISE_SECTION_IDS = ["requirements-and-estimates", "high-level-design", "data
                         "failure-modes", "trade-offs", "at-10x"]
 AWS_SECTION = "building-it-on-aws"   # :2 only, optional, right after high-level-design (format v2 addendum B)
 EXERCISE2_SECTION_IDS = EXERCISE_SECTION_IDS[:2] + [AWS_SECTION] + EXERCISE_SECTION_IDS[2:]
-# The AWS section's shape (orchestrator #46, 2026-10-15): it opens with the AWS architecture diagram (the section's only
-# diagram, and the one exception to "a diagram belongs in high-level-design only"), carries at least one decision block
-# (the choices as decisions, not prices) and holds at most one cost table, which comes last. A table is a cost table when
-# any column header contains "monthly", "cost" or "price" (case-insensitive).
+# The AWS section's shape (orchestrator #46 and #50, 2026-10-15): it opens with the AWS architecture diagram (a flowchart,
+# the first block), may carry further diagram blocks after it (sequence diagrams: the write and read paths through the
+# services, with their failure branches), carries at least one decision block (the choices as decisions, not prices) and
+# holds at most one cost table, which comes last. A table is a cost table when any column header contains "monthly", "cost"
+# or "price" (case-insensitive). Elsewhere in an exercise a diagram belongs in high-level-design (one flowchart) or in
+# core-flow (a sequence diagram may stand in for the steps block).
 AWS_COST_COLUMN = re.compile(r"(?i)monthly|cost|price")
 TITLED_BODY = {"title": str, "body": str}
-DIAGRAM_START = re.compile(r"^\s*(flowchart|graph)\s")
+FLOWCHART_START = re.compile(r"^\s*(flowchart|graph)\s")
+SEQUENCE_START = re.compile(r"^\s*sequenceDiagram\s")
+DIAGRAM_START = re.compile(r"^\s*(flowchart|graph|sequenceDiagram)\s")
 
 # --- the written practice pages (kind "case" and "artifact"): the generator's shapes and text checks ----------------------
 # Bounds as gigai.scout.learning_case (copied, never imported): (min, max) counts.
@@ -482,7 +486,7 @@ BLOCK_SPECS = {
     "callout": {"type": str, "kind": str, "text": str, "cites?": [str]},
     "steps": {"type": str, "title?": str, "items": [str], "cites?": [str]},
     "decision": {"type": str, "caption?": str, "rows": [{"option": str, "pick_when": str, "avoid_when": str, "example?": str}], "cites?": [str]},
-    "diagram": {"type": str, "mermaid": str, "legend?": str},
+    "diagram": {"type": str, "mermaid": str, "legend?": str, "cites?": [str]},   # the legend names the source ids its arrows rest on
 }
 CALLOUT_KINDS = ("rule", "pitfall", "tip")
 CITING_BLOCKS = frozenset(t for t, spec in BLOCK_SPECS.items() if "cites?" in spec)
@@ -857,7 +861,7 @@ def exercise_checks(l: dict) -> list[str]:
     if len(diagrams) != 1 or diagrams[0]["id"] != "high-level-design":
         out.append("exactly one diagram, in the high-level-design section")
     for sec in diagrams:
-        if not DIAGRAM_START.match(sec["diagram"]["source"]):
+        if not FLOWCHART_START.match(sec["diagram"]["source"]):
             out.append("the diagram must be a Mermaid flowchart (source starts with 'flowchart' or 'graph')")
         if re.search(r"(?i)^\s*C4", sec["diagram"]["source"]) or "%%{" in sec["diagram"]["source"]:
             out.append("no C4 syntax and no Mermaid directives in a diagram")
@@ -998,7 +1002,7 @@ def lesson2_checks(l: dict) -> list[str]:
                         out.append(f"{path}.rows[{ri}].{field}: a decision cell holds {n} numbers (at most {MAX_NUMBERS_IN_P}), the same as a paragraph; "
                                    "split the row or move the arithmetic to a steps block")
         if t == "diagram" and exercise and not DIAGRAM_START.match(b["mermaid"]):
-            out.append(f"{path}: the diagram must be a Mermaid flowchart (starts with 'flowchart' or 'graph')")
+            out.append(f"{path}: the diagram must be a Mermaid flowchart or sequence diagram (starts with 'flowchart', 'graph' or 'sequenceDiagram')")
     if not exercise:
         types = {b["type"] for _, _, b in blocks}
         if not types & {"table", "decision"}:
@@ -1043,8 +1047,12 @@ def exercise2_checks(l: dict) -> list[str]:
             if first != "diagram":
                 out.append(f"section {sid}: must start with a diagram block (the AWS architecture, mirroring the high-level-design one); "
                            f"the first block is {first!r}")
-            if sum(1 for b in bl if b.get("type") == "diagram") > 1:
-                out.append(f"section {sid}: one diagram block only, the AWS architecture at the start")
+            elif not FLOWCHART_START.match(bl[0]["mermaid"]):
+                out.append(f"section {sid}: must start with a flowchart (the AWS architecture); a sequence diagram comes after it")
+            for i, b in enumerate(bl[1:], 1):
+                if b.get("type") == "diagram" and not SEQUENCE_START.match(b["mermaid"]):
+                    out.append(f"section {sid}: a later diagram (block {i}) must be a sequence diagram (the paths through the services); "
+                               f"the architecture flowchart is the first block only")
             if not any(b.get("type") == "decision" for b in bl):
                 out.append(f"section {sid}: needs at least one decision block (the choices as decisions: option, pick when, avoid when, for this design)")
             cost_tables = [t for t in tables if any(AWS_COST_COLUMN.search(c) for c in t["columns"])]
@@ -1055,13 +1063,21 @@ def exercise2_checks(l: dict) -> list[str]:
             out.append(f"section {sid}: needs a table block with the columns {EST_COLUMNS}")
         if sid == "data-model" and not (any(t["columns"] == DATA_COLUMNS for t in tables) or any(b.get("type") == "code" for b in bl)):
             out.append(f"section {sid}: needs a table block with the columns {DATA_COLUMNS} or a code block")
-        if sid == "core-flow" and not any(b.get("type") == "steps" for b in bl):
-            out.append(f"section {sid}: needs a steps block")
-        n_diagrams = sum(1 for b in bl if b.get("type") == "diagram")
-        if sid == "high-level-design" and n_diagrams != 1:
-            out.append(f"section {sid}: needs exactly one diagram block, has {n_diagrams}")
-        if sid not in ("high-level-design", AWS_SECTION) and n_diagrams:
-            out.append(f"section {sid}: a diagram block belongs in high-level-design only (or at the start of {AWS_SECTION})")
+        diagrams = [b for b in bl if b.get("type") == "diagram"]
+        if sid == "core-flow":
+            if not any(b.get("type") == "steps" for b in bl) and not any(SEQUENCE_START.match(b["mermaid"]) for b in diagrams):
+                out.append(f"section {sid}: needs a steps block or a sequence diagram")
+            for b in diagrams:
+                if not SEQUENCE_START.match(b["mermaid"]):
+                    out.append(f"section {sid}: a diagram here is a sequence diagram (the flow, request by request); the flowchart is high-level-design's")
+        n_diagrams = len(diagrams)
+        if sid == "high-level-design":
+            if n_diagrams != 1:
+                out.append(f"section {sid}: needs exactly one diagram block, has {n_diagrams}")
+            elif not FLOWCHART_START.match(diagrams[0]["mermaid"]):
+                out.append(f"section {sid}: the diagram must be a Mermaid flowchart (the architecture)")
+        if sid not in ("high-level-design", AWS_SECTION, "core-flow") and n_diagrams:
+            out.append(f"section {sid}: a diagram block belongs in high-level-design only (or in {AWS_SECTION}, or a sequence diagram in core-flow)")
         for t in tables:
             if t["columns"][:1] == ["method"] and t["columns"] != API_COLUMNS:
                 out.append(f"section {sid}: an API table has the columns {API_COLUMNS}, got {t['columns']}")

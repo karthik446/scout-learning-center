@@ -415,15 +415,19 @@ def render_lesson(lib: Library, l: dict) -> tuple[str, str]:
 V2 = scan.V2
 CALLOUT_LABELS = {"rule": "Rule of thumb", "pitfall": "Pitfall", "tip": "Tip"}
 DECISION_COLUMNS = ("Option", "Pick when", "Avoid when", "Example")
+DECISION_LAST_EXERCISE = "For this design"   # an exercise's decision rows say what this design picks, not an example
+LEGEND_SOURCE_ID = re.compile(r"\bs\d+\b")
 
 
 class Page:
-    """What the blocks of one :2 page need from the page shell: whether it holds code or a diagram, and the numbered sources."""
+    """What the blocks of one :2 page need from the page shell: whether it holds code or a diagram, the numbered sources,
+    and whether it is a design exercise (the decision table's last column reads 'For this design' there)."""
 
-    def __init__(self, sources: list[dict]) -> None:
+    def __init__(self, sources: list[dict], *, exercise: bool = False) -> None:
         self.number = {s["id"]: n for n, s in enumerate(sources, 1)}   # scan.py keeps ids s1..sN in order
         self.code = False
         self.diagram = False
+        self.exercise = exercise
 
 
 def cite_marks(pg: Page, cites: list[str] | None) -> str:
@@ -481,13 +485,31 @@ def render_block(pg: Page, b: dict) -> str:
         return f'<div class="steps-block">{title}<ol>' + "".join(f"<li>{esc(i)}</li>" for i in b["items"]) + f"</ol>{row}</div>"
     if t == "decision":
         rows = [[r["option"], r["pick_when"], r["avoid_when"], r.get("example", "")] for r in b["rows"]]
-        return table_html(list(DECISION_COLUMNS), rows, b.get("caption"), first_col_head=True, cites=cites)
+        columns = list(DECISION_COLUMNS[:3]) + [DECISION_LAST_EXERCISE if pg.exercise else DECISION_COLUMNS[3]]
+        return table_html(columns, rows, b.get("caption"), first_col_head=True, cites=cites)
     if t == "diagram":
         pg.diagram = True
         src = esc(b["mermaid"])
-        legend = f'<p class="muted">{esc(b["legend"])}</p>' if b.get("legend") else ""
-        return f'<div class="mermaid-wrap"><pre class="mermaid">{src}</pre><pre class="mermaid-fallback">{src}</pre></div>{legend}'
+        return f'<div class="mermaid-wrap"><pre class="mermaid">{src}</pre><pre class="mermaid-fallback">{src}</pre></div>{legend_html(pg, b)}'
     raise BuildError(f"unknown block type {t!r}")
+
+
+def legend_html(pg: Page, b: dict) -> str:
+    """A diagram's legend. A source id in the legend text that is one of the block's cites (the 's12, s25' form a cite column
+    uses) renders as that source's linked mark, next to the fact it backs; cites the legend does not name follow at the end."""
+    legend, cites = b.get("legend") or "", list(b.get("cites") or [])
+    if not legend and not cites:
+        return ""
+    inline: set[str] = set()
+
+    def mark(m: re.Match) -> str:
+        sid = m.group(0)
+        if sid in cites and sid in pg.number:
+            inline.add(sid)
+            return cite_marks(pg, [sid])
+        return sid
+    text = LEGEND_SOURCE_ID.sub(mark, esc(legend))
+    return f'<p class="muted diagram-legend">{text}{cite_marks(pg, [c for c in cites if c not in inline])}</p>'
 
 
 def render_blocks(pg: Page, blocks) -> str:
@@ -657,7 +679,7 @@ def render_exercise_v2(lib: Library, l: dict) -> tuple[str, str]:
     here = f"/learn/lessons/{lid}/"
     mid, _, entry = lib.home_of[lid]
     mod_here = f"/learn/modules/{mid}/"
-    pg = Page(l["sources"])
+    pg = Page(l["sources"], exercise=True)
     body = [f"<h1>{esc(l['title'])}</h1>", exercise_attribution(l["provenance"])]
     krow = ["Concept: " + a(f"/learn/keys/{l['primary_key']}/", esc(lib.keys[l["primary_key"]]["display"]))]
     if l["secondary_keys"]:
