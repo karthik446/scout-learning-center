@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-notifications",
-  "version": 4,
+  "version": 5,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: notifications",
@@ -1740,7 +1740,7 @@
                 "DynamoDB, SQS, SNS, SES",
                 "Regional services, called over endpoints; personal data only in the adapters' tables",
                 "gateway endpoint for DynamoDB, interface endpoints for SQS and SES",
-                "no (AWS endpoints inside the VPC); encrypted in transit and at rest, as the Security pillar asks"
+                "no (AWS endpoints inside the VPC); DynamoDB encrypts all customer data at rest by default and the SQS endpoints in a VPC take HTTPS only, as the Security pillar asks"
               ]
             ],
             "cites": [
@@ -1908,7 +1908,7 @@
                 "option": "Amazon ECS on AWS Fargate",
                 "pick_when": "steady, container-shaped services that hold connections and run for as long as there is work, with no cluster to patch",
                 "avoid_when": "the load is bursty and mostly idle, or the platform team runs Kubernetes for everything else",
-                "example": "For this design: chosen for the API and the channel adapters, on Arm tasks across three Availability Zones. The API is sized for the peak at about $520 a month, a near tie with a function at about $600; the adapters keep their HTTP/2 connections to the providers open between messages and scale on queue age."
+                "example": "For this design: chosen for the API and the channel adapters, on Arm tasks across three Availability Zones. The API is sized for the peak at about $520 a month, a near tie with a function at about $600 (30 ms at 512 MB, assumption); the adapters keep their provider connections open between messages and scale on queue age."
               },
               {
                 "option": "AWS Lambda",
@@ -2062,7 +2062,7 @@
               ],
               [
                 "Load balancer",
-                "internal Application Load Balancer, $0.0225 an hour plus $0.008 per capacity unit-hour",
+                "internal Application Load Balancer, $0.0225 an hour plus $0.008 per capacity unit-hour, set by 2 KB a request (assumption)",
                 "about $41",
                 "about $260"
               ],
@@ -2092,7 +2092,7 @@
               ],
               [
                 "Total",
-                "the lines above; push providers' own terms, SNS events, the poller, data transfer out and CloudWatch not priced",
+                "the lines above; push providers' own terms, SNS events, the poller, interface endpoints, data transfer out and CloudWatch not priced",
                 "about $950,000, about 94 percent of it SMS",
                 "about $9,467,000, about 95 percent of it SMS"
               ]
@@ -2609,6 +2609,11 @@
       "version": 4,
       "date": "2026-10-16",
       "change": "AWS pass (building-it-on-aws, flow block, sequence diagrams), batch E1A, Claude (Sonnet 5.5) as writer: the high-level design flowchart became a flow block of eight boxes (the three channel queues, the three adapters and the three providers are one box each, with the status arrow from the API added, because the 14 boxes of the first version do not fit one flow of at most 12); the core flow became five sequence diagrams (every fact and number of the seven steps kept); a Building it on AWS section after the high-level design in the accepted news-feed shape (the architecture as two flow blocks, the accept, hand-off, release, delivery, retry and callback paths as sequence diagrams, the identity and network table, six decision blocks, the six-pillar Well-Architected table with the Serverless Lens row, one cost table); technologies and related filled; AWS sources s10 onward fetched 2026-10-16; reviewed_by cleared for a second read"
+    },
+    {
+      "version": 5,
+      "date": "2026-10-16",
+      "change": "Second read of the AWS pass (batch E1A), Claude (Sonnet 5.5) as a different instance from the writer; mechanical fixes only: the 30 ms at 512 MB behind the function price for the API and the 2 KB a request behind the load balancer capacity units are stated; the encryption claim is limited to what the cited DynamoDB and SQS pages say; interface endpoints are listed as not priced; reviewed_by stays empty, the remaining findings are in the review"
     }
   ]
 }

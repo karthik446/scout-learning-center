@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-chat",
-  "version": 6,
+  "version": 7,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: chat and presence",
@@ -1388,7 +1388,7 @@
                 "DynamoDB and Kinesis",
                 "Regional services, called over endpoints; no NAT gateway on the message path",
                 "gateway endpoint for DynamoDB, interface endpoint for Kinesis",
-                "no (AWS endpoints inside the VPC); encrypted in transit and at rest, as the Security pillar asks"
+                "no (AWS endpoints inside the VPC); DynamoDB encrypts all customer data at rest by default, as the Security pillar asks"
               ]
             ],
             "cites": [
@@ -1416,7 +1416,7 @@
                 "option": "Network Load Balancer, TCP listener, TLS terminated in the gateways",
                 "pick_when": "the connection count is high enough that the TLS capacity unit dominates, and the team can deliver certificates to the tasks and spend their CPU on encryption",
                 "avoid_when": "nobody wants to manage certificates on tasks, or the encryption CPU is not available",
-                "example": "For this design: the first lever, not the first choice. A TCP unit holds 100,000 active connections, so the same sessions would cost about $290, set by the bytes processed, not by the connection count; the price is encryption work on 150 tasks and a certificate to distribute."
+                "example": "For this design: the first lever, not the first choice. A TCP unit holds 100,000 active connections, so the same sessions would cost about $290, set by the bytes processed (300 bytes a delivered frame, assumption), not by the connection count; the price is encryption work on 150 tasks and a certificate to distribute."
               },
               {
                 "option": "Application Load Balancer in front of Fargate tasks",
@@ -1493,7 +1493,7 @@
                 "option": "Amazon ElastiCache for Valkey, node-based, a replica per shard",
                 "pick_when": "values are small, writes are very frequent, entries must expire within a minute, and the data can be rebuilt",
                 "avoid_when": "the data is the system of record and must survive a node loss without a rebuild",
-                "example": "For this design: chosen, as two clusters. Heartbeats are 170,000 writes a second, each key expires by its own TTL, and a lost node costs a minute of wrong presence, not a message. The twelve small nodes cost about $1,530 a month."
+                "example": "For this design: chosen, as two clusters. Heartbeats are 170,000 writes a second to each cluster, each key expires by its own TTL, and a lost node costs a minute of wrong presence, not a message. The sixteen small nodes cost about $2,050 a month."
               },
               {
                 "option": "Amazon DynamoDB with a TTL attribute",
@@ -1531,7 +1531,7 @@
                 "option": "Amazon SNS in front of one SQS queue per consumer",
                 "pick_when": "each consumer needs its own queue, retries and dead-letter queue, and the volume is modest",
                 "avoid_when": "the volume is in the tens of billions of events a month, because every publish is billed",
-                "example": "For this design: not chosen. It would give each consumer its own queue, but 30 billion publishes a month at $0.50 per million come to about $15,000 before any queue request is paid, and the order per conversation is lost."
+                "example": "For this design: not chosen. It would give each consumer its own queue, but 30 billion publishes a month at $0.50 per million come to about $15,000 before any queue request is paid, and with standard queues and topics the order per conversation is lost."
               },
               {
                 "option": "Amazon MSK",
@@ -1678,15 +1678,15 @@
               ],
               [
                 "Message store",
-                "DynamoDB on-demand, Standard-IA: writes at $0.78 per million, storage at $0.10 per GB-month for a year of history, 5 percent of reads from the table",
+                "DynamoDB on-demand, Standard-IA: writes at $0.78 per million, storage at $0.10 per GB-month for a year of history, 5 percent of reads from the table, 50 messages a page",
                 "about $41,700 (180 TB)",
                 "about $417,000 (1.8 PB)"
               ],
               [
                 "Presence and sessions",
                 "ElastiCache for Valkey, cache.r7g.large at $0.1752 an hour, a replica per shard; 50,000 writes a second per primary (assumption)",
-                "about $1,530 (12 nodes)",
-                "about $15,300 (120 nodes)"
+                "about $2,050 (16 nodes)",
+                "about $17,400 (136 nodes)"
               ],
               [
                 "Message events",
@@ -1696,9 +1696,9 @@
               ],
               [
                 "Total",
-                "the six lines above; the push and search consumers, receipt cursors, data transfer out and CloudWatch not priced",
-                "about $63,500, about $0.0013 per daily active user",
-                "about $635,000, about $0.0013 per daily active user"
+                "the six lines above; the push and search consumers, receipt cursors, interface endpoints, data transfer out and CloudWatch not priced",
+                "about $64,000, about $0.0013 per daily active user",
+                "about $637,000, about $0.0013 per daily active user"
               ]
             ],
             "cites": [
@@ -2209,6 +2209,11 @@
       "version": 6,
       "date": "2026-10-16",
       "change": "AWS pass (building-it-on-aws, flow block, sequence diagrams), batch E1A, Claude (Sonnet 5.5) as writer: the high-level design flowchart became a flow block with the same ten boxes and one added arrow (conversation servers to the session registry, which the core flow already described); the core flow became three sequence diagrams (every fact and number of the six steps kept); a Building it on AWS section after the high-level design in the accepted news-feed shape (the architecture as one flow block of ten boxes, the connection, send, fan-out, consumer and resync paths as sequence diagrams, the identity and network table, five decision blocks, the six-pillar Well-Architected table, one cost table); technologies and related filled; AWS sources s7 onward fetched 2026-10-16; reviewed_by cleared for a second read"
+    },
+    {
+      "version": 7,
+      "date": "2026-10-16",
+      "change": "Second read of the AWS pass (batch E1A), Claude (Sonnet 5.5) as a different instance from the writer; mechanical fixes only: the presence and session clusters are sized to the lesson's own heartbeat rate (two keys refreshed at each of 170,000 heartbeats a second, 50,000 writes a second per primary: 16 nodes at $2,050 and 136 at $17,400, not 12 and 120), so the two totals are about $64,000 and $637,000; the 50 messages a page behind the read line and the 300 bytes a frame behind the TCP listener price are stated; the SNS plus SQS line says the order is lost with standard queues and topics; the encryption claim is limited to what the cited DynamoDB page says; interface endpoints are listed as not priced; reviewed_by stays empty, the remaining findings are in the review"
     }
   ]
 }
