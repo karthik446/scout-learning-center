@@ -1,7 +1,7 @@
 {
   "schema_version": "learning-center-lesson:1",
   "id": "gpu-inference-serving",
-  "version": 1,
+  "version": 2,
   "status": "published",
   "superseded_by": null,
   "title": "GPU infrastructure and model serving for inference workloads",
@@ -39,7 +39,7 @@
     {
       "body": [
         {
-          "body": "Pods request GPUs through a vendor resource name such as nvidia.com/gpu, set under resource limits. GPUs are specified in limits; if a request is also given it must equal the limit. By default the count is a whole number, devices are not overcommitted, and a container cannot ask for a fraction of one. Nodes carry labels describing the GPU model and memory, added by node feature discovery, so workloads can use node selectors or affinity to land on the right hardware. GPU node pools are normally tainted so ordinary pods stay off them, and inference pods carry the matching toleration. Because nodes are expensive and slow to provision, plan for image pull time and model load time when designing autoscaling and readiness probes.",
+          "body": "Pods request GPUs through a vendor resource name such as nvidia.com/gpu, set under resource limits. GPUs are specified in limits; if a request is also given it must equal the limit. By default the count is a whole number, devices are not overcommitted, and a container cannot ask for a fraction of one. As of 2026-10, Dynamic Resource Allocation (stable in Kubernetes since v1.35) is the other model: workloads claim devices by their attributes through ResourceClaims and can share a claimed device, and the NVIDIA GPU Operator documentation has a DRA Driver for NVIDIA GPUs; this lesson describes the device-plugin model. Nodes carry labels describing the GPU model and memory, added by node feature discovery, so workloads can use node selectors or affinity to land on the right hardware. GPU node pools are normally tainted so ordinary pods stay off them, and inference pods carry the matching toleration. Because nodes are expensive and slow to provision, plan for image pull time and model load time when designing autoscaling and readiness probes.",
           "heading": "Extended resources and their rules"
         }
       ],
@@ -53,12 +53,12 @@
           "heading": "What a serving engine adds"
         },
         {
-          "body": "Hugging Face Text Generation Inference is a toolkit for deploying and serving LLMs with token streaming, continuous batching, quantization options, and production features such as Prometheus metrics and distributed tracing. Selection in practice depends on which engine supports the customer's approved model and hardware, how well it handles your structured output and tool calling needs, and what the customer platform team is willing to operate. Whichever you choose, put it behind the same client interface as hosted models, and rerun your evaluation suite: a smaller open-weight model will behave differently on prompts tuned for a frontier model.",
-          "heading": "Text Generation Inference and choosing"
+          "body": "Hugging Face Text Generation Inference (TGI) was a toolkit for deploying and serving LLMs with token streaming, continuous batching and quantization options. As of 2026-10 it is in maintenance mode: Hugging Face's documentation says it now recommends vLLM, SGLang and local engines such as llama.cpp or MLX going forward, and the GitHub repository was archived on 2026-03-21, so a new deployment should start on one of the maintained engines. Selection among them in practice depends on which engine supports the customer's approved model and hardware, how well it handles your structured output and tool calling needs, and what the customer platform team is willing to operate. Whichever you choose, put it behind the same client interface as hosted models, and rerun your evaluation suite: a smaller open-weight model will behave differently on prompts tuned for a frontier model.",
+          "heading": "Choosing an engine; TGI is in maintenance mode"
         }
       ],
       "id": "inference-servers",
-      "title": "Inference servers: vLLM and Text Generation Inference"
+      "title": "Inference servers: vLLM and choosing an engine"
     },
     {
       "body": [
@@ -76,7 +76,7 @@
     }
   ],
   "diagram": {
-    "source": "flowchart TB\n  APP[Application and agents] -->|OpenAI-compatible HTTP| SVC[Kubernetes Service]\n  SVC --> POD[Inference server pod: vLLM or TGI]\n  POD -->|requests nvidia.com/gpu| DP[Device plugin]\n  subgraph Node[GPU node]\n    DP --> RT[Container runtime with NVIDIA Container Toolkit]\n    RT --> DRV[NVIDIA driver]\n    DRV --> GPU[Physical GPU]\n  end\n  OP[GPU Operator] -.manages.-> DP\n  OP -.manages.-> RT\n  OP -.manages.-> DRV\n  POD --> W[(Model weights in internal store)]\n  EXP[DCGM exporter] --> MON[Monitoring]"
+    "source": "flowchart TB\n  APP[Application and agents] -->|OpenAI-compatible HTTP| SVC[Kubernetes Service]\n  SVC --> POD[Inference server pod: vLLM or another engine]\n  POD -->|requests nvidia.com/gpu| DP[Device plugin]\n  subgraph Node[GPU node]\n    DP --> RT[Container runtime with NVIDIA Container Toolkit]\n    RT --> DRV[NVIDIA driver]\n    DRV --> GPU[Physical GPU]\n  end\n  OP[GPU Operator] -.manages.-> DP\n  OP -.manages.-> RT\n  OP -.manages.-> DRV\n  POD --> W[(Model weights in internal store)]\n  EXP[DCGM exporter] --> MON[Monitoring]"
   },
   "code": [
     {
@@ -122,7 +122,7 @@
     },
     {
       "kind": "doc",
-      "title": "Hugging Face Text Generation Inference",
+      "title": "Hugging Face Text Generation Inference (maintenance mode)",
       "url": "https://huggingface.co/docs/text-generation-inference/index"
     },
     {
@@ -134,6 +134,16 @@
       "kind": "doc",
       "title": "NVIDIA Container Toolkit: Installation Guide",
       "url": "https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html"
+    },
+    {
+      "kind": "doc",
+      "title": "Kubernetes: Dynamic Resource Allocation (stable since v1.35)",
+      "url": "https://kubernetes.io/docs/concepts/resource-management/dynamic-resource-allocation/"
+    },
+    {
+      "kind": "repo",
+      "title": "Text Generation Inference repository (archived 2026-03-21)",
+      "url": "https://github.com/huggingface/text-generation-inference"
     }
   ],
   "practice": null,
@@ -148,6 +158,11 @@
       "version": 1,
       "date": "2026-10-12",
       "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-16",
+      "change": "corrections 2026-10: Text Generation Inference is in maintenance mode (repository archived), not a current engine choice; Dynamic Resource Allocation is stable since Kubernetes v1.35"
     }
   ]
 }

@@ -1,7 +1,7 @@
 {
   "schema_version": "learning-center-lesson:1",
   "id": "tensorrt-llm-low-latency-and-edge",
-  "version": 1,
+  "version": 2,
   "status": "published",
   "superseded_by": null,
   "title": "Low-latency inference: TensorRT-LLM, quantization and edge deployment",
@@ -16,23 +16,23 @@
     "low-latency",
     "edge-deployment"
   ],
-  "summary": "When latency or hardware budget is tight, the model itself is optimised for the target device instead of only scaling the service around it. TensorRT-LLM compiles LLMs into engines tuned for NVIDIA GPUs, quantization reduces the numeric precision of weights and activations to cut memory and compute, and edge deployment pushes the result onto constrained devices. Each step trades flexibility or accuracy for speed, so each needs measurement.",
+  "summary": "When latency or hardware budget is tight, the model itself is optimised for the target device instead of only scaling the service around it. TensorRT-LLM optimises LLM inference on NVIDIA GPUs (as of 2026-10 without a separate engine-build step), quantization reduces the numeric precision of weights and activations to cut memory and compute, and edge deployment pushes the result onto constrained devices. Each step trades flexibility or accuracy for speed, so each needs measurement.",
   "detail": [],
-  "in_practice": "Teams add an optimisation stage to the release pipeline after training and evaluation: export, quantize, compile for each target GPU or device class, then rerun the evaluation suite and a latency benchmark on the real hardware. Only variants that hold accuracy within an agreed tolerance and beat the baseline on cost at the latency objective are promoted. Engines are stored as versioned artifacts with build metadata, served through Triton or the bundled server in the data centre, and shipped as signed packages with staged rollout to edge fleets.",
+  "in_practice": "Teams add an optimisation stage to the release pipeline after training and evaluation: export, quantize, optimise for each target GPU or device class, then rerun the evaluation suite and a latency benchmark on the real hardware. Only variants that hold accuracy within an agreed tolerance and beat the baseline on cost at the latency objective are promoted. Optimised artifacts and the settings that produced them are stored as versioned artifacts with build metadata, served through NVIDIA Dynamo, Triton or the bundled server in the data centre, and shipped as signed packages with staged rollout to edge fleets.",
   "subtopics": [
     {
       "body": [
         {
-          "body": "TensorRT-LLM is NVIDIA's open-source library for optimising LLM inference on its GPUs. It provides a Python API for loading and running models, a command-line server with an OpenAI-compatible endpoint, and a backend for Triton Inference Server for production serving. Under the hood it applies GPU-specific kernels and graph optimisations together with LLM serving techniques: in-flight batching (its name for continuous batching), a paged KV cache with reuse, multi-GPU execution, and several quantization formats. It also supports speculative decoding and guided decoding.",
+          "body": "TensorRT-LLM is NVIDIA's open-source library for optimising LLM inference on its GPUs. It provides a Python API for loading and running models, a command-line server (trtllm-serve) with an OpenAI-compatible endpoint, and integrations with NVIDIA Dynamo and Triton Inference Server for production serving. Under the hood it applies GPU-specific kernels and graph optimisations together with LLM serving techniques: in-flight batching (its name for continuous batching), a paged KV cache with reuse, multi-GPU execution, and several quantization formats. It also supports speculative decoding and guided decoding.",
           "heading": "What it is"
         },
         {
-          "body": "An optimised engine is specific to the model, the precision, the shape limits and the GPU architecture it was built for, and is tied to the library version. That makes the build a pipeline stage with its own artifacts: build on the same GPU type that will serve, store the engine in the registry beside the source weights with all build parameters, and rebuild on every model, driver or library upgrade. The reward is typically lower latency and higher throughput than a general-purpose runtime on the same hardware.",
-          "heading": "The cost of compilation"
+          "body": "As of 2026-10, current TensorRT-LLM has no separate engine-build step. Release 1.2 (latest stable release v1.2.1) removed the TensorRT engine backend: PyTorch is the only execution backend, the trtllm-build, trtllm-refit and trtllm-prune commands and the per-model convert_checkpoint.py scripts are gone, and Hugging Face checkpoints load directly, for example with trtllm-serve <hf_model>. Guides that describe building an engine per model, precision, shape limits and GPU architecture, tied to the library version, describe older releases. What still belongs in the pipeline: pin the library and container version, record the precision and quantization settings, benchmark on the GPU type that will serve, and rerun the evaluation gate and latency benchmark on every model, driver or library upgrade. The reward is typically lower latency and higher throughput than a general-purpose runtime on the same hardware.",
+          "heading": "What changed: no separate engine build"
         }
       ],
       "id": "tensorrt-llm-engines",
-      "title": "TensorRT-LLM: compiled engines for NVIDIA GPUs"
+      "title": "TensorRT-LLM: an optimised runtime for NVIDIA GPUs"
     },
     {
       "body": [
@@ -74,7 +74,7 @@
     }
   ],
   "diagram": {
-    "source": "flowchart LR\n  W[Trained weights] --> X[Export and graph preprocessing]\n  X --> Q[Quantize with calibration data]\n  Q --> B[Build engine per target GPU]\n  B --> E[Evaluation gate and latency benchmark]\n  E -->|pass| R[(Registry with build metadata)]\n  E -->|fail| Q\n  R --> T[Triton or bundled server in data centre]\n  R --> O[Signed package and staged rollout to edge]"
+    "source": "flowchart LR\n  W[Trained weights] --> X[Export and graph preprocessing]\n  X --> Q[Quantize with calibration data]\n  Q --> B[Optimise for each target GPU or device]\n  B --> E[Evaluation gate and latency benchmark]\n  E -->|pass| R[(Registry with build metadata)]\n  E -->|fail| Q\n  R --> T[Dynamo, Triton or bundled server in data centre]\n  R --> O[Signed package and staged rollout to edge]"
   },
   "code": [
     {
@@ -111,6 +111,16 @@
       "url": "https://nvidia.github.io/TensorRT-LLM/quick-start-guide.html"
     },
     {
+      "kind": "doc",
+      "title": "TensorRT-LLM Migration Guide: TensorRT Backend Removed",
+      "url": "https://nvidia.github.io/TensorRT-LLM/legacy/tensorrt-backend-removal.html"
+    },
+    {
+      "kind": "doc",
+      "title": "TensorRT-LLM Release Notes (Release 1.2: TensorRT backend removed)",
+      "url": "https://nvidia.github.io/TensorRT-LLM/release-notes.html"
+    },
+    {
       "kind": "repo",
       "title": "TensorRT-LLM repository",
       "url": "https://github.com/NVIDIA/TensorRT-LLM"
@@ -133,6 +143,11 @@
       "version": 1,
       "date": "2026-10-12",
       "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-16",
+      "change": "corrections 2026-10: TensorRT-LLM no longer has a per-GPU engine-build stage (TensorRT backend removed in release 1.2; PyTorch is the only backend); Dynamo named beside Triton"
     }
   ]
 }
