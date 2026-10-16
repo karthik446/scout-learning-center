@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-chat",
-  "version": 14,
+  "version": 15,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: chat and presence",
@@ -1513,7 +1513,7 @@
           {
             "type": "diagram",
             "mermaid": "sequenceDiagram\n  autonumber 26\n  participant C as Conv server\n  participant D as DynamoDB\n  participant SS as Session registry\n  participant G as Member gateways\n  participant K as Kinesis stream\n  opt the members are not in the owner's cache\n    C->>D: GetItem the conversation\n    D-->>C: the member_ids, cached with a TTL\n  end\n  C->>SS: GET the sessions of the member_ids\n  SS-->>C: gateway task per session\n  C-)G: one batched delivery per gateway\n  Note over G: the frame goes to each local session, the<br/>delivery acks are coalesced, see part f\n  C-)K: PutRecords, the message event\n  Note over C,K: key is the conversation id, so one<br/>conversation's events stay in order\n  Note over G,K: a member whose gateway is gone<br/>resyncs when it reconnects",
-            "legend": "Solid arrows are synchronous calls with their replies dashed; open arrows are asynchronous hand-offs. Edge is the Network Load Balancer, drawn as one lane here and in every sequence diagram below. Events with one partition key stay in order within a shard s16; the interface endpoint s9; Discord's Elixir write-up on batching per node s5.",
+            "legend": "Solid arrows are synchronous calls with their replies dashed; open arrows are asynchronous hand-offs. Edge is the Network Load Balancer, drawn as one lane here and in every sequence diagram below. Records with one partition key go to one shard, and their sequence numbers generally increase over time s16; the interface endpoint s9; Discord's Elixir write-up on batching per node s5.",
             "cites": [
               "s5",
               "s9",
@@ -1968,8 +1968,8 @@
               [
                 "Total",
                 "the six lines above; presence reads, conversation-record reads on a cache miss, the push and search consumers and their lease tables, conversation and receipt records, ECR and S3 endpoints, interface endpoints, NAT gateways, data transfer out and CloudWatch not priced",
-                "about $67,600, about $0.0014 per daily active user",
-                "about $673,000, about $0.0014 per daily active user"
+                "about $67,600, about $0.00135 per daily active user",
+                "about $673,000, about $0.00135 per daily active user"
               ]
             ],
             "cites": [
@@ -2522,6 +2522,11 @@
       "version": 14,
       "date": "2026-10-16",
       "change": "fix round 4 after the third re-read (batch E1A): the owner and the push service take the members of a conversation from the conversation record (GetItem, cached with a TTL; flow edges and steps, Part b and Part c, role rows), a new Part g for the receipt frame to the other members' gateways, Part f without the owner lane, the resync diagram delivers the older bucket first, KCL 3.x consumer permissions and a CloudWatch endpoint for both consumers, client_msg_id on the message item, lane labels, reviewed_by stays null"
+    },
+    {
+      "version": 15,
+      "date": "2026-10-16",
+      "change": "Fifth read of the AWS pass (batch E1A), Claude (Sonnet 5.5), a different instance from the writer and the four earlier readers; mechanical fixes only: the per-user cost in the total row is about $0.00135 at both scales (the 10x total is $672,722 over 500 million users, which rounds to $0.0013, not $0.0014); the stream-order legend says what the cited Kinesis page says (records with one partition key go to one shard and their sequence numbers generally increase over time) instead of a stronger claim; findings for the writer in reviews/learning-center-F2-E1A-reread4.md; reviewed_by stays null"
     }
   ]
 }
