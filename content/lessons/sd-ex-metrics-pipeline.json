@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-metrics-pipeline",
-  "version": 4,
+  "version": 5,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: metrics and time series pipeline",
@@ -773,7 +773,7 @@
           },
           {
             "type": "p",
-            "text": "Series count is a useful capacity unit at a fixed scrape interval and retention, not a substitute for bytes. In this model retained samples dominate headers. Cardinality limits bound both sample traffic and per-series overhead; query fan-out and churn still require separate measurement. Gorilla's compression figure is an observed average, not a guarantee for these metrics."
+            "text": "Series count is a useful capacity unit at a fixed scrape interval and retention, not a substitute for bytes. In this model retained samples dominate headers; the header-size assumption is 100 bytes per series, 4 GB for 40 million series. Cardinality limits bound both sample traffic and per-series overhead; query fan-out and churn still require separate measurement. Gorilla's compression figure is an observed average, not a guarantee for these metrics."
           }
         ]
       },
@@ -1393,8 +1393,8 @@
                 "caption": "Evaluator publishes alert identity to SNS; duplicate evaluators and retries may publish duplicates, handled by capable receivers"
               }
             ],
-            "legend": "Neutral query path mapped to Fargate frontend/evaluators, Valkey cache, DynamoDB posting lists, hot replicas and S3 blocks. The public load balancer serves authenticated tenant queries. All subranges finish before a merged response. SNS acceptance is not exactly-once delivery. Sources: Service Connect s18, task roles s19, S3 endpoint s23, DynamoDB endpoint s24, cache s29 and SNS s32.",
-            "cites": ["s18", "s19", "s23", "s24", "s29", "s32"]
+            "legend": "Neutral query path mapped to Fargate frontend/evaluators, Valkey cache, DynamoDB posting lists, hot replicas and S3 blocks. The public load balancer serves authenticated tenant queries. All subranges finish before a merged response. SNS acceptance is not exactly-once delivery. Sources: Service Connect s18, task roles s19, S3 endpoint s23, DynamoDB endpoint s24, cache s29, SNS s32 and its delivery guarantees s13.",
+            "cites": ["s13", "s18", "s19", "s23", "s24", "s29", "s32"]
           },
           {
             "type": "p",
@@ -1551,8 +1551,9 @@
           {
             "type": "diagram",
             "mermaid": "sequenceDiagram\n  autonumber 8\n  participant Q as Caller\n  participant QF as Query frontend\n  participant S3 as S3 blocks\n  participant RE as Rule evaluator\n  participant SNS\n  opt older subrange needed\n    QF->>S3: GetObject index and chunks\n    alt objects available\n      S3-->>QF: older partial result\n    else unavailable\n      S3-->>QF: error\n      Note over QF: mark result partial\n    end\n  end\n  QF-->>Q: merge recent and older\n  RE->>QF: evaluate rule\n  QF-->>RE: result\n  RE->>SNS: Publish with alert identity\n  SNS-->>RE: accepted\n  Note over RE,SNS: duplicates remain possible",
-            "legend": "The response follows both subranges. SNS and replicated evaluators provide at-least-once notification attempts, not exactly one notification. Every alert includes tenant, rule, labels and evaluation-window identity so an idempotent downstream receiver can suppress duplicates; receivers without that contract may see duplicates. Sources: S3 endpoint s23 and SNS s32.",
+            "legend": "The response follows both subranges. SNS and replicated evaluators provide at-least-once notification attempts, not exactly one notification; the decision guide s13 gives at-least-once delivery for HTTP/S endpoints. Every alert includes tenant, rule, labels and evaluation-window identity so an idempotent downstream receiver can suppress duplicates; receivers without that contract may see duplicates. Sources: S3 endpoint s23, SNS s32 and delivery guarantees s13.",
             "cites": [
+              "s13",
               "s23",
               "s32"
             ]
@@ -1842,8 +1843,8 @@
               [
                 "Series registry",
                 "DynamoDB on-demand",
-                "$3,265",
-                "$32,650"
+                "$3,515",
+                "$35,150"
               ],
               [
                 "Alerts",
@@ -1854,8 +1855,8 @@
               [
                 "Priced subtotal",
                 "Excludes transfer, ALB/endpoints, monitoring, S3 requests/index overhead/versioning, discovery-query reads, active-lease/last-seen refresh operations and retries. Default stream retention only.",
-                "about $13,357; $334 per million active series",
-                "about $131,212; $328 per million active series"
+                "about $13,607; $340 per million active series",
+                "about $133,712; $334 per million active series"
               ]
             ],
             "cites": [
@@ -2262,11 +2263,12 @@
               ["Lifecycle writes", "Seven items on first creation, two on deactivation, six on eventual historical collection; transactional doubling gives 30 write units per distinct churn lifecycle. Assume 4M distinct replacements daily."],
               ["Write-size bound", "Each serialized metadata, label-index or counter item fits one KiB including attribute names/keys; the six discovery items together fit two KiB in this priced model. Larger labels require rejection or rounded-up capacity, not the same price."],
               ["Historical identity count", "40M active plus 4M daily distinct inactive identities retained for 460 days: 1.88B identities at steady state."],
-              ["Registry storage", "Budget 4,000 billed GB for retained discovery and counters at base; tenfold storage at larger load. This covers the two-KiB identity bound with rounding/headroom."],
+              ["Registry storage", "Budget 5,000 billed GB for retained discovery and counters at base; tenfold storage at larger load. This covers the two-KiB identity bound plus the per-item storage overhead that DynamoDB billing adds, with headroom."],
               ["Registry reads", "One strong metadata read per newly encountered identity, below four KiB. Historical selector reads, active refreshes, reactivations and retry/collection-lag overhead are excluded."],
               ["Storage units", "Teaching volumes are decimal. Budget the numeric total as 36,000 AWS billed GB conservatively rather than claim equality with binary units. Larger tier uses the actual 51,200-GB breakpoint."],
               ["Month and fleet", "30 request-days, 730 running hours. Tenfold task and shard counts are unbenchmarked sizing assumptions."]
-            ]
+            ],
+            "cites": ["s42"]
           },
           {
             "type": "table",
@@ -2332,8 +2334,8 @@
                 "Series registry: DynamoDB on-demand",
                 "Creation, active deactivation and historical collection are separate transactions; discovery retained independently of quota. Steady-state churn and item-size/storage assumptions above.",
                 "$0.625 per million writes; $0.125 per million reads; $0.25 per billed GB-month",
-                "$3,265",
-                "$32,650"
+                "$3,515",
+                "$35,150"
               ],
               [
                 "Alerts: SNS",
@@ -2353,8 +2355,8 @@
                 "Total on AWS (the design, not the buy option)",
                 "Same exclusions as the final AWS summary table",
                 "",
-                "about $13,357; $334 per million active series",
-                "about $131,212; $328 per million active series"
+                "about $13,607; $340 per million active series",
+                "about $133,712; $334 per million active series"
               ]
             ],
             "cites": [
@@ -2430,8 +2432,8 @@
   "provenance": {
     "generated_by": "Claude (Fable 5.1) by hand, Scout learning center M4a; format v2 and the AWS section by Claude (Fable 5.1) by hand, Scout learning center, format v2 batch E2A",
     "generated_on": "2026-10-12",
-    "reviewed_by": null,
-    "reviewed_on": null
+    "reviewed_by": "a third reader (Claude Sonnet 5.5, a different instance from the earlier readers), Scout learning center, format v2 E2A",
+    "reviewed_on": "2026-10-16"
   },
   "changelog": [
     {
@@ -2453,6 +2455,11 @@
       "version": 4,
       "date": "2026-10-16",
       "change": "Round-two MR1–MR3: retain historical discovery independently of active quota, separate deactivation from guarded collection, price retained identities and bounded write items, migrate recovery/delivery/compression/query summaries and scope the chosen API."
+    },
+    {
+      "version": 5,
+      "date": "2026-10-16",
+      "change": "Third read: the dropped 100-byte series-header assumption is stated again; the registry storage budget is raised to 5,000 and 50,000 billed GB so it covers DynamoDB's per-item storage overhead (registry $3,515 and $35,150, subtotals $13,607 and $133,712, $340 and $334 per million series); the SNS at-least-once claim cites the decision guide; reviewed by a third reader."
     }
   ]
 }
