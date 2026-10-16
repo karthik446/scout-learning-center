@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-payments-ledger",
-  "version": 3,
+  "version": 4,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: payments ledger",
@@ -84,7 +84,7 @@
     },
     {
       "id": "s4",
-      "title": "Uber Engineering: Revolutionizing money movements at scale with strong data consistency (Aakriti Singla and Simon Wu, 2020-10-02)",
+      "title": "Uber Engineering: Revolutionizing money movements at scale with strong data consistency (Aakriti Singla and Simon Wu, 2020-10-01)",
       "url": "https://www.uber.com/us/en/blog/money-scale-strong-data/",
       "kind": "article",
       "verified": {
@@ -609,6 +609,38 @@
         "http": 200,
         "section_found": "$0.10 per cluster per hour"
       }
+    },
+    {
+      "id": "s52",
+      "title": "Kinesis PutRecords API: per-record failures and no ordering guarantee",
+      "url": "https://docs.aws.amazon.com/kinesis/latest/APIReference/API_PutRecords.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "PutRecords doesn't guarantee the ordering of records"
+      }
+    },
+    {
+      "id": "s53",
+      "title": "Step Functions: interface VPC endpoints",
+      "url": "https://docs.aws.amazon.com/step-functions/latest/dg/vpc-endpoints.html",
+      "kind": "doc",
+      "verified": {"checked": "2026-10-16", "http": 200, "section_found": "Amazon VPC endpoints are supported by Standard Workflows, Express Workflows"}
+    },
+    {
+      "id": "s54",
+      "title": "Lambda: retrieving Secrets Manager secrets",
+      "url": "https://docs.aws.amazon.com/lambda/latest/dg/with-secrets-manager.html",
+      "kind": "doc",
+      "verified": {"checked": "2026-10-16", "http": 200, "section_found": "secretsmanager:GetSecretValue"}
+    },
+    {
+      "id": "s55",
+      "title": "Step Functions StartExecution API: Express is not idempotent",
+      "url": "https://docs.aws.amazon.com/step-functions/latest/apireference/API_StartExecution.html",
+      "kind": "doc",
+      "verified": {"checked": "2026-10-16", "http": 200, "section_found": "StartExecution"}
     }
   ],
   "practice": null,
@@ -635,7 +667,7 @@
         ],
         [
           "Targets (assumption)",
-          "Posting an entry is atomic and durable before the caller is told; a balance read reflects every entry acknowledged before the read for the same account (read-your-writes per account); provider calls complete or compensate within 10 minutes; reconciliation finishes within 6 hours of the statement; the daily sum of all lines is zero.",
+          "Posting is atomic and durable before acknowledgement. Same-account reads include acknowledged entries. Unresolved provider calls escalate within 10 minutes, without falsely claiming compensation succeeded. Reconciliation finishes within 6 hours of the statement; journal lines balance separately in each currency.",
           ""
         ],
         [
@@ -678,7 +710,7 @@
         "blocks": [
           {
             "type": "p",
-            "text": "Every number below follows from the stated assumptions: 10 million payments a day, about 6 journal lines per payment over its life, 50 million accounts and 7 years of retention. The tables carry the arithmetic; the paragraphs carry the assumptions."
+            "text": "The prompt's six-line estimate omits the append-only release of the memo hold. This answer uses eight lines per completed card payment so both memo and financial books balance independently. Payment volume, account count and retention remain the exercise assumptions; the revised line count changes journal storage, not provider-call or entry counts."
           },
           {
             "type": "table",
@@ -707,10 +739,10 @@
               ],
               [
                 "Journal lines",
-                "60 million",
-                "700",
-                "7,000",
-                "6 lines per payment; every line is written inside one atomic entry"
+                "80 million",
+                "926",
+                "9,260",
+                "8 lines per payment: two memo authorisation lines, then two memo reversals and four financial settlement lines"
               ],
               [
                 "Provider calls",
@@ -729,9 +761,9 @@
               [
                 "Sagas in flight",
                 "",
-                "about 116",
-                "about 1,160",
-                "Little's law: payments per second times about 1 s of provider latency (assumption); the orchestrator holds that many open sagas per second of provider latency"
+                "about 232",
+                "about 2,320",
+                "Little's law uses total saga lifetime: two sequential provider calls at an assumed second each, before other work and retries"
               ]
             ]
           },
@@ -751,18 +783,18 @@
               ],
               [
                 "Journal growth per day",
-                "12 GB",
-                "60 million lines times 200 bytes"
+                "16 GB",
+                "80 million lines times 200 bytes"
               ],
               [
                 "Journal per year",
-                "4.4 TB",
-                "12 GB times 365 days"
+                "5.84 TB",
+                "16 GB times 365 days"
               ],
               [
                 "Journal over 7 years",
-                "30 TB",
-                "4.4 TB times 7; sealed ranges move to cheaper storage, so the hot store holds far less"
+                "40.88 TB",
+                "5.84 TB times 7; sealed ranges move to verified cold storage"
               ],
               [
                 "Accounts",
@@ -778,14 +810,14 @@
           },
           {
             "type": "p",
-            "text": "The provider round trip is the slow step: an authorisation at a card provider is a call to an external system of the order of a second (assumption), so the payment flow is asynchronous by nature. A ledger write is a round trip inside the datacenter, about 500 microseconds, plus a synchronous replica commit: a few milliseconds, which is why the ledger is never the reason a payment feels slow.",
+            "text": "The historical latency reference lists a datacenter round trip of about 500 microseconds; it is not a measurement of this AWS path. A provider call lasting about a second is a billing and sizing assumption. Ledger commit latency, failover and end-to-end SLO feasibility need measurement under the chosen load, not an inference from that historical RTT.",
             "cites": [
               "s7"
             ]
           },
           {
             "type": "p",
-            "text": "Two targets shape everything else: an entry is atomic and durable before the caller is told, and the daily sum of all lines is zero. The first makes the ledger write a single transaction; the second is checked on every write and again by reconciliation."
+            "text": "Two targets shape everything else: an entry is atomic and durable before acknowledgement, and its signed lines sum to zero separately in each currency. Reconciliation repeats the per-currency check and compares provider movements. Authorisation reserves funds without counting the same hold twice."
           }
         ]
       },
@@ -1024,7 +1056,7 @@
               },
               {
                 "edge": 7,
-                "caption": "Ledger events to balance projector: entries in sequence order"
+                "caption": "Ledger events to projector: possibly duplicated or reordered entries; apply only contiguous sequences"
               },
               {
                 "edge": 8,
@@ -1283,7 +1315,8 @@
                 "caption": "Recovery worker to Step Functions: StartExecution again with the same payment id, async"
               }
             ],
-            "legend": "The write half of the architecture, the same boxes as the neutral diagram's payment path, one AWS service each: the payment API is an ECS on Fargate service behind an internal load balancer (the callers are the product's own services, so there is no CloudFront); the orchestrator is a Step Functions Express workflow per payment; the provider adapter and the ledger service are Lambda functions in the VPC's private subnets; the ledger is an Aurora PostgreSQL cluster per ledger shard, reached through RDS Proxy; the payments table (state and idempotency keys) is DynamoDB; the recovery worker is a small Fargate service that re-drives stuck payments. The provider is reached through a NAT gateway in the public subnets, the only path to the internet. Each arrow says how the call is made: HTTPS and HTTP inside the VPC, named AWS SDK calls over VPC endpoints, Lambda invocations from Task states, one SQL transaction. Sync means the caller waits; async means the work goes on after the caller is answered. The VPC frames are one VPC in one Region across three Availability Zones, drawn flat."
+            "legend": "The neutral payment path mapped to AWS: private Fargate API and recovery tasks, Step Functions Express orchestration, Lambda adapter and ledger service, DynamoDB intent records, and Aurora through RDS Proxy. Provider traffic exits through public NAT gateways. Express may start duplicate executions; durable intent recovery and conditional transitions provide application safety. ECS tasks use awsvpc, not every service. Sources: s8, s9, s13, s26, s31, s32, s53.",
+            "cites": ["s8", "s9", "s13", "s26", "s31", "s32", "s53"]
           },
           {
             "type": "flow",
@@ -1395,7 +1428,7 @@
                 "from": "PA",
                 "to": "LD",
                 "kind": "sync",
-                "label": "exact=true: the lines since as_of_sequence, read on the writer through RDS Proxy, sync",
+                "label": "exact=true: validated journal snapshot and active local reservations through RDS Proxy, sync",
                 "short": "Exact check"
               },
               {
@@ -1423,8 +1456,8 @@
                 "from": "BP",
                 "to": "BAL",
                 "kind": "sync",
-                "label": "UpdateItem with a condition on as_of_sequence over the gateway endpoint, sync",
-                "short": "UpdateItem"
+                "label": "TransactWriteItems: entry deltas and contiguous ledger watermark over gateway endpoint, sync",
+                "short": "Atomic projection"
               },
               {
                 "from": "PSP",
@@ -1477,7 +1510,7 @@
               },
               {
                 "edge": 3,
-                "caption": "Payment API to Aurora: exact=true reads the lines since as_of_sequence on the writer through RDS Proxy, sync"
+                "caption": "Payment API to Aurora: exact read from validated journal snapshot and active local reservations, never an unchecked dashboard base"
               },
               {
                 "edge": 4,
@@ -1493,7 +1526,7 @@
               },
               {
                 "edge": 7,
-                "caption": "Balance projector to DynamoDB balances: UpdateItem with a condition on as_of_sequence over the gateway endpoint, sync"
+                "caption": "Projector to DynamoDB: transact entry deltas with conditional contiguous ledger watermark; duplicates skipped, gaps recovered"
               },
               {
                 "edge": 8,
@@ -1516,7 +1549,8 @@
                 "caption": "Sealing task to S3: PutObject the sealed digest under Object Lock compliance mode, sync"
               }
             ],
-            "legend": "The read half: the balance reads, the neutral diagram's derived views and its daily jobs. The payment API, the load balancer and Aurora appear in both halves; the outbox relay, the reconciliation task and the sealing task are ECS on Fargate (the two jobs started by EventBridge Scheduler), the ledger events log is a Kinesis data stream, the projector is a Lambda function fed by the stream, balances and statements are a DynamoDB table, and provider statements and sealed digests live in S3 with Object Lock. The exact balance check is the one read that touches the ledger's writer; every other read is served by the projection."
+            "legend": "The neutral derived path mapped to AWS: a Fargate relay publishes per-record-accounted Kinesis batches, Lambda applies contiguous projections to DynamoDB, and scheduled Fargate jobs reconcile and seal into S3. Exact reads use Aurora, while dashboards use the projection. Projector gap recovery also reads Aurora or verified archived ranges. These recovery calls are detailed in the sequence rather than additional architecture boxes. Sources: s13, s14, s20, s25, s27, s36, s52.",
+            "cites": ["s13", "s14", "s20", "s25", "s27", "s36", "s52"]
           },
           {
             "type": "p",
@@ -1524,8 +1558,8 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber\n  participant P as Product svc\n  participant Edge\n  participant PA as Payment API\n  participant DDB as DynamoDB payments\n  participant SFN as Step Functions\n  P->>Edge: POST /payments, Idempotency-Key\n  Edge->>PA: HTTP, a healthy task\n  PA->>DDB: PutItem, state created\n  Note over PA,DDB: attribute_not_exists(<br/>idempotency_key)\n  alt the key is new\n    DDB-->>PA: ok\n    PA-)SFN: StartExecution,<br/>name = payment id\n    PA-->>Edge: 202 {payment_id, created}\n  else ConditionalCheckFailed\n    DDB-->>PA: the stored item\n    PA-->>Edge: the stored outcome\n  end\n  Edge-->>P: response\n  opt StartExecution fails after the put\n    PA->>SFN: retried, existing execution is ok\n  end",
-            "legend": "Solid arrows are synchronous calls with their replies dashed; the open arrow at step 5 is the hand-off: the caller's 202 does not wait for the provider. Sources: health checks and task replacement s34, s33; the conditional PutItem s15 and the SDK retry with backoff s16; the gateway endpoint s35; Express workflow executions s9.",
+            "mermaid": "sequenceDiagram\n  autonumber\n  participant P as Product svc\n  participant Edge\n  participant PA as Payment API\n  participant DDB as DynamoDB payments\n  participant SFN as Step Functions\n  P->>Edge: POST with caller key\n  Edge->>PA: authenticated request\n  PA->>DDB: conditional PutItem\n  alt caller key created\n    DDB-->>PA: durable intent\n    PA-)SFN: StartExecution\n    PA-->>Edge: 202 payment identity\n  else key already exists\n    PA->>DDB: consistent GetItem\n    DDB-->>PA: existing intent\n    PA-->>Edge: outcome or payload conflict\n  end\n  Edge-->>P: response\n  Note over DDB,SFN: recovery scans nonterminal intents",
+            "legend": "The primary key is the authenticated caller plus its idempotency key, not a newly generated payment id. Conditional creation s15 claims that item. On conflict, an authorized strongly consistent GetItem returns the record, and the API compares a canonical payload hash before returning an outcome. StartExecution is an asynchronous hand-off, not an Express deduplication boundary. Sources: s9, s15, s35.",
             "cites": [
               "s34",
               "s33",
@@ -1548,8 +1582,8 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 10\n  participant SFN as Step Functions\n  participant AD as Adapter (Lambda)\n  participant PSP as Provider\n  participant DDB as DynamoDB payments\n  SFN->>AD: Invoke authorise, Task state\n  Note over SFN,AD: TimeoutSeconds 5, Retry with backoff\n  AD->>PSP: authorise, through the NAT gateway\n  Note over AD,PSP: provider idempotency key = payment id\n  PSP-->>AD: authorised, provider_ref\n  AD-->>SFN: result\n  SFN->>DDB: UpdateItem state authorised\n  alt timeout or 5xx\n    SFN->>AD: Retry, same key\n    AD->>PSP: authorise again, a no-op at the provider\n  else retries exhausted\n    SFN->>DDB: Catch: state needs_recovery\n    Note over SFN,DDB: the recovery worker re-drives it,<br/>an operator at 10 minutes\n  end",
-            "legend": "The Task state's TimeoutSeconds and Retry with BackoffRate are Step Functions features s10; the saga orchestration pattern with Step Functions is AWS's own guidance s8. The provider idempotency key equals the payment id, so a retried authorise cannot hold money twice. Sources: the NAT gateway s26; Express at-least-once execution s9.",
+            "mermaid": "sequenceDiagram\n  autonumber 11\n  participant SFN as Step Functions\n  participant AD as Adapter\n  participant PSP as Provider\n  participant DDB as Payments\n  SFN->>DDB: compare state and version\n  DDB-->>SFN: current operation\n  SFN->>AD: Invoke authorise\n  AD->>PSP: stable authorise key\n  alt confirmed authorisation\n    PSP-->>AD: authorised reference\n    AD-->>SFN: confirmed\n    SFN->>DDB: conditional authorised state\n  else unknown result\n    AD-->>SFN: timeout or ambiguous result\n    SFN->>DDB: conditional pending recovery\n  else confirmed rejection\n    AD-->>SFN: rejected\n    SFN->>DDB: conditional rejected state\n  end",
+            "legend": "The state check is not an exclusive external-call lock: duplicate executions may repeat the same stable provider operation key. They cannot advance a different operation until its predecessor and ledger step are recorded. Conditional predecessor/version updates prevent regression, and terminal outcomes are protected. Unknown outcomes are queried or retried with the same operation key, never treated as rejection. Sources: Retry/Catch s10, saga pattern s8, NAT s26, Express s9.",
             "cites": [
               "s10",
               "s8",
@@ -1559,10 +1593,11 @@
           },
           {
             "type": "p",
-            "text": "An Express execution may run at most five minutes, so the ten-minute escalation does not live inside it: a step that exhausts its retries writes needs_recovery to the payments table and ends; the recovery worker starts a new execution for the same payment id, whose every step repeats as a no-op up to the one that failed, and pages an operator once the payment is ten minutes old. The execution is also recorded as at-least-once, which is safe here only because every step carries its own key.",
+            "text": "Express StartExecution is not idempotent. This design permits duplicate executions but conditions every state update on the expected predecessor and version; terminal states cannot regress. Provider operations use stable operation-specific keys. Only a confirmed rejection permits compensation; an unknown result remains pending while recovery queries or retries that same operation. A durable index of every nonterminal intent lets recovery find API deaths and executions killed at the five-minute limit even if no needs_recovery write happened. Recovery replays incomplete idempotent steps and escalates unresolved intents at ten minutes without declaring them compensated.",
             "cites": [
               "s9",
-              "s30"
+              "s30",
+              "s55"
             ]
           },
           {
@@ -1571,7 +1606,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 19\n  participant SFN as Step Functions\n  participant LS as Ledger svc (Lambda)\n  participant LD as Aurora writer\n  SFN->>LS: Invoke post entry, step id\n  Note over SFN,LS: the step id is the entry's idempotency key\n  LS->>LD: BEGIN, through RDS Proxy\n  LS->>LD: INSERT entry, lines, outbox row\n  Note over LS,LD: lines must sum to zero, else 422\n  LS->>LD: COMMIT\n  LD-->>LS: sequence\n  LS-->>SFN: {entry_id, sequence}\n  alt duplicate step id\n    LD-->>LS: duplicate: the stored entry\n  else writer failover\n    Note over LS,LD: the transaction fails,<br/>Retry after the promotion\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber 22\n  participant SFN as Step Functions\n  participant LS as Ledger svc\n  participant LD as Aurora writer\n  SFN->>LS: post entry with step key\n  LS->>LD: BEGIN and lock ledger head\n  alt new valid balanced entry\n    LS->>LD: lines, holds, sequence, outbox\n    LS->>LD: COMMIT\n    LD-->>LS: durable sequence\n  else duplicate step key\n    LD-->>LS: existing entry and sequence\n  else failure or invalid entry\n    LD-->>LS: rollback or unknown commit\n  end\n  LS-->>SFN: result or retry same key",
             "legend": "One transaction holds the entry, its lines, the per-ledger sequence and the outbox row, so nothing is published that was not committed. RDS Proxy pools the function's connections in front of the writer s13; a writer failover promotes a replica and service is typically restored in under a minute s11; the cluster volume is copied across three Availability Zones s12.",
             "cites": [
               "s13",
@@ -1585,8 +1620,8 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 27\n  participant SFN as Step Functions\n  participant AD as Adapter (Lambda)\n  participant PSP as Provider\n  participant LS as Ledger svc (Lambda)\n  SFN->>AD: Invoke capture\n  AD->>PSP: capture, same key\n  PSP-->>AD: captured\n  AD-->>SFN: result\n  SFN->>LS: Invoke post capture entry\n  LS-->>SFN: {entry_id, sequence}\n  Note over SFN: Succeed: captured, the outcome stored\n  alt capture rejected\n    SFN->>LS: Invoke reversal of the authorise\n    SFN->>AD: Invoke void at the provider\n    Note over SFN,AD: Catch and Retry, else needs_recovery\n  end",
-            "legend": "The compensation is two idempotent steps, a reversing entry and a void, each with its own key; if either keeps failing the execution ends in needs_recovery and the recovery worker takes over as in part b. Sources: Retry and Catch s10; compensating transactions in the saga pattern s8.",
+            "mermaid": "sequenceDiagram\n  autonumber 30\n  participant SFN as Step Functions\n  participant AD as Adapter\n  participant PSP as Provider\n  participant LS as Ledger svc\n  participant DDB as Payments\n  SFN->>AD: capture with stable key\n  AD->>PSP: capture\n  alt confirmed capture\n    PSP-->>AD: captured\n    AD-->>SFN: confirmed\n    SFN->>LS: post capture with step key\n    LS-->>SFN: durable entry\n    SFN->>DDB: conditional captured state\n  else confirmed rejection\n    AD-->>SFN: rejected\n    SFN->>AD: confirm void with stable key\n    AD-->>SFN: confirmed void or unknown\n    opt void confirmed\n      SFN->>LS: reverse reservation\n      SFN->>DDB: conditional compensated\n    end\n  else unknown result\n    AD-->>SFN: unknown\n    SFN->>DDB: conditional pending recovery\n  end",
+            "legend": "Capture and compensation are mutually exclusive paths. An unknown capture is resolved before any void or reversal. Only a confirmed void allows reservation release. Retries use immutable step keys and conditional predecessor/version transitions; terminal captured or compensated states cannot regress. A worker resolves overdue nonterminal intents even if the execution dies before recording recovery. Sources: s10 and s8.",
             "cites": [
               "s10",
               "s8"
@@ -1594,7 +1629,7 @@
           },
           {
             "type": "table",
-            "caption": "Identity and network: who may call what, over which endpoint, and what is public. Each ECS service runs under its own IAM task role and each Lambda function under its own execution role, so permissions are granted to the code, not to a host; everything in the VPC runs in private subnets across three Availability Zones in awsvpc mode. Nothing is public: the callers are the product's own services inside the VPC, and the only path to the internet is the NAT gateway the adapter uses to reach the provider.",
+            "caption": "Identity and network: per-service IAM roles and narrowly scoped database grants. ECS tasks use awsvpc in private subnets; Lambda and Aurora have their own networking models. The internal load balancer has no public address. Public NAT gateways provide outbound provider access; they do not accept unsolicited inbound connections.",
             "columns": [
               "service",
               "may call",
@@ -1616,31 +1651,31 @@
               ],
               [
                 "Step Functions (execution role)",
-                "Invoke on the two participant functions; UpdateItem on the payments table",
+                "Invoke participant functions; GetItem and conditional UpdateItem on payments",
                 "Regional service; the SDK integrations run inside AWS",
                 "no"
               ],
               [
                 "Provider adapter (Lambda execution role)",
-                "the provider's API over HTTPS; the provider secret from the secrets store; nothing in the VPC",
+                "provider HTTPS and secretsmanager:GetSecretValue on its provider credential ARN only",
                 "the NAT gateway in the public subnets, the one route to the internet; the secrets store over its interface endpoint",
                 "no; a private subnet function with no inbound rule at all"
               ],
               [
                 "Ledger service (Lambda execution role)",
-                "one transaction per invocation through RDS Proxy; nothing else",
-                "RDS Proxy inside the VPC; database credentials from the secrets store, never in code",
+                "ledger transactions through RDS Proxy; secretsmanager:GetSecretValue on its database credential ARN only",
+                "RDS Proxy inside VPC; Secrets Manager interface endpoint for credentials",
                 "no"
               ],
               [
                 "Recovery worker and outbox relay (task roles)",
-                "the worker: Query on the payments table and StartExecution; the relay: SELECT and UPDATE on the outbox table and PutRecords on the stream",
+                "worker: Query the nonterminal recovery index, consistent GetItem and conditional UpdateItem on payments, plus StartExecution; relay: SELECT and UPDATE outbox rows and PutRecords on the stream",
                 "DynamoDB gateway endpoint, Step Functions and Kinesis interface endpoints, RDS Proxy",
                 "no; no inbound rule at all"
               ],
               [
                 "Balance projector (Lambda execution role)",
-                "read the stream through its event source mapping; UpdateItem on the balances table",
+                "read Kinesis through its event source mapping; GetItem and TransactWriteItems on balances/watermarks; SELECT journal gaps through RDS Proxy and GetObject on verified archive ranges",
                 "Kinesis and DynamoDB endpoints",
                 "no"
               ],
@@ -1678,7 +1713,9 @@
               "s35",
               "s36",
               "s37",
-              "s25"
+              "s25",
+              "s53",
+              "s54"
             ]
           },
           {
@@ -1687,13 +1724,14 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber\n  participant LD as Aurora\n  participant RL as Outbox relay\n  participant K as Kinesis stream\n  participant BP as Projector (Lambda)\n  participant BAL as DynamoDB balances\n  RL->>LD: SELECT unsent outbox rows\n  LD-->>RL: rows in sequence order\n  RL-)K: PutRecords, partition key = ledger\n  RL->>LD: mark the rows sent\n  K-)BP: a batch, in shard order\n  BP->>BAL: UpdateItem posted, available\n  Note over BP,BAL: condition: as_of_sequence below this one\n  BAL-->>BP: ok, or ConditionalCheckFailed as a no-op\n  alt the relay crashes before marking\n    RL-)K: the rows are sent again\n    Note over K,BAL: duplicates are no-ops on as_of_sequence\n  else the projector fails a batch\n    Note over K,BP: retried in order, the shard waits,<br/>alarm on iterator age\n  end",
-            "legend": "The ledger id is the partition key, so one ledger's entries land on one shard in sequence order s18, and the Lambda event source processes each shard's records in order s20; a duplicate from a relay crash is refused by the condition on as_of_sequence s15. The stream keeps records for up to a year if asked, which is what a projection rebuild replays s19.",
+            "mermaid": "sequenceDiagram\n  autonumber\n  participant LD as Aurora\n  participant RL as Outbox relay\n  participant K as Kinesis stream\n  participant BP as Projector\n  participant BAL as DynamoDB balances\n  RL->>LD: read pending entries\n  LD-->>RL: ledger sequences\n  RL->>K: PutRecords\n  K-->>RL: per-record outcomes\n  RL->>LD: mark only successes sent\n  K-)BP: entries may be reordered\n  BP->>BAL: read ledger watermark\n  BAL-->>BP: contiguous watermark\n  alt next sequence\n    BP->>BAL: atomic deltas and watermark\n  else gap or expired log\n    BP->>LD: read missing journal range\n    LD-->>BP: contiguous entries\n    BP->>BAL: apply each next sequence\n  end",
+            "legend": "PutRecords can partially fail and reorder records. The relay retries only failed records and never marks an unacknowledged record sent. This application protocol, not partition-key ordering, supplies correctness: one logical projector per ledger conditionally advances a ledger watermark by exactly one, transactionally with every affected balance and hold delta. Duplicates at or below the watermark are skipped. Gaps are filled from the journal or verified archive, never skipped. Limit the entry's affected items to the DynamoDB transaction limit. Kinesis is short-lived delivery, not the rebuild source. Sources: s14, s15, s18, s20.",
             "cites": [
+              "s14",
+              "s15",
               "s18",
               "s20",
-              "s15",
-              "s19"
+              "s52"
             ]
           },
           {
@@ -1702,8 +1740,8 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 11\n  participant R as Dashboard\n  participant Edge\n  participant PA as Payment API\n  participant BAL as DynamoDB balances\n  participant LD as Aurora\n  R->>Edge: GET /accounts/{id}/balance\n  Edge->>PA: HTTP, a healthy task\n  PA->>BAL: GetItem\n  BAL-->>PA: posted, available, as_of_sequence\n  opt exact=true, before a payout\n    PA->>LD: SUM lines after<br/>as_of_sequence, writer\n    LD-->>PA: the delta\n  end\n  PA-->>Edge: balance\n  Edge-->>R: balance\n  alt writer failover during the exact read\n    Note over PA,LD: fails for under a minute, typically,<br/>the payout waits, never guesses\n  end",
-            "legend": "The projection serves dashboards; the exact check adds the lines the projection has not yet included, read on the writer so that read-your-writes per account holds. Sources: the gateway endpoint s35; Aurora failover times s11; RDS Proxy s13.",
+            "mermaid": "sequenceDiagram\n  autonumber 13\n  participant R as Dashboard\n  participant Edge\n  participant PA as Payment API\n  participant BAL as DynamoDB balances\n  participant LD as Aurora\n  R->>Edge: GET balance\n  Edge->>PA: authenticated request\n  alt exact read\n    PA->>LD: consistent snapshot and holds\n    alt valid snapshot and writer\n      LD-->>PA: exact balance and watermark\n    else unavailable or corrupt\n      LD-->>PA: fail closed\n    end\n  else dashboard\n    PA->>BAL: GetItem\n    BAL-->>PA: projected balance and age\n  end\n  PA-->>Edge: balance or unavailable\n  Edge-->>R: response\n  Note over PA,LD: spending requires a transaction",
+            "legend": "Exact reads do not trust the dashboard projection. They use a validated ledger snapshot plus contiguous journal and hold transitions in one database snapshot, or fail closed. Spending separately locks the ledger head and reserves or posts atomically. A corrupted snapshot is rebuilt from authoritative journal/archive before use. Sources: gateway endpoint s35, Aurora failover s11 and RDS Proxy s13.",
             "cites": [
               "s35",
               "s11",
@@ -1716,7 +1754,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 20\n  participant PSP as Provider\n  participant S3\n  participant RC as Reconciliation\n  participant LD as Aurora\n  participant SL as Sealing\n  PSP-)S3: the daily statement file\n  Note over S3,RC: EventBridge Scheduler starts the task\n  RC->>S3: GetObject, gateway endpoint\n  S3-->>RC: statement\n  RC->>LD: clearing lines by provider_ref\n  LD-->>RC: matches, mismatches\n  RC->>LD: adjustment cases with owners\n  Note over RC,LD: adjustment entries, never edits\n  SL->>LD: yesterday's range, in sequence\n  LD-->>SL: entries\n  SL->>LD: store the digest, verify the chain\n  SL->>S3: PutObject digest, Object Lock compliance\n  alt the statement is late\n    Note over RC: alarm at 6 hours, cases stay open,<br/>nothing is invented\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber 22\n  participant PSP as Provider\n  participant S3\n  participant RC as Reconciliation\n  participant LD as Aurora\n  participant SL as Sealing\n  alt statement received\n    PSP-)S3: daily statement\n    RC->>S3: GetObject\n    S3-->>RC: statement\n    RC->>LD: financial clearing lines\n    LD-->>RC: matches and mismatches\n    RC->>LD: cases with owners\n  else statement late\n    Note over RC: alarm, keep cases open\n  end\n  SL->>LD: committed range\n  LD-->>SL: entries\n  SL->>LD: record digest chain\n  SL->>S3: PutObject locked digest",
             "legend": "Sources: cron schedules in EventBridge Scheduler s27; the S3 gateway endpoint s36; Object Lock's compliance mode, under which no user can overwrite or delete the digest before its retention date s25; sealing and cold storage in time-range batches at Uber s3.",
             "cites": [
               "s27",
@@ -1727,7 +1765,7 @@
           },
           {
             "type": "p",
-            "text": "Sealed ranges are immutable twice over: the digest chain in the ledger says what the range contained, and the copy of each digest under Object Lock cannot be altered even by an administrator for the retention period, which is what the auditor is shown. Nothing in the read path writes to the journal except the reconciliation cases and the digests.",
+            "text": "This design's digest chain and Object Lock copy detect later journal tampering; they do not prevent database edits. Uber supports sealing and time-range cold storage, not this exact digest protocol. An auditor verifies the retained chain against the journal and archive. Reconciliation cases and digests are metadata writes, not edits to journal lines.",
             "cites": [
               "s25"
             ]
@@ -1746,13 +1784,13 @@
                 "option": "Amazon DynamoDB with transactions",
                 "pick_when": "entries are small and key-shaped, the invariants can be expressed as item conditions, and nobody wants instances or capacity planning",
                 "avoid_when": "an invariant must be computed over the rows inside the transaction, the design needs a dense per-ledger sequence, or reconciliation needs ad hoc queries",
-                "example": "For this design: not chosen. TransactWriteItems would hold an entry (it allows up to 100 actions, far more than 6 lines), but the sum-to-zero check would move into the caller, the sequence would need a counter item, and statements and reconciliation would become index design instead of queries; the balances projection, which is key-shaped, is DynamoDB."
+                "example": "For this design: not chosen for the journal. Transactional key access is viable, but database-side balanced-entry validation and reconciliation range queries favor SQL. DynamoDB holds the key-shaped derived balances with conditional transactional watermark advancement."
               },
               {
                 "option": "Amazon RDS for PostgreSQL",
-                "pick_when": "a single-instance PostgreSQL is enough, or an extension or an engine setting Aurora does not offer is required",
-                "avoid_when": "the data must survive the loss of a zone without the team running and testing its own replication",
-                "example": "For this design: not chosen. Aurora's cluster volume is copied across three zones and a replica is promoted on failure; with RDS the team would own the standby and the promotion, which an auditor would ask it to evidence."
+                "pick_when": "managed PostgreSQL with Multi-AZ standby replication and failover fits the workload, or required extensions favor RDS",
+                "avoid_when": "measurement shows Aurora's storage or read-scaling model better meets this workload's requirements",
+                "example": "For this design: Aurora is a workload choice for its cluster storage and read scaling, not because RDS lacks managed replication or promotion. RDS Multi-AZ remains a valid alternative requiring the same recovery testing."
               },
               {
                 "option": "Amazon Aurora DSQL",
@@ -1777,7 +1815,7 @@
                 "option": "Amazon Kinesis Data Streams",
                 "pick_when": "consumers need per-key ordering, replay of retained history, or several independent readers of the same stream; the producer can batch records",
                 "avoid_when": "the volume is tiny, nobody replays, and one consumer with at-least-once delivery is all that is needed",
-                "example": "For this design: chosen, on-demand. The ledger id is the partition key, so a ledger's entries arrive in sequence order at the projector; the stream retains history for replay, which is how a corrupted projection is rebuilt without touching the journal; a second consumer (statements, finance exports) reads the same stream."
+                "example": "For this design: chosen for asynchronous delivery, not as the authority for history. Partition keys select shards but PutRecords can reorder. The projector recovers gaps from the journal or verified archive. The priced model has one consumer; extra exports need separate read charges."
               },
               {
                 "option": "Amazon SQS standard queue",
@@ -1881,7 +1919,7 @@
                 "Security",
                 "a strong identity foundation; least privilege; protect data in transit and at rest; keep people away from data",
                 "one role per function and task; the provider secret readable by the adapter only; no card data anywhere; four-eyes on adjustments; digests under Object Lock; encryption at rest and in transit",
-                "none: the whitepaper does not trade security against the other pillars, and neither does this design",
+                "residual risks include credential theft, privileged edits and faulty adjustment approval; prioritizing security does not remove them",
                 "s28, s25"
               ],
               [
@@ -1943,8 +1981,8 @@
               [
                 "Ledger",
                 "Aurora PostgreSQL, Aurora Standard, a db.r7g.2xlarge writer and one reader, one cluster per shard",
-                "about $2,650 (one cluster)",
-                "about $26,500 (ten clusters)"
+                "about $2,800 (one cluster)",
+                "about $28,000 (ten assumed clusters)"
               ],
               [
                 "Saga",
@@ -1967,14 +2005,14 @@
               [
                 "Payments and balances",
                 "DynamoDB on-demand, two tables",
-                "about $1,800",
-                "about $18,000"
+                "about $3,430",
+                "about $34,300"
               ],
               [
                 "Ledger events",
                 "Kinesis Data Streams on-demand, one consumer",
-                "about $100",
-                "about $750"
+                "about $125",
+                "about $989"
               ],
               [
                 "Provider egress",
@@ -1985,8 +2023,8 @@
               [
                 "API, relay, recovery and jobs",
                 "ECS on Fargate, Arm",
-                "about $190",
-                "about $1,400"
+                "about $182",
+                "about $1,825"
               ],
               [
                 "Statements and digests",
@@ -1995,10 +2033,10 @@
                 "under $250"
               ],
               [
-                "Total",
-                "the nine lines above; data transfer, monitoring, backups and the secrets store not priced",
-                "about $8,100, about $0.03 per thousand payments",
-                "about $78,000, about $0.03 per thousand payments"
+                "Priced subtotal, not full TCO",
+                "Excludes projector Lambda, full-journal cold archive, ALB, interface endpoints, extra stream retention, retries/recovery I/O, data transfer, monitoring, backups, S3 requests and Secrets Manager.",
+                "about $9,900; $0.033 per thousand payments",
+                "about $96,900; $0.032 per thousand payments"
               ]
             ],
             "cites": [
@@ -2015,7 +2053,7 @@
           },
           {
             "type": "p",
-            "text": "Two lines dominate: the ledger clusters, because a writer and a reader run all month per shard, and the adapter, because Lambda bills the seconds it spends waiting on the provider. Everything else together is about a third of the bill, so the levers are the shard count (which the hot-account arithmetic sets) and where the adapter runs.",
+            "text": "DynamoDB, ledger clusters and provider-adapter duration dominate this priced subtotal. Transactional projection and recovery-index writes are not free. Shard count is an unbenchmarked fleet assumption, not a consequence of the hot-account rate alone, and the named exclusions prevent treating this subtotal as the complete production bill.",
             "cites": [
               "s41",
               "s46"
@@ -2057,27 +2095,27 @@
               ],
               [
                 "Line",
-                "entry_id, account_id, amount (signed, minor units), currency",
+                "entry_id, account_id, amount (signed, minor units), currency, book (memo or financial)",
                 "by entry_id, indexed by account_id",
-                "an entry's lines sum to zero in each currency, enforced on write; amounts are integers, no floating point anywhere"
+                "each entry balances separately by currency and book; debit is positive and credit negative. Memo postings never enter financial posted balances."
               ],
               [
                 "Hold",
-                "account_id, payment_id, amount, expires_at",
-                "by account_id",
-                "authorised-not-captured money; released by the capture entry or by a reversal"
+                "account_id, payment_id, amount, kind (provider memo or spend reservation), state, expires_at",
+                "by account_id and payment_id",
+                "provider memo holds describe money reserved by the card provider, not money already posted to our ledger. Capture or confirmed void closes the hold with memo reversal lines. Expiry schedules recovery, not unilateral release."
               ],
               [
                 "Balance",
-                "account_id, posted, available, as_of_sequence",
-                "account_id",
-                "derived: posted is the sum of lines, available is posted minus holds; as_of_sequence says which entries it includes"
+                "account_id, posted, spend_reservations, available, as_of_sequence",
+                "account_id; projector watermark keyed by ledger",
+                "posted derives only from financial lines, with the account's debit/credit sign convention. Available subtracts active local spend reservations once; provider memo holds are not merchant funds and are never subtracted again. Entry deltas and the ledger watermark commit atomically."
               ],
               [
                 "Payment",
-                "payment_id, state, provider_ref, idempotency_key, saga_step",
-                "payment_id; idempotency_key unique",
-                "the saga's state in one place; the stored outcome that a retried caller receives"
+                "caller_id, idempotency_key, payment_id, payload_hash, state, provider_ref, saga_step, version, recovery_bucket, next_attempt_at",
+                "primary key (caller_id, idempotency_key); payment_id derived from this immutable identity",
+                "conditional creation claims the caller-scoped key itself; mismatched canonical payload returns conflict, matching retries read the stored outcome. Nonterminal records remain discoverable by a recovery index."
               ],
               [
                 "SealedRange",
@@ -2121,7 +2159,7 @@
                 "/accounts/{id}/balance?exact=true",
                 "",
                 "{posted, available, as_of_sequence}",
-                "exact=true reads the ledger shard (the projection plus the lines since its sequence); otherwise the projection"
+                "exact=true reads a consistent ledger snapshot and active holds, never an unchecked dashboard projection. A read does not authorise spending; the posting transaction reserves funds under the ledger lock."
               ],
               [
                 "GET",
@@ -2170,8 +2208,8 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 6\n  participant O as Orchestrator\n  participant AD as Adapter\n  participant PSP as Provider\n  participant LS as Ledger svc\n  participant LD as Ledger DB\n  O->>AD: authorise, key = payment id\n  AD->>PSP: authorise, 5 s timeout\n  PSP-->>AD: authorised, provider_ref\n  AD-->>O: authorised\n  opt timeout or 5xx\n    AD->>PSP: bounded retry with jitter, same key\n    Note over AD,PSP: the breaker opens after repeated timeouts\n  end\n  O->>LS: post authorise entry, step id\n  LS->>LD: one transaction:<br/>entry, 2 lines, outbox\n  LD-->>LS: sequence\n  LS-->>O: {entry_id, sequence}",
-            "legend": "The provider's idempotency key equals the payment id, so a retried call cannot authorise twice; the timeout of 5 s is an assumption. Shopify's write-up on resilient payment systems is the reference for lowering timeouts and putting a circuit breaker in front of the provider s6. The authorise entry has two lines: a hold on the customer account and a matching line on the provider clearing account.",
+            "mermaid": "sequenceDiagram\n  autonumber 6\n  participant O as Orchestrator\n  participant AD as Adapter\n  participant PSP as Provider\n  participant LS as Ledger svc\n  participant LD as Ledger DB\n  O->>AD: authorise with operation key\n  AD->>PSP: authorise\n  alt confirmed authorisation\n    PSP-->>AD: authorised\n    AD-->>O: confirmed\n    O->>LS: post memo hold with step key\n    LS->>LD: entry, memo lines, hold, outbox\n    LD-->>LS: sequence\n    LS-->>O: durable entry\n  else unknown or rejected\n    AD-->>O: unresolved or rejected\n    Note over O: recover unknown, stop rejected\n  end",
+            "legend": "A provider memo hold is not a debit to a funded wallet. It records external authorisation in a separate memo book, excluded from financial posted and available balances. Unknown provider outcomes remain unresolved until queried or retried with the same operation key. Shopify supports timeout and circuit-breaker choices s6, not this specific accounting model.",
             "cites": [
               "s6"
             ]
@@ -2182,8 +2220,20 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 15\n  participant O as Orchestrator\n  participant AD as Adapter\n  participant PSP as Provider\n  participant LS as Ledger svc\n  participant LD as Ledger DB\n  O->>AD: capture, key = payment id\n  AD->>PSP: capture\n  PSP-->>AD: captured\n  AD-->>O: captured\n  O->>LS: post capture entry, step id\n  LS->>LD: one transaction:<br/>entry, 4 lines, hold released\n  LD-->>LS: sequence\n  LS-->>O: {entry_id, sequence}\n  Note over O: captured, the stored outcome for the key\n  alt capture rejected after the authorise\n    O->>LS: reversal entry for the authorise\n    O->>AD: void at the provider\n    Note over O,AD: idempotent, retried until done<br/>or escalated at 10 minutes\n  end",
-            "legend": "The capture entry has four lines: customer debit, merchant credit, fee revenue credit and the clearing line that nets the authorise, and it releases the hold in the same entry; the two entries are the six lines of the sizing assumption. A compensation is itself idempotent and is retried until it succeeds or an operator is paged after 10 minutes (the target)."
+            "mermaid": "sequenceDiagram\n  autonumber 15\n  participant O as Orchestrator\n  participant AD as Adapter\n  participant PSP as Provider\n  participant LS as Ledger svc\n  participant LD as Ledger DB\n  O->>AD: capture with operation key\n  AD->>PSP: capture\n  alt confirmed capture\n    PSP-->>AD: captured\n    AD-->>O: confirmed\n    O->>LS: post settlement with step key\n    LS->>LD: memo reversal and settlement\n    LD-->>LS: sequence\n    LS-->>O: durable entry\n  else confirmed rejection\n    AD-->>O: rejected\n    O->>AD: confirm provider void\n    AD-->>O: confirmed or unknown\n    opt confirmed void\n      O->>LS: reverse memo hold\n    end\n  else unknown capture\n    AD-->>O: pending recovery\n  end",
+            "legend": "Capture releases the memo hold and posts financial settlement in one entry. Rejection leads to a memo reversal only after a confirmed provider void. Unknown capture results are resolved before compensation. The worked postings below are this design's accounting convention, not a claim about Square's exact schema."
+          },
+          {
+            "type": "table",
+            "caption": "Synthetic USD card payment: $100 gross and $3 platform fee. Debit positive, credit negative; each book balances independently.",
+            "columns": ["entry", "book", "signed postings", "hold transition"],
+            "rows": [
+              ["Authorise", "Memo", "Customer-authorised +$100; provider-authorisation -$100", "Create provider memo hold; financial posted unchanged"],
+              ["Capture", "Memo", "Customer-authorised -$100; provider-authorisation +$100", "Close provider memo hold"],
+              ["Capture", "Financial gross", "Provider receivable +$100; merchant payable -$100", "Merchant earns gross payable"],
+              ["Capture", "Financial fee", "Merchant payable +$3; fee revenue -$3", "Net merchant payable is $97"],
+              ["Confirmed void instead", "Memo", "Customer-authorised -$100; provider-authorisation +$100", "Close hold without financial settlement"]
+            ]
           },
           {
             "type": "p",
@@ -2191,8 +2241,8 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 25\n  participant LD as Ledger DB\n  participant EV as Ledger events\n  participant BP as Projector\n  participant BAL as Balances\n  LD-)EV: the outbox relay publishes the entry\n  EV-)BP: entry, in sequence order\n  BP->>BAL: posted and available, as_of_sequence\n  BAL-->>BP: ok\n  Note over BP,BAL: statements are built from the same stream",
-            "legend": "The open arrows are the asynchronous hand-offs; nothing here is on the payment's path. The outbox row is written in the entry's transaction, so an entry is never published that was not committed, and never committed without being published eventually."
+            "mermaid": "sequenceDiagram\n  autonumber 28\n  participant LD as Ledger DB\n  participant EV as Ledger events\n  participant BP as Projector\n  participant BAL as Balances\n  LD-)EV: relay publishes pending entry\n  EV-)BP: duplicate or reordered entry\n  BP->>BAL: read contiguous watermark\n  BAL-->>BP: applied sequence\n  opt gap\n    BP->>LD: recover missing range\n    LD-->>BP: authoritative entries\n  end\n  BP->>BAL: transact next entry and mark\n  BAL-->>BP: committed or raced\n  Note over BP: retry races, skip duplicates",
+            "legend": "The relay records successful publication per record and retries failures. Projection applies the next ledger sequence only, atomically with all affected financial balances and local reservations. Provider memo lines never reduce available funds. Gaps come from the authoritative journal/archive; a missing or corrupt range stops advancement."
           },
           {
             "type": "p",
@@ -2200,7 +2250,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 29\n  participant PSP as Provider\n  participant RC as Reconciliation\n  participant LD as Ledger DB\n  participant SL as Sealing job\n  PSP-)RC: the daily statement\n  RC->>LD: clearing lines by provider_ref\n  LD-->>RC: matches and mismatches\n  RC->>LD: adjustment cases with owners\n  Note over RC,LD: the clearing account nets<br/>to the provider's balance\n  SL->>LD: the previous day's range, in sequence\n  LD-->>SL: entries\n  SL->>LD: store digest, verify the chain\n  Note over SL,LD: sealed ranges may move to cold storage",
+            "mermaid": "sequenceDiagram\n  autonumber 36\n  participant PSP as Provider\n  participant RC as Reconciliation\n  participant LD as Ledger DB\n  participant SL as Sealing job\n  PSP-)RC: daily statement\n  RC->>LD: clearing lines by reference\n  LD-->>RC: matches and mismatches\n  RC->>LD: adjustment cases\n  SL->>LD: committed range\n  LD-->>SL: entries\n  SL->>LD: record digest chain",
             "legend": "Every mismatch (in the ledger but not at the provider, the reverse, or an amount difference) becomes a case with an owner; corrections are adjustment entries, never edits. Reconciliation against the partner's records is Shopify's seventh rule s6; sealing and offloading sealed ranges in time-range batches is what Uber describes for LedgerStore s3.",
             "cites": [
               "s6",
@@ -2209,7 +2259,7 @@
           },
           {
             "type": "p",
-            "text": "The whole flow has three idempotency keys, one per boundary: the caller's intent at the payment API, the payment id at the provider, and the saga step id at the ledger. A crash between any two steps is recovered by replaying the saga from its stored step, and every replayed call is a no-op where it already happened."
+            "text": "The caller's scoped key identifies intent, each provider operation has a stable key derived from payment identity and operation, and each ledger step has its own key. Duplicate executions may run, so predecessor/version conditions guard transitions and terminal states never regress. Recovery examines every overdue nonterminal intent, queries unknown provider outcomes and resumes only the incomplete step. It never interprets a timeout as permission to reverse a captured payment."
           }
         ]
       },
@@ -2223,13 +2273,14 @@
           },
           {
             "type": "steps",
-            "title": "The hot account, and why balances are not maintained on the write path",
+            "title": "The serialization boundary and safe spending",
             "items": [
-              "A large merchant's payable account receives one line per captured payment.",
-              "For the biggest merchants that is about a tenth of the peak, 116 lines per second on one account (assumption).",
-              "A balance column updated in the entry's transaction would serialise those 116 writes per second on one row, and the row lock would set the ledger's throughput.",
-              "So the entry append is the only write; the balance is a projection built from the event stream, and it lags by seconds.",
-              "The exact available-balance check before a payout reads the projection plus the lines on the account since the projection's as_of_sequence, which is a short range scan, not a row lock."
+              "A captured payment writes gross and fee lines to the merchant payable account.",
+              "A tenth of peak payments gives about 232 lines per second there under this worked posting model; this is an assumption, not a measured locking bottleneck.",
+              "The dense per-ledger sequence already serializes updates to the ledger head. Benchmark that critical section before selecting shard count.",
+              "Entry, lines, hold transitions, sequence and outbox are written together. Dashboard balances remain a separate, rebuildable projection.",
+              "For spending, lock the ledger head and read a consistent journal-derived balance plus active holds. Atomically reject insufficient funds or reserve/post, so concurrent payouts cannot spend the same balance.",
+              "An exact read may use only a validated, immutable ledger snapshot with a contiguous watermark plus all later lines and hold transitions. If integrity fails, stop spending and rebuild from the journal or verified archive, not from the corrupted projection."
             ]
           },
           {
@@ -2319,9 +2370,9 @@
             "rows": [
               [
                 "Balance storage",
-                "balance column updated in the entry transaction versus derived projection plus exact range check",
-                "derived projection",
-                "hot accounts would serialise on the row; the journal is the truth and balances are rebuildable"
+                "transactional spend reservations versus a dashboard-only projection",
+                "exact serialized reservations, derived dashboards",
+                "a read-only check cannot prevent double spending; journal-derived snapshots and holds govern authorization while dashboards can lag"
               ],
               [
                 "Saga style",
@@ -2371,20 +2422,20 @@
             "rows": [
               [
                 "Journal lines per day",
-                "60 million",
-                "600 million",
-                "6 lines per payment"
+                "80 million",
+                "800 million",
+                "8 lines including the memo-hold reversal"
               ],
               [
                 "Journal growth",
-                "12 GB per day",
-                "120 GB per day",
+                "16 GB per day",
+                "160 GB per day",
                 "200 bytes per line with indexes"
               ],
               [
                 "Journal over 7 years",
-                "30 TB",
-                "about 300 TB",
+                "40.88 TB",
+                "408.8 TB",
                 "sealed ranges in cold storage; indexes rebuilt on demand for old ranges, as Uber describes"
               ],
               [
@@ -2415,6 +2466,24 @@
             "text": "At that scale the ledger is a platform for many products, and reconciliation becomes a service with per-provider adapters and a cases workflow. A migration from a legacy ledger is the hard project: dual posting into old and new, a daily side-by-side reconciliation of balances, a cutover criterion of zero differences for a set period, and reversing entries to repair, never edits. The question the staff engineer asks is which products need a ledger at all and which only need a provider's statement."
           },
           {
+            "type": "p",
+            "text": "Teaching journal volumes use decimal bytes. Billing allowances round upward into AWS GB units rather than equating decimal TB with binary storage. Journal storage is budgeted separately from statements, and stream bytes include metadata and record rounding. The month uses 30 request-days and 730 running hours."
+          },
+          {
+            "type": "table",
+            "caption": "Successful-path billing assumptions; retries, recovery scans and duplicate executions are excluded from this subtotal.",
+            "columns": ["dimension", "assumption"],
+            "rows": [
+              ["Payment state and index", "created, authorised, captured: each state change writes its item and sparse recovery index. Captured removes the index entry. No other indexes."],
+              ["Item size and retention", "Payment items including attribute names average 500 bytes and stay below one KiB; keep keys for 90 days. Allocate 500 billed GB including index/headroom."],
+              ["Projection writes", "Authorise advances only the watermark. Capture updates three financial accounts and the watermark. Five transactional item writes consume ten write units per payment."],
+              ["Read consistency", "Ten eventual dashboard reads and three strong reads per payment: two projector watermark reads plus one saga-state read. Every read item is below four KiB."],
+              ["Projection storage", "25 billed GB for balances plus one billed GB watermark allowance. No projection indexes."],
+              ["Daily jobs", "Two jobs, each four vCPUs and eight GB, run one hour daily."],
+              ["Fleet at larger volume", "Scale every Fargate task and daily job count tenfold. This is an explicit fleet assumption, not a benchmark."]
+            ]
+          },
+          {
             "type": "table",
             "caption": "How the cost table in Building it on AWS was worked out: the same lines at AWS list prices for US East (N. Virginia) as of 2026-10-15 (prices change; each line is cited to its price list or pricing page). Every sizing figure is an assumption unless the estimates table carries it.",
             "columns": [
@@ -2427,10 +2496,10 @@
             "rows": [
               [
                 "Ledger: Aurora PostgreSQL, Aurora Standard",
-                "a db.r7g.2xlarge writer and one reader all month; 4.4 TB of journal at the end of year one; about 10 I/O requests per payment",
-                "$1.106 per instance-hour, $0.10 per GB-month, $0.20 per million I/O requests",
-                "about $2,650 (instances $1,615, storage $440, I/O $600)",
-                "about $26,500 (ten clusters)"
+                "writer plus reader; 5,840 billed GB storage allowance at year end; ten I/O operations per payment are unmeasured",
+                "$1.106 per instance-hour; $0.10 per GB-month; $0.20 per million I/Os",
+                "$2,798.76",
+                "$27,987.60"
               ],
               [
                 "Saga: Step Functions Express",
@@ -2448,24 +2517,24 @@
               ],
               [
                 "Ledger service: Lambda, Arm, plus RDS Proxy",
-                "two invocations per payment at 512 MB, about 50 ms each; the proxy on the writer's 8 vCPUs",
+                "two invocations at 512 MB and 50 ms per payment; proxy writer size is eight vCPUs",
                 "$0.20 per million requests, $0.0000133334 per GB-second, $0.015 per vCPU-hour",
                 "about $410 (requests $120, duration $200, proxy $90)",
                 "about $4,100"
               ],
               [
                 "Payments and balances: DynamoDB on-demand",
-                "two writes per payment on the payments table and 90 days of keys; six balance updates and ten eventually consistent reads per payment; 25 GB of balances",
-                "$0.625 per million writes, $0.125 per million reads, $0.25 per GB-month",
-                "about $1,800 (payments $490, balances $1,310)",
-                "about $18,000"
+                "Three payment-state writes plus three recovery-index writes per successful payment. Projection uses ten transactional write units; read and storage assumptions follow below.",
+                "$0.625 per million writes; $0.125 per million reads; $0.25 per GB-month",
+                "$3,431.50",
+                "$34,315"
               ],
               [
                 "Ledger events: Kinesis Data Streams on-demand",
-                "20 million entries a day at about 1 kB, 600 GB a month written and read once",
-                "$0.08 per GB written, $0.04 per GB read, $0.04 per stream-hour",
-                "about $100",
-                "about $750"
+                "800 billed GB in and out per month is a conservative metadata-and-rounding allowance; one stream and one consumer, default retention",
+                "$0.08 per GB in; $0.04 per GB out; $0.04 per stream-hour",
+                "$125.20",
+                "$989.20"
               ],
               [
                 "Provider egress: NAT gateways",
@@ -2476,24 +2545,24 @@
               ],
               [
                 "API, relay, recovery and jobs: ECS on Fargate, Arm",
-                "four API tasks and one each for the relay and the recovery worker at 1 vCPU and 2 GB; two jobs of 4 vCPU for an hour a day",
-                "$0.03238 per vCPU-hour, $0.00356 per GB-hour",
-                "about $190",
-                "about $1,400"
+                "six tasks at one vCPU and two GB all month; daily job fleet and tenfold scaling specified below",
+                "$0.03238 per vCPU-hour; $0.00356 per GB-hour",
+                "$182.49",
+                "$1,824.90"
               ],
               [
                 "Statements and digests: S3 Standard",
-                "under 1 TB after a year",
+                "under 1,000 billed GB for statements/digests only; full-journal archive explicitly excluded",
                 "$0.023 per GB-month",
                 "under $25",
                 "under $250"
               ],
               [
-                "Total on AWS",
-                "the nine lines above; data transfer, monitoring, backups and the secrets store not priced",
+                "Priced subtotal",
+                "Same exclusions as the final AWS summary table; not production TCO",
                 "",
-                "about $8,100 a month, about $0.03 per thousand payments",
-                "about $78,000 a month, about $0.03 per thousand payments"
+                "about $9,900; $0.033 per thousand payments",
+                "about $96,900; $0.032 per thousand payments"
               ]
             ],
             "cites": [
@@ -2512,7 +2581,7 @@
           },
           {
             "type": "p",
-            "text": "The per-thousand-payments cost is the number the team is held to, beside the saga age and the reconciliation backlog. It stays flat across the tenfold step because every line scales with payments; the one lever that bends it is the adapter's wait on the provider, which a long-running adapter would turn from Lambda-seconds into a handful of tasks."
+            "text": "The subtotal is nearly linear, not exactly flat: Express tiers and fixed stream/NAT hours change the curve. Recompute operational overhead, archive and projector costs before using this as a production budget. Provider duration and database contention are measurement targets, not guarantees."
           }
         ]
       }
@@ -2539,7 +2608,7 @@
       "type": "steps",
       "title": "A 45-minute interview",
       "items": [
-        "0:00 to 0:05: Requirements: what is immutable, where strong consistency ends, who owns idempotency, what a balance is, how fast balances must be, currencies. Say the numbers aloud: 1,160 payments per second at peak, 7,000 lines per second at peak, 12 GB of journal per day and 30 TB over 7 years, about 1,160 sagas in flight per second of provider latency.",
+        "0:00 to 0:05: Requirements: distinguish memo holds from financial settlement, state per-currency balance, derive the revised eight-line lifecycle and its journal growth, and use total saga lifetime for concurrency.",
         "0:05 to 0:10: Entities and API: Ledger, Account, JournalEntry, Line with the sum-to-zero rule, Hold, Balance as a projection, Payment with its saga step, SealedRange; amounts as integers in minor units.",
         "0:10 to 0:20: High-level design with the diagram: orchestrator, provider adapter, ledger service and shards, outbox to events, balance projector, reconciliation, sealing. Say which system is the source of truth and which are derived.",
         "0:20 to 0:40: Two deep dives: the saga with its three idempotency layers and compensations (what happens when the provider times out after authorising), then the ledger write path (atomic per shard, clearing accounts, hot accounts and projected balances, the exact balance check).",
@@ -2585,6 +2654,11 @@
       "version": 3,
       "date": "2026-10-15",
       "change": "format v2 restructure (batch E2A): estimates, sizes, entities, API, failure modes, trade-offs and the 10x numbers as tables; the architecture as a flow block; the core flow as five sequence diagrams; the hot-account argument as steps; cites on every claim about a real system; sources with ids and the latency reference added; a 'Building it on AWS' section after the high-level design (two flow halves, seven sequence diagrams for the write and read paths, identity and network, three decision blocks with the cache fork marked as not applying, the Well-Architected table with the Financial Services Industry Lens row, one cost table) with every AWS claim and price cited to AWS documentation and price lists dated today; technologies filled; sd-aws-well-architected added to related; one substantive change (the balance-read assumption of 10 per payment is now stated once, in the table, and the exact check is described as the projection plus the lines since its sequence), so reviewed_by is cleared for a second read"
+    },
+    {
+      "version": 4,
+      "date": "2026-10-16",
+      "change": "Repair independent review P1-P9: scoped intent identity, guarded saga recovery, contiguous transactional projection, atomic exact spending, currency/book-balanced card memo and settlement postings, fair managed RDS comparison, corrected branches and source scope, revised eight-line volume and explicit billing subtotal/exclusions. Independent acceptance remains unset."
     }
   ]
 }

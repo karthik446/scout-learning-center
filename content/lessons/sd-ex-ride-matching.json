@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-ride-matching",
-  "version": 2,
+  "version": 3,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: ride matching and location",
@@ -19,7 +19,7 @@
     "data-stores",
     "scaling"
   ],
-  "summary": "A classic design exercise: matching riders to nearby drivers from a stream of locations, with one hard invariant (one driver, one trip) and a dependency that fails (ETA). The reference answer orders locations per driver on a log, indexes last positions by hierarchical grid cell per city, ranks candidates by ETA behind a deadline with a distance fallback, and decides the invariant in a lease store with fencing tokens that rejects late accepts.",
+  "summary": "A classic design exercise: matching riders to nearby drivers from a location stream, with one driver per trip and one active offer per ride. The answer filters positions by session sequence and event freshness, ranks candidates behind an ETA deadline, and atomically coordinates ride and driver state with conditional fencing tokens.",
   "detail": [],
   "in_practice": {
     "blocks": []
@@ -529,6 +529,48 @@
         "http": 200,
         "section_found": "$0.10 per cluster per hour"
       }
+    },
+    {
+      "id": "s45",
+      "title": "Kinesis PutRecords: individual failures and ordering",
+      "url": "https://docs.aws.amazon.com/kinesis/latest/APIReference/API_PutRecords.html",
+      "kind": "doc",
+      "verified": {"checked": "2026-10-16", "http": 200, "section_found": "PutRecords doesn't guarantee the ordering of records"}
+    },
+    {
+      "id": "s46",
+      "title": "API Gateway private APIs: only REST APIs supported",
+      "url": "https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-private-apis.html",
+      "kind": "doc",
+      "verified": {"checked": "2026-10-16", "http": 200, "section_found": "Only REST APIs are supported"}
+    },
+    {
+      "id": "s47",
+      "title": "DynamoDB transactions: atomic conditions and capacity",
+      "url": "https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/transaction-apis.html",
+      "kind": "doc",
+      "verified": {"checked": "2026-10-16", "http": 200, "section_found": "DynamoDB performs two underlying reads or writes of every item in the transaction"}
+    },
+    {
+      "id": "s48",
+      "title": "WebSocket backend callbacks: SigV4, public endpoint and GoneException",
+      "url": "https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-how-to-call-websocket-api-connections.html",
+      "kind": "doc",
+      "verified": {"checked": "2026-10-16", "http": 200, "section_found": "These requests use IAM authorization"}
+    },
+    {
+      "id": "s49",
+      "title": "WebSocket API quotas: connection duration and idle timeout",
+      "url": "https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-execution-service-websocket-limits-table.html",
+      "kind": "doc",
+      "verified": {"checked": "2026-10-16", "http": 200, "section_found": "Connection duration for WebSocket API"}
+    },
+    {
+      "id": "s50",
+      "title": "Amazon VPC NAT gateway pricing",
+      "url": "https://aws.amazon.com/vpc/pricing/",
+      "kind": "doc",
+      "verified": {"checked": "2026-10-16", "http": 200, "section_found": "$0.045 per hour"}
     }
   ],
   "practice": null,
@@ -633,7 +675,7 @@
                 "about 1 TB",
                 "",
                 "12.5 MB",
-                "about 50 bytes per update (driver id, latitude, longitude, heading, timestamp)"
+                "50 bytes per encoded update including identity/session/sequence; daily bytes are a continuous-peak bound, not average occupancy"
               ],
               [
                 "Ride requests",
@@ -653,8 +695,8 @@
                 "ETA calls with declines",
                 "",
                 "",
-                "up to 1,800",
-                "up to three offer rounds per request; the dominant dependency load"
+                "about 600",
+                "retry rounds reuse ranked candidates with freshness checks; no extra ETA call in this model"
               ],
               [
                 "Lock operations",
@@ -682,12 +724,12 @@
               [
                 "Live index, all cities",
                 "100 MB",
-                "1 million entries times 100 bytes; fits one process per city many times over"
+                "1 million entries times 100 bytes payload; runtime structures, replicas and headroom are additional"
               ],
               [
                 "Location history",
                 "1 TB per day",
-                "250,000 updates per second times 50 bytes times 86,400 s; 30 days raw in cold storage (assumption)"
+                "continuous peak: 250,000 updates/s times 50 bytes; raw retention is 30 days. Average WebSocket occupancy is a separate assumption."
               ],
               [
                 "Candidate set",
@@ -698,7 +740,7 @@
           },
           {
             "type": "p",
-            "text": "A match is a chain of datacenter round trips, about 500 microseconds each, plus one batched ETA call of up to 100 ms and the human: the driver's 15 s decision dominates everything, which is why the 20 s confirmation target is really a one-offer-round target and why the system must get the first offer right.",
+            "text": "The historical 500-microsecond datacenter RTT is not a measurement of this AWS path. ETA deadlines, callback delivery and offer acceptance must be measured together. The human decision dominates the intended confirmation target, but a fast offer is an SLO assumption, not a guarantee from a latency gist.",
             "cites": [
               "s7"
             ]
@@ -711,7 +753,7 @@
         "blocks": [
           {
             "type": "p",
-            "text": "Driver locations flow through a gateway onto a log partitioned by driver id, so updates for one driver stay ordered; a per-city geo index consumes the log and keeps each driver's last position under its grid cell with a TTL, and the same stream feeds cold storage and a supply-and-demand aggregator per cell for the pricing service. The matching service for a city takes a request, queries the index for candidates in the rings around the pickup cell, asks the ETA service for arrival times, ranks, takes a lease on the best driver, sends the offer, and on acceptance moves the ride and the driver into the trip state. The driver lock store is the only place the one-trip invariant is decided."
+            "text": "Driver positions enter a city log as packed records. The gateway acknowledges only per-record durable successes; consumers compare authenticated session/sequence and event time rather than relying on arrival order. A per-city index keeps current grid membership, while the same stream feeds cold history and asynchronous supply/demand snapshots. The matcher finds nearby candidates, ranks with a bounded ETA call, and atomically acquires the ride and driver before sending an offer. The Ride API authenticates acceptance and changes both records in one transaction; no crash gap exists between on_trip and matched."
           },
           {
             "type": "flow",
@@ -728,7 +770,7 @@
               },
               {
                 "id": "LL",
-                "label": "location log, partitioned by driver id",
+                "label": "Location log: per-city packed records",
                 "kind": "queue"
               },
               {
@@ -815,7 +857,7 @@
                 "from": "LG",
                 "to": "LL",
                 "kind": "async",
-                "label": "Location gateway to location log: append, keyed by driver id",
+                "label": "Gateway appends physical-shard aggregates; acknowledges only durable per-record results",
                 "short": "Append"
               },
               {
@@ -835,7 +877,7 @@
               {
                 "from": "GI",
                 "to": "SD",
-                "kind": "sync",
+                "kind": "async",
                 "label": "Geo index to supply and demand: a snapshot every few seconds",
                 "short": "Snapshot"
               },
@@ -878,7 +920,7 @@
                 "from": "MS",
                 "to": "LK",
                 "kind": "sync",
-                "label": "Matching service to driver locks: compare-and-set free to offered, lease token",
+                "label": "Matcher atomically acquires requested ride and free driver with monotonic fence",
                 "short": "Lease"
               },
               {
@@ -892,7 +934,7 @@
                 "from": "MS",
                 "to": "RS",
                 "kind": "sync",
-                "label": "Matching service to rides: offering, then matched",
+                "label": "Matcher records offering transactionally with driver state; Ride API later accepts both atomically",
                 "short": "Ride state"
               }
             ],
@@ -903,7 +945,7 @@
               },
               {
                 "edge": 1,
-                "caption": "Location gateway to location log: append, keyed by driver id so one driver's updates stay ordered, async"
+                "caption": "Gateway appends packed records; source ordering is checked by session/sequence and event freshness at consumers"
               },
               {
                 "edge": 2,
@@ -939,7 +981,7 @@
               },
               {
                 "edge": 10,
-                "caption": "Matching service to driver locks: compare-and-set free to offered, which returns the lease token, sync"
+                "caption": "Matcher transaction claims both requested ride and free driver with a fresh fence, or sends no offer on conflict"
               },
               {
                 "edge": 11,
@@ -947,10 +989,10 @@
               },
               {
                 "edge": 12,
-                "caption": "Matching service to rides: the ride moves to offering and, on accept, to matched, sync"
+                "caption": "Matcher records the offer with driver ownership atomically; authenticated Ride API acceptance changes both ride and driver state"
               }
             ],
-            "legend": "Boxes are containers; the two frames are the location path and the matching path; cylinders are stores; double brackets are logs. The lock store is the single arbiter of a driver's state. Pricing is not a box: it reads the supply-and-demand aggregates and never sits on the match path."
+            "legend": "Boxes are containers; frames separate location and matching. Cylinders are stores and double brackets are logs. Ride and driver state are two logical tables in one transactional boundary, not separately committed writes. Pricing reads asynchronous cell aggregates and never blocks a match."
           },
           {
             "type": "p",
@@ -988,7 +1030,7 @@
               },
               {
                 "id": "LL",
-                "label": "Amazon Kinesis Data Streams: one stream per city, partition key = driver id",
+                "label": "Kinesis: city streams, opaque physical-shard aggregates",
                 "kind": "queue"
               },
               {
@@ -1054,7 +1096,7 @@
                 "from": "LG",
                 "to": "LL",
                 "kind": "async",
-                "label": "PutRecords to the city's stream, partition key = driver id, aggregated per shard, over the interface endpoint, async",
+                "label": "PutRecords opaque aggregates per physical shard over interface endpoint; per-record durability before client ack",
                 "short": "PutRecords"
               },
               {
@@ -1104,7 +1146,7 @@
               },
               {
                 "edge": 2,
-                "caption": "Location gateway to Kinesis: PutRecords to the city's stream with the driver id as partition key, aggregated per shard, over the interface endpoint, async"
+                "caption": "Gateway publishes city/shard aggregates, checks each record result and retries failures before acknowledging durable positions"
               },
               {
                 "edge": 3,
@@ -1127,7 +1169,8 @@
                 "caption": "Aggregator to DynamoDB cell stats: BatchWriteItem over the gateway endpoint, sync; pricing reads this table"
               }
             ],
-            "legend": "The write half of the architecture, the same boxes as the neutral diagram's location path, one AWS service each: the location gateway, the geo index tasks and the aggregator are ECS on Fargate services; the location log is a Kinesis data stream per city with the driver id as partition key, so one driver's updates stay ordered; the history is S3, written by Firehose reading the stream; the cell stats are a DynamoDB table that the pricing service reads. The load balancer is the public entry for the apps. Each arrow says how the call is made: HTTPS from apps, HTTP inside the VPC, named AWS SDK calls over VPC endpoints, Kinesis puts and gets. Sync means the caller waits; async means the work goes on after the caller is answered. The VPC frames are one VPC in one Region across three Availability Zones, drawn flat."
+            "legend": "Neutral location path mapped to Fargate gateway, index replicas and aggregator, per-city Kinesis streams, Firehose and S3 history, and DynamoDB stats. Driver identities/sequences are inside opaque aggregates; PutRecords does not promise their source order. Both index replicas and Firehose read the stream. Consumers enforce event freshness, and unacknowledged stale positions may be superseded. Sources: s8, s9, s11, s12, s13, s25, s28, s45.",
+            "cites": ["s8", "s9", "s11", "s12", "s13", "s25", "s28", "s45"]
           },
           {
             "type": "flow",
@@ -1248,14 +1291,14 @@
                 "from": "MS",
                 "to": "LK",
                 "kind": "sync",
-                "label": "UpdateItem free to offered with a condition on state, returns the lease token, over the gateway endpoint, sync",
-                "short": "UpdateItem"
+                "label": "TransactWriteItems acquires ride and driver together with expected state/version and next fence",
+                "short": "Acquire offer"
               },
               {
                 "from": "MS",
                 "to": "WS",
                 "kind": "async",
-                "label": "PostToConnection the offer, over the interface endpoint, async",
+                "label": "SigV4 PostToConnection to public Regional callback endpoint via NAT HTTPS egress",
                 "short": "Push offer"
               },
               {
@@ -1276,14 +1319,14 @@
                 "from": "RQ",
                 "to": "LK",
                 "kind": "sync",
-                "label": "UpdateItem offered to on_trip with a condition on the token, sync",
+                "label": "TransactWriteItems accepts ride and driver with offered state, ride identity, fence and admission deadline",
                 "short": "Fenced update"
               },
               {
                 "from": "MS",
                 "to": "RS",
                 "kind": "sync",
-                "label": "UpdateItem offering, then matched, sync",
+                "label": "offer/release transaction includes ride condition; API owns atomic matched transition",
                 "short": "Ride state"
               }
             ],
@@ -1314,7 +1357,7 @@
               },
               {
                 "edge": 6,
-                "caption": "Matching service to DynamoDB driver locks: UpdateItem free to offered with a condition on the state, which returns the lease token, sync"
+                "caption": "Matcher atomically acquires driver and requested ride, incrementing the driver fence; conflict sends no offer"
               },
               {
                 "edge": 7,
@@ -1330,14 +1373,15 @@
               },
               {
                 "edge": 10,
-                "caption": "Ride request API to DynamoDB driver locks: UpdateItem offered to on_trip with a condition on the lease token, sync"
+                "caption": "Ride API atomically accepts matching offered ride/driver tuple with fence and deadline checks, or returns the existing matched result"
               },
               {
                 "edge": 11,
-                "caption": "Matching service to DynamoDB rides: UpdateItem offering, then matched, sync"
+                "caption": "Matcher's acquisition/release transaction includes the ride record; matched is written by the Ride API's acceptance transaction"
               }
             ],
-            "legend": "The read half, the neutral diagram's matching path: the ride request API, the matching service per city and the ETA service are ECS on Fargate services; the geo index tasks are the same as in the write half; driver locks and rides are DynamoDB tables, with the lock's compare-and-set as a conditional write; the offer reaches the driver over an API Gateway WebSocket API, the one piece the neutral diagram leaves implicit, and the accept comes back over HTTPS through the load balancer with the token. Every arrow is synchronous except the offer push."
+            "legend": "Neutral matching path mapped to Fargate API/matcher/ETA, in-memory geo replicas and transactional DynamoDB ride/driver state. The API owns acceptance, while matchers acquire and release offers. Connection records share the DynamoDB boundary. WebSocket callbacks use signed HTTPS to the public Regional endpoint through NAT, not PrivateLink. Sources: s16, s22, s26, s28, s31, s46, s47, s48.",
+            "cites": ["s16", "s22", "s26", "s28", "s31", "s46", "s47", "s48"]
           },
           {
             "type": "p",
@@ -1345,9 +1389,10 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber\n  participant D as Driver app\n  participant Edge\n  participant LG as Location gateway\n  participant K as Kinesis, city stream\n  participant GI as Geo index task\n  D->>Edge: POST /locations, a batch\n  Edge->>LG: HTTP, a healthy task\n  LG-)K: PutRecords, partition key = driver id\n  Note over LG,K: aggregated per shard, interface endpoint\n  LG-->>Edge: 204\n  Edge-->>D: 204\n  K-)GI: GetRecords, every shard of the city\n  GI->>GI: move between cells, refresh TTL\n  opt a shard is throttled\n    LG->>K: SDK retry with backoff\n    Note over LG: the app's next batch carries the rest\n  end\n  alt an index task is lost\n    Note over K,GI: ECS starts a replacement, it replays<br/>the last minutes from the stream\n    Note over GI: the other task serves the city meanwhile\n  end",
-            "legend": "Solid arrows are synchronous calls with their replies dashed; the open arrows are the hand-offs through the stream. One stream per city keeps the city's updates on shards only its index tasks read, and the driver id as partition key keeps one driver's updates in order s8. Sources: per-shard quotas and record aggregation s9, s10; the interface endpoint s11; the SDK retry s18; task replacement s25, s29.",
+            "mermaid": "sequenceDiagram\n  autonumber\n  participant D as Driver app\n  participant Edge\n  participant LG as Location gateway\n  participant K as City stream\n  participant GI as Geo index\n  D->>Edge: authenticated position batch\n  Edge->>LG: session and sequence\n  LG->>K: PutRecords opaque aggregates\n  K-->>LG: per-record results\n  alt all records durable\n    LG-->>Edge: 204\n    Edge-->>D: 204\n  else partial failure\n    LG-->>Edge: retryable batch status\n    Edge-->>D: retry or supersede old data\n  end\n  K-)GI: records may be reordered\n  GI->>GI: newest sequence and freshness",
+            "legend": "The gateway checks every PutRecords result before success. Failed records retry with the same sample identity; the client may explicitly supersede unacknowledged old positions, so this is not a lossless GPS archive. Index consumers reject older sessions/sequences and stale event times without refreshing TTL. City streams provide isolation, not source ordering. Sources: Kinesis s8/s9, endpoint s11, task replacement s25/s29 and PutRecords s45.",
             "cites": [
+              "s45",
               "s8",
               "s9",
               "s10",
@@ -1371,7 +1416,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 10\n  participant K as Kinesis, city stream\n  participant FH as Firehose\n  participant S3 as S3 history\n  participant GI as Geo index task\n  participant SD as Aggregator\n  K-)FH: the stream as the Firehose source\n  FH->>S3: PutObject, buffered by size or time\n  S3-->>FH: durable\n  GI-)SD: a snapshot of free drivers per cell\n  SD->>SD: open requests per cell\n  Note over SD: cell stats for the pricing service\n  alt S3 unavailable\n    Note over FH,S3: Firehose retries and buffers,<br/>history arrives late, nothing else notices\n  else the aggregator is behind\n    Note over SD: pricing reads a stale window,<br/>matching is unaffected\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber 11\n  participant K as City stream\n  participant FH as Firehose\n  participant S3 as History\n  participant GI as Geo index\n  participant SD as Aggregator\n  K-)FH: opaque packed record\n  FH->>S3: buffered PutObject\n  alt durable object\n    S3-->>FH: success\n  else unavailable\n    S3-->>FH: error, retry within retention\n  end\n  GI-)SD: free-driver cell snapshot\n  SD->>SD: combine with open requests\n  Note over SD: stale pricing never blocks match",
             "legend": "Sources: a Kinesis stream as the Firehose source s13; buffered delivery to S3 s12; the gateway endpoint s30. The aggregator's write to the cell stats table is a BatchWriteItem, listed in the identity table.",
             "cites": [
               "s13",
@@ -1398,7 +1443,7 @@
               [
                 "API Gateway WebSocket API",
                 "the driver apps, over their open connections; its connect route checks the driver's token",
-                "a Regional endpoint; the matching service calls PostToConnection over the interface endpoint",
+                "public Regional callback endpoint reached over HTTPS through NAT, not an interface endpoint",
                 "yes, the entry for the driver's connection"
               ],
               [
@@ -1427,14 +1472,14 @@
               ],
               [
                 "Ride request API (task role)",
-                "PutItem and UpdateItem on rides; the fenced UpdateItem on driver locks; the matching service by Service Connect name",
+                "conditional PutItem/GetItem on rides; TransactWriteItems and TransactGetItems on rides/driver state; Query pending index; authorized status and outstanding-offer reads",
                 "DynamoDB gateway endpoint; HTTP inside the VPC",
                 "no; admits the load balancer's security group only"
               ],
               [
                 "Matching service (task role)",
-                "UpdateItem on driver locks and rides; the index and the ETA service by Service Connect name; PostToConnection on the WebSocket API",
-                "DynamoDB gateway endpoint; HTTP inside the VPC; the API Gateway interface endpoint",
+                "GetItem, Query and transactional updates on rides/driver state; GetItem/conditional UpdateItem on connections; index/ETA calls; execute-api:ManageConnections scoped to callback ARN",
+                "DynamoDB gateway endpoint; HTTP inside VPC; public callback HTTPS through NAT gateways",
                 "no; admits the ride request API's security group only"
               ],
               [
@@ -1444,13 +1489,20 @@
                 "no; admits the matching service only"
               ],
               [
+                "WebSocket lifecycle Lambda",
+                "authenticate driver; GetItem and conditional UpdateItem on persistent connection/session record; disconnect removes only its own current connection fields",
+                "DynamoDB Regional API; public callback not required for recording the connection",
+                "invoked only by configured API routes; client cannot choose another driver's key"
+              ],
+              [
                 "DynamoDB, Kinesis, S3",
-                "Regional services, called over endpoints; no internet gateway or NAT gateway anywhere on the service path",
+                "Regional data services use VPC endpoints; only WebSocket callback egress uses NAT to its public endpoint",
                 "gateway endpoints for DynamoDB and S3, an interface endpoint for Kinesis",
                 "no (AWS endpoints inside the VPC); encrypted in transit and at rest, as the Security pillar asks"
               ]
             ],
             "cites": [
+              "s46", "s47", "s48", "s49",
               "s32",
               "s27",
               "s28",
@@ -1467,8 +1519,8 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber\n  participant R as Rider app\n  participant Edge\n  participant RQ as Ride API\n  participant MS as Matching svc\n  participant GI as Geo index task\n  R->>Edge: POST /rides\n  Edge->>RQ: HTTP, a healthy task\n  RQ->>RQ: PutItem the ride, requested\n  RQ->>MS: the city's partition,<br/>Service Connect\n  MS->>GI: rings 0 to 2 around the pickup\n  GI-->>MS: free drivers, fresher than 10 s\n  RQ-->>Edge: 202 {ride_id, requested}\n  Edge-->>R: 202, state follows on GET /rides\n  alt a matching task fails\n    Note over RQ,MS: Service Connect routes to the other task,<br/>the retry is idempotent on ride id\n  end",
-            "legend": "The ride is written before matching starts, so a retry after a lost response finds it by id s17. Sources: Service Connect round-robin with outlier detection s26; the DynamoDB gateway endpoint s31; health checks and task replacement s29, s25.",
+            "mermaid": "sequenceDiagram\n  autonumber\n  participant R as Rider\n  participant Edge\n  participant API as Ride API\n  participant DB as DynamoDB rides\n  participant MS as Matcher\n  R->>Edge: POST with client request id\n  Edge->>API: authenticated intent\n  API->>DB: conditional PutItem\n  DB-->>API: stored or ALL_OLD on conflict\n  Note over API,DB: compare canonical payload\n  API->>MS: wake durable pending ride\n  MS-->>API: accepted hint\n  API-->>Edge: 202 ride identity\n  Edge-->>R: response\n  Note over DB,MS: recovery queries pending index",
+            "legend": "The authenticated rider and preexisting client request id determine ride identity even after a lost response. A duplicate with a different canonical payload conflicts. The pending index is durable hand-off: if the API dies before waking the matcher, a worker still finds the requested ride. A failed hint does not erase that work. Sources: conditional writes s17, gateway endpoint s31, Service Connect s26 and task replacement s25.",
             "cites": [
               "s17",
               "s26",
@@ -1483,9 +1535,10 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 9\n  participant MS as Matching svc\n  participant ETA as ETA service\n  participant LK as DynamoDB locks\n  participant WS as WebSocket API\n  participant D as Driver app\n  MS->>ETA: batched ETAs, 100 ms deadline\n  alt in time\n    ETA-->>MS: arrival times\n  else timeout\n    Note over MS,ETA: straight-line ranking, flagged degraded\n  end\n  MS->>LK: UpdateItem free to offered,<br/>condition state = free\n  alt the driver is free\n    LK-->>MS: the new lease token\n  else ConditionalCheckFailed\n    LK-->>MS: taken, next candidate\n  end\n  MS-)WS: PostToConnection the offer\n  WS-)D: the offer, with the token\n  Note over MS,D: the lease expires in 15 s on its own",
-            "legend": "The compare-and-set is a conditional write: the update succeeds only if the item's state is still free, else ConditionalCheckFailedException s16; the token is the fencing token of part c s6. Sources: the WebSocket API's server-to-client messages s22; Service Connect s26.",
+            "mermaid": "sequenceDiagram\n  autonumber 9\n  participant MS as Matcher\n  participant ETA\n  participant DB as Rides and driver state\n  participant WS as WebSocket API\n  participant D as Driver\n  MS->>ETA: candidate ETAs, deadline\n  ETA-->>MS: times or fallback trigger\n  MS->>DB: transact fenced offer\n  alt ride and driver claimed\n    DB-->>MS: fence and deadline\n    MS->>DB: GetItem current connection\n    DB-->>MS: connection identity\n    MS->>WS: signed callback via NAT\n    WS-)D: offer and fence\n  else conditional conflict\n    DB-->>MS: no offer, retry candidate\n  end\n  Note over MS: Gone or timeout leaves durable offer",
+            "legend": "A transaction claims both requested ride and free driver, increments the driver's persistent fence and stores the offer deadline. Concurrent matchers cannot claim two drivers for one ride. Only successful acquisition sends an offer. Lookup uses the authenticated driver's connection mapping; Gone conditionally deletes that mapping, timeout may duplicate the same offer. Reconnect reads the outstanding durable offer. Sources: transactions s47, WebSocket s22, callback endpoint limitation s46, fencing s6.",
             "cites": [
+              "s46", "s47", "s48",
               "s16",
               "s6",
               "s22",
@@ -1498,9 +1551,10 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 16\n  participant D as Driver app\n  participant Edge\n  participant RQ as Ride API\n  participant LK as DynamoDB locks\n  participant RS as DynamoDB rides\n  D->>Edge: POST /offers/{ride}/accept, token\n  Edge->>RQ: HTTP, a healthy task\n  RQ->>LK: UpdateItem offered to on_trip,<br/>condition token = current\n  alt the token is the current lease\n    LK-->>RQ: on_trip\n    RQ->>RS: UpdateItem matched\n    RQ-->>Edge: 200 matched\n  else stale token, the lease had expired\n    LK-->>RQ: ConditionalCheckFailed\n    RQ-->>Edge: 409 offer expired\n  end\n  Edge-->>D: response\n  opt DynamoDB throttle or 5xx\n    RQ->>LK: SDK retry, safe by the condition\n  end",
-            "legend": "A late accept carries a token that is no longer the item's lease, so the condition fails and nothing changes, which is the fencing argument s6 made with one conditional write s16. Sources: the SDK retry s18; the gateway endpoint s31.",
+            "mermaid": "sequenceDiagram\n  autonumber 18\n  participant D as Driver\n  participant Edge\n  participant API as Ride API\n  participant DB as Rides and driver state\n  D->>Edge: accept ride and fence\n  Edge->>API: authenticated driver\n  API->>DB: transact accept conditions\n  alt offered tuple and valid deadline\n    DB-->>API: ride matched, driver on_trip\n    API-->>Edge: 200 matched\n  else condition failed or lost result\n    API->>DB: consistent tuple read\n    DB-->>API: current ride and driver\n    API-->>Edge: same match 200, else 409\n  end\n  Edge-->>D: response",
+            "legend": "The transaction checks offered state, authenticated driver, ride identity, fence and deadline, then writes matched/on_trip atomically. A lost success reply is recovered by reading the same matched tuple; a stale or expired offer is rejected even without a successor. Deadline is checked at trusted API admission using the explicit clock model below. Sources: transactional atomicity s47, conditional writes s16, gateway endpoint s31 and fencing s6.",
             "cites": [
+              "s47",
               "s6",
               "s16",
               "s18",
@@ -1509,7 +1563,7 @@
           },
           {
             "type": "p",
-            "text": "The lock table is the only place the invariant is decided, and it is a Regional service replicated across zones, which is why the design can afford to fail closed when it is unavailable: that is rare, and a double booking is worse than a delayed match."
+            "text": "The conditional transaction across ride and driver records decides the invariant, not a separate lock write followed by a ride write. Fail closed if that Regional database boundary is unavailable: a delayed match is preferable to double assignment."
           },
           {
             "type": "decision",
@@ -1517,27 +1571,27 @@
             "rows": [
               {
                 "option": "Amazon DynamoDB, on-demand",
-                "pick_when": "the invariant is a condition on one item, the rate is small, and the store must survive a zone loss without the team running it",
-                "avoid_when": "the decision needs a transaction across several entities or a query the item model cannot express",
-                "example": "For this design: chosen. A lease is one conditional UpdateItem on the driver's item, the accept is another conditioned on the token, and the table is replicated across zones by the service; a few thousand such writes a second at peak is a small table."
+                "pick_when": "ride and driver conditions fit a bounded same-Region transaction and key-shaped reads",
+                "avoid_when": "the access pattern requires ad hoc relational queries or cross-Region transactional guarantees",
+                "example": "For this design: chosen with TransactWriteItems across ride and driver state. Conditions enforce both one-driver-one-trip and one-offer-per-ride, rather than relying on an expiring field to change state automatically."
               },
               {
                 "option": "Amazon Aurora PostgreSQL",
-                "pick_when": "the lease must be taken inside a transaction that also writes the ride, or the team wants SQL over driver state",
-                "avoid_when": "a single-row compare-and-set at a modest rate, where two always-on instances would sit idle",
-                "example": "For this design: not chosen. The lease and the ride are written separately on purpose, so the ride record can lag the lock by design; a relational transaction would buy nothing the conditional write does not."
+                "pick_when": "the team wants relational transactions over ride and driver state or SQL reporting",
+                "avoid_when": "key-shaped transactions fit the existing managed key-value platform better",
+                "example": "For this design: valid alternative. A database transaction absolutely buys atomicity here; this answer obtains it from DynamoDB transactions instead of separate writes."
               },
               {
                 "option": "Amazon MemoryDB",
-                "pick_when": "the lock needs sub-millisecond latency and Valkey commands, and the data must survive a node loss because it is the system of record",
-                "avoid_when": "the lock rate does not need in-memory speed and the team prefers one store for locks and rides",
-                "example": "For this design: the honest alternative. Its durable in-memory store would hold the leases with SET NX and expiries at lower latency; the design keeps DynamoDB because the lock rate is low and one store fewer is one failure mode fewer."
+                "pick_when": "measured workload and a verified durable concurrency protocol favor an in-memory database",
+                "avoid_when": "simple key transactions already satisfy the requirements",
+                "example": "For this design: not selected. A database category guide alone does not establish the lease, fencing or latency guarantees needed here; SET NX with expiry is not the full two-entity protocol."
               },
               {
                 "option": "Amazon ElastiCache for Valkey",
                 "pick_when": "the data is a cache that may be lost",
                 "avoid_when": "the data decides an invariant: a cache that loses the lock can grant the same driver twice",
-                "example": "For this design: not chosen for the lock. Kleppmann's argument is exactly this case: a lease in a store that can lose it is not a lock; the index, which is rebuildable, could live there, not the lock."
+                "example": "For this design: not chosen for correctness-critical ownership. Kleppmann distinguishes efficiency locks from correctness locks; a rebuildable geo cache may tolerate loss, but assignment must preserve fenced state across failures."
               }
             ],
             "cites": [
@@ -1553,19 +1607,19 @@
             "rows": [
               {
                 "option": "Amazon Kinesis Data Streams, provisioned shards, one stream per city",
-                "pick_when": "consumers need per-key ordering and replay, the volume is known, and the partition unit (the city) wants its own stream so a consumer reads only its data",
+                "pick_when": "consumers need replay and known city-level isolation; application sequence checks handle producer retry/reordering",
                 "avoid_when": "the load swings by an order of magnitude within a day or the number of partitions is unknown",
-                "example": "For this design: chosen. The city is the partition unit for everything, so each city's index tasks read only their own stream; the driver id as partition key keeps a driver's updates in order; the shard count follows the city's driver count."
+                "example": "For this design: chosen for city isolation and replay, not a claim that PutRecords orders updates. Consumers enforce authenticated session sequence and event freshness independently of arrival order."
               },
               {
                 "option": "Amazon Kinesis Data Streams, on-demand",
                 "pick_when": "the per-city rates are unknown or bursty and nobody wants to count shards",
-                "avoid_when": "a flat, high volume read by two consumers, billed per GB written and read",
-                "example": "For this design: not chosen; about 32 TB a month written and read twice would cost about three times the provisioned shards."
+                "avoid_when": "steady bytes plus every independent reader and fixed per-stream charges exceed provisioned capacity cost",
+                "example": "For this design: price all city streams and all three readers, with physical-record rounding. The revised on-demand comparison is about $9,100, not the earlier two-reader estimate."
               },
               {
                 "option": "Amazon SQS FIFO queue",
-                "pick_when": "ordering per message group and exactly-once processing with one consumer, and no replay",
+                "pick_when": "message-group ordering and queue-side deduplication fit one processing path, with idempotent application effects",
                 "avoid_when": "a consumer must replay from a position to rebuild state, or several consumers need the same records",
                 "example": "For this design: not chosen. A replacement index task rebuilds by replaying the last minutes, and Firehose reads the same records; a queue has neither a position nor a second reader."
               },
@@ -1631,7 +1685,7 @@
                 "option": "In-task memory, two tasks per city, rebuilt from the stream",
                 "pick_when": "the live set is small, the query is a set lookup per cell, and the tasks can rebuild from a log in seconds",
                 "avoid_when": "many services need the same index, or the city's set outgrows a task",
-                "example": "For this design: chosen. A city's index is a few hundred megabytes at most, a ring query is a handful of set lookups in memory, and a lost task replays the last minutes of its stream; nothing outside the matcher needs the index."
+                "example": "For this design: chosen for the matcher and supply/demand snapshots. A hundred-megabyte global payload estimate does not prove per-city memory use; hundreds of megabytes per task is unbenchmarked overhead/headroom, not a derived payload."
               },
               {
                 "option": "Amazon ElastiCache for Valkey, GEOSEARCH",
@@ -1662,7 +1716,7 @@
           },
           {
             "type": "table",
-            "caption": "The design reviewed against the six Well-Architected pillars and the Serverless Applications Lens.",
+            "caption": "Author judgments applying the six Well-Architected pillars and Serverless Lens; the sources define principles, not proof of this protocol.",
             "columns": [
               "pillar",
               "what it asks of this design",
@@ -1681,8 +1735,8 @@
               [
                 "Security",
                 "a strong identity foundation; least privilege; protect data in transit and at rest; keep people away from data",
-                "one task role per service; the offer token as the driver's proof; location history under a stated retention with access logged; encryption at rest and in transit",
-                "none: the whitepaper does not trade security against the other pillars, and neither does this design",
+                "separate task roles; authenticate driver identity before checking the offer fence; logged location-history access and explicit retention; encryption in transit and at rest",
+                "residual risks include stolen driver credentials, location spoofing and incorrect authorization; a lease token is not a substitute for authentication",
                 "s32"
               ],
               [
@@ -1716,8 +1770,8 @@
               [
                 "Serverless Applications Lens",
                 "design for failures and duplicates; share nothing; think concurrent requests",
-                "every lock write is conditional, so a duplicate or a late request is a no-op; the WebSocket connect route is a stateless function; the index tasks share nothing and rebuild from the stream",
-                "at-least-once delivery from the stream means a position can be applied twice; the TTL refresh makes that harmless",
+                "application conditions fence ride/driver effects; location consumers compare authenticated session/sequence and event time; connect routes are stateless",
+                "stream reordering and duplicates must be filtered without refreshing stale TTLs; callback retries can duplicate offers, so clients identify them by ride and fence",
                 "s33"
               ]
             ],
@@ -1762,20 +1816,20 @@
               [
                 "Driver connections",
                 "API Gateway WebSocket API, connection minutes and offer messages",
-                "about $5,900",
-                "about $59,000"
+                "$5,850",
+                "$57,800"
               ],
               [
                 "Location log",
                 "Kinesis Data Streams, 150 provisioned shards across the city streams",
-                "about $1,700",
-                "about $17,000"
+                "$1,733",
+                "$17,332"
               ],
               [
                 "Location history",
                 "Firehose into S3 Standard, 30 days",
-                "about $1,600",
-                "about $16,000"
+                "$1,655",
+                "$16,272"
               ],
               [
                 "Location gateway",
@@ -1786,8 +1840,8 @@
               [
                 "Rides and driver locks",
                 "DynamoDB on-demand, two tables",
-                "about $980",
-                "about $9,800"
+                "$3,256",
+                "$32,563"
               ],
               [
                 "Ride API and aggregator",
@@ -1796,13 +1850,20 @@
                 "about $2,900"
               ],
               [
-                "Total",
-                "the nine lines above; the load balancer, data transfer, cell stats and monitoring not priced",
-                "about $22,500, about $0.15 per ride",
-                "about $225,000, about $0.15 per ride"
+                "Callback egress",
+                "NAT gateways and processed callback bytes",
+                "$144",
+                "$549"
+              ],
+              [
+                "Priced subtotal",
+                "Excludes ALB, interface endpoints, IPv4 addresses, data transfer, cell stats, monitoring, connection Lambda/registry writes, recovery scans and failed/retried transactions.",
+                "about $24,922; $0.166 per thousand rides",
+                "about $247,352; $0.165 per thousand rides"
               ]
             ],
             "cites": [
+              "s50",
               "s38",
               "s41",
               "s35",
@@ -1837,27 +1898,33 @@
             "rows": [
               [
                 "DriverLocation",
-                "driver_id, city, cell (grid cell id at the chosen resolution), lat, lng, heading, updated_at",
-                "driver_id; the index is cell to the set of driver ids with their last position, plus driver_id to cell for moves",
-                "updates older than 10 s are skipped by the candidate query"
+                "driver_id, authenticated_session_epoch, sequence, event_time, city, cell, lat, lng, heading",
+                "driver_id; cell membership plus last accepted session/sequence per driver",
+                "accept only a newer authenticated session/sequence and plausible event time, bounded against gateway admission time. Duplicate/older records never move position or refresh expiry; freshness uses event time, not replay arrival."
               ],
               [
                 "DriverState",
-                "driver_id, state (offline, free, offered, on_trip), lease_token, lease_expires_at, ride_id",
-                "driver_id, partitioned by city",
-                "the only place the one-driver-one-trip invariant is decided; only the holder of the current lease may change it"
+                "driver_id, state, monotonic_fence, lease_expires_at, ride_id, version",
+                "driver_id, partitioned by city; fence counter never reset",
+                "acquire, accept and release transact with the corresponding ride. Every operation checks expected state, ride identity and fence; active trips cannot be released by expired-offer cleanup."
               ],
               [
                 "Ride",
-                "ride_id, rider_id, pickup, dropoff, state (requested, offering, matched, in_progress, completed, cancelled), driver_id, offers[] of (driver_id, sent_at, outcome)",
-                "ride_id; the city is the partition unit",
-                "a trip never crosses the partition at request time"
+                "ride_id, rider_id, client_request_id, payload_hash, pickup, dropoff, state, driver_id, fence, deadline, version, retry_due",
+                "ride_id deterministically derived from authenticated rider plus client_request_id; pending-work index by city and retry_due",
+                "caller retains request identity before sending. Matching same payload retries return the stored ride; mismatched payload conflicts. Requested/offering records are durable work for recovery after API or matcher death."
               ],
               [
                 "Offer",
-                "ride_id, driver_id, expires_at, lease_token",
-                "ride_id, driver_id",
-                "the token the app must return; a stale accept is rejected even if it arrives late"
+                "ride_id, driver_id, deadline, monotonic_fence, outcome",
+                "stored atomically with ride and driver state",
+                "at most one current offer per ride; token equality alone is insufficient without state, ride and deadline checks"
+              ],
+              [
+                "DriverSession",
+                "driver_id, persistent_session_epoch, current_connection_id, mapping_version",
+                "authenticated driver_id",
+                "connect advances epoch by CAS; disconnect/Gone remove only matching connection fields, not the epoch. Reconnect retrieves any outstanding offer through the authorized API."
               ],
               [
                 "CellStats",
@@ -1891,30 +1958,37 @@
               [
                 "POST",
                 "/locations",
-                "{driver_id, lat, lng, heading, ts}[]",
-                "204",
-                "batched by the app, several positions per request"
+                "{session_epoch, sequence, lat, lng, heading, event_time}[]; driver from authentication",
+                "204 after durable per-record success, or retryable error",
+                "older/duplicate positions may be discarded at consumers explicitly; unacknowledged batches may be superseded by newer positions, not claimed as durable history"
               ],
               [
                 "POST",
                 "/rides",
-                "{rider_id, pickup, dropoff}",
+                "{client_request_id, pickup, dropoff}; rider from authentication",
                 "{ride_id, state}",
-                "validated and assigned to the city partition"
+                "stable caller identity claims the ride atomically; pending index recovers API death before matcher hand-off"
               ],
               [
                 "GET",
                 "/rides/{id}",
                 "",
                 "a stream of state changes",
-                "requested, offering, matched, or cancelled with a reason"
+                "only the owning rider or assigned driver may read; requested, offering, matched, or cancelled with a reason"
               ],
               [
                 "POST",
                 "/offers/{ride_id}/accept",
                 "{lease_token}",
                 "200 matched, or 409 offer expired",
-                "the driver app answers with the token it was given; decline is the same shape"
+                "authenticated driver, expected ride and fence, offered state and deadline required; transaction changes ride and driver together. A repeated matched tuple returns success."
+              ],
+              [
+                "GET",
+                "/drivers/me/offer",
+                "authenticated driver identity, never caller-supplied driver_id",
+                "current offered/matched ride and fence, or no offer",
+                "reconnect recovery reads driver state then its associated ride; acceptance still checks both records atomically"
               ],
               [
                 "GET",
@@ -1941,8 +2015,8 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber\n  participant D as Driver app\n  participant LG as Location gateway\n  participant LL as Location log\n  participant GI as Geo index\n  participant SD as Supply and demand\n  D->>LG: positions, batched\n  LG-)LL: append, keyed by driver id\n  LG-->>D: 204\n  LL-)GI: the city's updates, in order per driver\n  GI->>GI: move between cells, refresh TTL\n  Note over GI: a driver on a trip stays indexed,<br/>excluded by state\n  GI-)SD: a snapshot every few seconds\n  Note over SD: pricing reads the aggregates,<br/>matching never calls pricing",
-            "legend": "Solid arrows are synchronous calls with their replies dashed; the open arrows are the hand-offs through the log. The same stream feeds cold storage, not drawn."
+            "mermaid": "sequenceDiagram\n  autonumber\n  participant D as Driver\n  participant LG as Location gateway\n  participant LL as Location log\n  participant GI as Geo index\n  participant SD as Supply and demand\n  D->>LG: authenticated positions\n  LG->>LL: append packed records\n  LL-->>LG: per-record durable results\n  LG-->>D: ack successes, retry failures\n  LL-)GI: duplicated or reordered data\n  GI->>GI: session, sequence, event time\n  GI-)SD: async cell snapshot",
+            "legend": "Durable acknowledgement is per record. The application may drop superseded unacknowledged positions, not pretend they entered history. Older records never move a driver backwards or extend freshness. The same packed stream feeds history."
           },
           {
             "type": "p",
@@ -1950,7 +2024,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 8\n  participant R as Rider app\n  participant RQ as Ride API\n  participant MS as Matching svc\n  participant GI as Geo index\n  participant ETA as ETA service\n  R->>RQ: POST /rides\n  RQ->>RQ: Ride written, requested\n  RQ->>MS: the city's partition\n  MS->>GI: rings 0 to 2, until 50 or 5 rings\n  GI-->>MS: free drivers, fresher than 10 s\n  MS->>ETA: one batched call, 100 ms deadline\n  alt in time\n    ETA-->>MS: arrival times\n  else timeout or error\n    Note over MS,ETA: rank by straight-line distance,<br/>the match is flagged degraded\n  end\n  Note over MS: rank by ETA, then a fairness term",
+            "mermaid": "sequenceDiagram\n  autonumber 8\n  participant R as Rider\n  participant API as Ride API\n  participant MS as Matcher\n  participant GI as Geo index\n  participant ETA\n  R->>API: request with stable identity\n  API->>API: persist requested work\n  API-)MS: wake pending ride\n  API-->>R: ride identity and state\n  MS->>GI: nearby fresh drivers\n  GI-->>MS: candidate set\n  MS->>ETA: batched ETAs with deadline\n  ETA-->>MS: times or fallback trigger\n  Note over MS: reuse rank, recheck freshness",
             "legend": "The rings are H3 cells around the pickup cell s1; the ETA service is a routing engine of the contraction-hierarchy kind s4; the fairness term (time since the driver's last trip) is an assumption.",
             "cites": [
               "s1",
@@ -1963,8 +2037,8 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 16\n  participant MS as Matching svc\n  participant LK as Driver locks\n  participant D as Driver app\n  participant RS as Rides\n  MS->>LK: compare-and-set free to offered\n  alt the driver is still free\n    LK-->>MS: lease token, expires in 15 s\n  else taken by a concurrent match\n    LK-->>MS: refused, try the next candidate\n  end\n  MS->>RS: offering, the Offer recorded\n  MS-)D: the offer with the token\n  D->>MS: accept, with the token\n  MS->>LK: offered to on_trip if the token matches\n  alt token matches the current lease\n    LK-->>MS: on_trip\n    MS->>RS: matched, the rider is notified\n  else stale token, the offer had expired\n    LK-->>MS: rejected, the app shows offer expired\n  end",
-            "legend": "The compare-and-set in the lock store is the one-driver-one-trip decision, made in one place; the token is a fencing token in Kleppmann's sense, so a late accept from an expired offer is rejected even if it arrives s6; a lease needs an expiry and a heartbeat, and the holder must assume it can lose the lease at any moment s5.",
+            "mermaid": "sequenceDiagram\n  autonumber 16\n  participant MS as Matcher\n  participant DB as Ride and driver store\n  participant D as Driver\n  participant API as Ride API\n  MS->>DB: atomic offer acquisition\n  alt both states claimed\n    DB-->>MS: fence and deadline\n    MS-)D: offer with fence\n    D->>API: authenticated accept\n    API->>DB: atomic fenced acceptance\n    alt valid offered tuple\n      DB-->>API: matched and on_trip\n      API-->>D: matched\n    else expired or changed\n      DB-->>API: reject or existing match\n      API-->>D: response\n    end\n  else acquisition conflict\n    DB-->>MS: no offer sent\n  end",
+            "legend": "The transactional store enforces ride exclusion and driver exclusion together. Fence values increase on each acquisition and never reset. Acceptance checks identity, offered state and admission deadline, not just token equality. This design implements conditional transactional ownership, informed by s5/s6 rather than claiming TTL alone provides safety.",
             "cites": [
               "s6",
               "s5"
@@ -1976,8 +2050,8 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 25\n  participant MS as Matching svc\n  participant LK as Driver locks\n  participant D as Driver app\n  participant R as Rider app\n  alt the driver declines\n    D->>MS: decline, with the token\n  else no answer in 15 s\n    Note over MS,D: the lease expires on its own\n  end\n  MS->>LK: release, the driver returns to free\n  MS->>MS: offer the next candidate, part c again\n  opt three rounds without an accept\n    MS-->>R: cancelled, no driver found\n  end",
-            "legend": "After three rounds (assumption) the ride is cancelled with a clear reason; each round repeats part c with the next-ranked driver from the same candidate set."
+            "mermaid": "sequenceDiagram\n  autonumber 26\n  participant MS as Matcher\n  participant DB as Ride and driver store\n  participant D as Driver\n  participant R as Rider\n  alt explicit decline\n    D->>MS: decline ride and fence\n  else expired admission deadline\n    Note over MS: recovery finds overdue offer\n  end\n  MS->>DB: release matching offered tuple\n  alt both conditions hold\n    DB-->>MS: free driver, requested ride\n    MS->>MS: recheck next ranked candidate\n  else successor or active trip\n    DB-->>MS: no change\n  end\n  opt rounds exhausted\n    MS->>DB: conditionally cancel request\n    MS-->>R: no driver found\n  end",
+            "legend": "A deadline does not change stored state by itself. Release checks both records' state, ride and fence and never resets the driver fence. Retried cleanup is harmless because a successor or active trip fails those conditions. Retry rounds reuse the ranked candidates after freshness checks; they do not rerun ETA."
           }
         ]
       },
@@ -1991,11 +2065,25 @@
           },
           {
             "type": "p",
-            "text": "The lock store itself is a small, strongly consistent store (a consensus-backed key-value store with leases) keyed by driver id and partitioned by city; the Builders' Library article on leader election is the reference for why a lease needs an expiry and a heartbeat and why the holder must assume it can lose the lease at any moment; Kleppmann's post on distributed locking is the reference for why the token matters.",
+            "text": "DynamoDB is not a native timed lease service. Acquisition strongly reads the driver fence, then transacts driver free/version-equals-read and ride requested/version-equals-read conditions, storing the incremented fence and offer deadline on both records. A competing transaction changes those versions and forces a retry. Neither record is TTL-deleted; driver fences never reset. Accept requires both records offered with the same authenticated driver, ride, fence and admitted deadline; it atomically writes matched/on_trip. Lost replies use TransactGetItems to recover an already-matched tuple.",
             "cites": [
+              "s47",
               "s5",
               "s6"
             ]
+          },
+          {
+            "type": "p",
+            "text": "Time model: only authenticated service clocks decide admission, with monitored UTC error bounded by 250 ms. Accept requires stored_deadline greater than server_now plus that margin; expiry cleanup waits until server_now minus the margin passes the deadline. If clock health fails, fail closed. This is an admission deadline, not a promise of database commit before that instant; concurrent cleanup and acceptance still serialize on the same conditional transaction."
+          },
+          {
+            "type": "p",
+            "text": "An authenticated connect CAS-increments a persistent driver-session epoch and stores the current connection mapping; the epoch is never deleted or reset. Disconnect/Gone conditionally remove only their own current connection fields, never a newer mapping. Matchers look up this mapping and sign public callbacks. Timeout may duplicate the same fenced offer; reconnect fetches that driver's outstanding offer through the authorized Ride API. API Gateway connections last at most two hours and idle out after ten minutes, so jittered reconnect is normal. Callback NAT assumes a conservative request/response byte allowance, not free PrivateLink.",
+            "cites": ["s48", "s49", "s46", "s50"]
+          },
+          {
+            "type": "p",
+            "text": "Release requires both records still offered with the same ride/fence and either an authenticated decline or an expired admission deadline under the clock rule. It atomically returns the ride to requested and driver to free without changing the fence. A requested/offering sparse index persists until matched/cancelled; a reconciler queries every overdue item, including matcher death after acquisition but before delivery, and conditionally releases or re-wakes it. Duplicate index results are safe. Cancel checks requested state/version, so it cannot overwrite an acquired offer or a match."
           },
           {
             "type": "steps",
@@ -2003,7 +2091,7 @@
             "items": [
               "At peak the matching services make about 600 batched ETA calls per second, one per request.",
               "Each call carries about 50 candidates, so the routing engine answers about 30,000 routes per second.",
-              "When offers are declined the same request comes back for another round, up to three, so the engine must be sized for about 1,800 calls per second.",
+              "Retry rounds reuse the ranked set after rechecking freshness and ownership. They do not rerun ETA in this model; three rounds do not triple the ETA fleet.",
               "Every call carries a hard deadline of 100 ms; past it the matcher ranks the same candidates by straight-line distance and flags the match.",
               "The degraded ratio is an alarm: a match now beats a better match in 5 seconds, but a rising ratio means the map service, not the matcher, is the incident."
             ]
@@ -2054,7 +2142,7 @@
               [
                 "Driver accepts after the offer expired",
                 "would create a trip the rider abandoned",
-                "fencing token mismatch rejects the accept; the app shows offer expired"
+                "accept checks offered state, ride, fence and deadline even if no successor exists; a transaction changes both ride and driver or neither"
               ],
               [
                 "Lock store unavailable",
@@ -2094,9 +2182,9 @@
               ],
               [
                 "One-trip invariant",
-                "database transaction on the ride versus a lease with fencing token in a lock store",
-                "lease with fencing token",
-                "the offer involves a human and a timeout; a late accept must be rejectable"
+                "relational transaction versus conditional key-value transaction with fenced offers",
+                "atomic ride/driver transaction plus fencing",
+                "human timeouts need conditional expiry/release, while atomic state prevents crash gaps and concurrent offers for one ride"
               ],
               [
                 "ETA in matching",
@@ -2182,6 +2270,27 @@
           },
           {
             "type": "table",
+            "caption": "Billing quantities and units: conservative full-peak location volume, separate average connection occupancy.",
+            "columns": ["dimension", "assumption"],
+            "rows": [
+              ["Packed record", "100 binary positions of 50 bytes plus a 120-byte header make a 5-KiB frame. Flush by size or within a second; partial batches add cost excluded from this full-pack estimate."],
+              ["Position encoding", "Binary driver/session/sequence/time identifiers, coordinates, heading and flags fit the assumed fifty bytes; city/cell are derived, not repeated strings."],
+              ["Aggregation format", "Custom binary packing, not KPL. Firehose transformation, JSON deaggregation and format conversion are disabled; S3 retains opaque frames for offline decoding."],
+              ["Firehose metering", "KDS-source records round to 5-KiB increments. The full frame fits one increment; KPL deaggregation would change the calculation and is not selected."],
+              ["Stream billing", "2,500 records/s each consume one 25-KiB PUT unit. On-demand ingress rounds each frame to whole KiB; both geo replicas and Firehose are three readers."],
+              ["Fixed city charge", "100 streams times 730 hours times $0.04 gives $2,920 before on-demand bytes."],
+              ["Location versus connections", "History assumes continuous peak; WebSocket minutes assume 500,000 average connected drivers. These are deliberately different bounds."],
+              ["Transactional write units", "Creation plus pending index: two units. Each offer acquisition uses four transactional units plus one index write. Each release and final accept use the same five-unit total."],
+              ["Modeled rounds", "Three acquisitions, two releases and one accept plus creation total 32 write units per ride. Failed races and recovery scans are excluded."],
+              ["Reads and items", "Ten eventual status reads, three strong driver-fence reads and three strong connection lookups. Ride version comes from the durable work item. Read items fit four KiB; write items one KiB. Recovery queries are excluded."],
+              ["Storage", "200 billed GB for rides, driver state and sparse pending index. No other indexes. Connection-registry writes/storage and Lambda lifecycle costs are excluded."],
+              ["ETA headroom", "At an assumed three ms CPU/route, peak routing needs about ninety cores against ninety-six provisioned. No throughput guarantee; retries reuse ranking."],
+              ["Month and units", "30 request-days and 730 instance-hours. Teaching TB is decimal; streaming bills use binary GB conversion. S3 rounds upward and uses the actual 51,200-GB breakpoint."]
+            ],
+            "cites": ["s13", "s35", "s36", "s42", "s47"]
+          },
+          {
+            "type": "table",
             "caption": "How the cost table in Building it on AWS was worked out: the same lines at AWS list prices for US East (N. Virginia) as of 2026-10-15 (prices change; each line is cited to its price list or pricing page). Every sizing figure is an assumption unless the estimates table carries it.",
             "columns": [
               "cost line",
@@ -2207,7 +2316,7 @@
               ],
               [
                 "ETA service: ECS on Fargate, Arm",
-                "about 30,000 routes a second at a few milliseconds each on twelve tasks of 8 vCPU and 16 GB with the map in memory",
+                "twelve tasks with eight vCPUs and sixteen GB; routing throughput/headroom are unbenchmarked, not guaranteed",
                 "$0.03238 per vCPU-hour, $0.00356 per GB-hour",
                 "about $2,800",
                 "about $28,000"
@@ -2215,23 +2324,23 @@
               [
                 "Driver connections: API Gateway WebSocket",
                 "500,000 drivers connected on average, all month; about 15 million offer messages a day",
-                "$0.25 per million connection minutes, $1.00 per million messages",
-                "about $5,900 (minutes $5,400, messages $450)",
-                "about $59,000"
+                "$0.25 per million connection minutes; messages $1 per million initially, then $0.80 in the next tier",
+                "$5,850",
+                "$57,800"
               ],
               [
                 "Location log: Kinesis Data Streams, provisioned",
-                "150 shards across the city streams for 12.5 MB per second with per-city minimums and headroom; records aggregated per shard",
-                "$0.015 per shard-hour, $0.014 per million PUT payload units",
-                "about $1,700",
-                "about $17,000"
+                "150 shards with city minimums/headroom; 2,500 full opaque records/s, each one PUT unit",
+                "$0.015 per shard-hour; $0.014 per million PUT units",
+                "$1,733.22",
+                "$17,332.20"
               ],
               [
                 "Location history: Firehose and S3",
-                "32 TB a month through Firehose; 30 TB held in S3 Standard",
-                "$0.029 per GB ingested; $0.023 per GB-month for the first 50 TB, a little less beyond",
-                "about $1,600 (Firehose $930, S3 $690)",
-                "about $16,000"
+                "30,899.05 billed GB ingested at base; storage allowance 33,000 billed GB",
+                "Firehose $0.029/GB; S3 $0.023/GB for first 51,200, then $0.022/GB",
+                "$1,655.07",
+                "$16,271.92"
               ],
               [
                 "Location gateway: ECS on Fargate, Arm",
@@ -2242,10 +2351,10 @@
               ],
               [
                 "Rides and driver locks: DynamoDB on-demand",
-                "about five writes and ten reads per ride; about four lock writes per ride; 150 GB of rides",
-                "$0.625 per million writes, $0.125 per million reads, $0.25 per GB-month",
-                "about $980 (rides $600, locks $380)",
-                "about $9,800"
+                "three offer rounds, two releases, final accept; transaction/index and read units specified in the assumptions table",
+                "$0.625 per million writes; $0.125 per million reads; $0.25 per billed GB-month",
+                "$3,256.25",
+                "$32,562.50"
               ],
               [
                 "Ride API and aggregator: ECS on Fargate, Arm",
@@ -2255,14 +2364,22 @@
                 "about $2,900"
               ],
               [
-                "Total on AWS",
-                "the nine lines above; the load balancer, data transfer, cell stats and monitoring not priced",
+                "Callback NAT egress",
+                "three gateways, 730 hours; 1,000 billed GB at base and tenfold bytes at larger load",
+                "$0.045 per gateway-hour; $0.045 per GB",
+                "$143.55",
+                "$548.55"
+              ],
+              [
+                "Priced subtotal",
+                "Same exclusions as the final AWS summary; not production TCO",
                 "",
-                "about $22,500 a month, about $0.15 per ride",
-                "about $225,000 a month, about $0.15 per ride"
+                "about $24,922; $0.166 per thousand rides",
+                "about $247,352; $0.165 per thousand rides"
               ]
             ],
             "cites": [
+              "s50",
               "s38",
               "s37",
               "s41",
@@ -2276,7 +2393,7 @@
           },
           {
             "type": "p",
-            "text": "The cost per ride stays flat across the tenfold step because every large line scales with drivers or requests; the lever that bends it is consolidation, running the quiet cities' index and matching tasks on shared capacity instead of a pair each, and holding driver connections open only while the driver is free."
+            "text": "Cost per ride is the subtotal divided by the full monthly ride count, not a thousandfold larger value. The comparison is nearly linear, with WebSocket/S3 tiers and fixed NAT hours changing the curve. All task throughput and callback-byte allowances still require measurement."
           }
         ]
       }
@@ -2344,6 +2461,11 @@
       "version": 2,
       "date": "2026-10-15",
       "change": "format v2 restructure (batch E2A): rates, sizes, entities, API, failure modes, trade-offs and the 10x numbers as tables; the architecture as a flow block of 12 nodes (the supply-and-demand aggregator and the pricing consumer folded into one box, pricing named in the legend); the core flow as four sequence diagrams; the ETA load as steps; cites on every claim about a real system (H3, S2, Uber's routing engine, the Builders' Library, Kleppmann); the H3 repository kept as the resolution reference; a 'Building it on AWS' section after the high-level design (two flow halves, five sequence diagrams, identity and network, four decision blocks, the Well-Architected table with the Serverless Lens row, one cost table) with every AWS claim and price cited to AWS documentation and price lists dated today; technologies filled; sd-aws-well-architected added to related; the ETA load with declines (up to 1,800 calls per second) stated as its own row; reviewed_by cleared for a second read"
+    },
+    {
+      "version": 3,
+      "date": "2026-10-16",
+      "change": "E2A correctness repair: atomic fenced ride/driver ownership and recovery, authenticated reconnect/callback route, source-order-independent location ingest, explicit physical record billing, recomputed costs and honest exclusions; review R1–R8 and common teaching/source corrections."
     }
   ]
 }
