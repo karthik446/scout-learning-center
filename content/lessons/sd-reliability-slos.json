@@ -1,7 +1,7 @@
 {
   "schema_version": "learning-center-lesson:2",
   "id": "sd-reliability-slos",
-  "version": 2,
+  "version": 3,
   "status": "published",
   "superseded_by": null,
   "title": "Reliability, SLOs and failure modes",
@@ -455,7 +455,7 @@
         },
         {
           "type": "diagram",
-          "mermaid": "flowchart LR\n    S[Services expose request and error counters] --> P[Prometheus scrape]\n    P --> RR[Recording rules: error ratio per window]\n    RR --> AR[Alerting rules: multiwindow burn rate]\n    RR --> D[Dashboard: remaining error budget]\n    AR --> AM[Alertmanager: group, inhibit, silence, route]\n    AM -->|fast burn| PG[Page on-call]\n    AM -->|slow burn| T[Ticket queue]\n    D --> BR[Budget review and policy decisions]",
+          "mermaid": "flowchart LR\n    S[Services expose counters] --> P[Prometheus scrape]\n    P --> RR[Short-window error ratios]\n    RR --> AR[Multiwindow burn alerts]\n    P --> FW[Full-window good and total events]\n    FW --> D[Remaining budget dashboard]\n    AR --> AM[Alertmanager group and route]\n    AM --> PG[Page or ticket]\n    D --> BR[Budget review]",
           "legend": "From counters to pages: recording rules compute the ratios, alerting rules compare them with the burn-rate thresholds, Alertmanager decides who hears (s4, s5, s6)."
         },
         {
@@ -506,7 +506,7 @@
         },
         {
           "type": "p",
-          "text": "One design consequence: the burn-rate pair for each objective is two rules, a page and a ticket, and the diagram's dashboard of remaining budget is read from the same recording rules, so the on-call, the review and the policy all see one number."
+          "text": "Short-window ratios measure burn, not remaining budget. A remaining-budget dashboard requires good and total eligible events over the full rolling window: allowed bad events minus observed bad events, divided by allowed bad events. Weight by requests, not interval ratios. Require complete window coverage and expose gaps; the example alert rules alone do not implement this dashboard."
         },
         {
           "type": "callout",
@@ -532,7 +532,7 @@
         },
         {
           "type": "table",
-          "caption": "Failure domains and what spreading across them survives.",
+          "caption": "Conditional design analysis: surviving these failures requires independent domains, placement, spare capacity and compatible dependencies.",
           "columns": [
             "domain",
             "an example",
@@ -607,7 +607,7 @@
         },
         {
           "type": "p",
-          "text": "The targets tie back to the budget: a failover that takes two minutes spends two minutes of budget each time, so every hard dependency's recovery time must fit inside the objective of the service above it, which is the Azure guidance's point that strong dependencies' targets align with the application's own.",
+          "text": "Recovery targets tie back to user impact, not by blindly adding component RTOs. A failover spends outage minutes only while eligible user requests fail. At constant traffic a complete outage converts directly into equivalent minutes; partial impact weights duration by the failing fraction. Concurrent recoveries may overlap and retries or fallback may mask failures. Model observed service failures before comparing them with its request budget.",
           "cites": [
             "s7"
           ]
@@ -615,7 +615,7 @@
         {
           "type": "callout",
           "kind": "rule",
-          "text": "State the failure domain each tier survives and the RTO and RPO of each stateful component in the design document, and check that the sum of recovery times fits the error budget.",
+          "text": "State failure domains and each stateful component's RTO and RPO. Translate scenarios into failed eligible requests, accounting for traffic, impact and overlapping recoveries; compare that result with the service budget.",
           "cites": [
             "s8",
             "s9"
@@ -723,16 +723,16 @@
         "items": [
           "Indicator: the proportion of responses that are not 5xx, measured at the load balancer, with latency as the proportion of requests under a threshold (the workbook's implementation choice).",
           "Traffic: 2,000 requests per second on average (assumption), so about 5.2 billion requests in a 30-day window.",
-          "Objective: 99.9 percent availability over a rolling 30 days, so the budget is 0.1 percent, about 5.2 million failed requests, or 43 minutes of total outage.",
+          "Objective: 99.9 percent availability over rolling 30 days. At constant assumed traffic the budget is 5.184 million failures, equivalent to 43.2 minutes of complete outage.",
           "Latency objective: the measured p99 is 420 ms (assumption), rounded up to 99 percent of requests under 500 ms, the workbook's round-down-then-tighten method.",
           "Fast burn page: burn rate 14.4 over 1 hour and 5 minutes, so an error ratio above 1.44 percent on both windows; it spends 2 percent of the budget in an hour.",
           "Slow burn page: burn rate 6 over 6 hours and 30 minutes, so an error ratio above 0.6 percent; 5 percent of the budget in six hours.",
           "Ticket: burn rate 1 over 3 days and 6 hours, so an error ratio above 0.1 percent; 10 percent of the budget in three days.",
-          "Detection time for a total outage with the fast-burn rule: the budget fraction times the window times the burn rate, 0.001 times 60 minutes times 14.4, about 52 seconds.",
+          "Ideal expression detection: 0.001 times 60 minutes times 14.4 equals 51.84 seconds after a complete outage, assuming pre-existing healthy data and constant traffic. This is not notification latency.",
           "A zone loss: with three zones and health checks that shift traffic in 30 seconds (assumption), a third of requests fail for 30 seconds, worth 10 seconds of total outage, about 0.4 percent of the budget.",
-          "A database failover with a 2-minute RTO (assumption) spends 4.6 percent of the budget each time, so the window tolerates about 20 of them; one a week is fine, one a day is not.",
-          "A canary of 5 percent of traffic running a release that fails 20 percent of requests burns at ten times the sustainable rate; held for 10 minutes before rollback it spends about 0.2 percent of the budget.",
-          "The decider: the fast-burn page catches a total outage in under a minute, and the budget absorbs routine zone events and failovers, so the first reliability investment is the database's RTO, not more alerting."
+          "Assume database failover causes complete service failure for 2 minutes at constant traffic: it spends 4.6296 percent of the budget. Component RTO alone does not establish this impact; other incidents spend the same allowance.",
+          "A canary serving 5 percent of traffic and failing 20 percent produces 1 percent fleet errors. Held for 10 minutes at constant traffic with no other failures, it spends 0.23148 percent of the monthly budget.",
+          "The decider: full-service database failover is expensive under these assumptions. Ideal expression detection takes about 52 seconds, but scrape/evaluation cadence, delivery and the 30-second group wait delay paging. No under-a-minute notification guarantee is established."
         ],
         "cites": [
           "s3",
@@ -754,35 +754,27 @@
             "about 5.2 billion",
             "2,000 per second times 86,400 times 30"
           ],
+          ["Error budget fraction", "0.1 percent", "one minus objective"],
+          ["Allowed failed requests", "5.184 million", "monthly requests times budget fraction"],
+          ["Equivalent full outage", "43.2 minutes", "constant traffic and complete impact"],
+          ["Fast burn error ratio", "1.44 percent", "14.4 times 0.001"],
+          ["Fast burn long window", "1 hour", "workbook configuration"],
+          ["Fast burn short window", "5 minutes", "workbook configuration"],
+          ["Slow burn error ratio", "0.6 percent", "6 times 0.001"],
+          ["Slow burn long window", "6 hours", "workbook configuration"],
+          ["Slow burn short window", "30 minutes", "workbook configuration"],
+          ["Ticket error ratio", "0.1 percent", "budget fraction"],
+          ["Ticket long window", "3 days", "workbook configuration"],
+          ["Ticket short window", "6 hours", "workbook configuration"],
           [
-            "Error budget",
-            "0.1 percent, about 5.2 million requests, 43 minutes",
-            "1 minus 99.9 percent"
-          ],
-          [
-            "Fast burn threshold",
-            "1.44 percent error ratio, 1 h and 5 m",
-            "14.4 times 0.001"
-          ],
-          [
-            "Slow burn threshold",
-            "0.6 percent, 6 h and 30 m",
-            "6 times 0.001"
-          ],
-          [
-            "Ticket threshold",
-            "0.1 percent, 3 d and 6 h",
-            "1 times 0.001"
-          ],
-          [
-            "Detection of a total outage",
+            "Ideal expression detection, not paging",
             "about 52 seconds",
             "0.001 times 60 minutes times 14.4"
           ],
           [
             "Cost of a 2-minute failover",
             "4.6 percent of the budget",
-            "2 of 43 minutes"
+            "2 divided by 43.2 minutes; constant traffic and full impact"
           ],
           [
             "Cost of a 10-minute bad canary at 5 percent",
@@ -794,14 +786,14 @@
       {
         "type": "code",
         "lang": "yaml",
-        "code": "groups:\n  - name: slo-checkout\n    rules:\n      # error ratios per window, precomputed so the alerts and the budget dashboard read cheap series\n      - record: job:slo_errors:ratio_rate5m\n        expr: sum(rate(http_requests_total{job=\"checkout\",code=~\"5..\"}[5m])) / sum(rate(http_requests_total{job=\"checkout\"}[5m]))\n      - record: job:slo_errors:ratio_rate30m\n        expr: sum(rate(http_requests_total{job=\"checkout\",code=~\"5..\"}[30m])) / sum(rate(http_requests_total{job=\"checkout\"}[30m]))\n      - record: job:slo_errors:ratio_rate1h\n        expr: sum(rate(http_requests_total{job=\"checkout\",code=~\"5..\"}[1h])) / sum(rate(http_requests_total{job=\"checkout\"}[1h]))\n      - record: job:slo_errors:ratio_rate6h\n        expr: sum(rate(http_requests_total{job=\"checkout\",code=~\"5..\"}[6h])) / sum(rate(http_requests_total{job=\"checkout\"}[6h]))\n      - record: job:slo_errors:ratio_rate3d\n        expr: sum(rate(http_requests_total{job=\"checkout\",code=~\"5..\"}[3d])) / sum(rate(http_requests_total{job=\"checkout\"}[3d]))\n\n      # 99.9 percent over 30 days: budget 0.001; thresholds are burn rate times budget\n      - alert: CheckoutBurnRatePage\n        expr: |\n          (job:slo_errors:ratio_rate1h > (14.4 * 0.001) and job:slo_errors:ratio_rate5m > (14.4 * 0.001))\n          or\n          (job:slo_errors:ratio_rate6h > (6 * 0.001) and job:slo_errors:ratio_rate30m > (6 * 0.001))\n        labels:\n          severity: page\n        annotations:\n          summary: Checkout is burning its error budget fast\n          runbook: https://runbooks.example.test/checkout-slo\n      - alert: CheckoutBurnRateTicket\n        expr: job:slo_errors:ratio_rate3d > (1 * 0.001) and job:slo_errors:ratio_rate6h > (1 * 0.001)\n        labels:\n          severity: ticket\n        annotations:\n          summary: Checkout will exhaust its error budget within the window at the current rate",
+        "code": "groups:\n  - name: slo-checkout\n    rules:\n      # Global ratios, not remaining monthly budget.\n      - record: job:slo_errors:ratio_rate5m\n        expr: sum by (job) (rate(http_requests_total{job=\"checkout\",code=~\"5..\"}[5m])) / sum by (job) (rate(http_requests_total{job=\"checkout\"}[5m]))\n      - record: job:slo_errors:ratio_rate30m\n        expr: sum by (job) (rate(http_requests_total{job=\"checkout\",code=~\"5..\"}[30m])) / sum by (job) (rate(http_requests_total{job=\"checkout\"}[30m]))\n      - record: job:slo_errors:ratio_rate1h\n        expr: sum by (job) (rate(http_requests_total{job=\"checkout\",code=~\"5..\"}[1h])) / sum by (job) (rate(http_requests_total{job=\"checkout\"}[1h]))\n      - record: job:slo_errors:ratio_rate6h\n        expr: sum by (job) (rate(http_requests_total{job=\"checkout\",code=~\"5..\"}[6h])) / sum by (job) (rate(http_requests_total{job=\"checkout\"}[6h]))\n      - record: job:slo_errors:ratio_rate3d\n        expr: sum by (job) (rate(http_requests_total{job=\"checkout\",code=~\"5..\"}[3d])) / sum by (job) (rate(http_requests_total{job=\"checkout\"}[3d]))\n      - alert: CheckoutBurnRatePage\n        expr: |\n          (job:slo_errors:ratio_rate1h > (14.4 * 0.001) and job:slo_errors:ratio_rate5m > (14.4 * 0.001))\n          or\n          (job:slo_errors:ratio_rate6h > (6 * 0.001) and job:slo_errors:ratio_rate30m > (6 * 0.001))\n        labels:\n          severity: page\n        annotations:\n          summary: Checkout is burning its error budget fast\n      - alert: CheckoutBurnRateTicket\n        expr: job:slo_errors:ratio_rate3d > 0.001 and job:slo_errors:ratio_rate6h > 0.001\n        labels:\n          severity: ticket\n        annotations:\n          summary: Checkout is burning its error budget",
         "caption": "The recording and alerting rules for the example: the three burn-rate pairs from the workbook's table, scaled to a 0.001 budget."
       },
       {
         "type": "code",
         "lang": "yaml",
-        "code": "route:\n  receiver: tickets\n  group_by: [alertname, job]\n  routes:\n    - matchers: [severity=\"page\"]\n      receiver: oncall-pager\n      group_wait: 30s\n      repeat_interval: 4h\nreceivers:\n  - name: oncall-pager\n    pagerduty_configs: [{service_key: REDACTED}]\n  - name: tickets\n    webhook_configs: [{url: https://tickets.example.test/hooks/alerts}]\ninhibit_rules:\n  - source_matchers: [alertname=\"ZoneDrained\"]\n    target_matchers: [job=\"checkout\"]\n    equal: [zone]",
-        "caption": "The Alertmanager route for the two severities, grouped by alert and job, with per-zone alerts inhibited while a zone is deliberately drained."
+        "code": "route:\n  receiver: tickets\n  group_by: [alertname, job]\n  routes:\n    - matchers: [severity=\"page\"]\n      receiver: oncall-pager\n      group_wait: 30s\n      repeat_interval: 4h\nreceivers:\n  - name: oncall-pager\n    pagerduty_configs: [{service_key: REDACTED}]\n  - name: tickets\n    webhook_configs: [{url: https://tickets.example.test/hooks/alerts}]",
+        "caption": "Global burn alerts retain job=checkout and are never inhibited by zone drains. Replace receiver endpoints and credentials. Initialise error counters even when zero; monitor missing series and scrape gaps separately."
       }
     ]
   },
@@ -978,6 +970,11 @@
       "version": 2,
       "date": "2026-10-15",
       "change": "rewritten by hand at format v2 (version 2): indicators, objectives and agreements with the SLI menu table, setting the target from cost with the revenue table and the practice rules, error budgets with the allowance table and the policy contents, burn-rate alerting with the burn-rate and multiwindow tables, rules and Alertmanager with the diagram in its subtopic and the mechanism table, failure domains and recovery targets as tables, failure mode analysis with the example rows, canaries and the chaos steps, a worked checkout SLO with the rules file and the Alertmanager route after the teaching, cited in-practice blocks (Chubby, Google Apps and Bigtable, the workbook example, Slack, the canary example), 12 verified sources"
+    }
+    ,{
+      "version": 3,
+      "date": "2026-10-15",
+      "change": "Corrected global alert labels, removed zone inhibition, distinguished expression detection from paging, split SLO quantities and qualified budget/recovery assumptions."
     }
   ]
 }
