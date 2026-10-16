@@ -1,7 +1,7 @@
 {
   "schema_version": "learning-center-lesson:2",
   "id": "sd-security-basics",
-  "version": 2,
+  "version": 3,
   "status": "published",
   "superseded_by": null,
   "title": "Security basics in designs",
@@ -93,7 +93,7 @@
       },
       {
         "type": "p",
-        "text": "The OWASP API Security project puts broken object level authorization first in both its 2019 and 2023 editions, on the reasoning that APIs expose endpoints handling object identifiers and so create a wide attack surface of object level access control issues, and it instructs that the check be considered in every function that accesses a data source with an id from the user.",
+        "text": "The OWASP API Security project's 2023 list places broken object level authorization first. APIs expose object identifiers, creating a wide attack surface; it calls for considering object authorization in every function accessing data with an identifier from the user.",
         "cites": [
           "s2"
         ]
@@ -290,7 +290,7 @@
       "blocks": [
         {
           "type": "p",
-          "text": "OAuth 2.0 defines four roles, and most confusion about tokens comes from not naming them. The resource owner grants access, and is called the end-user when a person. The resource server hosts the protected resources and accepts requests bearing access tokens. The client makes requests on the resource owner's behalf, wherever it runs. The authorization server issues access tokens after authenticating the resource owner and obtaining authorization, and one authorization server may issue tokens accepted by many resource servers. In the authorization code grant the client receives a code via the user's browser and exchanges it for tokens on a back channel; the client credentials grant lets a client obtain a token with only its own credentials, which is the basis of service-to-service identity.",
+          "text": "OAuth defines four roles. The resource owner grants access; the resource server hosts protected resources; the client requests access on the owner's behalf; and the authorization server issues tokens after the applicable authentication and authorization. The client may run on a server or in a browser. Authorization code flow exchanges a code at the token endpoint. Client credentials lets a client obtain access on its own behalf, and is one service-identity mechanism, not the sole basis of service identity. Name the client and grant before deciding where credentials belong.",
           "cites": [
             "s3"
           ]
@@ -331,7 +331,7 @@
         },
         {
           "type": "p",
-          "text": "OpenID Connect is the identity layer on top of OAuth 2.0: it adds an ID token, a JSON Web Token carrying claims about the authentication of the end-user by the authorization server, with an issuer, a subject, an audience and an expiry. The authorization code flow returns the code to the client and the tokens from the token endpoint, so the tokens never pass through the browser.",
+          "text": "OpenID Connect adds an identity layer to OAuth: its ID token carries end-user authentication claims including issuer, subject, audience and expiry. Authorization code flow returns tokens from the token endpoint. For the depicted server-side client, tokens remain on its server; a browser-based client can instead receive tokens itself. The browser exclusion is a property of this architecture, not of every authorization-code flow.",
           "cites": [
             "s4"
           ]
@@ -339,7 +339,7 @@
         {
           "type": "diagram",
           "mermaid": "sequenceDiagram\n  participant U as User browser\n  participant A as Application\n  participant I as Identity provider\n  participant S as API service\n  U->>A: Open protected page\n  A->>U: Redirect to login with code challenge\n  U->>I: Authenticate\n  I->>U: Redirect back with authorization code\n  U->>A: Deliver code\n  A->>I: Exchange code and verifier for tokens\n  I->>A: ID token, access token, refresh token\n  A->>S: Call API with access token\n  S->>S: Verify signature, issuer, audience, expiry, scope\n  S->>A: Response",
-          "legend": "The authorization code flow with PKCE: the code travels through the browser, the tokens do not; the API validates the access token on every call (s3, s4, s5)."
+          "legend": "Server-side client with PKCE: this application's tokens stay on its server. Refresh issuance depends on policy; browser-based clients have different token exposure."
         },
         {
           "type": "list",
@@ -356,7 +356,7 @@
         {
           "type": "callout",
           "kind": "rule",
-          "text": "Delegate login to an identity provider with the authorization code flow, and validate every token on every call: issuer, audience, signature, expiry. An application that stores passwords or parses tokens without validating them has already failed the first STRIDE row.",
+          "text": "Delegate login when appropriate and validate tokens according to their profile, never merely parse them. Password storage requires dedicated controls but is not intrinsically an authentication failure: identity providers store password verifiers too.",
           "cites": [
             "s4",
             "s3"
@@ -428,10 +428,10 @@
         },
         {
           "type": "p",
-          "text": "Together the two documents fix the token lifetimes a design should expect: short-lived access tokens validated statelessly at the resource server, with revocation handled by expiry rather than by lookup, and longer-lived refresh tokens held only by the client that can prove it is the client, rotated on use. Service-to-service calls use the client credentials grant or a workload identity with mutual TLS rather than a shared static key, which is also the first design principle of the AWS security pillar: centralise identity and aim to eliminate reliance on long-term static credentials.",
+          "text": "Token format, revocation and lifetime are design choices. RFC 6749 permits opaque access tokens, so lookup-based validation is an alternative to stateless JWTs. Short-lived JWTs with expiry-based revocation are this example's choice, accepting a stolen-token exposure window, not a universal standard. Refresh issuance requires a risk assessment; issued public-client refresh tokens must use sender constraint or rotation under the BCP. Client credentials and workload identity offer alternatives for service access. Decide revocation, audience restrictions and key rotation before choosing a lifetime.",
           "cites": [
             "s3",
-            "s8"
+            "s5"
           ]
         },
         {
@@ -528,14 +528,14 @@
       "blocks": [
         {
           "type": "p",
-          "text": "A multi-tenant design has one more boundary than a single-tenant one: between tenants. AWS's tenant isolation whitepaper names the two ends of the spectrum. In the silo model each tenant runs a fully separate stack of resources surrounded by shared identity, onboarding, metering, deployment and operations; isolation is an end-to-end construct around the whole stack, generally simpler to enforce with well-defined constructs, at a cost to the economies of scale and agility that make SaaS attractive. In the pool model tenants share some or all of the infrastructure, which scales in proportion to actual load, and the storage is shared too, a table indexed by tenant identifier.",
+          "text": "Multi-tenancy adds a boundary between tenants. AWS's historical pool-isolation page describes shared infrastructure and warns that pooling cannot justify weaker isolation. It contrasts shared and separate resources, not every silo's onboarding and operational machinery. The comparison below is design analysis: decide which resources are shared and where each tenant boundary is enforced. In a shared database, application identity and data access are part of that boundary; successful login or a network perimeter alone does not prove tenant authorization.",
           "cites": [
             "s9"
           ]
         },
         {
           "type": "table",
-          "caption": "Silo against pool, from the whitepaper.",
+          "caption": "Illustrative design comparison; the historical source supports pooling and its isolation warning, not a complete silo implementation.",
           "columns": [
             "",
             "silo",
@@ -550,7 +550,7 @@
             [
               "How isolation is enforced",
               "a boundary around the whole stack; networking and IAM constructs apply",
-              "those constructs cannot separate tenants; isolation must be built into the application and the data access"
+              "typical network boundaries alone cannot separate rows; tenant-aware application, data and where supported IAM controls cooperate"
             ],
             [
               "Scaling and cost",
@@ -569,14 +569,14 @@
         },
         {
           "type": "p",
-          "text": "The whitepaper's warning is the design rule: a shared model increases the chance of cross-tenant access and cannot be a reason to relax isolation. In a pooled design that means the tenant identifier is carried from the verified token into every query, enforced in the data layer as well as the handler, so that a handler bug cannot read another tenant's rows; that encryption keys, queues and caches are keyed by tenant where the blast radius justifies it; and that the noisy-neighbour problem, one tenant's load degrading another's, is treated with quotas and fairness controls as an availability threat.",
+          "text": "The whitepaper's warning is not to relax isolation. As design recommendations, derive tenant context from authenticated identity, constrain queries and apply storage policies as defence in depth. Bind context to the transaction so pooled connections cannot retain another request's tenant. Session variables are mutable by the application role: they do not defend against arbitrary SQL execution or a bug setting the wrong tenant. Cover cache keys, queues and object paths too; row filtering does not protect those resources. Quotas and fairness address noisy neighbours separately from confidentiality.",
           "cites": [
             "s9"
           ]
         },
         {
           "type": "p",
-          "text": "Many products mix the models by tier: pooled resources for the standard tier and siloed stacks for tenants with compliance requirements, with the same identity and onboarding across both. The threat model gains a column for each: which tenant boundary a flow crosses and which control enforces it."
+          "text": "A product can mix pooled and dedicated tiers as a design choice, not an adoption claim supported by this source. Record each boundary and control. Test missing context, reused connections and cross-tenant identifiers. Tenant membership is only the first authorization predicate: an invoice may also require ownership, a finance role or an operation permission. Audit denials without exposing the foreign object's details."
         },
         {
           "type": "callout",
@@ -643,7 +643,7 @@
         },
         {
           "type": "p",
-          "text": "Secrets are data with a short useful life. Database passwords, API keys and signing keys belong in a secrets manager and are injected at runtime, never committed to source control or baked into images; they are rotated so that a stolen credential works only briefly, and where the platform allows, issued dynamically per workload or session so that there is nothing long-lived to steal. The pillar's phrase for the goal is to eliminate reliance on long-term static credentials.",
+          "text": "As design guidance, keep database passwords, API keys and signing keys in managed secret storage and inject them at runtime rather than committing them or baking them into images. Plan rotation and consumer reloads together: exposure only ends when old credentials stop working. Prefer dynamic workload credentials where supported. These recommendations apply the pillar's broad identity principle; its principles page is not a detailed secret-management procedure.",
           "cites": [
             "s8"
           ]
@@ -681,16 +681,16 @@
           "Diagram: 3 external actors (browser, mobile app, a payment provider's webhook), 2 processes (API, worker), 2 stores (database, object storage) (assumption).",
           "Trust boundaries: 4, between the internet and the edge, the edge and the API, the API and the stores, and between tenants inside the shared database.",
           "Entry points: 14 endpoints and one webhook (assumption), each listed with the trust level it requires.",
-          "STRIDE over the boundaries: 6 categories times 4 boundaries gives 24 candidate threats; ranking by likelihood and effect leaves 7 to mitigate now.",
+          "STRIDE checklist: 6 categories across 4 boundaries gives 24 review cells, not proof of completeness; assume ranking identifies 7 priority threats.",
           "Authentication: the identity provider with the authorization code flow and PKCE for both the web and the mobile client; no password grant.",
           "Token lifetimes: access tokens of 10 minutes (assumption) validated statelessly; refresh tokens rotated on every use for the public mobile client.",
           "Validation at the API: an allow-list of one signing algorithm, the issuer from discovery, the audience equal to the API's own identifier, expiry with 30 seconds of skew.",
-          "Object level authorization: every one of the 14 endpoints resolves the invoice and compares its tenant to the tenant claim in the token before doing anything else.",
-          "Tenant isolation in the pool: a tenant_id column on every table and a row-level security policy bound to the session's tenant, so a handler bug cannot cross tenants.",
+          "Object authorization: each endpoint checks tenant scope and the requested operation's role or ownership policy; tenant equality alone is insufficient.",
+          "Pooled isolation: set verified tenant context inside each database transaction before querying. RLS limits accidentally unscoped reads but cannot prevent a compromised application from changing context.",
           "Resource consumption: a per-tenant rate limit of 600 requests per minute (assumption) and a 5 MB cap on uploads, against the unrestricted-consumption risk.",
           "Webhook: the payment provider's signature verified before parsing, and the event id stored for replay rejection, against spoofing and tampering on that boundary.",
           "Audit: 8 event classes from the logging list, each carrying the tenant and the caller, written to an append-only store with 400 days of retention (assumption) and alerts on authorization failures.",
-          "The decider: object level authorization. Every other control is a library or a platform setting; this one is a check in every handler, and it is the one that fails silently as the product grows."
+          "The decider: object authorization needs explicit policy in each access path. Token handling, webhook verification, audit integrity and tenant isolation also require engineering and testing, not merely settings."
         ],
         "cites": [
           "s2",
@@ -722,8 +722,8 @@
             "Edge to API",
             "spoofing",
             "a forged or replayed token",
-            "signature, issuer, audience, expiry; sender-constrained refresh",
-            "mitigated"
+            "signature, issuer, audience, expiry; rotated refresh tokens",
+            "forgery mitigated; bearer access-token replay remains possible until expiry"
           ],
           [
             "Edge to API",
@@ -768,14 +768,14 @@
       {
         "type": "code",
         "lang": "python",
-        "code": "import time\nimport jwt                                   # PyJWT\nfrom jwt import PyJWKClient\n\nISSUER = \"https://id.example.test/realms/invoicing\"      # from discovery, pinned\nAUDIENCE = \"invoicing-api\"                                  # this API's own identifier\nJWKS = PyJWKClient(f\"{ISSUER}/protocol/openid-connect/certs\")\n\ndef verify(token: str) -> dict:\n    key = JWKS.get_signing_key_from_jwt(token).key   # the issuer's published key for this token's kid\n    return jwt.decode(\n        token, key,\n        algorithms=[\"RS256\"],          # an allow-list of one; never the token's own alg\n        issuer=ISSUER,                 # iss must match exactly\n        audience=AUDIENCE,             # aud must name this API; a missing aud is rejected\n        leeway=30,                     # seconds of clock skew on exp\n        options={\"require\": [\"exp\", \"iss\", \"aud\", \"sub\"]},\n    )\n\ndef get_invoice(token: str, invoice_id: str, db):\n    claims = verify(token)\n    tenant = claims[\"tenant_id\"]                       # from the verified token, never from the request\n    invoice = db.fetch_one(\"select * from invoices where id = %s\", (invoice_id,))\n    if invoice is None or invoice[\"tenant_id\"] != tenant:\n        raise Forbidden()                              # object level authorization: the same answer for missing and foreign\n    return invoice",
-        "caption": "The two checks the example rests on: token validation pinned to one algorithm, the issuer and the audience, and the object level check against the tenant claim."
+        "code": "from uuid import UUID\nimport jwt\nfrom jwt import PyJWKClient\nfrom psycopg.rows import dict_row\n\nISSUER = \"https://id.example.test/realms/invoicing\"\nAUDIENCE = \"invoicing-api\"\nJWKS = PyJWKClient(f\"{ISSUER}/protocol/openid-connect/certs\")\n\nclass Forbidden(Exception):\n    pass\n\ndef verify(token):\n    key = JWKS.get_signing_key_from_jwt(token).key\n    return jwt.decode(token, key, algorithms=[\"RS256\"], issuer=ISSUER,\n                      audience=AUDIENCE, leeway=30,\n                      options={\"require\": [\"exp\", \"iss\", \"aud\", \"sub\", \"tenant_id\"]})\n\ndef get_invoice(token, invoice_id, conn):\n    # conn is an idle psycopg connection authenticated as invoice_api.\n    claims = verify(token)\n    tenant = UUID(claims[\"tenant_id\"])\n    if \"invoice:read\" not in claims.get(\"scope\", \"\").split():\n        raise Forbidden()\n    with conn.transaction():\n        with conn.cursor(row_factory=dict_row) as cur:\n            cur.execute(\"SELECT set_config('app.tenant_id', %s, true)\", (str(tenant),))\n            cur.execute(\"SELECT id, tenant_id, owner_sub FROM invoices WHERE id = %s\", (UUID(invoice_id),))\n            row = cur.fetchone()\n            if row is None or row[\"tenant_id\"] != tenant or row[\"owner_sub\"] != claims[\"sub\"]:\n                raise Forbidden()\n            return row",
+        "caption": "Illustrative owner-read policy using PyJWT and psycopg: validate, require operation scope, set transaction-local context, then require ownership. Configure trusted issuer/JWKS and runtime authentication. Translate Forbidden into the same response for missing and unauthorized objects."
       },
       {
         "type": "code",
         "lang": "sql",
-        "code": "-- the pool model: every table carries the tenant, and the database enforces it even if a handler forgets\nalter table invoices enable row level security;\ncreate policy tenant_isolation on invoices\n  using (tenant_id = current_setting('app.tenant_id')::uuid);\n\n-- the API sets the session's tenant from the verified token before any query\nset local app.tenant_id = '2f9c3a4e-...';",
-        "caption": "Row-level security bound to the session's tenant: the second line of defence behind the handler's check."
+        "code": "-- Run as migration owner, not runtime role.\nCREATE ROLE invoice_api LOGIN NOSUPERUSER NOBYPASSRLS;\nCREATE TABLE invoices (\n  id uuid PRIMARY KEY,\n  tenant_id uuid NOT NULL,\n  owner_sub text NOT NULL\n);\nALTER TABLE invoices ENABLE ROW LEVEL SECURITY;\nALTER TABLE invoices FORCE ROW LEVEL SECURITY;\nCREATE POLICY tenant_isolation ON invoices TO invoice_api\n  USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)\n  WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);\nGRANT SELECT ON invoices TO invoice_api;\n-- Provision runtime authentication separately; never grant owner-role membership.\n-- Python opens the transaction and sets context via set_config(..., true).\n-- Missing context returns no rows; transaction end clears local context.",
+        "caption": "Matching minimal read-only schema. The runtime role is neither owner, superuser nor BYPASSRLS. Mutable context protects against missing filters, not SQL injection or a compromised role. Writes require separate operation authorization and grants."
       }
     ]
   },
@@ -951,6 +951,11 @@
       "version": 2,
       "date": "2026-10-15",
       "change": "rewritten by hand at format v2 (version 2): threat modelling in one page with the STRIDE table, the OWASP Top 10 2025 table and the API list, OAuth 2.0 roles as a table with OpenID Connect validation rules and the diagram in its subtopic, the token rules of RFC 9700 as a table with the JWT best practices, authorization and least privilege with the NIST zero trust tenets table, silo against pool isolation as a table, data, secrets and the audit trail with the AWS principles table and the logging list, a worked threat model for a multi-tenant invoicing API with the validation code and the row-level policy after the teaching, cited in-practice blocks (BeyondCorp, the OWASP data, the IETF decisions, the API project), 12 verified sources"
+    }
+    ,{
+      "version": 3,
+      "date": "2026-10-15",
+      "change": "Scoped OAuth and token design choices, narrowed tenancy attribution, corrected replay risk and added transaction-bound RLS with operation and ownership authorization."
     }
   ]
 }
