@@ -1,8 +1,8 @@
 {
-  "schema_version": "learning-center-lesson:1",
+  "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-metrics-pipeline",
-  "version": 1,
+  "version": 2,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: metrics and time series pipeline",
@@ -21,274 +21,2314 @@
   ],
   "summary": "A classic design exercise: a metrics system for tens of millions of series with dashboards, alerts and tiered retention. The reference answer sizes the sample stream from stated assumptions and the Gorilla compression figure, decouples ingestion from storage with a samples log, keeps a compressed 26-hour window in memory, compacts into immutable blocks with downsampled tiers, narrows queries through an inverted index, and treats cardinality as the unit of capacity with hard per-tenant limits.",
   "detail": [],
-  "in_practice": "",
+  "in_practice": {
+    "blocks": []
+  },
   "subtopics": [],
   "diagram": null,
   "code": [],
-  "technologies": [],
+  "technologies": [
+    "Amazon ECS",
+    "AWS Fargate",
+    "Amazon Kinesis Data Streams",
+    "Amazon S3",
+    "Amazon DynamoDB",
+    "Amazon ElastiCache",
+    "Application Load Balancer",
+    "Amazon SNS"
+  ],
   "related": [
     "sd-queues-streams",
     "sd-storage-engines",
     "sd-data-modelling",
     "sd-capacity",
-    "sd-observability"
+    "sd-observability",
+    "sd-aws-well-architected"
   ],
   "sources": [
     {
+      "id": "s1",
+      "title": "Prometheus documentation: Overview (the pull model, the time series data model, the push gateway)",
+      "url": "https://prometheus.io/docs/introduction/overview/",
       "kind": "doc",
-      "title": "Prometheus documentation: Overview",
-      "url": "https://prometheus.io/docs/introduction/overview/"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "time series collection happens via a pull model over HTTP"
+      }
     },
     {
+      "id": "s2",
+      "title": "Gorilla: a fast, scalable, in-memory time series database (Pelkonen et al., VLDB 2015)",
+      "url": "https://www.vldb.org/pvldb/vol8/p1816-teller.pdf",
       "kind": "paper",
-      "title": "Gorilla: a fast, scalable, in-memory time series database (VLDB 2015)",
-      "url": "https://www.vldb.org/pvldb/vol8/p1816-teller.pdf"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "compress each by series down from 16 bytes to an average of 1.37 bytes, a 12x reduction in size"
+      }
     },
     {
+      "id": "s3",
+      "title": "Monarch: Google's planet-scale in-memory time series database (Adams et al., VLDB 2020)",
+      "url": "https://www.vldb.org/pvldb/vol13/p3181-adams.pdf",
       "kind": "paper",
-      "title": "Monarch: Google's planet-scale in-memory time series database (VLDB 2020)",
-      "url": "https://www.vldb.org/pvldb/vol13/p3181-adams.pdf"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Monarch pushes down evaluation of a query's table operations as close to the source data as possible"
+      }
     },
     {
-      "kind": "blog",
-      "title": "Uber Engineering: M3, a metrics platform for Prometheus",
-      "url": "https://www.uber.com/us/en/blog/m3/"
+      "id": "s4",
+      "title": "Uber Engineering: M3, Uber's open source, large-scale metrics platform for Prometheus (Rob Skillington, 2018-08-07)",
+      "url": "https://www.uber.com/us/en/blog/m3/",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "The M3 Coordinator also performs downsampling, as well as ad hoc retention and aggregation of metrics using retention and rollup rules"
+      }
     },
     {
+      "id": "s5",
+      "title": "Prometheus documentation: Instrumentation practices (keep a metric's label cardinality below 10)",
+      "url": "https://prometheus.io/docs/practices/instrumentation/",
       "kind": "doc",
-      "title": "Prometheus documentation: Instrumentation practices",
-      "url": "https://prometheus.io/docs/practices/instrumentation/"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "try to keep the cardinality of your metrics below 10"
+      }
     },
     {
+      "id": "s6",
+      "title": "Prometheus documentation: Metric and label naming (unbounded label values such as user IDs)",
+      "url": "https://prometheus.io/docs/practices/naming/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "such as user IDs, email addresses, or other unbounded sets of values"
+      }
+    },
+    {
+      "id": "s7",
+      "title": "Site Reliability Engineering (Google, 2016), chapter 6: Monitoring distributed systems (the four golden signals, symptoms versus causes)",
+      "url": "https://sre.google/sre-book/monitoring-distributed-systems/",
       "kind": "book",
-      "title": "Site Reliability Engineering: Monitoring distributed systems",
-      "url": "https://sre.google/sre-book/monitoring-distributed-systems/"
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Your monitoring system should address two questions: what's broken, and why?"
+      }
+    },
+    {
+      "id": "s8",
+      "title": "Amazon Kinesis Data Streams Developer Guide: terminology and concepts (shards, partition keys, sequence numbers, retention)",
+      "url": "https://docs.aws.amazon.com/streams/latest/dev/key-concepts.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Data records are composed of a sequence number, a partition key, and a data blob"
+      }
+    },
+    {
+      "id": "s9",
+      "title": "Amazon Kinesis Data Streams Developer Guide: Quotas and limits (1 MB/s and 1,000 records/s per shard, on-demand throughput, retention from 24 hours to 365 days)",
+      "url": "https://docs.aws.amazon.com/streams/latest/dev/service-sizes-and-limits.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Each shard can support up to 1 MB/sec or 1,000 records/sec write throughput"
+      }
+    },
+    {
+      "id": "s10",
+      "title": "Amazon Kinesis Data Streams Developer Guide: Develop producers using the Amazon Kinesis Producer Library (record aggregation)",
+      "url": "https://docs.aws.amazon.com/streams/latest/dev/developing-producers-with-kpl.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Implement consumer de-aggregation"
+      }
+    },
+    {
+      "id": "s11",
+      "title": "Amazon Kinesis Data Streams Developer Guide: Use Kinesis Data Streams with interface VPC endpoints (AWS PrivateLink)",
+      "url": "https://docs.aws.amazon.com/streams/latest/dev/vpc.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Interface VPC endpoints are powered by AWS PrivateLink"
+      }
+    },
+    {
+      "id": "s12",
+      "title": "AWS decision guide: Choosing an AWS application integration service, including Kinesis Data Streams and Amazon MSK (last updated April 16, 2025)",
+      "url": "https://docs.aws.amazon.com/decision-guides/latest/decision-guides/application-integration-on-aws-how-to-choose.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Use streaming services such as Amazon Kinesis Data Streams"
+      }
+    },
+    {
+      "id": "s13",
+      "title": "AWS decision guide: Amazon SQS, Amazon SNS, or Amazon EventBridge? (last updated November 2025)",
+      "url": "https://docs.aws.amazon.com/decision-guides/latest/decision-guides/sns-or-sqs-or-eventbridge.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Messages persist until consumed or expired"
+      }
+    },
+    {
+      "id": "s14",
+      "title": "Amazon ECS Developer Guide: task definition parameters for Fargate (task sizes up to 16 vCPU and 120 GB of memory)",
+      "url": "https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task_definition_parameters.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Between 32 GB and 120 GB in 8 GB increments"
+      }
+    },
+    {
+      "id": "s15",
+      "title": "AWS decision guide: Choosing an AWS container service (last updated May 16, 2025)",
+      "url": "https://docs.aws.amazon.com/decision-guides/latest/decision-guides/choosing-aws-container-service.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Kubernetes has three major releases a year"
+      }
+    },
+    {
+      "id": "s16",
+      "title": "AWS decision guide: AWS Fargate or AWS Lambda? (last updated August 21, 2026)",
+      "url": "https://docs.aws.amazon.com/decision-guides/latest/decision-guides/fargate-or-lambda.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "more economical for sustained, high-throughput workloads"
+      }
+    },
+    {
+      "id": "s17",
+      "title": "Amazon ECS Developer Guide: Amazon ECS services (the scheduler replaces a task that fails a health check)",
+      "url": "https://docs.aws.amazon.com/AmazonECS/latest/developerguide/ecs_services.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "replaces tasks determined to be unhealthy after a container health check or a load balancer target group health check fails"
+      }
+    },
+    {
+      "id": "s18",
+      "title": "Amazon ECS Developer Guide: Use Service Connect to connect Amazon ECS services with short names",
+      "url": "https://docs.aws.amazon.com/AmazonECS/latest/developerguide/service-connect.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "uses round-robin load balancing and any previous failure information in outlier detection"
+      }
+    },
+    {
+      "id": "s19",
+      "title": "Amazon ECS Developer Guide: Amazon ECS task IAM role",
+      "url": "https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-iam-roles.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "task IAM roles allow you to specify IAM permissions for your containers"
+      }
+    },
+    {
+      "id": "s20",
+      "title": "Amazon ECS Developer Guide: Amazon ECS task networking options for Fargate (awsvpc mode, private subnets, VPC endpoints)",
+      "url": "https://docs.aws.amazon.com/AmazonECS/latest/developerguide/fargate-task-networking.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "When using a private subnet, the subnet can have a NAT gateway attached"
+      }
+    },
+    {
+      "id": "s21",
+      "title": "Elastic Load Balancing: Health checks for Application Load Balancer target groups",
+      "url": "https://docs.aws.amazon.com/elasticloadbalancing/latest/application/target-group-health-checks.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "routes requests only to the healthy targets"
+      }
+    },
+    {
+      "id": "s22",
+      "title": "AWS decision guide: Choosing an AWS storage service (object storage and Amazon S3; last updated October 5, 2026)",
+      "url": "https://docs.aws.amazon.com/decision-guides/latest/decision-guides/choosing-aws-storage-service.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Object storage is a technology that stores and manages data in an unstructured format called objects"
+      }
+    },
+    {
+      "id": "s23",
+      "title": "Amazon VPC, AWS PrivateLink: Gateway endpoints for Amazon S3",
+      "url": "https://docs.aws.amazon.com/vpc/latest/privatelink/vpc-endpoints-s3.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "you can access Amazon S3 from your VPC, without requiring an internet gateway or NAT device"
+      }
+    },
+    {
+      "id": "s24",
+      "title": "Amazon VPC, AWS PrivateLink: Gateway endpoints for Amazon DynamoDB",
+      "url": "https://docs.aws.amazon.com/vpc/latest/privatelink/vpc-endpoints-ddb.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "you can access DynamoDB from your VPC, without requiring an internet gateway or NAT device"
+      }
+    },
+    {
+      "id": "s25",
+      "title": "Amazon DynamoDB Developer Guide: Condition expressions (attribute_not_exists for an idempotent put)",
+      "url": "https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Expressions.ConditionExpressions.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "attribute_not_exists() to check whether an item with the same primary key already exists"
+      }
+    },
+    {
+      "id": "s26",
+      "title": "AWS decision guide: Choosing an AWS database service, including Amazon Timestream (last updated June 2, 2026)",
+      "url": "https://docs.aws.amazon.com/decision-guides/latest/decision-guides/databases-on-aws-how-to-choose.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "These include relational, key-value, document, in-memory, graph, time series, vector, and wide-column"
+      }
+    },
+    {
+      "id": "s27",
+      "title": "Amazon Timestream Developer Guide: What is Amazon Timestream for LiveAnalytics? (memory store and magnetic store tiers)",
+      "url": "https://docs.aws.amazon.com/timestream/latest/developerguide/what-is-timestream.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "It offers storage tiering, with a memory store for recent data and a magnetic store for historical data"
+      }
+    },
+    {
+      "id": "s28",
+      "title": "Amazon Managed Service for Prometheus User Guide: What is Amazon Managed Service for Prometheus?",
+      "url": "https://docs.aws.amazon.com/prometheus/latest/userguide/what-is-Amazon-Managed-Service-Prometheus.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "you use the same open-source Prometheus data model and PromQL query language that you use with Prometheus"
+      }
+    },
+    {
+      "id": "s29",
+      "title": "Amazon ElastiCache User Guide: Minimizing downtime with Multi-AZ (automatic failover and replica promotion)",
+      "url": "https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/AutoFailover.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "This failover and replica promotion ensure that you can resume writing to the new primary"
+      }
+    },
+    {
+      "id": "s30",
+      "title": "Amazon ElastiCache User Guide: Amazon VPCs and ElastiCache security (access controlled by VPC security groups)",
+      "url": "https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/VPCs.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "control access to the cluster by using Amazon VPC security groups"
+      }
+    },
+    {
+      "id": "s31",
+      "title": "Serverless Applications Lens: Data layer (DynamoDB, DAX as an in-memory cache for DynamoDB only)",
+      "url": "https://docs.aws.amazon.com/wellarchitected/latest/serverless-applications-lens/data-layer.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "adds a highly available in-memory cache"
+      }
+    },
+    {
+      "id": "s32",
+      "title": "Amazon SNS Developer Guide: What is Amazon SNS? (topics, subscribers, delivery to HTTPS endpoints, email and SMS)",
+      "url": "https://docs.aws.amazon.com/sns/latest/dg/welcome.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "provides message delivery from publishers (producers) to subscribers (consumers)"
+      }
+    },
+    {
+      "id": "s33",
+      "title": "AWS Well-Architected Framework, the whitepaper (PDF, publication date November 6, 2024): the six pillars and their design principles",
+      "url": "https://docs.aws.amazon.com/pdfs/wellarchitected/latest/framework/wellarchitected-framework.pdf",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Organize teams around business outcomes"
+      }
+    },
+    {
+      "id": "s34",
+      "title": "Data Analytics Lens, AWS Well-Architected Framework (publication date December 22, 2023)",
+      "url": "https://docs.aws.amazon.com/wellarchitected/latest/analytics-lens/analytics-lens.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "a collection of customer-proven best practices for designing well-architected analytics workloads"
+      }
+    },
+    {
+      "id": "s35",
+      "title": "Amazon Kinesis Data Streams pricing (on-demand per GB written and read, provisioned per shard-hour and PUT payload unit), read 2026-10-15",
+      "url": "https://aws.amazon.com/kinesis/data-streams/pricing/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "A PUT Payload Unit is counted in 25 KB payload"
+      }
+    },
+    {
+      "id": "s36",
+      "title": "AWS Price List Bulk API, AmazonKinesis offer file for us-east-1 (provisioned $0.015 per shard-hour and $0.014 per million PUT payload units; on-demand $0.08 per GB written and $0.04 per GB read; publication date 2026-09-11), read 2026-10-15",
+      "url": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonKinesis/current/us-east-1/index.json",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "$0.015 per provisioned shard-hour"
+      }
+    },
+    {
+      "id": "s37",
+      "title": "AWS Fargate pricing (per vCPU-second and GB-second; the hourly Linux/Arm figures used here are from the price list), read 2026-10-15",
+      "url": "https://aws.amazon.com/fargate/pricing/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "$0.000011244 per vCPU second"
+      }
+    },
+    {
+      "id": "s38",
+      "title": "AWS Price List Bulk API, AmazonECS offer file for us-east-1 (AWS Fargate Linux/Arm $0.03238 per vCPU-hour and $0.00356 per GB-hour; publication date 2026-09-11), read 2026-10-15",
+      "url": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonECS/current/us-east-1/index.json",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "AWS Fargate - ARM - vCPU - US East (N. Virginia)"
+      }
+    },
+    {
+      "id": "s39",
+      "title": "AWS Price List Bulk API, AmazonS3 offer file for us-east-1 (S3 Standard $0.023 per GB-month for the first 50 TB, $0.022 for the next 450 TB; publication date 2026-10-15), read 2026-10-15",
+      "url": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonS3/current/us-east-1/index.json",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "$0.022 per GB - next 450 TB / month of storage used"
+      }
+    },
+    {
+      "id": "s40",
+      "title": "Amazon ElastiCache pricing (node-based and serverless; the page's Valkey example prices a cache.r7g.xlarge node at $0.3496 an hour), read 2026-10-15",
+      "url": "https://aws.amazon.com/elasticache/pricing/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "Cache.r7g.xlarge = $0.3496"
+      }
+    },
+    {
+      "id": "s41",
+      "title": "AWS Price List Bulk API, AmazonElastiCache offer file for us-east-1 (Valkey cache.r7g.large $0.1752 and cache.r7g.xlarge $0.3496 per node-hour; publication date 2026-10-14), read 2026-10-15",
+      "url": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonElastiCache/current/us-east-1/index.json",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "$0.1752 per Memory optimized r7g.large node hour running Valkey"
+      }
+    },
+    {
+      "id": "s42",
+      "title": "Amazon DynamoDB pricing (on-demand request units and storage, US East (N. Virginia) examples), read 2026-10-15",
+      "url": "https://aws.amazon.com/dynamodb/pricing/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "$0.6250 per million writes"
+      }
+    },
+    {
+      "id": "s43",
+      "title": "Amazon MSK pricing (the page's example prices a kafka.m7g.large broker at $0.204 an hour in US East (N. Virginia)), read 2026-10-15",
+      "url": "https://aws.amazon.com/msk/pricing/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "$0.204 (price per hour for a kafka.m7g.large)"
+      }
+    },
+    {
+      "id": "s44",
+      "title": "Amazon Managed Service for Prometheus pricing (metric samples ingested in tiers per 10 million samples, storage per GB-month, query samples processed), read 2026-10-15",
+      "url": "https://aws.amazon.com/prometheus/pricing/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "$0.90/10M for the first 2 billion metric samples"
+      }
+    },
+    {
+      "id": "s45",
+      "title": "AWS Price List Bulk API, AmazonPrometheus offer file for us-east-1 ($0.90 per 10 million samples up to 2 billion, $0.35 for the next 250 billion, $0.16 above 252 billion; $0.03 per GB-month; publication date 2026-10-14), read 2026-10-15",
+      "url": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonPrometheus/current/us-east-1/index.json",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "$0.16 per 10M metric samples for over 252B metric samples in US East (N. Virginia)"
+      }
+    },
+    {
+      "id": "s46",
+      "title": "Amazon EKS pricing (per cluster per hour), read 2026-10-15",
+      "url": "https://aws.amazon.com/eks/pricing/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-15",
+        "http": 200,
+        "section_found": "$0.10 per cluster per hour"
+      }
     }
   ],
   "practice": null,
   "exercise": {
     "prompt": "Design the metrics system for a company's services: thousands of instances emit counters, gauges and histograms every few seconds, engineers query the last few hours on dashboards and alerts, and a few people need a year of history at coarser resolution. The system must not fall over when one team adds a label that explodes into millions of series.",
-    "constraints": [
-      {
-        "heading": "Functional",
-        "body": "Ingest metrics by scrape and by push; store them with labels; answer range and instant queries over labels with aggregation functions; evaluate alerting rules; retain raw data for 15 days, 1-minute data for 90 days and 1-hour data for 15 months (assumption); enforce per-tenant series limits."
-      },
-      {
-        "heading": "Scale (assumption)",
-        "body": "20,000 service instances, each exposing 2,000 series, so 40 million active series; a 15 s scrape interval; 50 tenants (teams); 500 dashboard and rule queries per second at peak, most over the last hour. Chosen for the exercise; derive the sample rate, the raw and compressed volumes and the hot-window memory yourself."
-      },
-      {
-        "heading": "Targets (assumption)",
-        "body": "A sample is queryable within 30 s of being scraped; a last-hour query answers in under 1 s at p99 and a 30-day query in under 10 s; 99.9 percent availability for ingestion and for alert evaluation; no single tenant can degrade another's ingestion."
-      },
-      {
-        "heading": "Non-goals",
-        "body": "Logs and traces (separate systems that share label conventions), anomaly detection, billing, the dashboard product itself."
-      }
-    ],
+    "constraints": {
+      "type": "table",
+      "caption": "Constraints and numbers.",
+      "columns": [
+        "kind",
+        "constraint",
+        "note"
+      ],
+      "rows": [
+        [
+          "Functional",
+          "Ingest metrics by scrape and by push; store them with labels; answer range and instant queries over labels with aggregation functions; evaluate alerting rules; enforce per-tenant series limits.",
+          ""
+        ],
+        [
+          "Retention (assumption)",
+          "Raw data for 15 days; minute aggregates for 90 days; hour aggregates for 15 months.",
+          ""
+        ],
+        [
+          "Scale (assumption)",
+          "20,000 service instances, each exposing 2,000 series, so 40 million active series; a 15 s scrape interval.",
+          "chosen for the exercise; derive the sample rate, the raw and compressed volumes and the hot-window memory yourself"
+        ],
+        [
+          "Scale (assumption)",
+          "50 tenants (teams); 500 dashboard and rule queries per second at peak, most over the last hour.",
+          ""
+        ],
+        [
+          "Targets (assumption)",
+          "A sample is queryable within 30 s of being scraped; a last-hour query answers in under 1 s at p99 and a 30-day query in under 10 s.",
+          ""
+        ],
+        [
+          "Targets (assumption)",
+          "99.9 percent availability for ingestion and for alert evaluation; no single tenant can degrade another's ingestion.",
+          ""
+        ],
+        [
+          "Non-goals",
+          "Logs and traces (separate systems that share label conventions), anomaly detection, billing, the dashboard product itself.",
+          ""
+        ]
+      ]
+    },
     "clarifying_questions": [
       {
-        "question": "What is a series?",
-        "answer": "A metric name plus a unique set of label key-value pairs; every distinct combination is a separate stream of (timestamp, value) samples, which is the Prometheus data model."
+        "q": "What is a series?",
+        "a": "A metric name plus a unique set of label key-value pairs; every distinct combination is a separate stream of (timestamp, value) samples, which is the Prometheus data model."
       },
       {
-        "question": "Pull or push?",
-        "answer": "Pull by default (the scraper controls the rate and knows when a target is down); push for batch jobs and for edge locations that cannot be scraped, through a gateway that applies the same limits."
+        "q": "Pull or push?",
+        "a": "Pull by default (the scraper controls the rate and knows when a target is down); push for batch jobs and for edge locations that cannot be scraped, through a gateway that applies the same limits."
       },
       {
-        "question": "What is the cardinality rule?",
-        "answer": "A label must never carry an unbounded value (user ids, request ids, full URLs); the Prometheus instrumentation guidance says to keep a metric's label cardinality small, below about 10 as its rule of thumb, because every label set is a separate series, and the ingest layer enforces a per-tenant series limit with rejection and an alert when it is hit."
+        "q": "What is the cardinality rule?",
+        "a": "A label must never carry an unbounded value (user ids, request ids, full URLs); the Prometheus instrumentation guidance says to keep a metric's label cardinality small, below about 10 as its rule of thumb, because every label set is a separate series, and the ingest layer enforces a per-tenant series limit with rejection and an alert when it is hit."
       },
       {
-        "question": "How exact must old data be?",
-        "answer": "Downsampled: for data older than 15 days, 1-minute aggregates (min, max, sum, count) are enough; older than 90 days, 1-hour."
+        "q": "How exact must old data be?",
+        "a": "Downsampled: for data older than 15 days, 1-minute aggregates (min, max, sum, count) are enough; older than 90 days, 1-hour."
       },
       {
-        "question": "Are histograms first class?",
-        "answer": "Yes, as bucket series; a histogram with 20 buckets is 22 series, and the sizing counts them."
+        "q": "Are histograms first class?",
+        "a": "Yes, as bucket series; a histogram with 20 buckets is 22 series, and the sizing counts them."
       },
       {
-        "question": "Can a query span all tenants?",
-        "answer": "No; queries are tenant-scoped, with a platform tenant that may read everything for fleet-level views."
+        "q": "Can a query span all tenants?",
+        "a": "No; queries are tenant-scoped, with a platform tenant that may read everything for fleet-level views."
       }
     ],
     "reference_answer": [
       {
         "id": "requirements-and-estimates",
         "title": "Requirements and estimates",
-        "body": [
+        "blocks": [
           {
-            "heading": "Derived numbers: samples and the hot window",
-            "body": "40 million series scraped every 15 s is 2.7 million samples per second. A raw sample is 16 bytes (an 8-byte timestamp and an 8-byte float, the figure the Gorilla paper starts from), so raw ingest is 43 MB per second and 3.7 TB per day. The Gorilla paper reports delta-of-delta timestamp and XOR value compression averaging 1.37 bytes per sample, a 12x reduction; at that rate the hot window costs 3.7 MB per second and 320 GB per day. Gorilla kept 26 hours in memory because most queries were for recent data; with the same window, the hot tier holds about 350 GB of compressed samples plus per-series overhead (a series header of about 100 bytes, assumption, is 4 GB), replicated twice, so about 700 GB of memory across the hot nodes: a few dozen large nodes, or more small ones."
+            "type": "p",
+            "text": "Every number below follows from the stated assumptions: 20,000 instances exposing 2,000 series each, a 15 s scrape interval, and the compression figure the Gorilla paper reports. The tables carry the arithmetic; the paragraphs carry the assumptions.",
+            "cites": [
+              "s2"
+            ]
           },
           {
-            "heading": "Derived numbers: retention and queries",
-            "body": "Long-term storage: raw for 15 days is about 4.8 TB compressed; 1-minute aggregates for 90 days are 4 values every 60 s instead of 1 value every 15 s, so about the same bytes per series per day as raw, 29 TB for 90 days (assumption, no further compression counted); 1-hour aggregates for 15 months are negligible. Object storage holds all of it cheaply. Queries: 500 per second at peak, most touching a few hundred series each over one hour (240 samples per series), so about 100,000 series-hours per second against the hot tier, which is a memory-bound scan, not a disk one."
+            "type": "table",
+            "caption": "Rates and daily volumes derived from the assumptions.",
+            "columns": [
+              "quantity",
+              "per day",
+              "average per second",
+              "peak per second",
+              "note"
+            ],
+            "rows": [
+              [
+                "Active series",
+                "40 million",
+                "",
+                "",
+                "20,000 instances times 2,000 series; a histogram with 20 buckets counts as 22 series"
+              ],
+              [
+                "Samples scraped",
+                "230 billion",
+                "2.7 million",
+                "2.7 million",
+                "40 million series every 15 s; scraping is flat, there is no daily peak"
+              ],
+              [
+                "Raw bytes ingested",
+                "3.7 TB",
+                "43 MB",
+                "43 MB",
+                "16 bytes per sample, an 8-byte timestamp and an 8-byte float, the figure Gorilla starts from"
+              ],
+              [
+                "Compressed bytes stored",
+                "320 GB",
+                "3.7 MB",
+                "3.7 MB",
+                "1.37 bytes per sample, the Gorilla average for delta-of-delta timestamps and XOR values, a 12x reduction"
+              ],
+              [
+                "Scrapes",
+                "115 million",
+                "1,333",
+                "1,333",
+                "20,000 targets every 15 s; a failed scrape still produces an up=0 sample"
+              ],
+              [
+                "Queries",
+                "",
+                "",
+                "500",
+                "dashboards and rules at peak, most over the last hour (assumption)"
+              ],
+              [
+                "Series-hours scanned",
+                "",
+                "",
+                "100,000",
+                "500 queries times a few hundred series each over one hour, 240 samples per series; a memory-bound scan, not a disk one"
+              ]
+            ],
+            "cites": [
+              "s2"
+            ]
+          },
+          {
+            "type": "table",
+            "caption": "Sizes: the hot window, the tiers and the index.",
+            "columns": [
+              "quantity",
+              "size",
+              "derived from"
+            ],
+            "rows": [
+              [
+                "Hot window, one copy",
+                "about 350 GB",
+                "320 GB per day times 26 hours, the window Gorilla kept in memory because most queries were for recent data, plus a series header of about 100 bytes per series (assumption), about 4 GB"
+              ],
+              [
+                "Hot tier in memory",
+                "about 700 GB",
+                "two replicas of the window: a few dozen large nodes, or more small ones"
+              ],
+              [
+                "Raw tier, 15 days",
+                "about 4.8 TB",
+                "320 GB per day times 15, in object storage"
+              ],
+              [
+                "1-minute tier, 90 days",
+                "about 29 TB",
+                "four values (min, max, sum, count) a minute instead of one every 15 s is about the same bytes per series per day as raw; 320 GB times 90 (assumption: no further compression counted)"
+              ],
+              [
+                "1-hour tier, 15 months",
+                "negligible",
+                "a sixtieth of the 1-minute tier"
+              ],
+              [
+                "A 30-day query per series",
+                "43,000 points at 1-minute resolution",
+                "instead of 172,800 raw samples; the reason the tiers exist"
+              ]
+            ],
+            "cites": [
+              "s2"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "The hot tier is sized by series, not by samples: the per-series header and the open chunk are what fill memory, and a query that touches millions of series is what times out. That is why the ingest layer enforces a series limit per tenant and why the capacity unit of the platform is a series."
           }
         ]
       },
       {
         "id": "high-level-design",
         "title": "High-level design",
-        "body": [
+        "blocks": [
           {
-            "heading": "Container view",
-            "body": "Scrapers pull targets on a schedule (the Prometheus model) and a push gateway accepts what cannot be scraped; both go through an ingest layer that validates labels and enforces per-tenant series limits before anything is stored. Samples land on a partitioned log keyed by series hash, which decouples ingestion from storage and lets the hot store be rebuilt. The hot store keeps the last 26 hours in memory, compressed, replicated twice; a compactor writes 2-hour blocks to object storage and downsamples into tiers. A query frontend splits a query by time range, caches results, and fans out to hot shards and long-term blocks, which is the shape Monarch describes (regional storage with query pushdown to where the data is) and M3 describes for Prometheus (a coordinator that handles downsampling, retention and rollup rules in front of the storage nodes)."
+            "type": "p",
+            "text": "Scrapers pull targets on a schedule (the Prometheus model) and a push gateway accepts what cannot be scraped; both go through an ingest layer that validates labels and enforces per-tenant series limits before anything is stored. Samples land on a partitioned log keyed by series hash, which decouples ingestion from storage and lets the hot store be rebuilt. The hot store keeps the last 26 hours in memory, compressed, replicated twice; a compactor writes 2-hour blocks to object storage and downsamples into tiers. A query frontend splits a query by time range, caches results, and fans out to hot shards and long-term blocks.",
+            "cites": [
+              "s1"
+            ]
+          },
+          {
+            "type": "flow",
+            "nodes": [
+              {
+                "id": "T",
+                "label": "Service instances: /metrics endpoints",
+                "kind": "actor"
+              },
+              {
+                "id": "SC",
+                "label": "Scrapers, sharded by target",
+                "kind": "service"
+              },
+              {
+                "id": "PG",
+                "label": "Push gateway: batch jobs and edge",
+                "kind": "service"
+              },
+              {
+                "id": "IN",
+                "label": "Ingest and validation: cardinality limits per tenant",
+                "kind": "service"
+              },
+              {
+                "id": "LOG",
+                "label": "samples log, partitioned by series hash",
+                "kind": "queue"
+              },
+              {
+                "id": "IX",
+                "label": "Series index: labels to series id",
+                "kind": "store"
+              },
+              {
+                "id": "HOT",
+                "label": "Hot store: in-memory, compressed, 26 h window, 2 replicas",
+                "kind": "store"
+              },
+              {
+                "id": "CP",
+                "label": "Compactor and downsampler",
+                "kind": "service"
+              },
+              {
+                "id": "LT",
+                "label": "Long-term blocks in object storage: raw, 1 min, 1 h tiers",
+                "kind": "store"
+              },
+              {
+                "id": "Q",
+                "label": "Dashboards, alerting rules",
+                "kind": "actor"
+              },
+              {
+                "id": "QF",
+                "label": "Query frontend: split, cache, fan-out",
+                "kind": "service"
+              }
+            ],
+            "frames": [
+              {
+                "id": "ingest",
+                "title": "Ingestion",
+                "nodes": [
+                  "T",
+                  "SC",
+                  "PG",
+                  "IN",
+                  "LOG",
+                  "IX"
+                ]
+              },
+              {
+                "id": "store",
+                "title": "Storage",
+                "nodes": [
+                  "HOT",
+                  "CP",
+                  "LT"
+                ]
+              },
+              {
+                "id": "query",
+                "title": "Query path",
+                "nodes": [
+                  "Q",
+                  "QF"
+                ]
+              }
+            ],
+            "edges": [
+              {
+                "from": "SC",
+                "to": "T",
+                "kind": "sync",
+                "label": "Scrapers to service instances: GET /metrics every 15 s",
+                "short": "Scrape"
+              },
+              {
+                "from": "SC",
+                "to": "IN",
+                "kind": "sync",
+                "label": "Scrapers to ingest: a parsed batch per target",
+                "short": "Ingest"
+              },
+              {
+                "from": "PG",
+                "to": "IN",
+                "kind": "sync",
+                "label": "Push gateway to ingest: pushed batches through the same limits",
+                "short": "Push"
+              },
+              {
+                "from": "IN",
+                "to": "IX",
+                "kind": "sync",
+                "label": "Ingest to series index: look up or create the series, count it against the tenant",
+                "short": "Series lookup"
+              },
+              {
+                "from": "IN",
+                "to": "LOG",
+                "kind": "async",
+                "label": "Ingest to samples log: append the batch to the partition of each series hash",
+                "short": "Append"
+              },
+              {
+                "from": "LOG",
+                "to": "HOT",
+                "kind": "async",
+                "label": "samples log to hot store: consumed by partition, acknowledged by offset",
+                "short": "Consume"
+              },
+              {
+                "from": "HOT",
+                "to": "CP",
+                "kind": "async",
+                "label": "Hot store to compactor: closed chunks every 2 hours",
+                "short": "Flush"
+              },
+              {
+                "from": "CP",
+                "to": "LT",
+                "kind": "sync",
+                "label": "Compactor to long-term blocks: immutable blocks with their index, downsampled tiers",
+                "short": "Write blocks"
+              },
+              {
+                "from": "Q",
+                "to": "QF",
+                "kind": "sync",
+                "label": "Dashboards and rules to query frontend",
+                "short": "Query"
+              },
+              {
+                "from": "QF",
+                "to": "IX",
+                "kind": "sync",
+                "label": "Query frontend to series index: which series and shards match the selector",
+                "short": "Narrow"
+              },
+              {
+                "from": "QF",
+                "to": "HOT",
+                "kind": "sync",
+                "label": "Query frontend to hot store: partial evaluation on the shards",
+                "short": "Hot shards"
+              },
+              {
+                "from": "QF",
+                "to": "LT",
+                "kind": "sync",
+                "label": "Query frontend to long-term blocks: the older ranges from the right tier",
+                "short": "Blocks"
+              }
+            ],
+            "steps": [
+              {
+                "edge": 0,
+                "caption": "Scrapers to service instances: GET /metrics every 15 s, sync"
+              },
+              {
+                "edge": 1,
+                "caption": "Scrapers to ingest: a parsed batch per target, sync"
+              },
+              {
+                "edge": 2,
+                "caption": "Push gateway to ingest: pushed batches through the same limits, sync"
+              },
+              {
+                "edge": 3,
+                "caption": "Ingest to series index: look up or create the series and count it against the tenant's limit, sync"
+              },
+              {
+                "edge": 4,
+                "caption": "Ingest to samples log: append the batch to the partition of each series hash, async"
+              },
+              {
+                "edge": 5,
+                "caption": "Samples log to hot store: consumed by partition and acknowledged by offset"
+              },
+              {
+                "edge": 6,
+                "caption": "Hot store to compactor: closed chunks every 2 hours"
+              },
+              {
+                "edge": 7,
+                "caption": "Compactor to long-term blocks: immutable blocks with their inverted index and the downsampled tiers, sync"
+              },
+              {
+                "edge": 8,
+                "caption": "Dashboards and rules to query frontend: an instant or range query, sync"
+              },
+              {
+                "edge": 9,
+                "caption": "Query frontend to series index: which series and which shards match the label selector, sync"
+              },
+              {
+                "edge": 10,
+                "caption": "Query frontend to hot store: partial evaluation pushed down to the shards that hold the series, sync"
+              },
+              {
+                "edge": 11,
+                "caption": "Query frontend to long-term blocks: the older sub-ranges read from the right tier, sync"
+              }
+            ],
+            "legend": "Boxes are containers; the three frames are ingestion, storage and the query path; cylinders are stores; double brackets are logs. Ingestion and storage are decoupled by the samples log: a hot store node can restart and replay without losing a scrape."
+          },
+          {
+            "type": "p",
+            "text": "Three published systems have this shape. Gorilla at Facebook is a write-through in-memory cache of the most recent 26 hours in front of a durable store, compressing samples to 1.37 bytes on average. Monarch at Google has a regionalised architecture, keeps the data in memory, and pushes query evaluation down as close to the source data as possible. Uber's M3 puts a coordinator in front of the storage nodes that handles downsampling, retention and rollup rules per subset of metrics.",
+            "cites": [
+              "s2",
+              "s3",
+              "s4"
+            ]
           }
-        ],
-        "diagram": {
-          "source": "flowchart LR\n  T[Service instances: /metrics endpoints] -->|scrape every 15 s| SC[Scrapers, sharded by target]\n  PG[Push gateway: batch jobs and edge] --> IN[Ingest and validation: cardinality limits per tenant]\n  SC --> IN\n  IN --> LOG[[samples log, partitioned by series hash]]\n  LOG --> HOT[(Hot store: in-memory, compressed, 26 h window, 2 replicas)]\n  HOT -->|every 2 h blocks| CP[Compactor and downsampler]\n  CP --> LT[(Long-term blocks in object storage: raw, 1 min, 1 h tiers)]\n  IN --> IX[(Series index: labels to series id)]\n  Q[Dashboards, alerting rules] --> QF[Query frontend: split, cache, fan-out]\n  QF --> HOT\n  QF --> LT\n  QF --> IX",
-          "legend": "Boxes are containers; cylinders are stores; double brackets are logs. Ingestion and storage are decoupled by the samples log."
-        }
+        ]
+      },
+      {
+        "id": "building-it-on-aws",
+        "title": "Building it on AWS",
+        "blocks": [
+          {
+            "type": "flow",
+            "nodes": [
+              {
+                "id": "T",
+                "label": "Service instances: /metrics endpoints",
+                "kind": "actor"
+              },
+              {
+                "id": "SC",
+                "label": "ECS on Fargate: scrapers, sharded by target",
+                "kind": "service"
+              },
+              {
+                "id": "ALB",
+                "label": "Application Load Balancer: push endpoint",
+                "kind": "service"
+              },
+              {
+                "id": "PG",
+                "label": "ECS on Fargate: push gateway",
+                "kind": "service"
+              },
+              {
+                "id": "IN",
+                "label": "ECS on Fargate: ingest and validation, limits per tenant",
+                "kind": "service"
+              },
+              {
+                "id": "IX",
+                "label": "Amazon DynamoDB: series registry and tenant counters",
+                "kind": "store"
+              },
+              {
+                "id": "LOG",
+                "label": "Amazon Kinesis Data Streams: samples log, provisioned shards, partition key = series hash",
+                "kind": "queue"
+              },
+              {
+                "id": "HOT",
+                "label": "ECS on Fargate: hot store tasks, 120 GB each, in memory, 2 replicas",
+                "kind": "store"
+              },
+              {
+                "id": "CP",
+                "label": "ECS on Fargate: compactor and downsampler",
+                "kind": "service"
+              },
+              {
+                "id": "LT",
+                "label": "Amazon S3: long-term blocks, raw, 1 min, 1 h tiers",
+                "kind": "store"
+              }
+            ],
+            "frames": [
+              {
+                "id": "PUB",
+                "title": "VPC public subnets",
+                "nodes": [
+                  "ALB"
+                ]
+              },
+              {
+                "id": "ING",
+                "title": "VPC private: ingestion",
+                "nodes": [
+                  "SC",
+                  "PG",
+                  "IN"
+                ]
+              },
+              {
+                "id": "STO",
+                "title": "VPC private: storage",
+                "nodes": [
+                  "HOT",
+                  "CP"
+                ]
+              }
+            ],
+            "edges": [
+              {
+                "from": "SC",
+                "to": "T",
+                "kind": "sync",
+                "label": "GET /metrics every 15 s over HTTP inside the VPC, sync",
+                "short": "Scrape"
+              },
+              {
+                "from": "SC",
+                "to": "IN",
+                "kind": "sync",
+                "label": "a parsed batch per target, HTTP by Service Connect name, sync",
+                "short": "Batch"
+              },
+              {
+                "from": "T",
+                "to": "ALB",
+                "kind": "sync",
+                "label": "HTTPS push from batch jobs and edge locations, sync",
+                "short": "HTTPS push"
+              },
+              {
+                "from": "ALB",
+                "to": "PG",
+                "kind": "sync",
+                "label": "HTTP, sync",
+                "short": "HTTP"
+              },
+              {
+                "from": "PG",
+                "to": "IN",
+                "kind": "sync",
+                "label": "pushed batches, HTTP by Service Connect name, sync",
+                "short": "Push"
+              },
+              {
+                "from": "IN",
+                "to": "IX",
+                "kind": "sync",
+                "label": "PutItem with attribute_not_exists for a new series and an atomic counter per tenant, over the gateway endpoint, sync",
+                "short": "PutItem"
+              },
+              {
+                "from": "IN",
+                "to": "LOG",
+                "kind": "async",
+                "label": "PutRecords, aggregated per shard, over the interface endpoint, async",
+                "short": "PutRecords"
+              },
+              {
+                "from": "LOG",
+                "to": "HOT",
+                "kind": "async",
+                "label": "GetRecords per shard; each hot task owns a set of shards",
+                "short": "GetRecords"
+              },
+              {
+                "from": "HOT",
+                "to": "CP",
+                "kind": "async",
+                "label": "closed chunks every 2 hours, HTTP by Service Connect name",
+                "short": "Flush"
+              },
+              {
+                "from": "CP",
+                "to": "LT",
+                "kind": "sync",
+                "label": "PutObject the block, its index and the tiers, over the gateway endpoint, sync",
+                "short": "PutObject"
+              }
+            ],
+            "steps": [
+              {
+                "edge": 0,
+                "caption": "Scrapers to service instances: GET /metrics every 15 s over HTTP inside the VPC, sync"
+              },
+              {
+                "edge": 1,
+                "caption": "Scrapers to ingest: a parsed batch per target over HTTP by Service Connect name, sync"
+              },
+              {
+                "edge": 2,
+                "caption": "Batch jobs and edge locations to the load balancer: HTTPS push, sync"
+              },
+              {
+                "edge": 3,
+                "caption": "Load balancer to push gateway: HTTP, sync"
+              },
+              {
+                "edge": 4,
+                "caption": "Push gateway to ingest: pushed batches over HTTP by Service Connect name, through the same limits, sync"
+              },
+              {
+                "edge": 5,
+                "caption": "Ingest to DynamoDB registry: PutItem with attribute_not_exists for a new series and an atomic counter per tenant, over the gateway endpoint, sync"
+              },
+              {
+                "edge": 6,
+                "caption": "Ingest to Kinesis: PutRecords aggregated per shard over the interface endpoint, async"
+              },
+              {
+                "edge": 7,
+                "caption": "Kinesis to hot store tasks: GetRecords per shard, each task owns a set of shards"
+              },
+              {
+                "edge": 8,
+                "caption": "Hot store to compactor: closed chunks every 2 hours over HTTP by Service Connect name, async"
+              },
+              {
+                "edge": 9,
+                "caption": "Compactor to S3: PutObject the block, its index and the downsampled tiers over the gateway endpoint, sync"
+              }
+            ],
+            "legend": "The write half of the architecture, the same boxes as the neutral diagram's ingestion and storage, one AWS service each: scrapers, push gateway, ingest, hot store and compactor are ECS on Fargate services (the hot store on the largest Fargate task size, 16 vCPU and 120 GB, one task per shard replica); the samples log is a Kinesis data stream with provisioned shards keyed by series hash; the series registry and the per-tenant counters are a DynamoDB table; the blocks live in S3. The push endpoint is the only public entry, an internet-facing load balancer for batch jobs and edge locations; the scrapers reach the service instances over HTTP inside the VPC. Each arrow says how the call is made: HTTP by Service Connect name between services, named AWS SDK calls over VPC endpoints, Kinesis puts and gets. Sync means the caller waits; async means the work goes on after the caller is answered. The VPC frames are one VPC in one Region across three Availability Zones, drawn flat."
+          },
+          {
+            "type": "flow",
+            "nodes": [
+              {
+                "id": "Q",
+                "label": "Dashboards, alerting rules",
+                "kind": "actor"
+              },
+              {
+                "id": "ALB",
+                "label": "Application Load Balancer: query endpoint",
+                "kind": "service"
+              },
+              {
+                "id": "QF",
+                "label": "ECS on Fargate: query frontend, split, cache, fan-out",
+                "kind": "service"
+              },
+              {
+                "id": "RC",
+                "label": "ElastiCache for Valkey: results cache",
+                "kind": "store"
+              },
+              {
+                "id": "IX",
+                "label": "Amazon DynamoDB: series registry",
+                "kind": "store"
+              },
+              {
+                "id": "HOT",
+                "label": "ECS on Fargate: hot store tasks",
+                "kind": "store"
+              },
+              {
+                "id": "LT",
+                "label": "Amazon S3: long-term blocks",
+                "kind": "store"
+              },
+              {
+                "id": "RE",
+                "label": "ECS on Fargate: rule evaluator, replicated",
+                "kind": "service"
+              },
+              {
+                "id": "SNS",
+                "label": "Amazon SNS: alert topic",
+                "kind": "queue"
+              }
+            ],
+            "frames": [
+              {
+                "id": "PUB",
+                "title": "VPC public subnets",
+                "nodes": [
+                  "ALB"
+                ]
+              },
+              {
+                "id": "QRY",
+                "title": "VPC private: query path",
+                "nodes": [
+                  "QF",
+                  "RE"
+                ]
+              },
+              {
+                "id": "CACHE",
+                "title": "VPC private: cache",
+                "nodes": [
+                  "RC"
+                ]
+              }
+            ],
+            "edges": [
+              {
+                "from": "Q",
+                "to": "ALB",
+                "kind": "sync",
+                "label": "HTTPS, sync",
+                "short": "HTTPS"
+              },
+              {
+                "from": "ALB",
+                "to": "QF",
+                "kind": "sync",
+                "label": "HTTP, sync",
+                "short": "HTTP"
+              },
+              {
+                "from": "QF",
+                "to": "RC",
+                "kind": "sync",
+                "label": "GET the cached sub-ranges, cache read, sync",
+                "short": "GET"
+              },
+              {
+                "from": "QF",
+                "to": "IX",
+                "kind": "sync",
+                "label": "Query which shards hold the matching series, over the gateway endpoint, sync",
+                "short": "Query"
+              },
+              {
+                "from": "QF",
+                "to": "HOT",
+                "kind": "sync",
+                "label": "partial evaluation on the shards, HTTP by Service Connect name, sync",
+                "short": "Evaluate"
+              },
+              {
+                "from": "QF",
+                "to": "LT",
+                "kind": "sync",
+                "label": "GetObject the older blocks' index and chunks, over the gateway endpoint, sync",
+                "short": "GetObject"
+              },
+              {
+                "from": "RE",
+                "to": "QF",
+                "kind": "sync",
+                "label": "each rule's query on its schedule, HTTP by Service Connect name, sync",
+                "short": "Rule query"
+              },
+              {
+                "from": "RE",
+                "to": "SNS",
+                "kind": "async",
+                "label": "Publish the alert, deduplicated across evaluators, over the interface endpoint, async",
+                "short": "Publish"
+              }
+            ],
+            "steps": [
+              {
+                "edge": 0,
+                "caption": "Dashboards to the load balancer: HTTPS, sync"
+              },
+              {
+                "edge": 1,
+                "caption": "Load balancer to query frontend: HTTP, sync"
+              },
+              {
+                "edge": 2,
+                "caption": "Query frontend to results cache: GET the cached sub-ranges, cache read, sync"
+              },
+              {
+                "edge": 3,
+                "caption": "Query frontend to DynamoDB registry: Query which shards hold the matching series, over the gateway endpoint, sync"
+              },
+              {
+                "edge": 4,
+                "caption": "Query frontend to hot store tasks: partial evaluation on the shards over HTTP by Service Connect name, sync"
+              },
+              {
+                "edge": 5,
+                "caption": "Query frontend to S3: GetObject the older blocks' index and chunks over the gateway endpoint, sync"
+              },
+              {
+                "edge": 6,
+                "caption": "Rule evaluator to query frontend: each rule's query on its schedule over HTTP by Service Connect name, sync"
+              },
+              {
+                "edge": 7,
+                "caption": "Rule evaluator to SNS: Publish the alert, deduplicated across evaluators, over the interface endpoint, async"
+              }
+            ],
+            "legend": "The read half, the neutral diagram's query path: the query frontend and the rule evaluator are ECS on Fargate services, the results cache is an ElastiCache for Valkey cluster, and the registry, the hot store tasks and the blocks are the same as in the write half. The load balancer serves dashboards from the same public entry as the push endpoint, on a separate listener. Every arrow here is synchronous except the alert publish: HTTPS from dashboards, HTTP by Service Connect name inside the VPC, named SDK calls over endpoints, cache reads."
+          },
+          {
+            "type": "p",
+            "text": "The write path through AWS, part a: a scrape, its validation against the tenant's limit, and the append to the stream."
+          },
+          {
+            "type": "diagram",
+            "mermaid": "sequenceDiagram\n  autonumber\n  participant T as Target\n  participant SC as Scraper\n  participant IN as Ingest\n  participant DDB as DynamoDB registry\n  participant K as Kinesis stream\n  SC->>T: GET /metrics, per-target timeout\n  T-->>SC: exposition text\n  opt the scrape fails\n    Note over SC: an up=0 sample is emitted\n  end\n  SC->>IN: batch, tenant attached\n  IN->>DDB: PutItem new series,<br/>attribute_not_exists\n  Note over IN,DDB: UpdateItem the tenant's counter,<br/>conditioned on the limit\n  alt over the limit\n    DDB-->>IN: ConditionalCheckFailed\n    IN-->>SC: counted rejection\n  else within the limit\n    DDB-->>IN: ok\n    IN-)K: PutRecords, aggregated per shard\n    Note over IN,K: partition key = series hash\n    IN-->>SC: 204\n  end\n  opt a shard is throttled\n    IN->>K: SDK retry with backoff\n  end",
+            "legend": "Solid arrows are synchronous calls with their replies dashed; the open arrow at step 9 is the hand-off: the scraper's acknowledgement does not wait for storage. The registry is consulted only for series the ingest task has not seen in its own cache, so most samples never touch it. Sources: the conditional put s25; the partition key and sequence numbers s8; per-shard write quotas and the aggregation of many samples into one record s9, s10; the interface endpoint s11; Service Connect s18.",
+            "cites": [
+              "s25",
+              "s8",
+              "s9",
+              "s10",
+              "s11",
+              "s18"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "The stream has provisioned shards because the load is flat: 43 MB per second around the clock needs about 43 shards at 1 MB per second each, and the design runs 60 for headroom and hot partitions.",
+            "cites": [
+              "s9"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Each shard also accepts at most 1,000 records a second, so the ingest task aggregates many samples into one record per shard, the way the Kinesis Producer Library does; without aggregation the record limit, not the byte limit, would be the ceiling.",
+            "cites": [
+              "s9",
+              "s10"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Part b: the hot store consumes its shards and the compactor writes the blocks, with the two failures that matter: a lost hot task and a compactor that falls behind."
+          },
+          {
+            "type": "diagram",
+            "mermaid": "sequenceDiagram\n  autonumber 11\n  participant K as Kinesis stream\n  participant HOT as Hot store task\n  participant CP as Compactor\n  participant S3\n  K-)HOT: GetRecords, the task's shards\n  HOT->>HOT: append, delta-of-delta and XOR\n  HOT->>K: checkpoint the sequence number\n  HOT-)CP: closed chunks, every 2 hours\n  CP->>S3: PutObject block, index, tiers\n  S3-->>CP: durable\n  CP->>HOT: durable, drop below 26 hours\n  alt a hot task is lost\n    Note over K,HOT: ECS starts a replacement, it replays<br/>its shards from the last checkpoint\n    Note over HOT: the replica serves reads meanwhile\n  else the compactor is behind\n    Note over HOT,CP: nothing is dropped,<br/>alarm on the oldest unflushed chunk\n  end",
+            "legend": "The hot task checkpoints its position per shard, so a replacement task started by the ECS scheduler replays only what the last durable block did not cover; the stream's retention, 24 hours by default and up to a year, bounds how far back a replay can reach s9. Sources: the ECS scheduler replacing an unhealthy task s17; the compression scheme s2; blocks in object storage s22, over the gateway endpoint s23.",
+            "cites": [
+              "s9",
+              "s17",
+              "s2",
+              "s22",
+              "s23"
+            ]
+          },
+          {
+            "type": "table",
+            "caption": "Identity and network: who may call what, over which endpoint, and what is public. Each ECS service runs under its own IAM task role, so permissions are granted to the task, not to a host; everything in the VPC runs in private subnets across three Availability Zones in awsvpc mode, one elastic network interface per task.",
+            "columns": [
+              "service",
+              "may call",
+              "over which endpoint",
+              "public?"
+            ],
+            "rows": [
+              [
+                "Application Load Balancer",
+                "the push gateway and the query frontend over HTTP, on two listeners",
+                "VPC public subnets; its security group admits HTTPS from the batch jobs' and edge locations' addresses and from the dashboards' network only",
+                "yes, the only entry for pushes and queries"
+              ],
+              [
+                "Scrapers (task role)",
+                "GET /metrics on the service instances; the ingest service by its Service Connect name",
+                "HTTP inside the VPC; their security group is admitted by the instances' security groups",
+                "no; private subnet, no inbound rule at all"
+              ],
+              [
+                "Push gateway (task role)",
+                "the ingest service by its Service Connect name; nothing else",
+                "HTTP inside the VPC",
+                "no; private subnet, admits the load balancer's security group only"
+              ],
+              [
+                "Ingest (task role)",
+                "PutItem and UpdateItem on the registry table; PutRecords on the stream; nothing else",
+                "DynamoDB gateway endpoint; Kinesis interface endpoint",
+                "no; admits the scrapers' and the push gateway's security groups only"
+              ],
+              [
+                "Hot store tasks (task role)",
+                "GetRecords and GetShardIterator on the stream; the compactor by its Service Connect name",
+                "Kinesis interface endpoint; HTTP inside the VPC",
+                "no; admit the query frontend's security group only"
+              ],
+              [
+                "Compactor (task role)",
+                "PutObject and ListObjects on the blocks bucket; nothing else",
+                "S3 gateway endpoint",
+                "no; admits the hot store's security group only"
+              ],
+              [
+                "Query frontend (task role)",
+                "GetObject on the blocks bucket; Query on the registry; reads and writes on the results cache; the hot store tasks by Service Connect name",
+                "S3 and DynamoDB gateway endpoints; the Valkey port and the Service Connect proxy inside the VPC",
+                "no; admits the load balancer's and the rule evaluator's security groups only"
+              ],
+              [
+                "Rule evaluator (task role)",
+                "the query frontend by Service Connect name; Publish on the alert topic",
+                "HTTP inside the VPC; SNS interface endpoint",
+                "no; no inbound rule at all"
+              ],
+              [
+                "The results cache",
+                "nothing; it is called",
+                "the Valkey port; its security group admits the query frontend only",
+                "no"
+              ],
+              [
+                "Kinesis, DynamoDB, S3, SNS",
+                "Regional services, called over endpoints; no internet gateway or NAT gateway anywhere on the service path",
+                "gateway endpoints for DynamoDB and S3, interface endpoints for Kinesis and SNS",
+                "no (AWS endpoints inside the VPC); encrypted in transit and at rest, as the Security pillar asks"
+              ]
+            ],
+            "cites": [
+              "s33",
+              "s19",
+              "s20",
+              "s18",
+              "s11",
+              "s23",
+              "s24",
+              "s30"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "The read path through AWS, part a: a last-hour dashboard query, served from the results cache and the hot shards."
+          },
+          {
+            "type": "diagram",
+            "mermaid": "sequenceDiagram\n  autonumber\n  participant Q as Dashboard\n  participant Edge\n  participant QF as Query frontend\n  participant RC as Valkey cache\n  participant HOT as Hot shards\n  Q->>Edge: GET /api/v1/query_range\n  Edge->>QF: HTTP, a healthy task\n  QF->>QF: split by tier and bucket\n  QF->>RC: GET the cached buckets\n  RC-->>QF: hits and misses\n  Note over QF: the registry says which shards,<br/>part b of the write path\n  par to each shard with a match\n    QF->>HOT: evaluate locally,<br/>Service Connect\n    HOT-->>QF: partial results\n  end\n  QF->>RC: SET the new buckets\n  QF-->>Edge: merged result\n  Edge-->>Q: result\n  alt a cache primary fails\n    Note over QF,RC: replica promoted,<br/>misses are recomputed meanwhile\n  end",
+            "legend": "Edge is the load balancer, drawn as one lane as in the other exercises; there is no CloudFront because per-tenant query results are never cached at the edge. Sources: health checks and task replacement s21, s17; Service Connect round-robin with outlier detection s18; cache failover and replica promotion s29; query pushdown s3.",
+            "cites": [
+              "s21",
+              "s17",
+              "s18",
+              "s29",
+              "s3"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Part b: the older sub-range from the tiers in S3, and the rule evaluator that uses the same path and publishes through SNS."
+          },
+          {
+            "type": "diagram",
+            "mermaid": "sequenceDiagram\n  autonumber 13\n  participant QF as Query frontend\n  participant S3 as S3 blocks\n  participant RE as Rule evaluator\n  participant SNS as SNS topic\n  QF->>S3: GetObject the block index\n  S3-->>QF: posting lists\n  QF->>S3: GetObject the matching chunks\n  S3-->>QF: 1-minute points\n  alt S3 unavailable\n    Note over QF,S3: the recent part is served, flagged partial\n  end\n  RE->>QF: the rule's query, on schedule\n  QF-->>RE: result\n  RE-)SNS: Publish, deduplicated across evaluators\n  Note over RE,SNS: subscribers: the on-call tool<br/>over HTTPS, email\n  alt an evaluator fails\n    Note over RE: its replica evaluates the same rules,<br/>one notification\n  end",
+            "legend": "Sources: the S3 gateway endpoint s23; SNS topics and their subscribers s32; the interface endpoint for the publish call is listed in the identity table above.",
+            "cites": [
+              "s23",
+              "s32"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Nothing in the read path writes to the stream or to S3; the only writes are the cache fills. A query that would touch more series than its tenant's limit is refused before any shard is called, which is the read-side half of the cardinality rule.",
+            "cites": [
+              "s5"
+            ]
+          },
+          {
+            "type": "decision",
+            "caption": "The samples log: Kinesis provisioned, Kinesis on-demand, Amazon MSK, or SQS.",
+            "rows": [
+              {
+                "option": "Amazon Kinesis Data Streams, provisioned shards",
+                "pick_when": "the throughput is known and flat, consumers need per-key ordering and replay, and the producer can aggregate records",
+                "avoid_when": "the load swings by an order of magnitude within a day, so sized shards sit idle or throttle",
+                "example": "For this design: chosen. Scraping is flat at 43 MB per second around the clock, so sixty shards at a fixed hourly rate are the cheap shape, each hot task owns a set of shards, and a replacement task replays from its checkpoint."
+              },
+              {
+                "option": "Amazon Kinesis Data Streams, on-demand",
+                "pick_when": "the throughput is unknown or bursty and nobody wants to count shards; it scales from a few MB per second to many GB per second in this Region",
+                "avoid_when": "a flat, high volume billed per GB written and read costs many times the equivalent shards",
+                "example": "For this design: not chosen. About 111 TB a month written and read once would cost about eighteen times the provisioned shards for the same bytes."
+              },
+              {
+                "option": "Amazon MSK",
+                "pick_when": "the team already runs Kafka clients, wants its ecosystem and compression, or needs retention and partition counts beyond what a managed stream offers",
+                "avoid_when": "a small team with no Kafka estate, where brokers to size, patch and rebalance buy nothing",
+                "example": "For this design: the honest alternative. Three small brokers cost about the same as the shards, and Kafka clients compress batches natively; it would be the pick if the scrapers already spoke Kafka or the log needed days of retention at this volume."
+              },
+              {
+                "option": "Amazon SQS",
+                "pick_when": "one consumer, idempotent work, no ordering and no replay, and the simplest hand-off",
+                "avoid_when": "consumers need order per key, replay from a position, or several readers of the same data",
+                "example": "For this design: not chosen. The hot store replays its shards from a checkpoint and needs samples per series in order; a queue has neither a position nor an order."
+              }
+            ],
+            "cites": [
+              "s9",
+              "s8",
+              "s10",
+              "s36",
+              "s43",
+              "s12",
+              "s13"
+            ]
+          },
+          {
+            "type": "decision",
+            "caption": "The hot store and the services: ECS on Fargate, ECS on EC2, EKS, or Lambda.",
+            "rows": [
+              {
+                "option": "Amazon ECS on AWS Fargate",
+                "pick_when": "steady, container-shaped services, including stateful ones whose memory fits the largest task size and whose state can be rebuilt from a log",
+                "avoid_when": "a shard needs more memory than one task offers, local NVMe, or a particular instance family",
+                "example": "For this design: chosen for everything. The hot store's shard replicas fit the largest Fargate task, 16 vCPU and 120 GB, with eight of them holding the 700 GB window; the scrapers, ingest, compactor, frontend and evaluator are plain stateless tasks scaled on lag and request rate."
+              },
+              {
+                "option": "Amazon ECS on Amazon EC2",
+                "pick_when": "the memory per shard exceeds the task maximum, or the hot store wants local NVMe for spill and faster restarts, or reserved instances make a steady fleet cheaper",
+                "avoid_when": "the team wants no instances to patch and the task sizes suffice",
+                "example": "For this design: the alternative at 10x. Seven terabytes of hot window on tasks of 120 GB is sixty replicas; a memory-optimised instance family with a reservation would hold the same window on fewer, larger nodes."
+              },
+              {
+                "option": "Amazon EKS",
+                "pick_when": "the organisation already runs Kubernetes, wants its operators for stateful sets, or portability across clouds",
+                "avoid_when": "a handful of services and no Kubernetes estate; the cluster fee, the upgrade cadence and the SRE time buy nothing",
+                "example": "For this design: not chosen, though a stateful set is the shape many open-source metrics stores ship as; the ECS service scheduler and the log replay give the same recovery without the cluster to run."
+              },
+              {
+                "option": "AWS Lambda",
+                "pick_when": "event-shaped, short, stateless work with spiky volume, paid per request",
+                "avoid_when": "long-lived state in memory, held connections, or a flat high volume where per-request billing dwarfs the compute",
+                "example": "For this design: not chosen anywhere on the hot path; a hot store is the opposite of stateless, and the scrapers run continuously."
+              }
+            ],
+            "cites": [
+              "s14",
+              "s15",
+              "s16",
+              "s17",
+              "s46",
+              "s38"
+            ]
+          },
+          {
+            "type": "decision",
+            "caption": "The long-term store, the index, and the buy option: S3 and DynamoDB, Timestream, or the managed Prometheus service.",
+            "rows": [
+              {
+                "option": "Amazon S3 for the blocks, Amazon DynamoDB for the registry",
+                "pick_when": "the long-term data is immutable blocks read by range, and the index is key lookups at a modest write rate",
+                "avoid_when": "the long-term queries need a query engine over the raw points rather than block reads",
+                "example": "For this design: chosen. Blocks are written once and read by time range, the cheapest shape object storage serves; the registry maps a series to its shard and counts series per tenant with conditional writes, which is a key-value workload."
+              },
+              {
+                "option": "Amazon Timestream for LiveAnalytics",
+                "pick_when": "the team wants a managed time series database with a memory store and a magnetic store, SQL over the points, and no compactor to run",
+                "avoid_when": "the data model is Prometheus series and PromQL, and the hot path is an in-memory window the team controls",
+                "example": "For this design: not chosen. Its memory and magnetic tiers mirror this design's hot window and blocks, but the query language and the series model differ from what the dashboards and rules speak."
+              },
+              {
+                "option": "Amazon Managed Service for Prometheus",
+                "pick_when": "the team wants the Prometheus data model and PromQL without running ingestion, storage or querying, and its volume sits in the cheaper tiers",
+                "avoid_when": "the volume is tens of millions of series, where the per-sample price tiers add up to far more than the equivalent fleet",
+                "example": "For this design: the buy option, priced honestly. About 6.9 trillion samples a month would cost about $116,000 in ingestion alone, roughly twelve times this design's bill; it buys the operations this design pays an SRE team for, and is the right call at a tenth of the volume."
+              },
+              {
+                "option": "A relational or wide-column store for the points",
+                "pick_when": "the points must be joined with other data in SQL at query time",
+                "avoid_when": "the workload is append-only samples read by series and time range",
+                "example": "For this design: does not apply; the decision guide's time series and object storage categories cover every store here."
+              }
+            ],
+            "cites": [
+              "s22",
+              "s26",
+              "s27",
+              "s28",
+              "s45",
+              "s44",
+              "s25"
+            ]
+          },
+          {
+            "type": "decision",
+            "caption": "The results cache: ElastiCache for Valkey, in-task memory, ElastiCache Serverless, or DAX.",
+            "rows": [
+              {
+                "option": "Amazon ElastiCache for Valkey, node-based",
+                "pick_when": "the cache is shared by all frontend tasks, the working set is small and steady, and a replica covers a node loss",
+                "avoid_when": "the working set swings widely or is tiny enough to live in each task",
+                "example": "For this design: chosen, one small node with a replica. Dashboards repeat the same queries every refresh, so a shared cache of sub-range results turns most of the 500 queries a second into cache hits; a lost primary fails over to the replica."
+              },
+              {
+                "option": "In-task memory",
+                "pick_when": "each frontend task can hold the working set and a miss is cheap",
+                "avoid_when": "many tasks each miss the same query, so the shards do the work many times over",
+                "example": "For this design: not chosen. Six frontend tasks would each warm the same buckets; the shared cache does it once."
+              },
+              {
+                "option": "Amazon ElastiCache Serverless",
+                "pick_when": "the working set is unpredictable and nobody wants to size nodes",
+                "avoid_when": "a small, steady working set where one node and a replica cost less than the per-GB-hour charge",
+                "example": "For this design: not chosen; the working set is a few gigabytes held all day."
+              },
+              {
+                "option": "Amazon DynamoDB Accelerator (DAX)",
+                "pick_when": "the cache fronts a DynamoDB table and the reads are item lookups",
+                "avoid_when": "the cached values are query results, not table items",
+                "example": "For this design: does not apply; the cached objects are evaluated sub-ranges, not registry items."
+              }
+            ],
+            "cites": [
+              "s29",
+              "s30",
+              "s41",
+              "s31"
+            ]
+          },
+          {
+            "type": "table",
+            "caption": "The design reviewed against the six Well-Architected pillars and the Data Analytics Lens.",
+            "columns": [
+              "pillar",
+              "what it asks of this design",
+              "our choice",
+              "the risk we accept",
+              "cite"
+            ],
+            "rows": [
+              [
+                "Operational excellence",
+                "observability for actionable insights; anticipate failure; frequent, small, reversible changes",
+                "the observability system watches itself: ingest lag, rejected samples per tenant, oldest unflushed chunk and query p99 by tier as the alarms; ECS rolling deployments; a game day for a lost hot task",
+                "the metrics about the metrics system live in the same system; a separate small alarm on ingestion is the only outside check",
+                "s33"
+              ],
+              [
+                "Security",
+                "a strong identity foundation; least privilege; protect data in transit and at rest; keep people away from data",
+                "one task role per service; tenant scoping on every query; the push listener and the query listener on the only public entry; encryption at rest and in transit",
+                "none: the whitepaper does not trade security against the other pillars, and neither does this design",
+                "s33"
+              ],
+              [
+                "Reliability",
+                "automatically recover from failure; scale horizontally; stop guessing capacity",
+                "two replicas per shard across zones; the stream as the replay source; the ECS scheduler replacing lost tasks; hard per-tenant limits so one tenant cannot exhaust the fleet",
+                "a lost hot task costs a replay from the last block boundary, during which its replica serves alone",
+                "s33, s17, s9"
+              ],
+              [
+                "Performance efficiency",
+                "consider mechanical sympathy; go global in minutes where it fits",
+                "compressed samples in memory with evaluation pushed down to the shards; the index narrows before anything scans; the tiers make a 30-day query read a quarter of the points",
+                "the largest Fargate task bounds the shard size; beyond it the hot store moves to instances",
+                "s33, s14"
+              ],
+              [
+                "Cost optimization",
+                "adopt a consumption model; measure overall efficiency; analyze and attribute expenditure",
+                "cost per million series on the dashboard and charged back per tenant; provisioned shards for a flat load; the managed service priced as the buy option and rejected on its tiers at this volume",
+                "a fleet sized for the window is paid all month; a reservation would cut it once the series count is proven steady",
+                "s33, s36, s45"
+              ],
+              [
+                "Sustainability",
+                "maximize utilization; use managed services; align to demand",
+                "Graviton (Arm) tasks; series that stop receiving samples expire and free memory; downsampled tiers so a year of history is a fraction of the raw bytes",
+                "the hot window is held in memory twice; a single copy would halve the memory and double the blast radius",
+                "s33"
+              ],
+              [
+                "Data Analytics Lens",
+                "the lens's best practices for analytics workloads: decoupled ingestion, tiered storage by access pattern, cost attribution per consumer",
+                "the samples log between ingestion and storage; raw, 1-minute and 1-hour tiers by query pattern; showback per tenant in series and query cost",
+                "the lens is written for batch and lakehouse pipelines; the operational metrics shape maps to it only in part",
+                "s34"
+              ]
+            ],
+            "cites": [
+              "s33",
+              "s17",
+              "s9",
+              "s14",
+              "s36",
+              "s45",
+              "s34"
+            ]
+          },
+          {
+            "type": "table",
+            "caption": "What the picks cost at AWS list prices for US East (N. Virginia) as of 2026-10-15; the arithmetic is in the AWS table of the 10x section below, and prices change.",
+            "columns": [
+              "component",
+              "AWS service",
+              "monthly at 40 million series",
+              "monthly at 400 million series"
+            ],
+            "rows": [
+              [
+                "Hot store",
+                "ECS on Fargate, Arm, eight tasks of 16 vCPU and 120 GB",
+                "about $5,500",
+                "about $55,000"
+              ],
+              [
+                "Samples log",
+                "Kinesis Data Streams, 60 provisioned shards, aggregated records",
+                "about $720",
+                "about $7,200"
+              ],
+              [
+                "Scrapers, push gateway, ingest",
+                "ECS on Fargate, Arm, 18 tasks of 2 vCPU and 4 GB",
+                "about $1,040",
+                "about $10,400"
+              ],
+              [
+                "Compactor",
+                "ECS on Fargate, Arm, four tasks of 4 vCPU and 8 GB",
+                "about $460",
+                "about $4,600"
+              ],
+              [
+                "Long-term blocks",
+                "S3 Standard, about 34 TB across the tiers",
+                "about $780",
+                "about $7,500"
+              ],
+              [
+                "Query frontend and rule evaluator",
+                "ECS on Fargate, Arm, nine tasks of 2 vCPU and 4 GB",
+                "about $520",
+                "about $5,200"
+              ],
+              [
+                "Results cache",
+                "ElastiCache for Valkey, one node with a replica",
+                "about $260 (cache.r7g.large)",
+                "about $510 (cache.r7g.xlarge)"
+              ],
+              [
+                "Series registry",
+                "DynamoDB on-demand",
+                "about $80",
+                "about $800"
+              ],
+              [
+                "Alerts",
+                "SNS",
+                "under $10",
+                "under $100"
+              ],
+              [
+                "Total",
+                "the nine lines above; data transfer, the load balancer and monitoring not priced",
+                "about $9,400, about $230 per million series",
+                "about $91,000, about $230 per million series"
+              ]
+            ],
+            "cites": [
+              "s38",
+              "s36",
+              "s39",
+              "s41",
+              "s42"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "One line dominates: the hot store, because the window is held in memory twice and the tasks run all month; it is well over half the bill at both scales. The stream and the stateless fleet together are about a quarter, so the levers are the compression ratio, the replica count and, above all, the series limits that decide how large the window is.",
+            "cites": [
+              "s38",
+              "s2"
+            ]
+          }
+        ]
       },
       {
         "id": "data-model",
         "title": "The data model",
-        "body": [
+        "blocks": [
           {
-            "heading": "Entities",
-            "body": "Series {series_id (hash of name and sorted labels), tenant, name, labels{}, first_seen, last_seen}. Sample {series_id, timestamp_ms, value} stored as compressed chunks of about 120 samples (assumption) per series in the hot tier. Block {tenant, from, to, resolution (raw, 1m, 1h), series index, chunk files} immutable in object storage. Index: an inverted index from each label pair to the series ids that carry it, per block, so a query by labels intersects posting lists before touching chunks. Tenant {tenant_id, max_series, max_samples_per_second, retention overrides}. Rule {tenant, expression, interval, for, labels}."
+            "type": "table",
+            "caption": "Entities.",
+            "columns": [
+              "entity",
+              "fields",
+              "key or partition",
+              "notes"
+            ],
+            "rows": [
+              [
+                "Series",
+                "series_id (hash of name and sorted labels), tenant, name, labels{}, first_seen, last_seen",
+                "series_id; partitioned by hash across hot shards",
+                "a metric name plus a unique label set, the Prometheus data model; every distinct combination is a separate stream of samples"
+              ],
+              [
+                "Sample",
+                "series_id, timestamp_ms, value",
+                "by series, in time order",
+                "stored as compressed chunks of about 120 samples (assumption) per series in the hot tier, delta-of-delta timestamps and XOR values"
+              ],
+              [
+                "Block",
+                "tenant, from, to, resolution (raw, 1m, 1h), series index, chunk files",
+                "tenant, from, resolution",
+                "immutable, in object storage; each block carries its own inverted index"
+              ],
+              [
+                "Index",
+                "label pair to the series ids that carry it",
+                "per block, and per shard for the open window",
+                "a query by labels intersects posting lists before touching chunks"
+              ],
+              [
+                "Tenant",
+                "tenant_id, max_series, max_samples_per_second, retention overrides",
+                "tenant_id",
+                "the limits are the capacity model; the platform tenant may read everything"
+              ],
+              [
+                "Rule",
+                "tenant, expression, interval, for, labels",
+                "tenant, rule name",
+                "evaluated on a schedule by a replicated evaluator that deduplicates notifications"
+              ]
+            ],
+            "cites": [
+              "s1",
+              "s2"
+            ]
           },
           {
-            "heading": "API",
-            "body": "GET /api/v1/query?query=&time= (instant), GET /api/v1/query_range?query=&start=&end=&step=, GET /api/v1/series?match[]=, GET /api/v1/labels; the push gateway's POST /write accepts batches of samples with labels; rules are declared in files per tenant. The query language is a label-selector-and-function language in the PromQL shape; the exercise does not design it."
+            "type": "table",
+            "caption": "The API.",
+            "columns": [
+              "method",
+              "path",
+              "request",
+              "response",
+              "notes"
+            ],
+            "rows": [
+              [
+                "GET",
+                "/api/v1/query",
+                "query, time",
+                "an instant vector",
+                "tenant-scoped by the caller's identity"
+              ],
+              [
+                "GET",
+                "/api/v1/query_range",
+                "query, start, end, step",
+                "a range of samples per matching series",
+                "split by time at the tier boundaries, cached per (tenant, query, step, time bucket)"
+              ],
+              [
+                "GET",
+                "/api/v1/series",
+                "match[]",
+                "the matching label sets",
+                "answered from the index without touching chunks"
+              ],
+              [
+                "GET",
+                "/api/v1/labels",
+                "",
+                "label names",
+                ""
+              ],
+              [
+                "POST",
+                "/write",
+                "a batch of samples with labels",
+                "204, or a counted rejection",
+                "the push gateway's endpoint; the same limits as the scrape path"
+              ]
+            ],
+            "cites": [
+              "s1"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "The query language is a label-selector-and-function language in the PromQL shape; the exercise does not design it. Rules are declared in files per tenant and evaluated through the same query path as dashboards.",
+            "cites": [
+              "s1"
+            ]
           }
         ]
       },
       {
         "id": "core-flow",
         "title": "The core flow, step by step",
-        "body": [
+        "blocks": [
           {
-            "body": "One scrape cycle and one dashboard query."
+            "type": "p",
+            "text": "One scrape cycle, one compaction, and one dashboard query; the step numbers run on across the three parts."
+          },
+          {
+            "type": "p",
+            "text": "Part a: a scrape and its ingestion, with the limit that protects the other tenants."
+          },
+          {
+            "type": "diagram",
+            "mermaid": "sequenceDiagram\n  autonumber\n  participant T as Target\n  participant SC as Scraper\n  participant IN as Ingest\n  participant IX as Series index\n  participant LOG as Samples log\n  SC->>T: GET /metrics, per-target timeout\n  T-->>SC: exposition text\n  opt scrape fails\n    Note over SC: an up=0 sample, so absence is visible\n  end\n  SC->>IN: a parsed batch, tenant attached\n  IN->>IX: look up or create each series\n  alt the tenant is over its series limit\n    IX-->>IN: refused\n    IN-->>SC: counted error, not a silent drop\n  else within the limit\n    IX-->>IN: series ids\n    IN-)LOG: append by series hash\n  end",
+            "legend": "Solid arrows are synchronous calls with their replies dashed; the open arrow is the hand-off to the log. Every 15 s each scraper shard scrapes the targets it owns by consistent hashing of the target address s1; the cardinality rule the limit enforces is Prometheus's own guidance s5, s6.",
+            "cites": [
+              "s1",
+              "s5",
+              "s6"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Part b: the hot store consumes the log and the compactor turns closed chunks into blocks and tiers."
+          },
+          {
+            "type": "diagram",
+            "mermaid": "sequenceDiagram\n  autonumber 10\n  participant LOG as Samples log\n  participant HOT as Hot store\n  participant CP as Compactor\n  participant LT as Long-term blocks\n  LOG-)HOT: samples, by partition\n  HOT->>HOT: append to the open chunk, compressed\n  HOT->>LOG: acknowledge the offset\n  Note over HOT: new series update the shard's index\n  HOT-)CP: closed chunks, every 2 hours\n  CP->>LT: an immutable block with its index\n  CP->>LT: the 1-minute and 1-hour aggregates\n  LT-->>CP: durable\n  CP->>HOT: the block is durable\n  Note over HOT: drops data older than 26 hours only now",
+            "legend": "Compression is delta-of-delta on timestamps and XOR on values, the Gorilla scheme s2; the hot store never drops data before the block that holds it is durable. The 2-hour block and the tiers follow the M3 shape of retention and rollup rules s4.",
+            "cites": [
+              "s2",
+              "s4"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Part c: a last-hour dashboard query, and the rule evaluator that uses the same path."
+          },
+          {
+            "type": "diagram",
+            "mermaid": "sequenceDiagram\n  autonumber 19\n  participant Q as Dashboard\n  participant QF as Query frontend\n  participant IX as Series index\n  participant HOT as Hot shards\n  participant LT as Long-term blocks\n  Q->>QF: query_range, last hour\n  QF->>QF: split by tier, check the results cache\n  QF->>IX: which series, which shards\n  IX-->>QF: a small set\n  par to each shard that holds a match\n    QF->>HOT: evaluate the expression locally\n    HOT-->>QF: partial results\n  end\n  opt the range crosses into the tiers\n    QF->>LT: the older sub-range, 1-minute tier\n    LT-->>QF: downsampled points\n  end\n  QF-->>Q: merged result, cached by bucket\n  Note over Q,QF: rules run on this path on a schedule,<br/>replicated and deduplicated",
+            "legend": "Pushing evaluation down to the shards that hold the series is Monarch's main argument s3; the rule evaluator is replicated so that an evaluator failure does not silence alerts, and the four golden signals are what most of those rules watch s7.",
+            "cites": [
+              "s3",
+              "s7"
+            ]
           }
-        ],
-        "steps": [
-          "A scraper shard owns a subset of targets (by consistent hashing of the target address) and scrapes each every 15 s with a per-target timeout; a failed scrape produces an up=0 sample so absence is visible.",
-          "The ingest layer parses the exposition, attaches the tenant label, rejects samples whose label set is malformed or whose series would exceed the tenant's limit (returning a counted error, not silently dropping), and writes the batch to the samples log partition for each series hash.",
-          "Hot store nodes consume their partitions, look up or create the series, append the sample to the series' current chunk with delta-of-delta and XOR encoding, and acknowledge the log offset; the series index is updated for new series.",
-          "Every 2 hours the compactor flushes closed chunks into an immutable block with its own inverted index, uploads it to object storage, and writes the 1-minute and 1-hour aggregates for the tiers; the hot store drops data older than 26 hours only after the block is durable.",
-          "A dashboard query for the last hour arrives at the frontend, is split by time if it spans tiers, is checked against a results cache keyed by (tenant, query, step, time bucket), and is fanned out to the hot shards that hold matching series (the index narrows the shards); each shard evaluates as much of the expression as it can locally and returns partial results that the frontend merges.",
-          "Alert rules run on the same path on a schedule in a rule evaluator that is replicated and deduplicates notifications, so an evaluator failure does not silence alerts."
         ]
       },
       {
         "id": "scaling-and-the-bottleneck",
         "title": "Scaling and the bottleneck",
-        "body": [
+        "blocks": [
           {
-            "heading": "Cardinality is the capacity unit",
-            "body": "The bottleneck is cardinality, not bytes. One service that adds a user id label turns 2,000 series into millions overnight; memory per series, not per sample, is what fills the hot tier, and a query that touches millions of series is what times out. The ingest limit per tenant is the control: a hard cap on active series with rejection, a soft cap that alerts, and per-metric cardinality reports so the owning team can see which label did it. The Prometheus instrumentation guidance (keep label cardinality small; every label set is another series with its own cost) is the rule the limit enforces: label values must be bounded sets. Series churn (short-lived pods creating new series on every deploy) is the second-order problem; it is bounded by the same limit and by expiring series that have not received a sample for a window."
+            "type": "p",
+            "text": "The bottleneck is cardinality, not bytes. One service that adds a user id label turns 2,000 series into millions overnight; memory per series, not per sample, is what fills the hot tier, and a query that touches millions of series is what times out. The ingest limit per tenant is the control: a hard cap on active series with rejection, a soft cap that alerts, and per-metric cardinality reports so the owning team can see which label did it.",
+            "cites": [
+              "s6"
+            ]
           },
           {
-            "heading": "Query fan-out and downsampling",
-            "body": "Reads scale by narrowing before scanning: the inverted index turns a label selector into a small set of series and the shards that hold them, the frontend splits long ranges into cached sub-ranges, and downsampled tiers make a 30-day query read 1-minute data (43,000 points per series) instead of raw (172,800). Pushing aggregation down to the shards keeps the data where it is, which is Monarch's main argument. Fleet-level queries that touch every tenant are run by the platform tenant against pre-aggregated recording rules, never ad hoc at full resolution."
+            "type": "p",
+            "text": "The Prometheus instrumentation guidance (keep a metric's label cardinality below 10; every label set is another series with its own cost) is the rule the limit enforces, and the naming guidance names the values that must never be labels: user ids, email addresses, any unbounded set. Series churn (short-lived pods creating new series on every deploy) is the second-order problem; it is bounded by the same limit and by expiring series that have not received a sample for a window.",
+            "cites": [
+              "s5",
+              "s6"
+            ]
+          },
+          {
+            "type": "steps",
+            "title": "Why the tiers exist: one 30-day query",
+            "items": [
+              "A 30-day dashboard panel asks for one series over 30 days.",
+              "At raw resolution that is 172,800 samples per series (one every 15 s).",
+              "At the 1-minute tier it is 43,200 points, a quarter of the raw count, and the panel cannot show more anyway.",
+              "The frontend splits the range at the 15-day boundary and reads the older part from the 1-minute blocks.",
+              "A fleet-level query over every tenant never runs ad hoc at full resolution: the platform tenant reads pre-aggregated recording rules."
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Reads scale by narrowing before scanning: the inverted index turns a label selector into a small set of series and the shards that hold them, the frontend splits long ranges into cached sub-ranges, and pushing aggregation down to the shards keeps the data where it is, which is Monarch's main argument.",
+            "cites": [
+              "s3"
+            ]
           }
         ]
       },
       {
         "id": "failure-modes",
         "title": "Failure modes and what degrades",
-        "body": [
+        "blocks": [
           {
-            "body": "Each row names the failure, what engineers see, and the mitigation."
-          }
-        ],
-        "table": {
-          "columns": [
-            "Failure",
-            "Effect",
-            "Mitigation"
-          ],
-          "rows": [
-            [
-              "Hot store node lost",
-              "its series are unavailable for recent queries until the replica serves them",
-              "two replicas per partition; the samples log allows a rebuild from the last block boundary"
+            "type": "p",
+            "text": "Each row names the failure, what engineers see, and the mitigation."
+          },
+          {
+            "type": "table",
+            "caption": "Failure modes.",
+            "columns": [
+              "Failure",
+              "Effect",
+              "Mitigation"
             ],
-            [
-              "Samples log backlog",
-              "data visible late (freshness SLI breached)",
-              "consumers scale on lag; ingestion keeps accepting; alert on lag over 30 s"
-            ],
-            [
-              "Tenant exceeds series limit",
-              "that tenant's new series are rejected",
-              "per-tenant enforcement at ingest; other tenants unaffected; counted errors and a cardinality report"
-            ],
-            [
-              "Compactor behind",
-              "hot tier cannot drop old data; memory grows",
-              "hot tier refuses to drop until blocks are durable; alert on oldest unflushed chunk; emergency: raise the window or shed the largest tenant's raw retention"
-            ],
-            [
-              "Object storage unavailable",
-              "long-range queries fail; recent queries fine",
-              "query frontend returns partial results with a flag; compactor retries; the 26-hour window covers the common case"
-            ],
-            [
-              "Scraper shard down",
-              "its targets show up=0 and gaps",
-              "targets rehashed to other shards within a minute; gaps are visible, not invented"
+            "rows": [
+              [
+                "Hot store node lost",
+                "its series are unavailable for recent queries until the replica serves them",
+                "two replicas per partition; the samples log allows a rebuild from the last block boundary"
+              ],
+              [
+                "Samples log backlog",
+                "data visible late (freshness SLI breached)",
+                "consumers scale on lag; ingestion keeps accepting; alert on lag over 30 s"
+              ],
+              [
+                "Tenant exceeds series limit",
+                "that tenant's new series are rejected",
+                "per-tenant enforcement at ingest; other tenants unaffected; counted errors and a cardinality report"
+              ],
+              [
+                "Compactor behind",
+                "hot tier cannot drop old data; memory grows",
+                "hot tier refuses to drop until blocks are durable; alert on oldest unflushed chunk; emergency: raise the window or shed the largest tenant's raw retention"
+              ],
+              [
+                "Object storage unavailable",
+                "long-range queries fail; recent queries fine",
+                "query frontend returns partial results with a flag; compactor retries; the 26-hour window covers the common case"
+              ],
+              [
+                "Scraper shard down",
+                "its targets show up=0 and gaps",
+                "targets rehashed to other shards within a minute; gaps are visible, not invented"
+              ]
             ]
-          ]
-        }
+          }
+        ]
       },
       {
         "id": "trade-offs",
         "title": "Trade-offs and the alternative not taken",
-        "body": [
+        "blocks": [
           {
-            "body": "The decisions a reviewer reads first."
-          }
-        ],
-        "table": {
-          "columns": [
-            "Decision",
-            "Options",
-            "Chosen",
-            "Why"
-          ],
-          "rows": [
-            [
-              "Ingestion",
-              "push everything versus pull by default with a push gateway",
-              "pull by default",
-              "the scraper knows when a target is down and controls the rate; push for what cannot be scraped"
+            "type": "p",
+            "text": "The decisions a reviewer reads first."
+          },
+          {
+            "type": "table",
+            "caption": "Trade-offs.",
+            "columns": [
+              "Decision",
+              "Options",
+              "Chosen",
+              "Why"
             ],
-            [
-              "Hot tier",
-              "disk-based store for everything versus an in-memory compressed window",
-              "in-memory 26-hour window plus blocks",
-              "most queries are recent; compression makes memory affordable (1.37 bytes per sample)"
+            "rows": [
+              [
+                "Ingestion",
+                "push everything versus pull by default with a push gateway",
+                "pull by default",
+                "the scraper knows when a target is down and controls the rate; push for what cannot be scraped"
+              ],
+              [
+                "Hot tier",
+                "disk-based store for everything versus an in-memory compressed window",
+                "in-memory 26-hour window plus blocks",
+                "most queries are recent; compression makes memory affordable (1.37 bytes per sample)"
+              ],
+              [
+                "Ingestion to storage",
+                "scrapers write straight to the store versus a samples log in between",
+                "samples log",
+                "backpressure, rebuilds and replays; storage nodes can restart without losing scrapes"
+              ],
+              [
+                "Retention",
+                "raw forever versus tiered downsampling",
+                "tiered",
+                "a year of raw data is about 120 TB compressed (320 GB per day) for nothing most queries need"
+              ],
+              [
+                "Cardinality",
+                "best effort versus hard per-tenant limits",
+                "hard limits with reports",
+                "one tenant must not take the system down; the limit is the capacity unit"
+              ]
             ],
-            [
-              "Ingestion to storage",
-              "scrapers write straight to the store versus a samples log in between",
-              "samples log",
-              "backpressure, rebuilds and replays; storage nodes can restart without losing scrapes"
-            ],
-            [
-              "Retention",
-              "raw forever versus tiered downsampling",
-              "tiered",
-              "a year of raw data is about 120 TB compressed (320 GB per day) for nothing most queries need"
-            ],
-            [
-              "Cardinality",
-              "best effort versus hard per-tenant limits",
-              "hard limits with reports",
-              "one tenant must not take the system down; the limit is the capacity unit"
+            "cites": [
+              "s1",
+              "s2"
             ]
-          ]
-        }
+          }
+        ]
       },
       {
         "id": "at-10x",
         "title": "What changes at 10x",
-        "body": [
+        "blocks": [
           {
-            "body": "At 400 million series the system is a multi-tenant platform with zones: regional ingestion and hot tiers with a global query layer that federates across them (Monarch's regional zones), per-tenant isolation of hot-store partitions so a noisy tenant is confined to its shards, quotas and showback per tenant measured in active series and in query cost, and a cost per million series per month that the platform publishes. Recording rules move from a convenience to a necessity for every dashboard that aggregates across the fleet. Exemplars that link a histogram bucket to a trace id, and native histograms that collapse 22 series into one, are the next two design changes a team would plan."
+            "type": "table",
+            "caption": "The numbers at 10x.",
+            "columns": [
+              "quantity",
+              "at 40 million series",
+              "at 400 million series",
+              "note"
+            ],
+            "rows": [
+              [
+                "Samples per second",
+                "2.7 million",
+                "27 million",
+                "still every 15 s"
+              ],
+              [
+                "Compressed ingest",
+                "320 GB per day",
+                "3.2 TB per day",
+                "at 1.37 bytes per sample"
+              ],
+              [
+                "Hot tier in memory",
+                "about 700 GB",
+                "about 7 TB",
+                "two replicas; regional hot tiers with a global query layer, Monarch's zones"
+              ],
+              [
+                "Tenant isolation",
+                "limits at ingest",
+                "hot-store partitions per tenant, so a noisy tenant is confined to its shards",
+                "quotas and showback measured in active series and in query cost"
+              ],
+              [
+                "Fleet-level dashboards",
+                "recording rules as a convenience",
+                "recording rules as a necessity",
+                "ad hoc fleet queries at full resolution are refused"
+              ],
+              [
+                "The platform's number",
+                "memory per series",
+                "a published cost per million series per month",
+                "what tenants are charged back"
+              ]
+            ],
+            "cites": [
+              "s3"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Exemplars that link a histogram bucket to a trace id, and native histograms that collapse 22 series into one, are the next two design changes a team would plan at that scale; both change what a series is, which is why they are platform decisions rather than tenant ones."
+          },
+          {
+            "type": "table",
+            "caption": "How the cost table in Building it on AWS was worked out: the same lines at AWS list prices for US East (N. Virginia) as of 2026-10-15 (prices change; each line is cited to its price list or pricing page). Every sizing figure is an assumption unless the estimates table carries it.",
+            "columns": [
+              "cost line",
+              "sizing assumption",
+              "unit price",
+              "at 40 million series",
+              "at 400 million series"
+            ],
+            "rows": [
+              [
+                "Hot store: ECS on Fargate, Arm",
+                "eight tasks of 16 vCPU and 120 GB, four shards with two replicas, about 88 GB of window each plus headroom, all month",
+                "$0.03238 per vCPU-hour, $0.00356 per GB-hour",
+                "about $5,500 (about $690 per task)",
+                "about $55,000 (80 tasks)"
+              ],
+              [
+                "Samples log: Kinesis Data Streams, provisioned",
+                "60 shards for 43 MB per second with headroom; records aggregated per shard so that about 1,800 PUT payload units a second are billed",
+                "$0.015 per shard-hour, $0.014 per million PUT payload units",
+                "about $720 (shards $657, puts $65)",
+                "about $7,200"
+              ],
+              [
+                "Scrapers, push gateway, ingest: ECS on Fargate, Arm",
+                "eight scraper, eight ingest and two gateway tasks of 2 vCPU and 4 GB",
+                "$0.03238 per vCPU-hour, $0.00356 per GB-hour",
+                "about $1,040",
+                "about $10,400"
+              ],
+              [
+                "Compactor: ECS on Fargate, Arm",
+                "four tasks of 4 vCPU and 8 GB",
+                "$0.03238 per vCPU-hour, $0.00356 per GB-hour",
+                "about $460",
+                "about $4,600"
+              ],
+              [
+                "Long-term blocks: S3 Standard",
+                "4.8 TB raw plus 29 TB of the minute tier plus the hour tier, about 34 TB",
+                "$0.023 per GB-month for the first 50 TB, $0.022 for the next 450 TB",
+                "about $780",
+                "about $7,500 (340 TB)"
+              ],
+              [
+                "Query frontend and rule evaluator: ECS on Fargate, Arm",
+                "six frontend and three evaluator tasks of 2 vCPU and 4 GB",
+                "$0.03238 per vCPU-hour, $0.00356 per GB-hour",
+                "about $520",
+                "about $5,200"
+              ],
+              [
+                "Results cache: ElastiCache for Valkey",
+                "a primary and a replica, cache.r7g.large; cache.r7g.xlarge at 10x",
+                "$0.1752 and $0.3496 per node-hour",
+                "about $260",
+                "about $510"
+              ],
+              [
+                "Series registry: DynamoDB on-demand",
+                "a tenth of the series replaced each day (churn), 4 million writes a day; reads served from the ingest tasks' caches; 12 GB stored",
+                "$0.625 per million writes, $0.25 per GB-month",
+                "about $80",
+                "about $800"
+              ],
+              [
+                "Alerts: SNS",
+                "a few thousand notifications a month",
+                "$0.50 per million requests, $0.06 per 100,000 HTTPS deliveries",
+                "under $10",
+                "under $100"
+              ],
+              [
+                "The buy option, for comparison: Amazon Managed Service for Prometheus",
+                "about 6.9 trillion samples a month ingested",
+                "$0.90, $0.35 and $0.16 per 10 million samples in three volume tiers",
+                "about $116,000 for ingestion alone",
+                "about $1.1 million"
+              ],
+              [
+                "Total on AWS (the design, not the buy option)",
+                "the nine lines above; data transfer, the load balancer and monitoring not priced",
+                "",
+                "about $9,400 a month, about $230 per million series",
+                "about $91,000 a month, about $230 per million series"
+              ]
+            ],
+            "cites": [
+              "s38",
+              "s37",
+              "s36",
+              "s35",
+              "s39",
+              "s41",
+              "s40",
+              "s42",
+              "s45",
+              "s44"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "The cost per million series per month is the number the platform publishes, and the hot tier's memory is most of it, so the levers are the compression ratio (which the Gorilla scheme fixes) and the series limits, which decide how many series exist at all.",
+            "cites": [
+              "s2"
+            ]
           }
         ]
       }
@@ -311,54 +2351,29 @@
         "What the system refuses: unbounded labels, cross-tenant ad hoc queries, dropping hot data before blocks are durable."
       ]
     },
-    "interview_frame": [
-      {
-        "time": "0:00 to 0:05",
-        "text": "Requirements: what a series is, pull versus push, the cardinality rule, downsampling, histograms, tenant scoping. Say the numbers aloud: 40 million series, 2.7 million samples per second, 43 MB per second raw and about 3.7 MB per second compressed, a 26-hour hot window of about 700 GB with two replicas."
-      },
-      {
-        "time": "0:05 to 0:10",
-        "text": "Entities and API: Series, Sample in compressed chunks, Block with an inverted index, Tenant limits, Rule; the query and series endpoints and the push write endpoint."
-      },
-      {
-        "time": "0:10 to 0:20",
-        "text": "High-level design with the diagram: scrapers and push gateway, ingest with limits, the samples log, the hot store, compactor and tiers in object storage, the query frontend. Say what the log buys."
-      },
-      {
-        "time": "0:20 to 0:40",
-        "text": "Two deep dives: cardinality as the capacity unit (limits, reports, churn, memory per series), then the query path (index narrowing, splitting and caching, downsampled tiers, pushdown, replicated rules)."
-      },
-      {
-        "time": "0:40 to 0:45",
-        "text": "Failure modes from the table, the 10x platform (zones and federation, isolation, showback), and the L3 sentence: the unit of capacity is a series, not a byte, and the design is about who may create one."
-      }
-    ],
-    "design_doc_frame": [
-      {
-        "section": "Context and scope",
-        "text": "The services and their instrumentation today, the dashboards and alerts that depend on it, the outage or cost that motivates a new system, and the label conventions shared with logs and traces."
-      },
-      {
-        "section": "Goals and non-goals",
-        "text": "Freshness within 30 s, last-hour queries under 1 s, tiered retention, tenant isolation; logs, traces, anomaly detection and the dashboard product out of scope."
-      },
-      {
-        "section": "Design",
-        "text": "This answer fills it: ingestion with limits, the samples log, the hot tier, compaction and tiers, the query frontend and rules."
-      },
-      {
-        "section": "Alternatives considered",
-        "text": "Push everywhere, a disk-based store for everything, direct writes without a log, raw retention forever, best-effort cardinality, with the trade-off table."
-      },
-      {
-        "section": "Cross-cutting concerns",
-        "text": "Security (tenant scoping on every query, who may change limits), observability of the observability system (ingest lag, rejected samples per tenant, compaction backlog, query p99 by tier, rule evaluation lag), cost per million series per month, rollout by scraping both systems for a tenant and comparing."
-      },
-      {
-        "section": "Review questions the doc must answer",
-        "text": "What happens on the day a tenant doubles its series in an hour, and what a dashboard shows while object storage is unavailable."
-      }
-    ],
+    "interview_frame": {
+      "type": "steps",
+      "title": "A 45-minute interview",
+      "items": [
+        "0:00 to 0:05: Requirements: what a series is, pull versus push, the cardinality rule, downsampling, histograms, tenant scoping. Say the numbers aloud: 40 million series, 2.7 million samples per second, 43 MB per second raw and about 3.7 MB per second compressed, a 26-hour hot window of about 700 GB with two replicas.",
+        "0:05 to 0:10: Entities and API: Series, Sample in compressed chunks, Block with an inverted index, Tenant limits, Rule; the query and series endpoints and the push write endpoint.",
+        "0:10 to 0:20: High-level design with the diagram: scrapers and push gateway, ingest with limits, the samples log, the hot store, compactor and tiers in object storage, the query frontend. Say what the log buys.",
+        "0:20 to 0:40: Two deep dives: cardinality as the capacity unit (limits, reports, churn, memory per series), then the query path (index narrowing, splitting and caching, downsampled tiers, pushdown, replicated rules).",
+        "0:40 to 0:45: Failure modes from the table, the 10x platform (zones and federation, isolation, showback), and the L3 sentence: the unit of capacity is a series, not a byte, and the design is about who may create one."
+      ]
+    },
+    "design_doc_frame": {
+      "type": "list",
+      "items": [
+        "Context and scope: The services and their instrumentation today, the dashboards and alerts that depend on it, the outage or cost that motivates a new system, and the label conventions shared with logs and traces.",
+        "Goals and non-goals: Freshness within 30 s, last-hour queries under 1 s, tiered retention, tenant isolation; logs, traces, anomaly detection and the dashboard product out of scope.",
+        "Design: This answer fills it: ingestion with limits, the samples log, the hot tier, compaction and tiers, the query frontend and rules.",
+        "Alternatives considered: Push everywhere, a disk-based store for everything, direct writes without a log, raw retention forever, best-effort cardinality, with the trade-off table.",
+        "Cross-cutting concerns: Security (tenant scoping on every query, who may change limits), observability of the observability system (ingest lag, rejected samples per tenant, compaction backlog, query p99 by tier, rule evaluation lag), cost per million series per month, rollout by scraping both systems for a tenant and comparing.",
+        "Review questions the doc must answer: What happens on the day a tenant doubles its series in an hour, and what a dashboard shows while object storage is unavailable."
+      ],
+      "ordered": true
+    },
     "depth_notes": {
       "L1": "Scrape or push ingestion, a time series store, a query API and retention.",
       "L2": "Aggregation and downsampling tiers, cardinality limits, hot window in memory with compression, query fan-out across shards.",
@@ -366,16 +2381,21 @@
     }
   },
   "provenance": {
-    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center M4a",
+    "generated_by": "Claude (Fable 5.1) by hand, Scout learning center M4a; format v2 and the AWS section by Claude (Fable 5.1) by hand, Scout learning center, format v2 batch E2A",
     "generated_on": "2026-10-12",
-    "reviewed_by": "a second reader (Claude Fable 5.1), Scout learning center M4b",
-    "reviewed_on": "2026-10-12"
+    "reviewed_by": null,
+    "reviewed_on": null
   },
   "changelog": [
     {
       "version": 1,
       "date": "2026-10-12",
       "change": "written by hand for the system design module, Part C entry C9 of the outline"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-15",
+      "change": "format v2 restructure (batch E2A): rates, sizes, entities, API, failure modes, trade-offs and the 10x numbers as tables; the architecture as a flow block; the core flow as three sequence diagrams; the 30-day query arithmetic as steps; cites on every claim about a real system (Gorilla, Monarch, M3, the Prometheus guidance, the SRE book); the Prometheus naming page added as the source for unbounded label values, as the second reader had asked; a 'Building it on AWS' section after the high-level design (two flow halves, four sequence diagrams, identity and network, four decision blocks including the managed Prometheus service as the buy option, the Well-Architected table with the Data Analytics Lens row, one cost table) with every AWS claim and price cited to AWS documentation and price lists dated today; technologies filled; sd-aws-well-architected added to related; two derived rows added to the estimates (scrapes per second, series-hours per query second) and the 1-minute tier's assumption stated in the table; reviewed_by cleared for a second read"
     }
   ]
 }
