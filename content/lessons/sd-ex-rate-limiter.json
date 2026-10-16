@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-rate-limiter",
-  "version": 6,
+  "version": 7,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: API rate limiter",
@@ -1095,7 +1095,7 @@
                 "caption": "Gateway tasks to CloudWatch: PutMetricData with statistic sets every 10 s over the interface endpoint, async"
               }
             ],
-            "legend": "The architecture, the same boxes as the neutral diagram, one AWS service each: the load balancer is an Application Load Balancer, the 20 gateway nodes are ECS on Fargate tasks that keep the local buckets in memory, the shared counter store is an ElastiCache for Valkey cluster with a replica in another zone that takes over on failure s14, the backend services and the policy service are ECS on Fargate services, and the metrics go to CloudWatch. The policies table is the one box the neutral diagram leaves implicit, as the load balancer is; the clients and the operators reach only the load balancer. The neutral diagram's push becomes the poll. The CloudWatch alarms that the operators watch are the reader of the metrics. Tasks find the backends and the policy service through AWS Cloud Map DNS names s13; a lookup returns up to eight healthy records, which is enough for the two policy tasks and enough to spread load over the backends, and it is why no box here depends on one lookup reaching every gateway task. Policies are not pushed: each gateway task asks the policy service for anything newer than its version every 5 seconds, so an edit reaches every task within about 6 seconds (the policy service refreshes from the table once a second, then the 5 s poll), and a task that cannot reach the policy service keeps the set it has. Operators edit through the load balancer: its admin listener rule authenticates them with Amazon Cognito or an OIDC provider before forwarding s43. Calls to DynamoDB go over a gateway endpoint s18 and the metrics over an interface endpoint s19; the counter correction is one pipelined call per report s15. Sync means the caller waits for the answer; async means the work goes on after the request has been answered. The VPC frames are one VPC in one Region across three Availability Zones.",
+            "legend": "The architecture, the same boxes as the neutral diagram, one AWS service each: the load balancer is an Application Load Balancer, the 20 gateway nodes are ECS on Fargate tasks that keep the local buckets in memory, the shared counter store is an ElastiCache for Valkey cluster with a replica in another zone that takes over on failure s14, the backend services and the policy service are ECS on Fargate services, and the metrics go to CloudWatch. The policies table and the operators are the two boxes the neutral diagram leaves implicit; the clients and the operators reach only the load balancer. The neutral diagram's push becomes the poll. The CloudWatch alarms that the operators watch are the reader of the metrics. Tasks find the backends and the policy service through AWS Cloud Map DNS names s13; a lookup returns up to eight healthy records, which is enough for the two policy tasks and enough to spread load over the backends, and it is why no box here depends on one lookup reaching every gateway task. Policies are not pushed: each gateway task asks the policy service for anything newer than its version every 5 seconds, so an edit reaches every task within about 6 seconds (the policy service refreshes from the table once a second, then the 5 s poll), and a task that cannot reach the policy service keeps the set it has. Operators edit through the load balancer: its admin listener rule authenticates them with Amazon Cognito or an OIDC provider before forwarding s43. Calls to DynamoDB go over a gateway endpoint s18 and the metrics over an interface endpoint s19; the counter correction is one pipelined call per report s15. Sync means the caller waits for the answer; async means the work goes on after the request has been answered. The VPC frames are one VPC in one Region across three Availability Zones.",
             "cites": [
               "s11",
               "s12",
@@ -1323,7 +1323,7 @@
                 "option": "Amazon Aurora PostgreSQL or Amazon RDS",
                 "pick_when": "tiers, per-endpoint costs and customers become relational data that product and support teams query and report on",
                 "avoid_when": "the data is a key-to-policy lookup with rare writes and no reporting",
-                "example": "For this design: not chosen now. When the product team adds tiers and per-endpoint costs, as the prompt says, the admin side may want a relational store; the gateway tasks would still read a pushed copy, so nothing on the request path changes."
+                "example": "For this design: not chosen now. When the product team adds tiers and per-endpoint costs, as the prompt says, the admin side may want a relational store; the gateway tasks would still read a polled copy, so nothing on the request path changes."
               },
               {
                 "option": "AWS AppConfig",
@@ -1357,7 +1357,7 @@
                 "Operational excellence",
                 "make frequent, small, reversible changes; anticipate failure; learn from operational events",
                 "overshoot, rejected requests and store-unreachable as the alarms, with the 10 percent overshoot target as the threshold; policy edits through the policy service instead of a deploy; a runbook for a Valkey failover",
-                "a bad policy reaches every task within one push; a staged policy rollout is not designed here",
+                "a bad policy reaches every task within one poll; a staged policy rollout is not designed here",
                 "s36"
               ],
               [
@@ -1432,7 +1432,7 @@
               ],
               [
                 "Shared counters",
-                "ElastiCache for Valkey, cache.m7g.large nodes, a replica per shard; at most 100,000 commands a second, one shard at the design point and three at ten times (assumption)",
+                "ElastiCache for Valkey, cache.m7g.large nodes, a replica per shard; at most 100,000 commands a second at the design point and 1,000,000 at ten times, so one shard and three (assumption: about 333,000 a second per shard)",
                 "about $185 (2 nodes)",
                 "about $550 (6 nodes)"
               ],
@@ -1944,6 +1944,11 @@
       "version": 6,
       "date": "2026-10-16",
       "change": "fix round 2 on the third read (E1B): the policy push by DNS (a Cloud Map lookup returns at most eight tasks) is replaced by a poll: every gateway task asks the policy service for policies newer than its version every 5 seconds, so an edit reaches every task within about 6 seconds; operators edit through the load balancer, whose admin listener rule authenticates them (flow edges, steps, diagram, identity rows); the fleet is fixed at 20 tasks; the identity caption names the ECR interface endpoints and the S3 gateway endpoint for image pulls; the policy service tasks are priced (about $29) and the interface endpoints are in the not-priced list; sources s43 and s44 added; reviewed_by stays null"
+    },
+    {
+      "version": 7,
+      "date": "2026-10-16",
+      "change": "second re-read of the AWS pass (E1B, after fix round 2): mechanical corrections only; the flow legend names the policies table and the operators as the two boxes the neutral diagram leaves implicit (it said the policies table alone, like the load balancer, which the neutral flow does draw); two leftovers of the push are now the poll (the well-architected risk says one poll, the relational-store cell says a polled copy); the Valkey cost row states the demand at ten times (1,000,000 commands a second) and the per-shard assumption behind three shards; findings left for the writer in reviews/learning-center-F2-E1B-reread2.md; reviewed_by stays null"
     }
   ],
   "sim": {
