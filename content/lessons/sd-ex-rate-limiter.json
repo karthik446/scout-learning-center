@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-rate-limiter",
-  "version": 8,
+  "version": 9,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: API rate limiter",
@@ -1288,7 +1288,7 @@
                 "option": "Amazon DynamoDB, on-demand",
                 "pick_when": "each counter must be durable, writes touch one key at a time, and nobody wants to run a cluster",
                 "avoid_when": "a report must increment many counters at once: BatchWriteItem cannot update items, and a transaction is limited to 100 actions and bills every item twice, so the write count stays at one per active key",
-                "example": "For this design: chosen. A policy is looked up by key or pattern, and the whole set (about 100 MB) is read by the policy service at start and by changes afterwards, through an index on the change version."
+                "example": "For this design: not chosen. One write per active key per report is the same write count as the exact design's one per request, so the correction loop would save nothing on the bill."
               },
               {
                 "option": "Amazon MemoryDB",
@@ -1981,6 +1981,11 @@
       "version": 8,
       "date": "2026-10-16",
       "change": "fix round 3 on the fourth read (E1B): the policy poll carries removals (a delete is a tombstone with a new change version, the policy service answers from a global secondary index on the change version, and a task with no set is not ready until its first poll returns the whole set); the window counters get an EXPIRE (3 commands per key, so at most 150,000 commands a second at the design point and 1,500,000 at ten times, one shard and three at about 500,000 each); sources s45 and s46 added; reviewed_by stays null"
+    },
+    {
+      "version": 9,
+      "date": "2026-10-16",
+      "change": "third re-read of the AWS pass (E1B, after fix round 3): one mechanical correction; the counter-store decision's DynamoDB row said 'chosen' with the policy store's sentence (a paste of fix round 3) and now says again that DynamoDB is not chosen for the counters, with the reason of version 7; findings left for the writer in reviews/learning-center-F2-E1B-reread3.md; reviewed_by stays null"
     }
   ],
   "sim": {
