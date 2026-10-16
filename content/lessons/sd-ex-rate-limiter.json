@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-rate-limiter",
-  "version": 4,
+  "version": 5,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: API rate limiter",
@@ -820,6 +820,13 @@
               },
               {
                 "from": "G",
+                "to": "PC",
+                "kind": "sync",
+                "label": "Gateway nodes to Policy service: policies() at start and after a missed push",
+                "short": "policies()"
+              },
+              {
+                "from": "G",
                 "to": "M",
                 "kind": "async",
                 "label": "Gateway nodes to Metrics: allowed, rejected, overshoot",
@@ -849,10 +856,25 @@
               },
               {
                 "edge": 5,
+                "caption": "Gateway nodes to Policy service: policies() at start and after a missed push"
+              },
+              {
+                "edge": 6,
                 "caption": "Gateway nodes to Metrics: allowed, rejected, overshoot"
               }
             ],
-            "legend": "Boxes are containers; cylinders are stores; the gateway box stands for all 20 nodes. The solid arrows are the request path; the shared store, the policy push and the metrics are asynchronous, so none of them waits on a request. The shared store is off the request path."
+            "legend": "Boxes are containers; cylinders are stores; the gateway box stands for all 20 nodes, and the frame is the request path. The solid arrows are the request path; the shared store, the policy push and the metrics are asynchronous (the policies() pull is a call at start, not on the request path), so none of them waits on a request. The shared store is off the request path.",
+            "frames": [
+              {
+                "id": "req",
+                "title": "Request path",
+                "nodes": [
+                  "LB",
+                  "G",
+                  "B"
+                ]
+              }
+            ]
           },
           {
             "type": "p",
@@ -921,12 +943,18 @@
                 ]
               },
               {
+                "id": "CTRL",
+                "title": "VPC private: policy",
+                "nodes": [
+                  "PS"
+                ]
+              },
+              {
                 "id": "TASKS",
                 "title": "VPC private: tasks",
                 "nodes": [
                   "GW",
-                  "BE",
-                  "PS"
+                  "BE"
                 ]
               },
               {
@@ -974,6 +1002,13 @@
                 "short": "Push"
               },
               {
+                "from": "GW",
+                "to": "PS",
+                "kind": "sync",
+                "label": "HTTP: policies() at start and after a missed push, found by Cloud Map DNS, sync",
+                "short": "policies()"
+              },
+              {
                 "from": "PS",
                 "to": "PT",
                 "kind": "sync",
@@ -1011,14 +1046,18 @@
               },
               {
                 "edge": 5,
-                "caption": "Policy service to Policies table: Query and PutItem over the gateway endpoint, sync"
+                "caption": "Gateway tasks to policy service: HTTP: policies() at start and after a missed push, found by Cloud Map DNS, sync"
               },
               {
                 "edge": 6,
+                "caption": "Policy service to Policies table: Query and PutItem over the gateway endpoint, sync"
+              },
+              {
+                "edge": 7,
                 "caption": "Gateway tasks to CloudWatch: PutMetricData with statistic sets every 10 s over the interface endpoint, async"
               }
             ],
-            "legend": "The architecture, the same boxes as the neutral diagram, one AWS service each: the load balancer is an Application Load Balancer, the 20 gateway nodes are ECS on Fargate tasks that keep the local buckets in memory, the shared counter store is an ElastiCache for Valkey cluster with a replica in another zone that takes over on failure s14, the backend services and the policy service are ECS on Fargate services, and the metrics go to CloudWatch. The policies table is the one box the neutral diagram leaves implicit, as the load balancer is; the clients reach only the load balancer. Tasks find each other through AWS Cloud Map DNS names s13. Calls to DynamoDB go over a gateway endpoint s18 and the metrics over an interface endpoint s19; the counter correction is one pipelined call per report s15. Sync means the caller waits for the answer; async means the work goes on after the request has been answered. The VPC frames are one VPC in one Region across three Availability Zones.",
+            "legend": "The architecture, the same boxes as the neutral diagram, one AWS service each: the load balancer is an Application Load Balancer, the 20 gateway nodes are ECS on Fargate tasks that keep the local buckets in memory, the shared counter store is an ElastiCache for Valkey cluster with a replica in another zone that takes over on failure s14, the backend services and the policy service are ECS on Fargate services, and the metrics go to CloudWatch. The policies table is the one box the neutral diagram leaves implicit, as the load balancer is; the clients reach only the load balancer. Tasks find each other through AWS Cloud Map DNS names s13. Calls to DynamoDB go over a gateway endpoint s18 and the metrics over an interface endpoint s19; the counter correction is one pipelined call per report s15. A task pulls the whole policy set from the policy service when it starts and after a push it missed. Sync means the caller waits for the answer; async means the work goes on after the request has been answered. The VPC frames are one VPC in one Region across three Availability Zones.",
             "cites": [
               "s11",
               "s12",
@@ -1081,7 +1120,7 @@
           },
           {
             "type": "table",
-            "caption": "Identity and network: who may call what, over which endpoint, and what is public. Each ECS service runs under its own IAM task role, so permissions go to the task and not to a host; everything in the VPC runs in private subnets across three Availability Zones in awsvpc mode, one network interface per task.",
+            "caption": "Identity and network: who may call what, over which endpoint, and what is public. Only the load balancer is public: it sits in the VPC's public subnets. Every ECS service and the cache run in private subnets across three Availability Zones in awsvpc mode, one network interface per task, each service under its own IAM task role, so permissions go to the task and not to a host.",
             "columns": [
               "service",
               "may call",
@@ -1391,6 +1430,10 @@
               "s39",
               "s41"
             ]
+          },
+          {
+            "type": "p",
+            "text": "The neutral ten-times table prices store operations at an assumed $0.20 per million, so its limiter rows differ from these lines by a floor: two cache nodes and 30 custom metrics are paid at any traffic, and at ten times the two tables agree to within a few percent. The neutral exact design ($26,000 at that assumed price) is the same count of operations as the DynamoDB figure above ($81,000 at its list price)."
           }
         ]
       },
@@ -1850,6 +1893,11 @@
       "version": 4,
       "date": "2026-10-16",
       "change": "second read of the AWS pass (E1B): mechanical corrections only; the identity table now says the gateway tasks call the policy service for the policy set at start and after a missed push (the policy path diagram shows the call); the WAF decision cell names source IP and header, not a cookie (the cited page names no cookie); the uncited cluster fee clause is cut from the EKS cell; the Valkey cost row states its basis (at most 100,000 commands a second, one shard and three, assumption); the cost caption says no free tier is applied; findings left for the writer in reviews/learning-center-F2-E1B-read.md; reviewed_by stays null"
+    },
+    {
+      "version": 5,
+      "date": "2026-10-16",
+      "change": "fix round on the second read (E1B): the AWS flow and the neutral flow now draw the policies() pull (gateway tasks to the policy service, at start and after a missed push) with a step each; the identity caption says only the load balancer is public and the tasks and cache are private; one paragraph reconciles the AWS limiter lines and the DynamoDB comparison with the neutral 10x table; reviewed_by stays null"
     }
   ],
   "sim": {

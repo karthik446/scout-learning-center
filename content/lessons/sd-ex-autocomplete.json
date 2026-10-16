@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-autocomplete",
-  "version": 5,
+  "version": 6,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: search autocomplete",
@@ -508,6 +508,39 @@
         "checked": "2026-10-16",
         "http": 200,
         "section_found": "USD $0.178/Hr r7g.large.search - US East (N. Virginia)"
+      }
+    },
+    {
+      "id": "s43",
+      "title": "Amazon VPC, AWS PrivateLink: AWS services that integrate with AWS PrivateLink (Amazon CloudFront is on the list as com.amazonaws.cloudfront)",
+      "url": "https://docs.aws.amazon.com/vpc/latest/privatelink/aws-services-privatelink-support.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Amazon CloudFront com.amazonaws.cloudfront"
+      }
+    },
+    {
+      "id": "s44",
+      "title": "Amazon EMR Serverless API Reference: StartJobRun",
+      "url": "https://docs.aws.amazon.com/emr-serverless/latest/APIReference/API_StartJobRun.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Starts a job run."
+      }
+    },
+    {
+      "id": "s45",
+      "title": "Amazon CloudFront API Reference: CreateInvalidation",
+      "url": "https://docs.aws.amazon.com/cloudfront/latest/APIReference/API_CreateInvalidation.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Create a new invalidation."
       }
     }
   ],
@@ -1038,6 +1071,16 @@
                 "id": "FB",
                 "label": "Amazon OpenSearch Service: fallback suggester",
                 "kind": "service"
+              },
+              {
+                "id": "O",
+                "label": "Operators",
+                "kind": "actor"
+              },
+              {
+                "id": "CFAPI",
+                "label": "Amazon CloudFront API: invalidations",
+                "kind": "service"
               }
             ],
             "frames": [
@@ -1073,6 +1116,13 @@
                 "short": "HTTPS"
               },
               {
+                "from": "O",
+                "to": "CF",
+                "kind": "sync",
+                "label": "HTTPS: POST /blocklist, never cached, sync",
+                "short": "POST /blocklist"
+              },
+              {
                 "from": "CF",
                 "to": "ALB",
                 "kind": "sync",
@@ -1102,6 +1152,20 @@
               },
               {
                 "from": "AS",
+                "to": "UH",
+                "kind": "sync",
+                "label": "PutItem on the block list table over the gateway endpoint, sync",
+                "short": "PutItem"
+              },
+              {
+                "from": "AS",
+                "to": "CFAPI",
+                "kind": "sync",
+                "label": "CreateInvalidation for the prefixes of the blocked term, through the CloudFront interface endpoint, sync",
+                "short": "CreateInvalidation"
+              },
+              {
+                "from": "AS",
                 "to": "FB",
                 "kind": "sync",
                 "label": "HTTPS suggest request when the prefix has no entry, 10 ms deadline, sync",
@@ -1115,32 +1179,46 @@
               },
               {
                 "edge": 1,
-                "caption": "CloudFront to Load balancer: HTTPS to the origin on a miss, sync"
+                "caption": "Operators to CloudFront: HTTPS: POST /blocklist, never cached, sync (it follows the same edges to the service)"
               },
               {
                 "edge": 2,
-                "caption": "Load balancer to Autocomplete service: HTTP, sync"
+                "caption": "CloudFront to Load balancer: HTTPS to the origin on a miss, sync"
               },
               {
                 "edge": 3,
-                "caption": "Autocomplete service to Shard tasks: HTTP by Service Connect name, round robin over the replicas, sync"
+                "caption": "Load balancer to Autocomplete service: HTTP, sync"
               },
               {
                 "edge": 4,
-                "caption": "Autocomplete service to DynamoDB: GetItem on the recents, and the block list read every minute, over the gateway endpoint, sync"
+                "caption": "Autocomplete service to Shard tasks: HTTP by Service Connect name, round robin over the replicas, sync"
               },
               {
                 "edge": 5,
+                "caption": "Autocomplete service to DynamoDB: GetItem on the recents, and the block list read every minute, over the gateway endpoint, sync"
+              },
+              {
+                "edge": 6,
+                "caption": "Autocomplete service to DynamoDB: PutItem on the block list table over the gateway endpoint, sync"
+              },
+              {
+                "edge": 7,
+                "caption": "Autocomplete service to CloudFront API: CreateInvalidation for the prefixes of the blocked term, through the CloudFront interface endpoint, sync"
+              },
+              {
+                "edge": 8,
                 "caption": "Autocomplete service to Fallback suggester: HTTPS suggest request when the prefix has no entry, 10 ms deadline, sync"
               }
             ],
-            "legend": "The serving half of the architecture, the same boxes as the neutral diagram's serving frame, one AWS service each: the edge cache is CloudFront, which keeps a response for the max-age its origin sends s7; the load balancer admits only CloudFront s8; the autocomplete service and the prefix shards are ECS on Fargate tasks that call each other by Service Connect names, which balance round robin and remember failures s11; the recent queries and the block list are DynamoDB tables; the fallback suggester is an OpenSearch Service domain with term and phrase suggesters s15, s13. The neutral re-rank box is a code path inside the service task, so it has no box of its own. Sync means the caller waits for the answer. The VPC frames are one VPC in one Region across three Availability Zones.",
+            "legend": "The serving half of the architecture, the same boxes as the neutral diagram's serving frame, one AWS service each: the edge cache is CloudFront, which keeps a response for the max-age its origin sends s7; the load balancer admits only CloudFront s8; the autocomplete service and the prefix shards are ECS on Fargate tasks that call each other by Service Connect names, which balance round robin and remember failures s11; the recent queries and the block list are DynamoDB tables; the fallback suggester is an OpenSearch Service domain with term and phrase suggesters s15, s13. The neutral re-rank box is a code path inside the service task, so it has no box of its own. The block list is changed by operators: the POST follows the client edges to the service (it is never cached), which writes the table and then calls the CloudFront API to invalidate the term's prefixes s45, through the interface endpoint CloudFront offers s43; the invalidation call has its own box because it goes to CloudFront's API and not to the edge. Sync means the caller waits for the answer. The VPC frames are one VPC in one Region across three Availability Zones.",
             "cites": [
               "s7",
               "s8",
               "s11",
               "s15",
-              "s13"
+              "s13",
+              "s43",
+              "s45"
             ]
           },
           {
@@ -1190,6 +1268,11 @@
                 "id": "SH",
                 "label": "ECS on Fargate: prefix shard tasks, index in memory",
                 "kind": "store"
+              },
+              {
+                "id": "SC",
+                "label": "Amazon S3: decayed scores, one file per version",
+                "kind": "store"
               }
             ],
             "frames": [
@@ -1234,6 +1317,13 @@
               },
               {
                 "from": "AG",
+                "to": "SC",
+                "kind": "sync",
+                "label": "GET the previous score file and, once the version is accepted, PutObject the new one, sync",
+                "short": "Scores"
+              },
+              {
+                "from": "AG",
                 "to": "FL",
                 "kind": "sync",
                 "label": "the next stage of the same Spark job",
@@ -1275,7 +1365,7 @@
               },
               {
                 "edge": 1,
-                "caption": "Scheduler to Aggregator stage: StartJobRun every hour through a universal target, async"
+                "caption": "Scheduler to aggregator stage: StartJobRun every hour through a universal target, async"
               },
               {
                 "edge": 2,
@@ -1283,32 +1373,37 @@
               },
               {
                 "edge": 3,
-                "caption": "Aggregator stage to Filter stage: the next stage of the same Spark job"
+                "caption": "Aggregator stage to S3 scores: GET the previous score file and, once the version is accepted, PutObject the new one, sync"
               },
               {
                 "edge": 4,
-                "caption": "Filter stage to DynamoDB block list: Scan of the block list, sync"
+                "caption": "Aggregator stage to Filter stage: the next stage of the same Spark job"
               },
               {
                 "edge": 5,
-                "caption": "Filter stage to Builder stage: the next stage of the same Spark job"
+                "caption": "Filter stage to DynamoDB block list: Scan of the block list, sync"
               },
               {
                 "edge": 6,
-                "caption": "Builder stage to S3 index versions: PutObject of each shard file, then the version pointer, sync"
+                "caption": "Filter stage to Builder stage: the next stage of the same Spark job"
               },
               {
                 "edge": 7,
+                "caption": "Builder stage to S3 index versions: PutObject of each shard file, then the version pointer, sync"
+              },
+              {
+                "edge": 8,
                 "caption": "S3 index versions to Shard tasks: each shard task polls the pointer, reads its file, then switches (pull), async"
               }
             ],
-            "legend": "The build half of the neutral diagram, one AWS service each: the search service writes each search to an Amazon Data Firehose stream, which delivers objects to S3 under a yyyy/MM/dd/HH prefix s17, s18; EventBridge Scheduler starts one EMR Serverless job every hour with a universal target s19, and the three stages are the neutral aggregator, filter and builder, run as one Spark application s20; the builder writes the shard files to S3 and the shard tasks pull each new version, which S3's read-after-write consistency makes safe s21. The block list table is the one box the neutral diagram leaves implicit. Sync means the caller waits for the answer; async means the work goes on after the caller has moved on.",
+            "legend": "The build half of the neutral diagram, one AWS service each: the search service writes each search to an Amazon Data Firehose stream, which delivers objects to S3 under a yyyy/MM/dd/HH prefix s17, s18; EventBridge Scheduler starts one EMR Serverless job every hour; this is a design choice: a universal target may call any API operation that is not read-only s19, and StartJobRun is an EMR Serverless operation s44, and the three stages are the neutral aggregator, filter and builder, run as one Spark application s20; the builder writes the shard files to S3 and the shard tasks pull each new version, which S3's read-after-write consistency makes safe s21. The decayed scores (the neutral Query entity's score) live in a score file in S3, one per version: the job reads the previous file, adds the last hour with the old scores halved, and writes the new file with the version. The block list table and the score files are the boxes the neutral diagram leaves implicit. Sync means the caller waits for the answer; async means the work goes on after the caller has moved on.",
             "cites": [
               "s17",
               "s18",
               "s19",
               "s20",
-              "s21"
+              "s21",
+              "s44"
             ]
           },
           {
@@ -1349,16 +1444,17 @@
           },
           {
             "type": "p",
-            "text": "The build path through AWS: one run an hour, nothing on the request path waits for it."
+            "text": "The build path through AWS: one run an hour, nothing on the request path waits for it; the step numbers run on from the read path."
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber\n  participant Sch as Scheduler\n  participant Job as EMR Serverless job\n  participant S3 as S3\n  participant DDB as DynamoDB\n  participant SH as Shard task\n  Sch->>Job: StartJobRun, every hour\n  Job->>S3: GET the last hour of the log\n  S3-->>Job: log objects\n  Note over Job: decayed counts,<br/>yesterday weighs half (assumption)\n  Job->>DDB: Scan the block list\n  DDB-->>Job: blocked terms\n  Note over Job: drop blocked and rare terms,<br/>top 10 per prefix\n  alt no smaller than 80 percent of the last version\n    Job->>S3: PUT the shard files, then the pointer\n  else shrank by more than 20 percent\n    Note over Job,S3: refuse the version, alarm\n  end\n  loop every shard task, on its poll\n    SH->>S3: GET the version pointer\n    S3-->>SH: a new version\n    SH->>S3: GET its shard file\n    Note over SH: load beside the old,<br/>then switch pointers\n  end",
-            "legend": "Each shard task polls the pointer and reads its own file; because S3 reads after a write always return the new object s21, a task that sees the new pointer finds every file under it. A failed or refused job leaves the pointer alone, so the shards keep serving the last good version while the age alarm (over 2 hours) fires. The job is started by an EventBridge Scheduler universal target s19 and releases its capacity when it finishes s20.",
+            "mermaid": "sequenceDiagram\n  autonumber 13\n  participant Sch as Scheduler\n  participant Job as EMR Serverless job\n  participant S3 as S3\n  participant DDB as DynamoDB\n  participant SH as Shard task\n  Sch->>Job: StartJobRun, every hour\n  Job->>S3: GET the last hour of the log\n  S3-->>Job: log objects\n  Job->>S3: GET the previous score file\n  S3-->>Job: the decayed scores\n  Note over Job: add the hour to the scores,<br/>yesterday weighs half (assumption)\n  Job->>DDB: Scan the block list\n  DDB-->>Job: blocked terms\n  Note over Job: drop blocked and rare terms,<br/>top 10 per prefix\n  alt no smaller than 80 percent of the last version\n    Job->>S3: PUT shard files, new scores, pointer\n  else shrank by more than 20 percent\n    Note over Job,S3: refuse the version and the scores,<br/>alarm\n  end\n  loop every shard task, on its poll\n    SH->>S3: GET the version pointer\n    S3-->>SH: a new version\n    SH->>S3: GET its shard file\n    Note over SH: load beside the old,<br/>then switch pointers\n  end",
+            "legend": "Each shard task polls the pointer and reads its own file; because S3 reads after a write always return the new object s21, a task that sees the new pointer finds every file under it. A failed or refused job leaves the pointer alone, so the shards keep serving the last good version while the age alarm (over 2 hours) fires. The schedule starts the job with a universal target, a design choice: the Scheduler page says universal targets may call API operations of many services and refuses only read-only ones s19, and StartJobRun is an EMR Serverless operation s44; the job releases its capacity when it finishes s20. The score file is read at step 16 and written at step 20, in the same step as the shard files and before the pointer, so a refused version keeps the previous scores.",
             "cites": [
               "s21",
               "s19",
-              "s20"
+              "s20",
+              "s44"
             ]
           },
           {
@@ -1371,15 +1467,17 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber\n  participant Op as Operator\n  participant AS as Autocomplete svc\n  participant DDB as DynamoDB\n  participant CF as CloudFront\n  Op->>AS: POST /blocklist, term and locale\n  AS->>DDB: PutItem, the blocked term\n  DDB-->>AS: ok\n  AS-->>Op: 204\n  Note over AS: every task re-reads the list<br/>within a minute (assumption)\n  Op->>CF: invalidate the prefixes of the term\n  Note over Op,CF: one path per prefix\n  CF-->>Op: in progress\n  Note over CF: the next request for each prefix<br/>returns to the origin",
-            "legend": "The block list takes effect at the service within a minute and at the edge when the invalidation completes, without waiting for a build; the next build drops the term from the index. Invalidation removes the cached copies before they expire s24; without it the term lingers for up to the 60 s of the TTL.",
+            "mermaid": "sequenceDiagram\n  autonumber 24\n  participant Op as Operator\n  participant Edge as Edge\n  participant AS as Autocomplete svc\n  participant DDB as DynamoDB\n  participant CFA as CloudFront API\n  Op->>Edge: POST /blocklist, term and locale\n  Edge->>AS: HTTP, a healthy task\n  AS->>DDB: PutItem, the blocked term\n  DDB-->>AS: ok\n  Note over AS: every task re-reads the list<br/>within a minute (assumption)\n  AS->>CFA: CreateInvalidation, the prefixes\n  Note over AS,CFA: one path per prefix,<br/>through the interface endpoint\n  CFA-->>AS: in progress\n  AS-->>Edge: 204\n  Edge-->>Op: 204\n  Note over CFA: the next request for each prefix<br/>returns to the origin",
+            "legend": "The operator endpoint is part of the service, as in the neutral design: it writes the list and purges the prefix keys itself, with a task role that may call CreateInvalidation on the distribution s45; the call reaches the CloudFront API through its interface endpoint s43. The list takes effect at the service within a minute and at the edge when the invalidation completes, without waiting for a build; the next build drops the term from the index. Invalidation removes the cached copies before they expire s24; without it the term lingers for up to the 60 s of the TTL.",
             "cites": [
-              "s24"
+              "s24",
+              "s45",
+              "s43"
             ]
           },
           {
             "type": "table",
-            "caption": "Identity and network: who may call what, over which endpoint, and what is public. Each ECS service runs under its own IAM task role, so permissions go to the task and not to a host; everything in the VPC runs in private subnets across three Availability Zones in awsvpc mode, one network interface per task.",
+            "caption": "Identity and network: who may call what, over which endpoint, and what is public. The public entries are CloudFront and the load balancer behind it, which sits in public subnets and admits only CloudFront. The ECS services, the shard tasks, the OpenSearch domain and the job run in private subnets across three Availability Zones in awsvpc mode, one network interface per task, each service under its own IAM task role, so permissions go to the task and not to a host.",
             "columns": [
               "service",
               "may call",
@@ -1401,8 +1499,8 @@
               ],
               [
                 "Autocomplete service (task role)",
-                "GetItem on the recents table; Scan and PutItem on the block list table; the shard tasks by Service Connect name; the OpenSearch domain",
-                "DynamoDB gateway endpoint; the Service Connect proxy and the domain inside the VPC",
+                "GetItem on the recents table; Scan and PutItem on the block list table; CreateInvalidation on the distribution, for the block list endpoint; the shard tasks by Service Connect name; the OpenSearch domain",
+                "DynamoDB gateway endpoint; the CloudFront interface endpoint; the Service Connect proxy and the domain inside the VPC",
                 "no; private subnet, admits the load balancer's security group only"
               ],
               [
@@ -1413,7 +1511,7 @@
               ],
               [
                 "EMR Serverless job (job runtime role)",
-                "GetObject on the log prefix; PutObject on the index bucket; Scan on the block list table",
+                "GetObject on the log prefix; GetObject and PutObject on the index bucket, including the score files; Scan on the block list table",
                 "S3 and DynamoDB, Regional services; started by the scheduler's role",
                 "no; the job is not reachable from outside"
               ],
@@ -1444,7 +1542,9 @@
               "s23",
               "s14",
               "s11",
-              "s19"
+              "s19",
+              "s45",
+              "s43"
             ]
           },
           {
@@ -1693,7 +1793,7 @@
               ],
               [
                 "Query log ingestion",
-                "Data Firehose Direct PUT, one record per search, billed in 5 KB increments",
+                "Data Firehose Direct PUT, one record per search, billed in 5 KB increments, counted in binary units",
                 "about $415",
                 "about $4,150"
               ],
@@ -1705,9 +1805,9 @@
               ],
               [
                 "Index versions",
-                "S3 Standard storage, 72 versions kept, of 10 GB and of 100 GB (assumption)",
+                "S3 Standard storage, 72 versions kept, each the index and its score file (about 10.3 GB, and 103 GB at ten times; assumption)",
                 "about $17",
-                "about $166"
+                "about $171"
               ],
               [
                 "Fallback suggester",
@@ -1735,7 +1835,7 @@
           },
           {
             "type": "p",
-            "text": "The edge requests are about seven eighths of the priced total at the design point and about eleven twelfths at ten times, which is the neutral answer's point again: the serving path is a cache in front of a lookup, and the hit ratio is the lever. The fallback suggester, a domain of six nodes for a path taken only when a prefix has no entry, costs more at the design point than the shard tasks it backs up.",
+            "text": "The edge requests are about seven eighths of the priced total at the design point and about eleven twelfths at ten times; the neutral table shows more than ninety-five percent because this one also prices the shard tasks, the fallback domain and the log ingestion. The point is the neutral one again: the serving path is a cache in front of a lookup, and the hit ratio is the lever. The fallback suggester, a domain of six nodes for a path taken only when a prefix has no entry, costs more at the design point than the shard tasks it backs up.",
             "cites": [
               "s36",
               "s42",
@@ -2210,6 +2310,11 @@
       "version": 5,
       "date": "2026-10-16",
       "change": "second read of the AWS pass (E1B): mechanical corrections only; the recents cost row states its basis (eventually consistent reads, half a read unit each); the not-priced list names the OpenSearch storage volumes; the closing line says the fallback domain costs more than the shard tasks at the design point (at ten times the shard tasks cost more); the uncited cluster fee clause is cut from the EKS cell; findings left for the writer in reviews/learning-center-F2-E1B-read.md; reviewed_by stays null"
+    },
+    {
+      "version": 6,
+      "date": "2026-10-16",
+      "change": "fix round on the second read (E1B): the decayed scores now live in a score file in S3 beside each index version (a node, an edge and a read and write in the build sequence diagram, the job role row and the index-versions cost line, about $17 and $171); the block list write path is in the serving flow (operators, PutItem, CreateInvalidation through the CloudFront API and its interface endpoint) with the autocomplete service's task role as the caller of CreateInvalidation, in the identity table and the block list diagram; the Scheduler to EMR Serverless StartJobRun call is stated as a design choice and cited to the Scheduler and EMR Serverless API pages (sources s43 to s45 added); the AWS sequence diagrams run on in one numbering; the identity caption says CloudFront and the load balancer are public and the rest private; the closing line explains the edge share against the neutral table; Firehose units stated; reviewed_by stays null"
     }
   ]
 }
