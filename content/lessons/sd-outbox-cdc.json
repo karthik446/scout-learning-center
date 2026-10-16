@@ -293,7 +293,7 @@
         {
           "type": "callout",
           "kind": "rule",
-          "text": "Capture from the log, not by querying the tables: it is in commit order, it costs the database no queries, and it sees every change including deletes. Set replica identity deliberately for any table whose consumers need the old row.",
+          "text": "Log-based streaming avoids polling business tables for changes and can capture committed deletes. Initial snapshots, metadata queries and configured heartbeat writes still access the database. Set capture filters and replica identity deliberately for consumers that need old rows.",
           "cites": [
             "s4",
             "s8"
@@ -456,7 +456,7 @@
       "blocks": [
         {
           "type": "p",
-          "text": "Kleppmann's talk generalises the pattern beyond service integration. Replicas, secondary indexes, caches and materialized views are all derived data: each can be computed from the primary table and the log of its changes, and each can be rebuilt by replaying that log. The application that manages its own cache in code, read the cache, miss, read the database, write the cache, is maintaining a derived view by hand, with all the invalidation bugs that implies; a materialized view maintained by the database from the same log does the job without the bugs, and the talk's argument is to build the application's views the same way, from a stream of changes.",
+          "text": "Kleppmann's talk generalises the pattern beyond service integration. Replicas, secondary indexes, caches and materialized views are derived data, computed from primary data and its changes. The application that manages its own cache through read, miss, database lookup and cache write is maintaining a view by hand. The talk argues for maintaining such views from a stream of changes instead. Correctness still depends on the view function, ordering and the snapshot-and-retention contract described below; streaming is not a guarantee of bug-free results.",
           "cites": [
             "s8"
           ]
@@ -683,7 +683,7 @@
         "type": "code",
         "lang": "sql",
         "code": "-- In database orders, as the table/publication owner:\nCREATE TABLE orders (id bigint PRIMARY KEY, status text NOT NULL, version bigint NOT NULL);\nCREATE TABLE outbox (\n  id uuid PRIMARY KEY, aggregatetype text NOT NULL,\n  aggregateid text NOT NULL, type text NOT NULL, payload jsonb NOT NULL\n);\nCREATE TABLE debezium_heartbeat (id integer PRIMARY KEY, ts timestamptz NOT NULL);\nCREATE ROLE cdc LOGIN REPLICATION;\nGRANT CONNECT ON DATABASE orders TO cdc;\nGRANT USAGE ON SCHEMA public TO cdc;\nGRANT SELECT ON outbox, debezium_heartbeat TO cdc;\nGRANT INSERT, UPDATE ON debezium_heartbeat TO cdc;\nCREATE PUBLICATION orders_outbox_pub FOR TABLE outbox, debezium_heartbeat;\n-- Provision cdc authentication through your secret system, not this file.\n-- Server: wal_level=logical, available replication slot and WAL sender capacity;\n-- pg_hba.conf and network policy must permit this role's TLS connection.\n-- Configure max_slot_wal_keep_size from measured WAL and recovery requirements.",
-        "caption": "Minimal setup before the transaction sample. Start capture before accepting writes because deleted transit events cannot be recovered by an initial snapshot. The connector role does not own tables; publication creation is performed by the owner."
+        "caption": "Minimal setup before the transaction sample. Role creation requires an appropriately privileged administrator (CREATEROLE and permission to grant REPLICATION, or a superuser); table ownership alone is insufficient. Start capture before accepting writes because deleted transit events cannot be recovered by an initial snapshot. The connector role does not own tables; publication creation is performed by the owner."
       },
       {
         "type": "code",
@@ -850,8 +850,8 @@
   "provenance": {
     "generated_by": "Claude (Fable 5.1) by hand, Scout learning center, format v2",
     "generated_on": "2026-10-15",
-    "reviewed_by": null,
-    "reviewed_on": null
+    "reviewed_by": "a second reader (Codex gpt-6-astra, a different instance from the first reader), Scout learning center, format v2 C4",
+    "reviewed_on": "2026-10-15"
   },
   "changelog": [
     {

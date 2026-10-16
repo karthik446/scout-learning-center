@@ -437,7 +437,7 @@
         {
           "type": "callout",
           "kind": "pitfall",
-          "text": "An access token validated only for its signature is accepted from any issuer, for any audience, with any algorithm the attacker chose. Pin the algorithms, the issuer and the audience, and reject a missing audience.",
+          "text": "A valid signature alone does not establish the intended issuer, audience or token purpose. Pin the allowed algorithms and trusted issuer keys, validate issuer and audience, and reject a missing required audience.",
           "cites": [
             "s6"
           ]
@@ -775,7 +775,7 @@
         "type": "code",
         "lang": "sql",
         "code": "-- Run as migration owner, not runtime role.\nCREATE ROLE invoice_api LOGIN NOSUPERUSER NOBYPASSRLS;\nCREATE TABLE invoices (\n  id uuid PRIMARY KEY,\n  tenant_id uuid NOT NULL,\n  owner_sub text NOT NULL\n);\nALTER TABLE invoices ENABLE ROW LEVEL SECURITY;\nALTER TABLE invoices FORCE ROW LEVEL SECURITY;\nCREATE POLICY tenant_isolation ON invoices TO invoice_api\n  USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)\n  WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);\nGRANT SELECT ON invoices TO invoice_api;\n-- Provision runtime authentication separately; never grant owner-role membership.\n-- Python opens the transaction and sets context via set_config(..., true).\n-- Missing context returns no rows; transaction end clears local context.",
-        "caption": "Matching minimal read-only schema. The runtime role is neither owner, superuser nor BYPASSRLS. Mutable context protects against missing filters, not SQL injection or a compromised role. Writes require separate operation authorization and grants."
+        "caption": "Matching minimal read-only schema. The migration identity needs CREATEROLE or administrator assistance for role creation. The runtime role is neither owner, superuser nor BYPASSRLS. Mutable context protects against missing filters, not SQL injection or a compromised role. Writes require separate operation authorization and grants."
       }
     ]
   },
@@ -938,8 +938,8 @@
   "provenance": {
     "generated_by": "Claude (Fable 5.1) by hand, Scout learning center, format v2",
     "generated_on": "2026-10-15",
-    "reviewed_by": null,
-    "reviewed_on": null
+    "reviewed_by": "a second reader (Codex gpt-6-astra, a different instance from the first reader), Scout learning center, format v2 C4",
+    "reviewed_on": "2026-10-15"
   },
   "changelog": [
     {

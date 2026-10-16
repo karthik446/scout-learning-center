@@ -258,7 +258,7 @@
         },
         {
           "type": "p",
-          "text": "The join between the signals is an identifier. Amazon's engineering guidance describes a trace id as a meta request id stamped on a distributed unit of work by the front-door service and propagated to every dependency, so that the log entries of many services can be lined up for one request. OpenTelemetry's SDKs do the same join automatically by injecting the trace id and span id into each log record, which lets a reader move from a slow span to the log lines written inside it, and lets metrics be aggregated by the calling context rather than only by endpoint.",
+          "text": "The join between the signals is an identifier. Amazon's engineering guidance describes a trace id as a meta request id stamped on a distributed unit of work by the front-door service and propagated to every dependency, so that the log entries of many services can be lined up for one request. OpenTelemetry SDKs can correlate logs with traces by injecting the trace id and span id into log records when the logging integration and active context are configured. This lets a reader move from a slow span to the log lines written inside it.",
           "cites": [
             "s2",
             "s4"
@@ -318,7 +318,7 @@
               "Batch job",
               "last success time, stage durations, total runtime",
               "the last-success timestamp ages",
-              "push to a gateway; a job that runs more often than every 15 minutes should become a daemon"
+              "push to a gateway; for a job running more often than every 15 minutes, consider conversion to a daemon"
             ]
           ],
           "cites": [
@@ -347,7 +347,7 @@
             "The depth of every queue the request touches, and the time each item waited in it, which needs an enqueue timestamp on the message.",
             "A counter per error reason, grouped at least into the client's fault and the server's fault.",
             "A separate latency timer for successful responses, so that fast errors do not make latency look good.",
-            "Enough metadata to know who called and what for, with sensitive fields left out on an opt-in basis."
+            "Enough metadata to know who called and what for, allowing fields into logs only through an opt-in policy that excludes sensitive data."
           ],
           "cites": [
             "s2"
@@ -479,7 +479,7 @@
             ],
             [
               "Emit a 1 for success and a 0 for failure",
-              "the mean is the availability, and a process that stops emitting 0s has broken"
+              "the mean is availability only when both successes and failures are recorded"
             ],
             [
               "Keep a separate timer for successful responses",
@@ -490,7 +490,7 @@
               "lines from many services can be lined up for one request"
             ],
             [
-              "Leave out sensitive fields on an opt-in basis; protect the log with access control and encryption",
+              "Opt in to logging approved fields, excluding sensitive data; protect the log with access control and encryption",
               "a sensitive parameter added later is not logged by default"
             ]
           ],
@@ -515,7 +515,7 @@
         {
           "type": "callout",
           "kind": "pitfall",
-          "text": "An application log that grows into the request path, with a line per stage and a stack trace per error, is the most expensive form of telemetry. Rate-limit error spam, keep debug levels off in production, and put the per-request facts in the one structured entry.",
+          "text": "An application log that grows into the request path, with a line per stage and a stack trace per error, can impose substantial cost. Rate-limit error spam, keep debug levels off in production, and put the per-request facts in the one structured entry.",
           "cites": [
             "s2"
           ]
@@ -678,7 +678,7 @@
             [
               "Second tier by trace id",
               "a pool fed by the load-balancing exporter",
-              "tail sampling and span-based metrics, which need all spans of a trace or a service in one place",
+              "tail sampling with trace-id routing; span-based metrics may instead require service-based routing and distinct writer identities",
               "stateful buffering; the single-writer rule for metrics"
             ]
           ],
@@ -1045,8 +1045,8 @@
   "provenance": {
     "generated_by": "Claude (Fable 5.1) by hand, Scout learning center, format v2",
     "generated_on": "2026-10-15",
-    "reviewed_by": null,
-    "reviewed_on": null
+    "reviewed_by": "a second reader (Codex gpt-6-astra, a different instance from the first reader), Scout learning center, format v2 C4",
+    "reviewed_on": "2026-10-15"
   },
   "changelog": [
     {
