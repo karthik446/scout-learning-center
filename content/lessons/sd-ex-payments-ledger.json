@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-payments-ledger",
-  "version": 7,
+  "version": 8,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: payments ledger",
@@ -1762,7 +1762,7 @@
           {
             "type": "diagram",
             "mermaid": "sequenceDiagram\n  autonumber 22\n  participant PSP as Provider\n  participant S3\n  participant RC as Reconciliation\n  participant LD as Aurora\n  participant SL as Sealing\n  alt statement fetched\n    RC->>PSP: GET the day's statement\n    PSP-->>RC: statement file\n    RC->>S3: PutObject as received\n    RC->>S3: GetObject the stored copy\n    S3-->>RC: statement\n    RC->>LD: financial clearing lines\n    LD-->>RC: matches and mismatches\n    RC->>LD: cases with owners\n  else statement not available\n    Note over RC: alarm, keep cases open\n  end\n  SL->>LD: committed range\n  LD-->>SL: entries\n  SL->>LD: record digest chain\n  SL->>S3: PutObject locked digest",
-            "legend": "The reconciliation task, not the provider, writes the statement into the bucket: it fetches the file over the NAT egress with a credential from Secrets Manager, stores it unchanged and matches from the stored copy, so a re-run needs no second download and nothing outside the VPC writes to the bucket. Sources: cron schedules in EventBridge Scheduler s27; the S3 gateway endpoint s36; Object Lock's compliance mode, under which no user can overwrite or delete the digest before its retention date s25; sealing and cold storage in time-range batches at Uber s3.",
+            "legend": "The reconciliation task, not the provider, writes the statement into the bucket: it fetches the file over the NAT egress with a credential from Secrets Manager, stores it unchanged and matches from the stored copy; nothing outside the VPC writes to the bucket. Sources: cron schedules in EventBridge Scheduler s27; the S3 gateway endpoint s36; Object Lock's compliance mode, under which no user can overwrite or delete the digest before its retention date s25; sealing and cold storage in time-range batches at Uber s3.",
             "cites": [
               "s27",
               "s36",
@@ -2645,8 +2645,8 @@
   "provenance": {
     "generated_by": "Claude (Fable 5.1) by hand, Scout learning center M4a; format v2 and the AWS section by Claude (Fable 5.1) by hand, Scout learning center, format v2 batch E2A",
     "generated_on": "2026-10-12",
-    "reviewed_by": null,
-    "reviewed_on": null
+    "reviewed_by": "a second reader (Codex gpt-6-astra, a different instance from the writer), Scout learning center, format v2 follow-ups",
+    "reviewed_on": "2026-10-16"
   },
   "changelog": [
     {
@@ -2683,6 +2683,11 @@
       "version": 7,
       "date": "2026-10-16",
       "change": "Third-read follow-ups: the Secrets Manager interface endpoint is cited; the reconciliation task fetches the provider statement through the NAT gateways, stores it unchanged in S3 and matches from the stored copy (flow edges, sequences, identity rows, neutral part e; NAT cell, 60 GB a month added); the authorised state is written after the ledger memo hold is durable (part b sequence redrawn, parts c and d renumbered) and the recovery index key transitions are stated (put, delete and put, delete: four index writes, +$187.50 a month, +$1,875 at ten times); DynamoDB storage allowances derived with the 100-byte item overhead (510 and 30 GB). Priced subtotal about $10,100 and about $98,900 (was $9,900 and $96,900). reviewed_by cleared for a re-read."
+    },
+    {
+      "version": 8,
+      "date": "2026-10-16",
+      "change": "Second read of the follow-ups: accepted; the unsupported clause that a re-run of the reconciliation needs no second download is cut (the sequence always fetches the statement); every changed number and cost cell recomputed and every cited AWS sentence checked; reviewed by a second reader."
     }
   ]
 }

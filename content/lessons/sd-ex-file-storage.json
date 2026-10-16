@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-file-storage",
-  "version": 11,
+  "version": 12,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: file storage and sync",
@@ -1562,7 +1562,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 26\n  participant C as Client\n  participant Edge as Load balancer\n  participant MS as Metadata svc\n  participant DDB as DynamoDB\n  C->>Edge: POST /commit, same list\n  Edge->>MS: HTTP\n  MS->>DDB: BatchGetItem, blocks table\n  DDB-->>MS: the blocks that exist\n  alt some blocks are missing\n    MS-->>Edge: 409, missing_blocks\n    Edge-->>C: 409, missing_blocks\n  else every block exists\n    Note over MS,DDB: a zero-count block with an old zero_since<br/>is touched again, as in the first call\n    opt a touched block is gone\n      MS-->>Edge: 409, missing_blocks\n      Edge-->>C: 409, missing_blocks\n    end\n    MS->>DDB: GetItem, the account's sequence number\n    DDB-->>MS: N, strongly consistent\n    MS->>DDB: TransactWriteItems\n    Note over MS,DDB: conditions on the parent version<br/>and on the sequence number N, then<br/>put version (with its shared folder, if any),<br/>update node, put feed item with N+1,<br/>set the TTL of the superseded version\n    alt the transaction commits\n      DDB-->>MS: durable\n      MS-->>Edge: 200, the version\n      Edge-->>C: 200, the version\n    else the parent version moved\n      DDB-->>MS: canceled, the version condition\n      MS-->>Edge: 412\n      Edge-->>C: 412, save a conflicted copy\n    else the sequence moved\n      DDB-->>MS: canceled, the sequence condition\n      Note over MS: another commit of the account got N first:<br/>read the number again and retry\n    end\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber 26\n  participant C as Client\n  participant Edge as Load balancer\n  participant MS as Metadata svc\n  participant DDB as DynamoDB\n  C->>Edge: POST /commit, same list\n  Edge->>MS: HTTP\n  MS->>DDB: BatchGetItem, blocks table\n  DDB-->>MS: the blocks that exist\n  alt some blocks are missing\n    MS-->>Edge: 409, missing_blocks\n    Edge-->>C: 409, missing_blocks\n  else every block exists\n    Note over MS,DDB: a zero-count block with an old zero_since<br/>is touched again, as in the first call\n    alt a touched block is gone\n      MS-->>Edge: 409, missing_blocks\n      Edge-->>C: 409, missing_blocks\n    else every touched block is still there\n      MS->>DDB: GetItem, the account's sequence number\n      DDB-->>MS: N, strongly consistent\n      MS->>DDB: TransactWriteItems\n      Note over MS,DDB: conditions on the parent version<br/>and on the sequence number N, then<br/>put version (with its shared folder, if any),<br/>update node, put feed item with N+1,<br/>set the TTL of the superseded version\n      alt the transaction commits\n        DDB-->>MS: durable\n        MS-->>Edge: 200, the version\n        Edge-->>C: 200, the version\n      else the parent version moved\n        DDB-->>MS: canceled, the version condition\n        MS-->>Edge: 412\n        Edge-->>C: 412, save a conflicted copy\n      else the sequence moved\n        DDB-->>MS: canceled, the sequence condition\n        Note over MS: another commit of the account got N first:<br/>read the number again and retry\n      end\n    end\n  end",
             "legend": "Every call of the commit checks the blocks, as the neutral commit does: a client that skipped the first call, or a block swept in between, gets the 409 again, and a version never references a block that is not there; a touch that finds its block gone, as in the first call, is that same 409. One transaction then carries every item of the commit, five actions, one of them the update that gives the version this commit supersedes a TTL of 30 days, so only noncurrent versions ever expire and the current version of an untouched file never does (a delete does the same for the current version, 30 days after the soft delete); all actions succeed or none does s12, and DynamoDB writes each item twice underneath, one to prepare and one to commit s13. The service reads the sequence item first, because an update inside a transaction returns no value, and conditions the transaction on it; the condition is what makes the feed a log with a monotonic sequence: two commits racing on one account cannot take the same number. A cancelled transaction names the condition that failed, item by item s46: only a failed parent-version condition is a real conflict and becomes the 412, while a failed sequence condition means a commit of another file got the number first, so the service reads the number again and retries, and the client never sees it. All of an account's items share one partition key, so a very busy account is where the limit of 1,000 write units a second that a partition delivers would show first s15; the namespace split by folder subtree in the 10x section is the remedy. The version item carries the id of its shared folder when the node is in one (copied from the node item), which is how the stream function later knows to copy the commit to the members.",
             "cites": [
               "s12",
@@ -2528,8 +2528,8 @@
   "provenance": {
     "generated_by": "Claude (Fable 5.1) by hand, Scout learning center M4a; format v2 restructure by hand, Claude (Fable 5.1), Scout learning center F2-E1; AWS pass (building-it-on-aws, flow block, sequence diagrams) by hand, Claude (Sonnet 5.5), Scout learning center, format v2 batch E1B",
     "generated_on": "2026-10-12",
-    "reviewed_by": null,
-    "reviewed_on": null
+    "reviewed_by": "a second reader (Codex gpt-6-astra, a different instance from the writer), Scout learning center, format v2 follow-ups",
+    "reviewed_on": "2026-10-16"
   },
   "changelog": [
     {
@@ -2586,6 +2586,11 @@
       "version": 11,
       "date": "2026-10-16",
       "change": "Follow-ups from the fifth read: a touch that finds its block gone (the sweep deleted it between the read and the update) is a 409 with that hash in missing_blocks, in the first and the second commit (UpdateItem asks for the old item back); the sweep index has 64 shard values, derived from the lesson's own peak of ten times the average (16,200 index writes a second, about 253 each; 256 at ten times the scale), the cost unchanged; the notification function's event source mapping has two filter patterns (feed-item inserts, shared-folder version inserts); the cold class price ($4 against the neutral $20 per TB-month) is stated as a ratio. Later AWS sequence numbers shift by two. reviewed_by cleared for a re-read."
+    },
+    {
+      "version": 12,
+      "date": "2026-10-16",
+      "change": "Second read of the follow-ups: accepted; the second commit's check of the touched blocks is drawn as an alt with an else, so the diagram no longer reads as if the commit went on after the 409 (same messages, same numbers); every changed number recomputed and every cited AWS sentence checked; reviewed by a second reader."
     }
   ]
 }
