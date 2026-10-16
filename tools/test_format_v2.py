@@ -221,12 +221,20 @@ class Negative(Fixture):
         docs["lessons/sd-caching.json"] = lesson
         self.assertTrue(any("about a choice" in p for p in scan.validate(docs)))
 
-    # The AWS section (orchestrator #46, #50): the architecture flowchart first, sequence diagrams after it (the paths), a decision
+    # The AWS section (orchestrator #46, #50): the architecture flow block first, sequence diagrams after it (the paths), a decision
     # block, at most one cost table.
     SEQUENCE = "sequenceDiagram\n  autonumber\n  participant C as client\n  participant S as service\n  C->>S: POST\n  S-->>C: 201\n  opt network failure\n    C->>S: retry with the same id\n  end"
+    FLOW = {"type": "flow",
+            "nodes": [{"id": "C", "label": "client", "kind": "actor"}, {"id": "ALB", "label": "Application Load Balancer", "kind": "service"},
+                      {"id": "S", "label": "ECS on Fargate", "kind": "service"}, {"id": "D", "label": "DynamoDB", "kind": "store"}],
+            "edges": [{"from": "C", "to": "ALB", "label": "HTTPS, sync"}, {"from": "ALB", "to": "S", "label": "HTTP, sync"},
+                      {"from": "S", "to": "D", "label": "PutItem, sync"}],
+            "steps": [{"edge": 0, "caption": "The client calls the ALB"}, {"edge": 1, "caption": "The ALB calls the service"},
+                      {"edge": 2, "caption": "The service writes the item"}],
+            "legend": "The neutral boxes, one AWS service each."}
+    MERMAID_FLOWCHARTS = ("flowchart TB\n  C[client] --> S[service]", "graph TD\n  C[client] --> S[service]")
     AWS = {"id": "building-it-on-aws", "title": "Building it on AWS", "blocks": [
-        {"type": "diagram", "mermaid": "flowchart TB\n  C[client] -->|HTTPS, sync| ALB[Application Load Balancer]\n  ALB -->|HTTP, sync| S[ECS on Fargate]\n  S -->|PutItem, sync| D[(DynamoDB)]",
-         "legend": "The neutral boxes, one AWS service each."},
+        FLOW,
         {"type": "steps", "title": "The write path", "items": ["The client calls the ALB over HTTPS, sync; it retries with backoff.", "The service writes with PutItem, sync."]},
         {"type": "diagram", "mermaid": SEQUENCE, "legend": "The write path. Sources: the retry s1, the write s2.", "cites": ["s1", "s2"]},
         {"type": "p", "text": "The retry carries the same id, so the second write is a no-op."},
@@ -249,30 +257,30 @@ class Negative(Fixture):
         self.assertEqual(self.problems_after(EXERCISE, self.with_aws()), [])
         self.refuses(EXERCISE, self.with_aws(at=3), "right after high-level-design")
 
-    def test_aws_section_without_a_leading_diagram(self) -> None:
+    def test_aws_section_without_a_leading_flow(self) -> None:
         def drop(s): s["blocks"] = s["blocks"][1:]
-        self.refuses(EXERCISE, self.with_aws(drop), "section building-it-on-aws: must start with a diagram block")
+        self.refuses(EXERCISE, self.with_aws(drop), "section building-it-on-aws: must start with a flow block")
         def later(s): s["blocks"] = s["blocks"][1:2] + s["blocks"][:1] + s["blocks"][2:]
-        self.refuses(EXERCISE, self.with_aws(later), "must start with a diagram block (the AWS architecture, mirroring the high-level-design one); the first block is 'steps'")
+        self.refuses(EXERCISE, self.with_aws(later), "must start with a flow block (the AWS architecture, mirroring the high-level-design one); the first block is 'steps'")
 
-    def test_aws_section_starts_with_the_flowchart_not_a_sequence(self) -> None:
+    def test_aws_section_starts_with_the_flow_not_a_sequence(self) -> None:
         def seq_first(s): s["blocks"][0] = copy.deepcopy(s["blocks"][2])
-        self.refuses(EXERCISE, self.with_aws(seq_first), "section building-it-on-aws: must start with a flowchart (the AWS architecture); a sequence diagram comes after it")
+        self.refuses(EXERCISE, self.with_aws(seq_first), "section building-it-on-aws: must start with a flow block (the AWS architecture); a sequence diagram comes after it")
 
     def test_aws_section_later_diagrams_are_sequence_diagrams(self) -> None:
-        def flowchart_again(s): s["blocks"].append(copy.deepcopy(s["blocks"][0]))
-        self.refuses(EXERCISE, self.with_aws(flowchart_again), "a later diagram (block 9) must be a sequence diagram (the paths through the services)")
+        def flow_again(s): s["blocks"].append(copy.deepcopy(s["blocks"][0]))
+        self.refuses(EXERCISE, self.with_aws(flow_again), "a later diagram (block 9) must be a sequence diagram (the paths through the services)")
         def two_sequences(s): s["blocks"].insert(4, copy.deepcopy(s["blocks"][2]))
         self.assertEqual(self.problems_after(EXERCISE, self.with_aws(two_sequences)), [])
 
-    # The split (2026-10-15): the architecture may come as two leading flowcharts (write half, read half); a third is a later diagram.
-    def test_aws_section_two_leading_flowcharts(self) -> None:
+    # The split (2026-10-15): the architecture may come as two leading flow blocks (write half, read half); a third is a later diagram.
+    def test_aws_section_two_leading_flows(self) -> None:
         def two_halves(s): s["blocks"].insert(1, copy.deepcopy(s["blocks"][0]))
         self.assertEqual(self.problems_after(EXERCISE, self.with_aws(two_halves)), [])
         def three(s): s["blocks"][1:1] = [copy.deepcopy(s["blocks"][0]), copy.deepcopy(s["blocks"][0])]
         self.refuses(EXERCISE, self.with_aws(three), "a later diagram (block 2) must be a sequence diagram")
-        def flowchart_after_a_sequence(s): s["blocks"].insert(3, copy.deepcopy(s["blocks"][0]))
-        self.refuses(EXERCISE, self.with_aws(flowchart_after_a_sequence), "a later diagram (block 3) must be a sequence diagram")
+        def flow_after_a_sequence(s): s["blocks"].insert(3, copy.deepcopy(s["blocks"][0]))
+        self.refuses(EXERCISE, self.with_aws(flow_after_a_sequence), "a later diagram (block 3) must be a sequence diagram")
 
     # A sequence diagram has at most five lanes, declared or implied by its arrows (five is what the 1280 column holds).
     def test_sequence_diagram_participants(self) -> None:
@@ -290,7 +298,7 @@ class Negative(Fixture):
         def in_a_concept_lesson(d): first(d, "diagram").update(mermaid=five + "\n  E->>F: implied")
         self.refuses(LESSON, in_a_concept_lesson, "a sequence diagram has 6 participants")
 
-    # The news-feed exercise as shipped (version 9): the two flowchart halves first, the write path in three parts, the identity table,
+    # The news-feed exercise as shipped (version 9): the two flow-block halves first, the write path in three parts, the identity table,
     # the read path in three parts; the core flow in five; every sequence diagram at most five lanes, a one-sentence lead-in before it,
     # and the step numbers running on across the parts of a path.
     def test_news_feed_diagram_blocks(self) -> None:
@@ -298,7 +306,7 @@ class Negative(Fixture):
         arrow = re.compile(r"^\s*\S+\s*(?:-->>|->>|--\)|-\)|--x|-x)[+-]?\s*\S+\s*:")
 
         def kinds(sid):
-            return ["flow" if b["type"] == "diagram" and b["mermaid"].startswith("flowchart") else "seq" if b["type"] == "diagram" else b["type"]
+            return ["seq" if b["type"] == "diagram" else b["type"]
                     for b in section(doc, sid)["blocks"]]
 
         def chains(sid):
@@ -350,11 +358,42 @@ class Negative(Fixture):
         def m(d): section(d, "failure-modes")["blocks"].append({"type": "diagram", "mermaid": self.SEQUENCE})
         self.refuses(EXERCISE, m, "section failure-modes: a diagram block belongs in high-level-design only")
 
-    def test_high_level_design_diagram_is_the_flowchart(self) -> None:
-        self.refuses(EXERCISE, lambda d: section(d, "high-level-design")["blocks"][0].update(mermaid=self.SEQUENCE), "section high-level-design: the diagram must be a Mermaid flowchart or flow block (the architecture)")
+    def test_high_level_design_diagram_is_the_flow(self) -> None:
+        def seq(d): section(d, "high-level-design")["blocks"][0] = {"type": "diagram", "mermaid": self.SEQUENCE}
+        self.refuses(EXERCISE, seq, "section high-level-design: the diagram must be a flow block (the architecture); Mermaid remains for sequence diagrams")
+
+    # Exercises, like concept lessons, refuse a Mermaid flowchart or graph: the architecture is a flow block, Mermaid is for sequences.
+    def test_exercise_refuses_a_mermaid_flowchart_in_high_level_design(self) -> None:
+        for source in self.MERMAID_FLOWCHARTS:
+            with self.subTest(source=source.split()[0]):
+                def m(d): section(d, "high-level-design")["blocks"][0] = {"type": "diagram", "mermaid": source}
+                self.refuses(EXERCISE, m, "exercise architecture diagrams must use a flow block; Mermaid remains for sequence diagrams")
+
+    def test_exercise_refuses_a_mermaid_flowchart_as_a_leading_aws_block(self) -> None:
+        for source in self.MERMAID_FLOWCHARTS:
+            with self.subTest(source=source.split()[0]):
+                def lead(s): s["blocks"][0] = {"type": "diagram", "mermaid": source}
+                self.refuses(EXERCISE, self.with_aws(lead), "exercise architecture diagrams must use a flow block; Mermaid remains for sequence diagrams")
+                def second(s): s["blocks"].insert(1, {"type": "diagram", "mermaid": source})
+                self.refuses(EXERCISE, self.with_aws(second), "exercise architecture diagrams must use a flow block")
+
+    def test_exercise_refuses_a_mermaid_flowchart_anywhere(self) -> None:
+        for sid in ("core-flow", "failure-modes"):
+            with self.subTest(section=sid):
+                def m(d): section(d, sid)["blocks"].append({"type": "diagram", "mermaid": self.MERMAID_FLOWCHARTS[0]})
+                self.refuses(EXERCISE, m, "exercise architecture diagrams must use a flow block")
+
+    def test_exercise_accepts_flow_blocks_and_sequences(self) -> None:
+        def hld(d): section(d, "high-level-design")["blocks"][0] = copy.deepcopy(self.FLOW)
+        self.assertEqual(self.problems_after(EXERCISE, hld), [])
+        def halves(s): s["blocks"].insert(1, copy.deepcopy(s["blocks"][0]))
+        self.assertEqual(self.problems_after(EXERCISE, self.with_aws(halves)), [])
+        def seq(d): section(d, "core-flow")["blocks"] = [{"type": "diagram", "mermaid": self.SEQUENCE, "legend": "Post, then read."}]
+        self.assertEqual(self.problems_after(EXERCISE, seq), [])
 
     def test_diagram_kind_unknown(self) -> None:
-        self.refuses(EXERCISE, lambda d: section(d, "high-level-design")["blocks"][0].update(mermaid="gantt\n  title x"), "must be a Mermaid flowchart or sequence diagram")
+        def gantt(d): section(d, "core-flow")["blocks"] = [{"type": "diagram", "mermaid": "gantt\n  title x"}]
+        self.refuses(EXERCISE, gantt, "must be a Mermaid sequence diagram")
 
     def test_aws_section_without_a_decision(self) -> None:
         def drop(s): s["blocks"] = [b for b in s["blocks"] if b["type"] != "decision"]
@@ -448,8 +487,9 @@ class Negative(Fixture):
         def m(d): section(d, "at-10x")["blocks"].append(copy.deepcopy(section(d, "high-level-design")["blocks"][0]))
         self.refuses(EXERCISE, m, "belongs in high-level-design only")
 
-    def test_exercise_diagram_is_a_flowchart(self) -> None:
-        self.refuses(EXERCISE, lambda d: section(d, "high-level-design")["blocks"][0].update(mermaid="sequenceDiagram\n A->>B: hi"), "must be a Mermaid flowchart")
+    def test_exercise_diagram_is_a_flow_block(self) -> None:
+        def seq(d): section(d, "high-level-design")["blocks"][0] = {"type": "diagram", "mermaid": "sequenceDiagram\n A->>B: hi"}
+        self.refuses(EXERCISE, seq, "the diagram must be a flow block")
 
     def test_section_order(self) -> None:
         def m(d): d["exercise"]["reference_answer"].reverse()
@@ -592,7 +632,8 @@ class Pages(Fixture):
         ids = ["prompt", "constraints", "clarifying-questions", "reference-answer", "requirements-and-estimates", "high-level-design", "data-model", "core-flow",
                "scaling-and-the-bottleneck", "failure-modes", "trade-offs", "at-10x", "rubric", "interview-frame", "design-doc-frame", "depth", "sources", "related"]
         self.in_order(self.exercise, [f'<h{n} id="{i}"' for i, n in zip(ids, [2, 2, 2, 2] + [3] * 8 + [2] * 6)])
-        self.assertEqual(self.exercise.count('<pre class="mermaid">'), 1)
+        self.assertEqual(self.exercise.count('<pre class="mermaid">'), 0)
+        self.assertEqual(self.exercise.count('<section class="flow"'), 1)
         self.assertIn('<th scope="col">average per second</th>', self.exercise)
         self.assertIn("<li><strong>Question 1?</strong> Answer 1.</li>", self.exercise)
         self.assertIn('<div class="steps-block"><p class="steps-title">Sections</p>', self.exercise)

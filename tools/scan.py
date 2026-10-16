@@ -158,20 +158,20 @@ EXERCISE_SECTION_IDS = ["requirements-and-estimates", "high-level-design", "data
 AWS_SECTION = "building-it-on-aws"   # :2 only, optional, right after high-level-design (format v2 addendum B)
 EXERCISE2_SECTION_IDS = EXERCISE_SECTION_IDS[:2] + [AWS_SECTION] + EXERCISE_SECTION_IDS[2:]
 # The AWS section's shape (orchestrator #46 and #50, 2026-10-15; the split of 2026-10-15): it opens with the AWS architecture
-# as one flowchart or as two (a write half and a read half), the leading blocks; every later diagram block is a sequence
+# as one flow block or as two (a write half and a read half), the leading blocks; every later diagram block is a sequence
 # diagram (the write and read paths through the services, split at their boundaries, with their failure branches); it
 # carries at least one decision block (the choices as decisions, not prices) and holds at most one cost table, which comes
 # last. A table is a cost table when any column header contains "monthly", "cost" or "price" (case-insensitive). Elsewhere
-# in an exercise a diagram belongs in high-level-design (one flowchart) or in core-flow (sequence diagrams may stand in for
-# the steps block). A sequence diagram anywhere has at most MAX_SEQUENCE_PARTICIPANTS lanes, declared or implied by its
-# arrows: Mermaid gives each lane about 200 px, so five is what the 1280 lesson column holds without sideways scrolling.
+# in an exercise a diagram belongs in high-level-design (one flow block) or in core-flow (sequence diagrams may stand in for
+# the steps block); a Mermaid flowchart or graph is refused anywhere in an exercise, as in a concept lesson. A sequence diagram
+# anywhere has at most MAX_SEQUENCE_PARTICIPANTS lanes, declared or implied by its arrows: Mermaid gives each lane about
+# 200 px, so five is what the 1280 lesson column holds without sideways scrolling.
 AWS_COST_COLUMN = re.compile(r"(?i)monthly|cost|price")
-AWS_MAX_LEADING_FLOWCHARTS = 2
+AWS_MAX_LEADING_FLOWS = 2
 MAX_SEQUENCE_PARTICIPANTS = 5
 TITLED_BODY = {"title": str, "body": str}
 FLOWCHART_START = re.compile(r"^\s*(flowchart|graph)\s")
 SEQUENCE_START = re.compile(r"^\s*sequenceDiagram\s")
-DIAGRAM_START = re.compile(r"^\s*(flowchart|graph|sequenceDiagram)\s")
 SEQUENCE_PARTICIPANT = re.compile(r"^\s*(?:participant|actor)\s+([^\s:]+)")
 SEQUENCE_ARROW = re.compile(r"^\s*([^\s:<>+-][^\s:<>]*?)\s*(?:-->>|->>|--\)|-\)|--x|-x|-->|->)[+-]?\s*([^\s:<>+-][^\s:<>]*?)\s*:")
 
@@ -981,10 +981,6 @@ def flow_problems(b: dict, path: str) -> list[str]:
     return out
 
 
-def architecture_block(b: dict) -> bool:
-    return b.get("type") == "flow" or (b.get("type") == "diagram" and bool(FLOWCHART_START.match(b.get("mermaid", ""))))
-
-
 def block_problems(b, path: str) -> list[str]:
     if not isinstance(b, dict):
         return [f"{path}: a block is an object, got {type(b).__name__}"]
@@ -1099,10 +1095,11 @@ def lesson2_checks(l: dict) -> list[str]:
                     if n > MAX_NUMBERS_IN_P:
                         out.append(f"{path}.rows[{ri}].{field}: a decision cell holds {n} numbers (at most {MAX_NUMBERS_IN_P}), the same as a paragraph; "
                                    "split the row or move the arithmetic to a steps block")
-        if t == "diagram" and exercise and not DIAGRAM_START.match(b["mermaid"]):
-            out.append(f"{path}: the diagram must be a Mermaid flowchart or sequence diagram (starts with 'flowchart', 'graph' or 'sequenceDiagram')")
-        if t == "diagram" and not exercise and FLOWCHART_START.match(b["mermaid"]):
-            out.append(f"{path}: concept flowcharts must use a flow block; Mermaid remains for sequence diagrams")
+        if t == "diagram" and FLOWCHART_START.match(b["mermaid"]):
+            what = "exercise architecture diagrams" if exercise else "concept flowcharts"
+            out.append(f"{path}: {what} must use a flow block; Mermaid remains for sequence diagrams")
+        elif t == "diagram" and exercise and not SEQUENCE_START.match(b["mermaid"]):
+            out.append(f"{path}: the diagram must be a Mermaid sequence diagram (starts with 'sequenceDiagram'); an architecture diagram is a flow block")
         if t == "diagram" and SEQUENCE_START.match(b["mermaid"]):
             n = len(sequence_participants(b["mermaid"]))
             if n > MAX_SEQUENCE_PARTICIPANTS:
@@ -1150,17 +1147,17 @@ def exercise2_checks(l: dict) -> list[str]:
         if sid == AWS_SECTION:
             first = bl[0].get("type") if bl else "missing"
             if first not in ("diagram", "flow"):
-                out.append(f"section {sid}: must start with a diagram block (the AWS architecture, mirroring the high-level-design one); "
+                out.append(f"section {sid}: must start with a flow block (the AWS architecture, mirroring the high-level-design one); "
                            f"the first block is {first!r}")
-            elif not architecture_block(bl[0]):
-                out.append(f"section {sid}: must start with a flowchart (the AWS architecture); a sequence diagram comes after it")
-            lead = 0   # the architecture: one flowchart, or its write half and read half
-            while lead < min(len(bl), AWS_MAX_LEADING_FLOWCHARTS) and architecture_block(bl[lead]):
+            elif first != "flow":
+                out.append(f"section {sid}: must start with a flow block (the AWS architecture); a sequence diagram comes after it")
+            lead = 0   # the architecture: one flow block, or its write half and read half
+            while lead < min(len(bl), AWS_MAX_LEADING_FLOWS) and bl[lead].get("type") == "flow":
                 lead += 1
             for i, b in enumerate(bl[lead:], lead):
                 if b.get("type") == "flow" or (b.get("type") == "diagram" and not SEQUENCE_START.match(b["mermaid"])):
                     out.append(f"section {sid}: a later diagram (block {i}) must be a sequence diagram (the paths through the services); "
-                               f"the architecture flowchart, or its write and read halves, comes first only")
+                               f"the architecture flow block, or its write and read halves, comes first only")
             if not any(b.get("type") == "decision" for b in bl):
                 out.append(f"section {sid}: needs at least one decision block (the choices as decisions: option, pick when, avoid when, for this design)")
             cost_tables = [t for t in tables if any(AWS_COST_COLUMN.search(c) for c in t["columns"])]
@@ -1177,13 +1174,13 @@ def exercise2_checks(l: dict) -> list[str]:
                 out.append(f"section {sid}: needs a steps block or a sequence diagram")
             for b in diagrams:
                 if not SEQUENCE_START.match(b.get("mermaid", "")):
-                    out.append(f"section {sid}: a diagram here is a sequence diagram (the flow, request by request); the flowchart is high-level-design's")
+                    out.append(f"section {sid}: a diagram here is a sequence diagram (the flow, request by request); the flow block is high-level-design's")
         n_diagrams = len(diagrams)
         if sid == "high-level-design":
             if n_diagrams != 1:
                 out.append(f"section {sid}: needs exactly one diagram block, has {n_diagrams}")
-            elif not architecture_block(diagrams[0]):
-                out.append(f"section {sid}: the diagram must be a Mermaid flowchart or flow block (the architecture)")
+            elif diagrams[0].get("type") != "flow":
+                out.append(f"section {sid}: the diagram must be a flow block (the architecture); Mermaid remains for sequence diagrams")
         if sid not in ("high-level-design", AWS_SECTION, "core-flow") and n_diagrams:
             out.append(f"section {sid}: a diagram block belongs in high-level-design only (or in {AWS_SECTION}, or a sequence diagram in core-flow)")
         for t in tables:
