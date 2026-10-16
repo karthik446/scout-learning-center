@@ -751,6 +751,17 @@ class Flows(unittest.TestCase):
                     self.assertLessEqual(frame["y"]+frame["h"], geometry["height"], "frame clipped by viewBox")
                 for item in geometry["labels"]:
                     left, top, right, bottom = item["box"]
+                    for frame in geometry["frames"]:
+                        l, t, r, bot = frame["x"], frame["y"], frame["x"]+frame["w"], frame["y"]+frame["h"]
+                        forbidden = [(l-4, t-4, r+4, frame["title_box"][3]+4),
+                                     (l-4, t-4, l+4, bot+4), (r-4, t-4, r+4, bot+4), (l-4, bot-4, r+4, bot+4)]
+                        for x1, y1, x2, y2 in forbidden:
+                            self.assertFalse(max(left, x1) < min(right, x2) and max(top, y1) < min(bottom, y2),
+                                             "edge label sits on a frame title row or border")
+                    for other in geometry["labels"]:
+                        if abs(item["edge"]-other["edge"]) == 1 and max(left, other["box"][0]) < min(right, other["box"][2]):
+                            self.assertGreaterEqual(max(top-other["box"][3], other["box"][1]-bottom), 10,
+                                                    "consecutive call labels crowd vertically")
                     for route in geometry["routes"]:
                         for a, z in zip(route, route[1:]):
                             crossed = (left < a[0] < right and max(min(a[1], z[1]), top) < min(max(a[1], z[1]), bottom)) if a[0] == z[0] else (
@@ -779,6 +790,15 @@ class Flows(unittest.TestCase):
                 self.assertEqual(len(route), 2, "entry chain must not wrap around a frame")
                 self.assertEqual(route[0][0], route[1][0])
         self.assertLessEqual(build.flow_layout(halves[0])["height"], 750)
+        neutral = next(b for b in section(news, "high-level-design")["blocks"] if b["type"] == "flow")
+        geometry = build.flow_layout(neutral)
+        for edge, route in zip(neutral["edges"], geometry["routes"]):
+            if edge["from"] == "FS" and edge["to"] in ("TL", "PDB"):
+                distance = sum(abs(a[0]-z[0])+abs(a[1]-z[1]) for a, z in zip(route, route[1:]))
+                direct = abs(route[0][0]-route[-1][0])+abs(route[0][1]-route[-1][1])
+                self.assertLessEqual(distance, direct+40, "cross-frame read takes a long loop")
+                self.assertLessEqual(max(p[0] for p in route), geometry["nodes"][edge["to"]]["x"],
+                                     "cross-frame read goes around the far side of its store")
 
     def test_exercise_accepts_flow_architecture(self):
         doc = json.loads((FIXTURES / f"{EXERCISE}.json").read_text())

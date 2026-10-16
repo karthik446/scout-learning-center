@@ -489,7 +489,7 @@ def flow_layout(b: dict) -> dict:
     for n in nodes.values():
         n["lines"] = textwrap.wrap(n["label"], 24 if n["kind"] == "queue" else 26)
         n["w"] = box_width
-        n["h"] = max(40, len(n["lines"])*18 + (38 if n["kind"] == "store" else 16))
+        n["h"] = max(38, len(n["lines"])*18 + (38 if n["kind"] == "store" else 14))
     columns = {key: int(n["kind"] in ("store", "queue")) for key, n in nodes.items()}
     ranks = dict.fromkeys(nodes, 0)
     # Keep storage members of a frame together, so an unrelated regional store
@@ -548,7 +548,7 @@ def flow_layout(b: dict) -> dict:
             break
     title_lines = {f["id"]: textwrap.wrap(f["title"], 13) for f in groups}
     title_heights = {key: len(lines)*18+8 for key, lines in title_lines.items()}
-    y = 36
+    y = max([8]+[title_heights[owner[n]]+10 for n in nodes if ranks[n] == 0 and n in owner])
     for panel in panels:
         previous_row = []
         for rank in sorted({ranks[n] for n in panel}):
@@ -559,7 +559,9 @@ def flow_layout(b: dict) -> dict:
                 extra_gap = 0
                 for f in starts:
                     framed_before = any(n in owner and columns[n] == columns[f["nodes"][0]] for n in previous_row)
-                    extra_gap = max(extra_gap, title_heights[f["id"]]+(24 if framed_before else 12)-32)
+                    vertical_entry = any(n in f["nodes"] and any(columns[p] == columns[n] for p in incoming[n]) for n in row)
+                    extra_gap = max(extra_gap, title_heights[f["id"]]+(24 if framed_before else 12)
+                                    +(24 if vertical_entry else 0)-32)
                 y += extra_gap
             height = max(nodes[n]["h"] for n in row)
             for key in row:
@@ -585,9 +587,7 @@ def flow_layout(b: dict) -> dict:
     attachments = {}
     for i, edge in enumerate(b["edges"]):
         a, z = nodes[edge["from"]], nodes[edge["to"]]
-        if panel_of[edge["from"]] != panel_of[edge["to"]]:
-            pair = ("right", "right")
-        elif a["x"] == z["x"]:
+        if a["x"] == z["x"]:
             pair = ("bottom", "top") if a["y"] < z["y"] else ("top", "bottom")
         elif abs(a["y"]+a["h"]/2-z["y"]-z["h"]/2) < 2:
             pair = ("right", "left") if a["x"] < z["x"] else ("left", "right")
@@ -615,7 +615,6 @@ def flow_layout(b: dict) -> dict:
         return 0
 
     segments, routes = [], []
-    cross_count = 0
     for i, edge in enumerate(b["edges"]):
         start_side, end_side = sides[i]
         start_port = port(edge["from"], start_side, (i, "start"))
@@ -647,24 +646,6 @@ def flow_layout(b: dict) -> dict:
             return not any(overlap(a, z, c, d) > 0 for l, t, r, bot in borders
                            for c, d in (((l,t),(r,t)), ((r,t),(r,bot)), ((r,bot),(l,bot)), ((l,bot),(l,t))))
 
-        if panel_of[edge["from"]] != panel_of[edge["to"]]:
-            # Cross-panel reads take their own outside return tracks instead
-            # of threading a long vertical line through the write-path boxes.
-            panel = panels[panel_of[edge["from"]]]
-            panel_top = min((f["y"] for f in frames if any(n in panel for n in f["nodes"])),
-                            default=min(nodes[n]["y"] for n in panel))
-            guide_y = panel_top-24+cross_count*14
-            corridor_x = start[0]+24+cross_count*14
-            outer_x = width-24-cross_count*14
-            middle = [start, (corridor_x, start[1]), (corridor_x, guide_y),
-                      (outer_x, guide_y), (outer_x, end[1]), end]
-            if not all(clear(a, z) for a, z in zip(middle, middle[1:])):
-                raise BuildError(f"flow: no clear outside track for edge {i}")
-            route = [start_port]+middle+[end_port]
-            routes.append(route)
-            segments.extend(zip(route, route[1:]))
-            cross_count += 1
-            continue
         origin = (xs.index(start[0]), ys.index(start[1]), 0)
         target = (xs.index(end[0]), ys.index(end[1]))
         todo, distances, previous = [(0, origin)], {origin: 0}, {}
@@ -709,36 +690,43 @@ def flow_layout(b: dict) -> dict:
         routes.append(compact)
         segments.extend(zip(compact, compact[1:]))
     labels = []
+    label_obstacles = obstacles + [(f["x"]-4, f["y"]-4, f["x"]+f["w"]+4, f["title_box"][3]+4) for f in frames]
+    label_obstacles += [rect for l, t, r, bot in borders for rect in
+                        ((l-4, t-4, l+4, bot+4), (r-4, t-4, r+4, bot+4), (l-4, bot-4, r+4, bot+4))]
     label_order = sorted(range(len(routes)), key=lambda i: sum(abs(a[0]-z[0])+abs(a[1]-z[1]) for a, z in zip(routes[i], routes[i][1:])))
     for i in label_order:
         edge, route = b["edges"][i], routes[i]
         short = edge.get("short") or " ".join(edge["label"].split()[:3])
         text = f"{i+1} · {short}"
-        tw = len(text)*8.2
         candidates = []
-        for a, z in zip(route, route[1:]):
-            length = abs(a[0]-z[0])+abs(a[1]-z[1])
-            if length < 16:
-                continue
-            for fraction in (i/40 for i in range(4, 37)):
-                cx, cy = a[0]+(z[0]-a[0])*fraction, a[1]+(z[1]-a[1])*fraction
-                positions = [(cx+10, cy-9), (cx-tw-10, cy-9)] if a[0] == z[0] else [(cx-tw/2, cy-24), (cx-tw/2, cy+7)]
-                for lx, ly in positions:
-                    rect = (lx-3, ly-2, lx+tw+3, ly+20)
-                    if rect[0] < 4 or rect[2] > width-4 or rect[1] < 0:
-                        continue
-                    if any(max(rect[0], l) < min(rect[2], r) and max(rect[1], t) < min(rect[3], bot)
-                           for l, t, r, bot in obstacles+[item["box"] for item in labels]):
-                        continue
-                    if any((rect[0] < a[0] < rect[2] and max(min(a[1], z[1]), rect[1]) < min(max(a[1], z[1]), rect[3]))
-                           if a[0] == z[0] else (rect[1] < a[1] < rect[3] and max(min(a[0], z[0]), rect[0]) < min(max(a[0], z[0]), rect[2]))
-                           for a, z in segments):
-                        continue
-                    candidates.append((abs(fraction-.5)*30-length/100, lx, ly, rect))
+        for lines in ([text], textwrap.wrap(text, 12)):
+            tw, th = max(map(len, lines))*8.2, len(lines)*18
+            for a, z in zip(route, route[1:]):
+                length = abs(a[0]-z[0])+abs(a[1]-z[1])
+                if length < 16:
+                    continue
+                for fraction in (j/40 for j in range(4, 37)):
+                    cx, cy = a[0]+(z[0]-a[0])*fraction, a[1]+(z[1]-a[1])*fraction
+                    positions = [(cx+10, cy-th/2), (cx-tw-10, cy-th/2)] if a[0] == z[0] else [(cx-tw/2, cy-th-6), (cx-tw/2, cy+7)]
+                    for lx, ly in positions:
+                        rect = (lx-3, ly-2, lx+tw+3, ly+th+2)
+                        if rect[0] < 4 or rect[2] > width-4 or rect[1] < 0:
+                            continue
+                        if any(max(rect[0], l) < min(rect[2], r) and max(rect[1], t) < min(rect[3], bot)
+                               for l, t, r, bot in label_obstacles+[item["box"] for item in labels]):
+                            continue
+                        if any(abs(i-item["edge"]) == 1 and max(rect[0], item["box"][0]) < min(rect[2], item["box"][2])
+                               and max(rect[1]-item["box"][3], item["box"][1]-rect[3]) < 10 for item in labels):
+                            continue
+                        if any((rect[0] < a[0] < rect[2] and max(min(a[1], z[1]), rect[1]) < min(max(a[1], z[1]), rect[3]))
+                               if a[0] == z[0] else (rect[1] < a[1] < rect[3] and max(min(a[0], z[0]), rect[0]) < min(max(a[0], z[0]), rect[2]))
+                               for a, z in segments):
+                            continue
+                        candidates.append((len(lines)*100+abs(fraction-.5)*30-length/100, lx, ly, rect, lines))
         if not candidates:
             raise BuildError(f"flow: no clear space for edge label {text!r}")
-        _, lx, ly, rect = min(candidates)
-        labels.append(dict(text=text, x=lx, y=ly+15, box=rect))
+        _, lx, ly, rect, lines = min(candidates)
+        labels.append(dict(edge=i, text=text, lines=lines, x=lx, y=ly+15, box=rect))
     return dict(nodes=nodes, frames=frames, routes=routes, labels=labels, width=width, height=y-18)
 
 
@@ -772,7 +760,7 @@ def render_flow(b: dict, ident: str) -> str:
         baseline = y+(h-len(n["lines"])*18)/2+(18 if n["kind"] == "store" else 14)
         out.append(label(n["lines"], x+w/2, baseline, "flow-label") + '</g>')
     for item in g["labels"]:
-        out.append(label([item["text"]], item["x"], item["y"], "flow-edge-label"))
+        out.append(label(item["lines"], item["x"], item["y"], "flow-edge-label"))
     out += ['<circle class="flow-packet hidden" r="6"/>', '<circle class="flow-queued hidden" r="6"/>', '</svg>',
             '<div class="flow-controls">' + "".join(f'<button type="button" data-action="{action}">{text}</button>' for action, text in
             (("previous", "Back"), ("next", "Next"), ("play", "Play"), ("reset", "Reset"))) + '</div>',
