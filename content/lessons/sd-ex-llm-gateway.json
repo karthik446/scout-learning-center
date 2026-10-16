@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-llm-gateway",
-  "version": 4,
+  "version": 5,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: LLM gateway",
@@ -596,6 +596,11 @@
                 "kind": "service"
               },
               {
+                "id": "DIS",
+                "label": "Usage dispatcher",
+                "kind": "service"
+              },
+              {
                 "id": "LOG",
                 "label": "Durable usage work",
                 "kind": "queue"
@@ -669,10 +674,17 @@
                 "short": "Settle"
               },
               {
-                "from": "GW",
+                "from": "DIS",
+                "to": "RES",
+                "kind": "sync",
+                "label": "Read durable pending usage-change events",
+                "short": "Read events"
+              },
+              {
+                "from": "DIS",
                 "to": "LOG",
                 "kind": "async",
-                "label": "Dispatch durable usage intent",
+                "label": "Send one event per settlement version",
                 "short": "Dispatch"
               },
               {
@@ -726,18 +738,22 @@
               },
               {
                 "edge": 8,
-                "caption": "GW to LOG: Dispatch durable usage intent"
+                "caption": "DIS to RES: Read durable pending usage-change events"
               },
               {
                 "edge": 9,
-                "caption": "LOG to AG: Deliver usage event"
+                "caption": "DIS to LOG: Send one event per settlement version"
               },
               {
                 "edge": 10,
+                "caption": "LOG to AG: Deliver usage event"
+              },
+              {
+                "edge": 11,
                 "caption": "AG to EV: Idempotent usage and review rollup"
               }
             ],
-            "legend": "Router is inside the gateway. Hosted routes are alternatives, not a fan-out to every provider. The usage queue is backed by durable intents; accounting remains correct if dispatch fails."
+            "legend": "Router is inside the gateway. Hosted routes are alternatives, not a fan-out to every provider. The settlement transaction writes an immutable usage-change event with the ledger update; only the separate dispatcher reads those events and sends them, so accounting remains correct if dispatch fails. In AWS the dispatcher is its own task role."
           },
           {
             "type": "p",
@@ -953,21 +969,21 @@
                 "from": "GW",
                 "to": "DB",
                 "kind": "sync",
-                "label": "TransactWriteItems settlement plus usage intent",
+                "label": "TransactWriteItems settlement plus usage-change event",
                 "short": "Settle"
               },
               {
                 "from": "DIS",
                 "to": "DB",
                 "kind": "sync",
-                "label": "Query pending usage intents",
+                "label": "Query pending usage-change events",
                 "short": "Query intents"
               },
               {
                 "from": "DIS",
                 "to": "Q",
                 "kind": "async",
-                "label": "SendMessage request usage version",
+                "label": "SendMessage one event per request and settlement version",
                 "short": "SendMessage"
               },
               {
@@ -1013,15 +1029,15 @@
             "steps": [
               {
                 "edge": 0,
-                "caption": "GW to DB: TransactWriteItems settlement plus usage intent"
+                "caption": "GW to DB: TransactWriteItems settlement plus usage-change event"
               },
               {
                 "edge": 1,
-                "caption": "DIS to DB: Query pending usage intents"
+                "caption": "DIS to DB: Query pending usage-change events"
               },
               {
                 "edge": 2,
-                "caption": "DIS to Q: SendMessage request usage version"
+                "caption": "DIS to Q: SendMessage one event per request and settlement version"
               },
               {
                 "edge": 3,
@@ -1040,7 +1056,7 @@
                 "caption": "ADMIN to AG: HTTPS authorised usage request"
               }
             ],
-            "legend": "Accounting and usage-read half. SQS may duplicate or reorder events. The aggregator conditionally records a processed event key with its rollup delta, preventing double charges in showback; the live budget was already settled in the authoritative transaction. Sources: s21, s14.",
+            "legend": "Accounting and usage-read half. SQS may duplicate or reorder events. Each event is a per-change delta keyed by request id and settlement version; the aggregator conditionally records that key with its rollup delta, so duplicates and reordering neither lose nor double-count showback. The live budget was already settled in the authoritative transaction. Sources: s21, s14.",
             "cites": [
               "s21",
               "s14"
@@ -1076,7 +1092,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 18\n  participant G as Gateway\n  participant D as DynamoDB\n  participant X as Dispatcher\n  participant Q as SQS\n  participant W as Aggregator\n  G->>D: conditional settle and intent\n  alt expected version matches\n   D-->>G: delta committed once\n  else stale settlement version\n   D-->>G: reject, reread request\n  end\n  X->>D: read durable pending intent\n  D-->>X: request and usage version\n  X-)Q: usage event\n  Q-)W: usage delivery\n  W->>D: event dedupe plus rollup\n  alt first delivery\n   D-->>W: applied\n  else duplicate\n   D-->>W: already applied\n  end\n  W->>Q: DeleteMessage",
+            "mermaid": "sequenceDiagram\n  autonumber 18\n  participant G as Gateway\n  participant D as DynamoDB\n  participant X as Dispatcher\n  participant Q as SQS\n  participant W as Aggregator\n  G->>D: settle plus change event\n  alt expected version matches\n   D-->>G: delta and event committed\n  else stale settlement version\n   D-->>G: reject, reread request\n  end\n  X->>D: read pending change events\n  D-->>X: request id, version, deltas\n  X-)Q: one event per version\n  Q-)W: usage delivery\n  W->>D: apply delta once per key\n  alt key not yet applied\n   D-->>W: rollup updated\n  else key already applied\n   D-->>W: no change\n  end\n  W->>Q: DeleteMessage",
             "legend": "Solid calls and dashed replies are synchronous; open arrows hand work off asynchronously. Failure branches are mutually exclusive. Sources: s21, s9.",
             "cites": [
               "s21",
@@ -1377,9 +1393,15 @@
               ],
               [
                 "Request",
-                "payload_hash, owner, state, budget_month, reservation_amount, settlement_version, booked_spend, held_exposure, attempts, usage_intent",
+                "payload_hash, owner, state, budget_month, reservation_amount, settlement_version, booked_spend, held_exposure, attempts",
                 "tenant_id, client_request_id",
                 "Immutable original month and reservation amount; conditional settlement version protects balance deltas. Same primary-key claim prevents another owner redispatching inference."
+              ],
+              [
+                "UsageChange",
+                "request_id, settlement_version, spend_delta, exposure_delta, budget_month, sent",
+                "tenant_id, request_id, settlement_version",
+                "Immutable event written in the same transaction as each settlement change; dispatcher marks sent only after SendMessage."
               ],
               [
                 "DeploymentState",
@@ -1451,7 +1473,7 @@
           },
           {
             "type": "p",
-            "text": "Settlement reads the request's settlement_version, booked_spend and held_exposure. Compute new cumulative booked spend and remaining unknown exposure from durable attempt evidence, bounded by the reserved attempt ceiling. In one transaction, condition the Request update on the expected settlement version, advance it, store the new totals and usage intent, and change Team.spent by new booked spend minus old booked spend and Team.reserved by new held exposure minus old held exposure. Always update the original budget month, even after month rollover. A lost reply or racing reconciler cannot apply that version twice: on conflict reread, return the already-applied result or recompute from newer evidence. Later unknown-to-known evidence uses the same versioned delta transition, not another subtraction of the original reservation. Retain per-attempt evidence identities and cumulative values so replayed evidence is a no-op. Request is the durable outbox; only the dispatcher sends its versioned events. Unknown requests cannot be resubmitted under the same id; a fresh id is a new billable request."
+            "text": "Settlement reads the request's settlement_version, booked_spend and held_exposure. Compute new cumulative booked spend and remaining unknown exposure from durable attempt evidence, bounded by the reserved attempt ceiling. In one transaction, condition the Request update on the expected settlement version, advance it, store the new totals, write one immutable UsageChange keyed by request id and the new version, and change Team.spent by new booked spend minus old booked spend and Team.reserved by new held exposure minus old held exposure. Always update the original budget month, even after month rollover. A lost reply or racing reconciler cannot apply that version twice: on conflict reread, return the already-applied result or recompute from newer evidence. Later unknown-to-known evidence uses the same versioned delta transition, not another subtraction of the original reservation. Retain per-attempt evidence identities and cumulative values so replayed evidence is a no-op. Usage events carry per-change deltas, never a single overwritten pending total (which loses spend) and never cumulative totals added per event (which double-counts). The aggregator applies each delta once per (request id, version) key in one transaction with the rollup, so duplicate or reordered delivery is harmless. Only the dispatcher sends events; unsent changes stay pending for retry. Unknown requests cannot be resubmitted under the same id; a fresh id is a new billable request."
           }
         ]
       },
@@ -1486,8 +1508,8 @@
               "Choose a route allowed for this alias and data classification. Check per-provider request, input-token, output-token and concurrency dimensions; cache hits may affect these differently by provider.",
               "A confirmed rejection before inference may permit bounded failover. An ambiguous timeout can have incurred usage even with no first byte; failover is allowed only under an explicit duplicate-inference policy with both attempt costs reserved. Never retry a tool side effect; tools are out of scope.",
               "After any client-visible output, do not splice another completion into the same stream. Return an interrupted marker, not a fabricated resume cursor. The client may choose a new request with a new id and budget.",
-              "Settle by conditional settlement-version transition with cumulative spend/exposure deltas and the usage intent in the same transaction against the original month. Replay or racing reconciliation rereads on conflict; later known usage adjusts only the prior totals once. Unknown attempt exposure remains reserved. The dispatcher alone reads durable intents and sends usage events.",
-              "Project usage asynchronously with event deduplication; the rollup’s delay never authorises additional spending. Show spent, reserved and unknown usage separately."
+              "Settle by conditional settlement-version transition with cumulative spend/exposure deltas and one immutable UsageChange event in the same transaction against the original month. Replay or racing reconciliation rereads on conflict; later known usage adjusts only the prior totals once. Unknown attempt exposure remains reserved. The dispatcher alone reads pending events and sends one per request and version.",
+              "Project usage asynchronously: the aggregator applies each per-change delta once per request-and-version key, so duplicates and reordering neither lose nor double-count showback; the rollup's delay never authorises additional spending. Show spent, reserved and unknown usage separately."
             ],
             "cites": [
               "s21",
@@ -1841,6 +1863,11 @@
       "version": 4,
       "date": "2026-10-16",
       "change": "Address E2B G1-G3: replay-safe conditional settlement tied to original budget month, dispatcher-only usage path, distinct absent/duplicate/conflict admission outcomes, and retained retry-after qualification. Review provenance remains unset."
+    },
+    {
+      "version": 5,
+      "date": "2026-10-16",
+      "change": "Address reread G2-R and G4: neutral flow shows the usage dispatcher; usage events are immutable per-change deltas keyed by request id and settlement version, applied idempotently. Review provenance remains unset."
     }
   ]
 }
