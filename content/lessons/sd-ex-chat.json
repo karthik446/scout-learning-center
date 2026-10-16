@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-chat",
-  "version": 9,
+  "version": 10,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: chat and presence",
@@ -670,6 +670,17 @@
         "http": 200,
         "section_found": "Every publish, publish batch, topic owner operation, and subscription owner operation counts as a request"
       }
+    },
+    {
+      "id": "s58",
+      "title": "Amazon ECR User Guide: Amazon ECR interface VPC endpoints (AWS PrivateLink)",
+      "url": "https://docs.aws.amazon.com/AmazonECR/latest/userguide/vpc-endpoints.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Amazon ECR interface VPC endpoints (AWS PrivateLink)"
+      }
     }
   ],
   "practice": null,
@@ -1090,7 +1101,7 @@
                 "caption": "The gateway reads the gap for a reconnecting client from the message store and writes the receipt cursors"
               }
             ],
-            "legend": "Boxes are containers; cylinders are stores; double brackets are logs. Gateways hold connections, conversation servers hold order. The gateway fleet is drawn twice, as the sender's gateway on the way in and as the members' gateways on the way out, so that the diagram has no cycle. The arrow from the conversation servers to the session registry is the lookup the core flow describes, which the first version of the diagram left out. Two more arrows the first version of the diagram left out, which the core flow describes: the push service looks the sessions up in the registry to find the members without one (the registry is drawn a second time here, because the flow router cannot lay out three arrows into one box; it is the same store), and the gateway reads the message store to serve the gap of a reconnecting client and writes the receipt cursors. The push providers the push service sends to are not drawn, to stay within 12 boxes."
+            "legend": "Boxes are containers; cylinders are stores; double brackets are logs. Gateways hold connections, conversation servers hold order. The gateway fleet is drawn twice, as the sender's gateway on the way in and as the members' gateways on the way out, so that the diagram has no cycle. The arrow from the conversation servers to the session registry is the lookup the core flow describes, which the first version of the diagram left out. Two more arrows the first version of the diagram left out, which the core flow describes: the push service looks the sessions up in the registry to find the members without one (the registry is drawn a second time here, because the flow router cannot lay out three arrows into one box; it is the same store), and the gateway reads the message store to serve the gap of a reconnecting client and writes the receipt cursors. The push providers the push service sends to are not drawn, to stay within 12 boxes. The message store box stands for the stores of the messages, the conversation records and the receipts. The gateway also forwards a history read to the owning conversation server, which serves it from its tail or the store."
           },
           {
             "type": "p",
@@ -1131,7 +1142,7 @@
               },
               {
                 "id": "MS",
-                "label": "Amazon DynamoDB: messages table",
+                "label": "Amazon DynamoDB: chat tables",
                 "kind": "store"
               },
               {
@@ -1216,22 +1227,22 @@
                 "from": "GW",
                 "to": "PR",
                 "kind": "sync",
-                "label": "SET the status with a TTL, cache write",
+                "label": "SET the status with a TTL, GET the status of the contacts in view, cache write and read",
                 "short": "Status"
               },
               {
                 "from": "GW",
                 "to": "CS",
                 "kind": "sync",
-                "label": "RPC to the owning task by IP, sync",
+                "label": "RPC to the owning task by IP, sends and history reads, sync",
                 "short": "Publish"
               },
               {
                 "from": "CS",
                 "to": "MS",
                 "kind": "sync",
-                "label": "PutItem over the gateway endpoint, sync",
-                "short": "PutItem"
+                "label": "PutItem and Query over the gateway endpoint, sync",
+                "short": "PutItem + Query"
               },
               {
                 "from": "CS",
@@ -1279,8 +1290,8 @@
                 "from": "GW",
                 "to": "MS",
                 "kind": "sync",
-                "label": "Query the gap and UpdateItem the receipt cursor over the gateway endpoint, sync",
-                "short": "Resync"
+                "label": "Query the gap, GetItem and PutItem the conversations, UpdateItem the receipts, over the gateway endpoint, sync",
+                "short": "Tables"
               }
             ],
             "steps": [
@@ -1298,15 +1309,15 @@
               },
               {
                 "edge": 3,
-                "caption": "Gateway to presence: SET the status with a TTL, again at every heartbeat"
+                "caption": "Gateway to presence: SET the status with a TTL at every heartbeat, GET the status of the contacts in view"
               },
               {
                 "edge": 4,
-                "caption": "Gateway to the owning conversation server: RPC by task IP, sync"
+                "caption": "Gateway to the owning conversation server: RPC by task IP, for a send or a history read, sync"
               },
               {
                 "edge": 5,
-                "caption": "Conversation server to DynamoDB messages: PutItem over the gateway endpoint, sync"
+                "caption": "Conversation server to DynamoDB chat tables: PutItem for a send, Query for a history read or to rebuild its tail, sync"
               },
               {
                 "edge": 6,
@@ -1334,16 +1345,18 @@
               },
               {
                 "edge": 12,
-                "caption": "Gateway to DynamoDB messages: Query the gap on a reconnect and UpdateItem the receipt cursor, over the gateway endpoint, sync"
+                "caption": "Gateway to DynamoDB chat tables: Query the gap on a reconnect, GetItem and PutItem the conversations, UpdateItem the receipt cursors, sync"
               }
             ],
-            "legend": "The same boxes as the neutral diagram, one AWS service each, plus the arrow the core flow needs: the L4 balancer is a Network Load Balancer, gateways, conversation servers, the push service and the indexer are ECS on Fargate services, message history is a DynamoDB table keyed by conversation and bucket, presence and the session registry are two ElastiCache for Valkey clusters (kept apart so the best-effort presence traffic never shares a failure with the registry the message path reads), and the message events are a Kinesis data stream. Each arrow says how the call is made: TLS from clients, TCP through the load balancer s7, RPC and batched deliveries between tasks by IP address, named SDK calls over the DynamoDB gateway endpoint s8 and the Kinesis interface endpoint s9, cache reads and writes with a TTL s10. Sync means the caller waits for the answer; async means the work goes on after the caller has been answered. The gateway fleet is drawn twice, as the sender's gateway on the way in and as the members' gateways on the way out, so that the diagram has no cycle. Gateways learn the conversation servers' task addresses from ECS service discovery s11 and hash conversation ids over that list. The VPC frames are one VPC in one Region across three Availability Zones. The push service reads the session registry to find the members without a session (the cache clusters sit in the same private subnets, outside the frame so that the diagram can be laid out; the registry box is drawn a second time because the flow router cannot lay out three arrows into one box; it is the same cluster) and sends the push to APNs and FCM through NAT gateways s55, which the diagram does not draw to stay within 12 boxes; the gateways read the messages table for a resync and write the receipt cursors.",
+            "legend": "The same boxes as the neutral diagram, one AWS service each, plus the arrow the core flow needs: the L4 balancer is a Network Load Balancer, gateways, conversation servers, the push service and the indexer are ECS on Fargate services, message history is a DynamoDB table keyed by conversation and bucket, presence and the session registry are two ElastiCache for Valkey clusters (kept apart so the best-effort presence traffic never shares a failure with the registry the message path reads), and the message events are a Kinesis data stream. Each arrow says how the call is made: TLS from clients, TCP through the load balancer s7, RPC and batched deliveries between tasks by IP address, named SDK calls over the DynamoDB gateway endpoint s8 and the Kinesis interface endpoint s9, cache reads and writes with a TTL s10. Sync means the caller waits for the answer; async means the work goes on after the caller has been answered. The gateway fleet is drawn twice, as the sender's gateway on the way in and as the members' gateways on the way out, so that the diagram has no cycle. Gateways learn the conversation servers' task addresses from ECS service discovery s11 and hash conversation ids over that list. The VPC frames are one VPC in one Region across three Availability Zones. The push service reads the session registry to find the members without a session (the cache clusters sit in the same private subnets, outside the frame so that the diagram can be laid out; the registry box is drawn a second time because the flow router cannot lay out three arrows into one box; it is the same cluster) and sends the push to APNs and FCM through NAT gateways s55, which the diagram does not draw to stay within 12 boxes; the gateways read the messages table for a resync and write the receipt cursors. The DynamoDB box stands for three tables: messages (key conversation and bucket, sort key message id), conversations (key conversation id, with the member ids) and receipts (key conversation and user); a Query on the messages table is one key s17, a conversation is created with a conditional put s14. The conversation servers write the messages and read them back to serve history and to rebuild a tail; the gateways read and create conversations, read the gap for a resync and write the receipt cursors. History reads and the conversation calls reach the gateways over the same load balancer listener.",
             "cites": [
               "s7",
               "s8",
               "s9",
               "s10",
               "s11",
+              "s14",
+              "s17",
               "s55"
             ]
           },
@@ -1353,7 +1366,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber\n  participant App as Client app\n  participant Edge\n  participant G as Gateway\n  participant SS as Session registry\n  participant PR as Presence\n  App->>Edge: TLS handshake, HTTP upgrade\n  Edge->>G: TCP to a gateway task\n  Note over App,G: the WebSocket opens, RFC 6455\n  G->>SS: SET the session with a TTL\n  G->>PR: SET status online with a TTL\n  loop every 30 s\n    App->>G: ping\n    G-->>App: pong\n    G->>PR: SET status again\n    G->>SS: SET session again\n  end\n  opt a clean disconnect\n    G->>SS: DEL the session\n    G->>PR: DEL the status\n  end\n  opt the gateway task dies\n    Note over SS,PR: the entries expire by their TTL,<br/>60 s for presence, the clients reconnect\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber\n  participant App as Client app\n  participant Edge\n  participant G as Gateway\n  participant SS as Session registry\n  participant PR as Presence\n  App->>Edge: TLS handshake, HTTP upgrade\n  Edge->>G: TCP to a gateway task\n  Note over App,G: the WebSocket opens, RFC 6455\n  G->>SS: SET the session with a TTL\n  G->>PR: SET status online with a TTL\n  loop every 30 s\n    App->>G: ping\n    G-->>App: pong\n    G->>PR: SET status again\n    G->>SS: SET session again\n  end\n  opt the user opens a conversation view\n    G->>PR: GET the status of the contacts in view\n    PR-->>G: online, away or offline\n    Note over G,PR: a change reaches the viewer by a<br/>debounced re-read every few seconds\n  end\n  opt a clean disconnect\n    G->>SS: DEL the session\n    G->>PR: DEL the status\n  end\n  opt the gateway task dies\n    Note over SS,PR: the entries expire by their TTL,<br/>60 s for presence, the clients reconnect\n  end",
             "legend": "Solid arrows are synchronous calls with their replies dashed; open arrows are asynchronous hand-offs. Edge is the Network Load Balancer, drawn as one lane here and in every sequence diagram below. A TLS listener offloads the encryption and WebSockets are supported on it s7; the default idle timeout for TCP flows is 350 seconds, far above the 30-second heartbeat s12; the ping and pong frames are defined by RFC 6455 s1; SET with an expiry s10.",
             "cites": [
               "s7",
@@ -1375,7 +1388,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 11\n  participant App as Sender's app\n  participant Edge\n  participant G as Gateway\n  participant C as Conv server\n  participant D as DynamoDB messages\n  App->>Edge: send frame, client_msg_id\n  Edge->>G: the open connection\n  Note over G: membership is checked<br/>from the cache\n  G->>C: RPC to the owner, by task IP\n  Note over G,C: owner = hash of the conversation id<br/>over the task list\n  alt a retry, the id is in the tail\n    C-->>G: the id already assigned\n  else a new message\n    C->>C: next time-ordered id\n    C->>D: PutItem, attribute_not_exists<br/>on the sort key\n    D-->>C: 200, durably persisted\n    C-->>G: ack with the message id\n  end\n  G-->>App: ack frame\n  opt the write fails or is throttled\n    C-->>G: no ack, the client retries\n    Note over C,D: SDK retry with backoff<br/>and jitter first\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber 13\n  participant App as Sender's app\n  participant Edge\n  participant G as Gateway\n  participant C as Conv server\n  participant D as DynamoDB messages\n  App->>Edge: send frame, client_msg_id\n  Edge->>G: the open connection\n  opt membership not in the gateway's cache\n    G->>D: GetItem the conversation\n    D-->>G: the member_ids, cached with a TTL\n  end\n  G->>C: RPC to the owner, by task IP\n  Note over G,C: owner = hash of the conversation id<br/>over the task list\n  alt a retry, the id is in the tail\n    C-->>G: the id already assigned\n  else a new message\n    C->>C: next time-ordered id\n    C->>D: PutItem, attribute_not_exists<br/>on the sort key\n    D-->>C: 200, durably persisted\n    C-->>G: ack with the message id\n  end\n  G-->>App: ack frame\n  opt the write fails or is throttled\n    C-->>G: no ack, the client retries\n    Note over C,D: SDK retry with backoff<br/>and jitter first\n  end",
             "legend": "Solid arrows are synchronous calls with their replies dashed; open arrows are asynchronous hand-offs. Edge is the Network Load Balancer, drawn as one lane here and in every sequence diagram below. The ack follows the 200 of the write, which means durably persisted s13; a conditional put s14; the SDK retry with backoff and jitter s15; the owner's address comes from ECS service discovery s11; the write goes over the gateway endpoint s8.",
             "cites": [
               "s8",
@@ -1387,7 +1400,7 @@
           },
           {
             "type": "p",
-            "text": "The condition on the sort key costs nothing extra and does one thing: if two conversation servers ever believe they own a conversation after a failover, the second write of a message id fails instead of replacing the first. Deduplication of a retried send is the owner's job: its in-memory tail holds the recent client_msg_ids and is rebuilt from the table when the conversation moves, so no second item per message is written. The ack is sent only after DynamoDB answers 200, which is the neutral design's rule that the sender hears nothing before the message is durable.",
+            "text": "The condition on the sort key costs nothing extra and does one thing: if two conversation servers ever believe they own a conversation after a failover, the second write of a message id fails instead of replacing the first. Deduplication of a retried send is the owner's job: its in-memory tail holds the recent client_msg_ids and is rebuilt by a Query of the table when the conversation moves (part e), so no second item per message is written. The ack is sent only after DynamoDB answers 200, which is the neutral design's rule that the sender hears nothing before the message is durable. The send check reads membership from the gateway's own cache of the conversation record, filled by a GetItem when it is missing.",
             "cites": [
               "s13",
               "s14"
@@ -1399,7 +1412,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 21\n  participant C as Conv server\n  participant SS as Session registry\n  participant G as Member gateways\n  participant App as Member apps\n  participant K as Kinesis stream\n  C->>SS: GET the members' sessions\n  SS-->>C: gateway task per session\n  C-)G: one batched delivery per gateway\n  G-)App: the frame to each local session\n  App-->>G: delivery ack\n  Note over G: last_delivered_id is<br/>updated asynchronously\n  C-)K: PutRecords, the message event\n  Note over C,K: key is the conversation id, so one<br/>conversation's events stay in order\n  Note over G,App: a member whose gateway is gone<br/>resyncs when it reconnects",
+            "mermaid": "sequenceDiagram\n  autonumber 25\n  participant C as Conv server\n  participant SS as Session registry\n  participant G as Member gateways\n  participant App as Member apps\n  participant K as Kinesis stream\n  C->>SS: GET the members' sessions\n  SS-->>C: gateway task per session\n  C-)G: one batched delivery per gateway\n  G-)App: the frame to each local session\n  App-->>G: delivery ack\n  Note over G: last_delivered_id is coalesced,<br/>see part f\n  C-)K: PutRecords, the message event\n  Note over C,K: key is the conversation id, so one<br/>conversation's events stay in order\n  Note over G,App: a member whose gateway is gone<br/>resyncs when it reconnects",
             "legend": "Solid arrows are synchronous calls with their replies dashed; open arrows are asynchronous hand-offs. Edge is the Network Load Balancer, drawn as one lane here and in every sequence diagram below. Events with one partition key stay in order within a shard s16; the interface endpoint s9; Discord's Elixir write-up on batching per node s5.",
             "cites": [
               "s5",
@@ -1413,7 +1426,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 27\n  participant K as Kinesis stream\n  participant P as Push svc\n  participant SS as Session registry\n  K-)P: GetRecords, a batch of message events\n  P->>SS: GET the members' sessions\n  SS-->>P: who has none\n  Note over P: sends the push for them to APNs and<br/>FCM, through the NAT gateway\n  Note over K,P: the search indexer reads the same stream<br/>with its own position\n  opt the provider is slow\n    Note over K,P: the consumer lags, visible as iterator age,<br/>delivery is unaffected\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber 31\n  participant K as Kinesis stream\n  participant P as Push svc\n  participant SS as Session registry\n  K-)P: GetRecords, a batch of message events\n  P->>SS: GET the members' sessions\n  SS-->>P: who has none\n  Note over P: sends the push for them to APNs and<br/>FCM, through the NAT gateway\n  Note over K,P: the search indexer reads the same stream<br/>with its own position\n  opt the provider is slow\n    Note over K,P: the consumer lags, visible as iterator age,<br/>delivery is unaffected\n  end",
             "legend": "Solid arrows are synchronous calls with their replies dashed; open arrows are asynchronous hand-offs. Edge is the Network Load Balancer, drawn as one lane here and in every sequence diagram below. The search indexer is a second consumer of the same stream. A stream keeps its records for 24 hours by default, so a consumer that is down for less than a day catches up s16.",
             "cites": [
               "s16"
@@ -1425,15 +1438,53 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 30\n  participant App as Client app\n  participant Edge\n  participant G as Gateway\n  participant D as DynamoDB messages\n  App->>Edge: reconnect, backoff and jitter\n  Edge->>G: a gateway task, any\n  Note over App,G: the session is registered again,<br/>as in the connect diagram\n  App->>G: last seen message id<br/>per conversation\n  G->>D: Query the current bucket,<br/>after that id\n  D-->>G: the gap\n  G-->>App: the missed messages,<br/>then live delivery\n  opt the gap starts in the previous bucket\n    G->>D: Query the previous bucket\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber 34\n  participant App as Client app\n  participant Edge\n  participant G as Gateway\n  participant D as DynamoDB messages\n  App->>Edge: reconnect, backoff and jitter\n  Edge->>G: a gateway task, any\n  Note over App,G: the session is registered again,<br/>as in the connect diagram\n  App->>G: last seen message id<br/>per conversation\n  G->>D: Query the current bucket,<br/>after that id\n  D-->>G: the gap\n  G-->>App: the missed messages,<br/>then live delivery\n  opt the gap starts in the previous bucket\n    G->>D: Query the previous bucket\n  end",
             "legend": "Solid arrows are synchronous calls with their replies dashed; open arrows are asynchronous hand-offs. Edge is the Network Load Balancer, drawn as one lane here and in every sequence diagram below. A page of recent history is one Query on one partition key, narrowed by the sort key s17.",
             "cites": [
               "s17"
             ]
           },
           {
+            "type": "p",
+            "text": "Part e: reading history, served by the owning conversation server."
+          },
+          {
+            "type": "diagram",
+            "mermaid": "sequenceDiagram\n  autonumber 41\n  participant App as Client app\n  participant Edge\n  participant G as Gateway\n  participant C as Conv server\n  participant D as DynamoDB\n  App->>Edge: GET /conversations/id/messages\n  Edge->>G: HTTP on the same listener\n  G->>C: RPC to the owner, a page before the id\n  alt the page is in the owner's tail\n    C-->>G: the page, from memory\n  else a miss, or a new owner with an empty tail\n    C->>D: Query the current bucket,<br/>newest first\n    opt the page crosses a bucket\n      C->>D: Query the previous bucket\n    end\n    D-->>C: the messages\n    C-->>G: the page, the tail refilled\n  end\n  G-->>Edge: 200 with the messages\n  Edge-->>App: 200",
+            "legend": "Solid arrows are synchronous calls with their replies dashed; open arrows are asynchronous hand-offs. Edge is the Network Load Balancer, drawn as one lane here and in every sequence diagram below. The owner answers a history read from its tail and reads the table only on a miss; a new owner starts with an empty tail, so its first reads are misses that rebuild it. A Query reads one key, narrowed by the sort key s17.",
+            "cites": [
+              "s17"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "The history endpoint is an HTTP call on the same listener as the WebSocket; the gateway hands it to the owner by the same hash as a send, and the owner's role has Query on the messages table for exactly this and for rebuilding its tail.",
+            "cites": [
+              "s17"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Part f: creating a conversation and moving the cursors."
+          },
+          {
+            "type": "diagram",
+            "mermaid": "sequenceDiagram\n  autonumber 51\n  participant App as Client app\n  participant Edge\n  participant G as Gateway\n  participant D as DynamoDB\n  App->>Edge: POST /conversations, type and member_ids\n  Edge->>G: HTTP on the same listener\n  G->>D: PutItem the conversation,<br/>attribute_not_exists on the id\n  D-->>G: ok\n  G-->>Edge: 201 with the conversation_id\n  Edge-->>App: 201\n  App->>Edge: PUT /conversations/id/read, last_read_id\n  Edge->>G: HTTP on the same listener\n  G->>D: UpdateItem the receipt cursor,<br/>only forward\n  D-->>G: ok\n  G-->>Edge: 204\n  Edge-->>App: 204\n  Note over G,D: delivered acks are coalesced, then one UpdateItem<br/>of last_delivered_id per member and conversation",
+            "legend": "Solid arrows are synchronous calls with their replies dashed; open arrows are asynchronous hand-offs. Edge is the Network Load Balancer, drawn as one lane here and in every sequence diagram below. The conversation is a conditional put s14; the receipt cursor is one item per member and conversation, moved forward only by a condition on its old value, so receipts cost nothing per message.",
+            "cites": [
+              "s14"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "The conversation record is what the send check reads: the gateways cache it with a TTL, so a send costs no table read in the common case. The receipts have their own table, one item per member and conversation, so a cursor update never touches a message.",
+            "cites": [
+              "s14"
+            ]
+          },
+          {
             "type": "table",
-            "caption": "Identity and network: who may call what, over which endpoint, and what is public. The load balancer is the only public entry; the services and both caches run in private subnets across three Availability Zones, and the NAT gateways in public subnets only send out; the Fargate tasks run in awsvpc mode with one elastic network interface each, each service under its own IAM task role.",
+            "caption": "Identity and network: who may call what, over which endpoint, and what is public. The load balancer is the only public entry; the services and both caches run in private subnets across three Availability Zones, and the NAT gateways in public subnets only send out; the Fargate tasks run in awsvpc mode with one elastic network interface each, each service under its own IAM task role. A task in a private subnet pulls its image through the Amazon ECR interface endpoints and an S3 gateway endpoint (or through a NAT gateway), and this design uses the endpoints s58.",
             "columns": [
               "service",
               "may call",
@@ -1449,13 +1500,13 @@
               ],
               [
                 "Gateway tasks (task role)",
-                "Query on the messages table for the resync; UpdateItem on the receipts; the registry and presence caches; the conversation servers",
+                "Query on the messages table for the resync; GetItem and PutItem on the conversations table; UpdateItem on the receipts table; the registry and presence caches; the conversation servers (sends and history)",
                 "DynamoDB gateway endpoint; the Valkey port; task-to-task traffic inside the VPC",
                 "no; private subnet, admits the load balancer's security group only"
               ],
               [
                 "Conversation servers (task role)",
-                "PutItem on the messages table; PutRecords on the event stream; the session registry; the gateways",
+                "PutItem and Query on the messages table; PutRecords on the event stream; the session registry; the gateways",
                 "DynamoDB gateway endpoint; Kinesis interface endpoint; the Valkey port",
                 "no; private subnet, admits the gateways' security group only"
               ],
@@ -1488,12 +1539,15 @@
               "s8",
               "s9",
               "s11",
+              "s14",
+              "s17",
               "s18",
               "s19",
               "s20",
               "s21",
               "s22",
-              "s55"
+              "s55",
+              "s58"
             ]
           },
           {
@@ -1706,7 +1760,7 @@
               [
                 "Security",
                 "a strong identity foundation; security at all layers; protect data in transit and at rest",
-                "one IAM task role per service, the gateways writing only receipt cursors and never a message; TLS on the listener; both caches and the services in private subnets; message bodies never logged",
+                "one IAM task role per service, the gateways writing only conversation records and receipt cursors and never a message; TLS on the listener; both caches and the services in private subnets; message bodies never logged",
                 "the service can read message bodies, because end-to-end encryption is a non-goal",
                 "s18"
               ],
@@ -1792,7 +1846,7 @@
               ],
               [
                 "Total",
-                "the six lines above; the push and search consumers, receipt cursors, interface endpoints, NAT gateways, data transfer out and CloudWatch not priced",
+                "the six lines above; the push and search consumers, conversation and receipt records, ECR and S3 endpoints, interface endpoints, NAT gateways, data transfer out and CloudWatch not priced",
                 "about $64,000, about $0.0013 per daily active user",
                 "about $637,000, about $0.0013 per daily active user"
               ]
@@ -2320,6 +2374,11 @@
       "version": 9,
       "date": "2026-10-16",
       "change": "Third read of the AWS pass (batch E1A), Claude (Sonnet 5.5), a different instance from the writer and the two earlier readers; mechanical fixes only: the identity-table caption no longer says everything else runs in private subnets (the NAT gateways sit in public subnets); the Standard-class comparison uses the table's own $41,700 (with reads) and $64,000, not $41,400 and $63,800; the TCP listener cell says sends and heartbeats are not counted in its bytes; the security row says the gateways write only receipt cursors; the version 8 changelog line no longer claims a push providers box; findings for the writer in reviews/learning-center-F2-E1A-reread.md; reviewed_by stays null"
+    },
+    {
+      "version": 10,
+      "date": "2026-10-16",
+      "change": "fix round 2 after the re-read (batch E1A): every operation of the data-model tables has a path, a store and a permission: history reads and the rebuild of a tail are served by the owning conversation server (edge and role carry Query), POST /conversations, the membership read and the receipt cursors have their tables (conversations and receipts inside one DynamoDB box, declared in the legends, 12 boxes kept) with edges, steps and two new sequence diagrams (history; conversation and cursors), the membership read in the send diagram, the presence read in the connect diagram, and the image-pull clause; reviewed_by stays null"
     }
   ]
 }

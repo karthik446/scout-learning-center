@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-notifications",
-  "version": 7,
+  "version": 8,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: notifications",
@@ -797,6 +797,17 @@
         "http": 200,
         "section_found": "Learn how to configure a dead-letter queue redrive in Amazon SQS"
       }
+    },
+    {
+      "id": "s69",
+      "title": "Amazon ECR User Guide: Amazon ECR interface VPC endpoints (AWS PrivateLink)",
+      "url": "https://docs.aws.amazon.com/AmazonECR/latest/userguide/vpc-endpoints.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Amazon ECR interface VPC endpoints (AWS PrivateLink)"
+      }
     }
   ],
   "practice": null,
@@ -1252,12 +1263,12 @@
               },
               {
                 "id": "PC",
-                "label": "ElastiCache for Valkey: preferences and rate counters",
+                "label": "ElastiCache for Valkey: preferences, templates and rate counters",
                 "kind": "store"
               },
               {
                 "id": "PT",
-                "label": "Amazon DynamoDB: preferences table",
+                "label": "Amazon DynamoDB: preferences and templates tables",
                 "kind": "store"
               },
               {
@@ -1316,28 +1327,28 @@
                 "from": "API",
                 "to": "PC",
                 "kind": "sync",
-                "label": "GET preferences, INCR counters, cache read and write, sync",
-                "short": "GET + INCR"
+                "label": "GET preferences and templates, INCR counters, DEL on a preference change, cache read and write, sync",
+                "short": "GET INCR DEL"
               },
               {
                 "from": "API",
                 "to": "PT",
                 "kind": "sync",
-                "label": "GetItem on a cache miss over the gateway endpoint, sync",
-                "short": "GetItem"
+                "label": "GetItem on a cache miss, PutItem a preference or a template version, over the gateway endpoint, sync",
+                "short": "Tables"
               },
               {
                 "from": "API",
                 "to": "ST",
                 "kind": "sync",
-                "label": "TransactWriteItems: key item and one record per channel, queued or held, sync",
-                "short": "Transact"
+                "label": "TransactWriteItems on a send, GetItem or Query on a status read, sync",
+                "short": "Transact + read"
               },
               {
                 "from": "API",
                 "to": "H",
                 "kind": "sync",
-                "label": "the same transaction writes the held items, sync",
+                "label": "Query the user's held items, the same transaction writes the held items, sync",
                 "short": "Hold"
               },
               {
@@ -1387,19 +1398,19 @@
               },
               {
                 "edge": 2,
-                "caption": "API to the cache: GET the preferences and INCR the user's counters, sync"
+                "caption": "API to the cache: GET the preferences and the template, INCR the counters, DEL the entry on a preference change, sync"
               },
               {
                 "edge": 3,
-                "caption": "On a miss, API to the preferences table: GetItem over the gateway endpoint, sync"
+                "caption": "API to DynamoDB: GetItem preferences and templates on a miss, PutItem a preference or a template version, sync"
               },
               {
                 "edge": 4,
-                "caption": "API to the notifications table: TransactWriteItems with the key item and one record per channel, queued or held, sync"
+                "caption": "API to the notifications table: TransactWriteItems on a send, GetItem or Query on a status read, sync"
               },
               {
                 "edge": 5,
-                "caption": "Inside the quiet hours, the same transaction writes the held items, sync"
+                "caption": "Inside the quiet hours, API to the held table: Query the user's held items, the same transaction writes the held items, sync"
               },
               {
                 "edge": 6,
@@ -1422,7 +1433,7 @@
                 "caption": "Release poller to the notifications table: the record held to queued and the held item deleted, one transaction, sync"
               }
             ],
-            "legend": "The accept half of the architecture, the same boxes as the neutral diagram's left side, one AWS service each: the API is an ECS on Fargate service behind an internal load balancer, the preference lookup is a Valkey cache over a DynamoDB table, the delivery status is a DynamoDB table that also holds the idempotency key items (with a TTL), and the six channel queues are SQS standard queues. The load balancer is the entry the neutral diagram leaves implicit; the held table and the release poller (a function that EventBridge Scheduler invokes on a one-minute schedule s10) carry the quiet-hours hold of the neutral design. Each arrow says how the call is made: HTTPS and HTTP inside the VPC, named SDK calls over the gateway endpoint s11 and the SQS interface endpoint s12, cache reads and writes. Sync means the caller waits for the answer; async means the work goes on after the caller has been answered. The VPC frame is one VPC in one Region across three Availability Zones. Inside the quiet hours the record starts in state held, one of the states of the neutral data model, and a retry skips it. The held table is keyed by user and channel, sorted by release time, with a sparse index by release minute plus a shard number so that a morning's releases do not pile onto one key range; the index costs extra write units s30 and the shard number is write sharding s67.",
+            "legend": "The accept half of the architecture, the same boxes as the neutral diagram's left side, one AWS service each: the API is an ECS on Fargate service behind an internal load balancer, the preference lookup is a Valkey cache over a DynamoDB table, the delivery status is a DynamoDB table that also holds the idempotency key items (with a TTL), and the six channel queues are SQS standard queues. The load balancer is the entry the neutral diagram leaves implicit; the held table and the release poller (a function that EventBridge Scheduler invokes on a one-minute schedule s10) carry the quiet-hours hold of the neutral design. Each arrow says how the call is made: HTTPS and HTTP inside the VPC, named SDK calls over the gateway endpoint s11 and the SQS interface endpoint s12, cache reads and writes. Sync means the caller waits for the answer; async means the work goes on after the caller has been answered. The VPC frame is one VPC in one Region across three Availability Zones. Inside the quiet hours the record starts in state held, one of the states of the neutral data model, and a retry skips it. The held table is keyed by user and channel, sorted by release time, with a sparse index by release minute plus a shard number so that a morning's releases do not pile onto one key range; the index costs extra write units s30 and the shard number is write sharding s67. The preferences box also holds the templates (key team and template, one item per version with an active-version marker and a kill switch), the cache holds the templates too, and the API serves the three calls besides a send: GET a status (a GetItem, or a Query of the index by user), PUT preferences (a PutItem and a DEL of the cache entry) and POST a template (a conditional PutItem of the next version). The notifications table has two indexes, by user and by provider message id, each costing extra write units s30.",
             "cites": [
               "s10",
               "s11",
@@ -1619,7 +1630,7 @@
                 "caption": "Callback handler to the notifications table: find the record by provider message id, then UpdateItem, sync"
               }
             ],
-            "legend": "The delivery half, the neutral diagram's right side: the channel queues feed the adapters, which call the providers (APNs and FCM directly, Amazon SES for email, AWS End User Messaging SMS for SMS) and record each attempt; a message that is received 6 times without success (3 attempts on each of the two providers) is moved to a dead-letter queue by SQS's redrive policy s26, and an operator can redrive it back to its source queue or delete it s68. The provider callbacks of the neutral design arrive as events: Amazon SES publishes them through a configuration set s13 and AWS End User Messaging SMS through an event destination s14, both to an SNS topic that invokes a callback function; APNs and FCM answer each request synchronously. The adapters run in private subnets with an interface endpoint for SQS s12 and for SES s15; the push providers are reached through NAT gateways s16. Sync means the caller waits for the answer; async means the work goes on after the caller has been answered. The adapters also read the device-token and address tables, which sit beside the notifications table in DynamoDB; the callback handler's suppression list is a flag on the address table.",
+            "legend": "The delivery half, the neutral diagram's right side: the channel queues feed the adapters, which call the providers (APNs and FCM directly, Amazon SES for email, AWS End User Messaging SMS for SMS) and record each attempt; a message that is received 6 times without success (3 attempts on each of the two providers) is moved to a dead-letter queue by SQS's redrive policy s26, and an operator can redrive it back to its source queue or delete it s68. The provider callbacks of the neutral design arrive as events: Amazon SES publishes them through a configuration set s13 and AWS End User Messaging SMS through an event destination s14, both to an SNS topic that invokes a callback function; APNs and FCM answer each request synchronously. The adapters run in private subnets with an interface endpoint for SQS s12 and for SES s15; the push providers are reached through NAT gateways s16. Sync means the caller waits for the answer; async means the work goes on after the caller has been answered. The adapters also read the device-token and address tables, which sit beside the notifications table in DynamoDB; the callback handler's suppression list is a flag on the address table. The adapters read the device tokens (push) or the address (email and SMS) beside the record, and remove a token on a hard failure.",
             "cites": [
               "s12",
               "s13",
@@ -1636,8 +1647,8 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber\n  participant T as Product team\n  participant Edge\n  participant A as Notification API\n  participant D as DynamoDB\n  participant C as Cache\n  T->>Edge: POST /notifications, Idempotency-Key\n  Edge->>A: HTTP, a healthy task\n  A->>D: GetItem the key item\n  alt the key is known\n    D-->>A: the stored notification ids\n    Note over A: queued records are enqueued<br/>again, held ones are skipped\n    A-->>Edge: 200 with the stored ids\n  else a new key\n    D-->>A: nothing\n    A->>C: GET preferences, INCR the counter\n    C-->>A: channels, quiet hours, limit\n    opt a cache miss\n      A->>D: GetItem preferences\n      A->>C: SET with a short TTL\n    end\n    Note over A: each channel is queued or held,<br/>from the quiet hours\n    A->>D: TransactWriteItems, key item,<br/>records, held items\n    Note over A,D: records start queued or held,<br/>the key item has a 24 hour TTL\n  end",
-            "legend": "Solid arrows are synchronous calls with their replies dashed; open arrows are asynchronous hand-offs. Edge is the internal Application Load Balancer, drawn as one lane here and in every sequence diagram below. Health checks and task replacement s17, s18; the all-or-nothing transaction and the conditional writes s19, s20; the TTL s21; SET with an expiry s22; the key lives 24 hours, the lifetime Stripe gives its own keys s6.",
+            "mermaid": "sequenceDiagram\n  autonumber\n  participant T as Product team\n  participant Edge\n  participant A as Notification API\n  participant D as DynamoDB\n  participant C as Cache\n  T->>Edge: POST /notifications, Idempotency-Key\n  Edge->>A: HTTP, a healthy task\n  A->>D: GetItem the key item\n  alt the key is known\n    D-->>A: the stored notification ids\n    A->>D: BatchGetItem the records\n    D-->>A: their states\n    Note over A: queued ones are enqueued again,<br/>held ones are skipped\n    A-->>Edge: 200 with the stored ids\n  else a new key\n    D-->>A: nothing\n    A->>C: GET preferences, template,<br/>INCR the counter\n    C-->>A: channels, quiet hours, limit\n    opt a cache miss\n      A->>D: GetItem preferences, template\n      A->>C: SET with a short TTL\n    end\n    Note over A: render the templates, a killed one is<br/>refused, each channel queued or held\n    opt a channel is held\n      A->>D: Query the user's held items\n      Note over A,D: over the cap, the oldest<br/>are dropped in the transaction\n    end\n    A->>D: TransactWriteItems, key item,<br/>records, held items\n    alt another request won the key\n      D-->>A: cancelled, the key item exists\n      A->>D: GetItem the key item\n      A-->>Edge: 200 with the stored ids\n    else committed\n      Note over A,D: records start queued or held,<br/>the key item has a 24 hour TTL\n    end\n  end",
+            "legend": "Solid arrows are synchronous calls with their replies dashed; open arrows are asynchronous hand-offs. Edge is the internal Application Load Balancer, drawn as one lane here and in every sequence diagram below. Health checks and task replacement s17, s18; the all-or-nothing transaction and the conditional writes s19, s20; the TTL s21; SET with an expiry s22; the key lives 24 hours, the lifetime Stripe gives its own keys s6. Two requests with one key can both read nothing; the conditional key item cancels one of them, and it returns the stored ids s19.",
             "cites": [
               "s6",
               "s17",
@@ -1650,7 +1661,7 @@
           },
           {
             "type": "p",
-            "text": "The key is read first because a known key is the cheap case, and the transaction then writes the key item and the records together: either all of them exist or none, so a retry never finds a key without its records. A key item is deleted by DynamoDB some time after its day is over, and the deletion may lag by days, so the check compares the timestamp itself. The channels inside the quiet hours are decided before the transaction, so their records start in state held, one of the states of the neutral data model, and the held items are written in the same transaction; a retry skips them. Transactional notifications skip the quiet-hours and limit checks, as the priority class says.",
+            "text": "The key is read first because a known key is the cheap case, and the transaction then writes the key item and the records together: either all of them exist or none, so a retry never finds a key without its records. A key item is deleted by DynamoDB some time after its day is over, and the deletion may lag by days, so the check compares the timestamp itself. The channels inside the quiet hours are decided before the transaction, so their records start in state held, one of the states of the neutral data model, and the held items are written in the same transaction; a retry skips them. Transactional notifications skip the quiet-hours and limit checks, as the priority class says. A known key is answered from the records themselves: the API reads their states, enqueues the ones still queued and skips the held ones. The templates are read through the cache and rendered before the transaction; a template whose kill switch is set is refused.",
             "cites": [
               "s19",
               "s21"
@@ -1662,7 +1673,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 12\n  participant A as Notification API\n  participant Q as SQS channel queue\n  participant Edge\n  participant T as Product team\n  alt a record in state queued\n    A-)Q: SendMessage, the notification id\n  else a record in state held\n    Note over A,Q: nothing is sent now,<br/>the poller releases it\n  end\n  A-->>Edge: 202 with the notification ids\n  Edge-->>T: 202\n  opt SQS unreachable after the records are written\n    A->>Q: SendMessage retried\n    A-->>Edge: 503 instead of the 202\n    Edge-->>T: 503\n    Note over T,A: the retry finds the key, returns the ids<br/>and enqueues the records still queued\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber 18\n  participant A as Notification API\n  participant Q as SQS channel queue\n  participant Edge\n  participant T as Product team\n  alt a record in state queued\n    A-)Q: SendMessage, the notification id\n  else a record in state held\n    Note over A,Q: nothing is sent now,<br/>the poller releases it\n  end\n  A-->>Edge: 202 with the notification ids\n  Edge-->>T: 202\n  opt SQS unreachable after the records are written\n    A->>Q: SendMessage retried\n    A-->>Edge: 503 instead of the 202\n    Edge-->>T: 503\n    Note over T,A: the retry finds the key, returns the ids<br/>and enqueues the records still queued\n  end",
             "legend": "Solid arrows are synchronous calls with their replies dashed; open arrows are asynchronous hand-offs. Edge is the internal Application Load Balancer, drawn as one lane here and in every sequence diagram below. The send goes over the SQS interface endpoint s12.",
             "cites": [
               "s12"
@@ -1681,7 +1692,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 18\n  participant S as EventBridge Scheduler\n  participant R as Release poller\n  participant D as DynamoDB\n  participant Q as SQS channel queue\n  S-)R: every minute, rate schedule\n  R->>D: Query the due index, the sharded minute keys\n  D-->>R: the held items of this minute\n  loop each item\n    alt past its expires_at\n      R->>D: record dropped, the status says so\n    else still due\n      R-)Q: SendMessage on the channel queue\n      R->>D: record held to queued, held item deleted,<br/>one transaction\n    end\n  end\n  Note over R,Q: send first, then change the state, so a crash<br/>in between sends again, which is harmless",
+            "mermaid": "sequenceDiagram\n  autonumber 24\n  participant S as EventBridge Scheduler\n  participant R as Release poller\n  participant D as DynamoDB\n  participant Q as SQS channel queue\n  S-)R: every minute, rate schedule\n  R->>D: Query the due index, the sharded minute keys\n  D-->>R: the held items of this minute\n  loop each item\n    alt past its expires_at\n      R->>D: record dropped, the status says so\n    else still due\n      R-)Q: SendMessage on the channel queue\n      R->>D: record held to queued, held item deleted,<br/>one transaction\n    end\n  end\n  Note over R,Q: send first, then change the state, so a crash<br/>in between sends again, which is harmless",
             "legend": "Solid arrows are synchronous calls with their replies dashed; open arrows are asynchronous hand-offs. Edge is the internal Application Load Balancer, drawn as one lane here and in every sequence diagram below. A rate-based schedule invokes the poller every minute s10; a delay queue could not hold a message for hours, its maximum is 15 minutes s24. The held items and the records are changed together in one all-or-nothing transaction s19.",
             "cites": [
               "s10",
@@ -1695,11 +1706,40 @@
           },
           {
             "type": "p",
+            "text": "Part d: the other calls of the API: reading a status, changing preferences and publishing a template."
+          },
+          {
+            "type": "diagram",
+            "mermaid": "sequenceDiagram\n  autonumber 30\n  participant T as Product team\n  participant Edge\n  participant A as Notification API\n  participant D as DynamoDB\n  T->>Edge: GET /notifications/id\n  Edge->>A: HTTP, a healthy task\n  A->>D: GetItem the record\n  D-->>A: the state and the attempts\n  A-->>Edge: 200 with the status history\n  Edge-->>T: 200\n  Note over A,D: a question by user is a Query<br/>of the index by user",
+            "legend": "Solid arrows are synchronous calls with their replies dashed; open arrows are asynchronous hand-offs. Edge is the internal Application Load Balancer, drawn as one lane here and in every sequence diagram below. The status is a read of the record the adapters and the callbacks write; the index by user is a global secondary index s30.",
+            "cites": [
+              "s30"
+            ]
+          },
+          {
+            "type": "diagram",
+            "mermaid": "sequenceDiagram\n  autonumber 36\n  participant T as Caller\n  participant Edge\n  participant A as Notification API\n  participant D as DynamoDB\n  participant C as Cache\n  T->>Edge: PUT /users/id/preferences\n  Edge->>A: HTTP, a healthy task\n  A->>D: PutItem the preference\n  D-->>A: ok\n  A->>C: DEL the cache entry\n  A-->>Edge: 204\n  Edge-->>T: 204\n  T->>Edge: POST /templates\n  Edge->>A: HTTP, a healthy task\n  A->>D: PutItem the next version,<br/>attribute_not_exists\n  D-->>A: ok\n  A-->>Edge: 201 with template_id, version\n  Edge-->>T: 201\n  Note over A,D: the old version stays active until the<br/>canary passes, then the active version moves",
+            "legend": "Solid arrows are synchronous calls with their replies dashed; open arrows are asynchronous hand-offs. Edge is the internal Application Load Balancer, drawn as one lane here and in every sequence diagram below. The cache entry is deleted after the write, as in the url-shortener's disable, and expires by its short TTL if the delete is lost s22; a template version is a conditional put, so a new version never overwrites an old one s20.",
+            "cites": [
+              "s20",
+              "s22"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "A preference change is visible to the next send once the cache entry is gone; a send that read the old entry just before the delete can still use it until the entry's short TTL, which is the bound. The held-set cap, the template read and the status read are drawn in the accept and status diagrams above.",
+            "cites": [
+              "s20",
+              "s22"
+            ]
+          },
+          {
+            "type": "p",
             "text": "The delivery path through AWS, part a: taking the message, calling the provider and recording the attempt."
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 24\n  participant Q as SQS push queue\n  participant W as Push adapter\n  participant D as DynamoDB\n  participant X as APNs or FCM\n  Q-)W: ReceiveMessage, long-poll\n  Note over Q,W: hidden for the visibility<br/>timeout of 30 s\n  W->>D: GetItem the record and the device tokens\n  alt the record already says sent\n    W->>Q: DeleteMessage, nothing to do\n  else not sent yet\n    W->>X: HTTP/2, collapse id = event id,<br/>expiry = expires_at\n    X-->>W: accepted\n    W->>D: UpdateItem state sent, the attempt\n    W->>Q: DeleteMessage\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber 49\n  participant Q as SQS push queue\n  participant W as Push adapter\n  participant D as DynamoDB\n  participant X as APNs or FCM\n  Q-)W: ReceiveMessage, long-poll\n  Note over Q,W: hidden for the visibility<br/>timeout of 30 s\n  W->>D: GetItem the record, the device tokens<br/>or the address\n  alt the record already says sent\n    W->>Q: DeleteMessage, nothing to do\n  else not sent yet\n    W->>X: HTTP/2, collapse id = event id,<br/>expiry = expires_at\n    alt accepted\n      X-->>W: accepted\n      W->>D: UpdateItem state sent, the attempt\n      W->>Q: DeleteMessage\n    else a hard failure, an invalid token\n      X--xW: invalid token\n      W->>D: state failed, DeleteItem the token\n      W->>Q: DeleteMessage\n    end\n  end",
             "legend": "Solid arrows are synchronous calls with their replies dashed; open arrows are asynchronous hand-offs. Edge is the internal Application Load Balancer, drawn as one lane here and in every sequence diagram below. Long polling waits up to 20 seconds s25; the visibility timeout defaults to 30 seconds s23; APNs takes the collapse identifier and the expiry on its provider API s2; the adapter's reads and writes go over the gateway endpoint s11.",
             "cites": [
               "s11",
@@ -1721,7 +1761,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 31\n  participant W as Adapter\n  participant Q as SQS queue\n  participant P1 as Primary provider\n  participant P2 as Secondary provider\n  participant DLQ as Dead-letter queue\n  W->>P1: send\n  P1--xW: a timeout or a 5xx\n  W->>Q: ChangeMessageVisibility,<br/>backoff with jitter\n  Note over W,P1: up to 3 attempts, a hard<br/>failure is not retried\n  opt the breaker is open\n    W->>P2: send through the secondary\n  end\n  opt the last receive fails\n    Note over W,Q: the record is marked dead with the last error,<br/>the message is not deleted\n    Q-)DLQ: the redrive policy moves it after<br/>6 receives, 3 on each provider\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber 59\n  participant W as Adapter\n  participant Q as SQS queue\n  participant P1 as Primary provider\n  participant P2 as Secondary provider\n  participant DLQ as Dead-letter queue\n  W->>P1: send\n  P1--xW: a timeout or a 5xx\n  W->>Q: ChangeMessageVisibility,<br/>backoff with jitter\n  Note over W,P1: up to 3 attempts, a hard<br/>failure is not retried\n  opt the breaker is open\n    W->>P2: send through the secondary\n  end\n  opt the last receive fails\n    Note over W,Q: the record is marked dead with the last error,<br/>the message is not deleted\n    Q-)DLQ: the redrive policy moves it after<br/>6 receives, 3 on each provider\n  end",
             "legend": "Solid arrows are synchronous calls with their replies dashed; open arrows are asynchronous hand-offs. Edge is the internal Application Load Balancer, drawn as one lane here and in every sequence diagram below. Each retry extends the visibility timeout with backoff and jitter s23; after maxReceiveCount receives the redrive policy moves the message to the dead-letter queue, and the adapter never sends to it itself s26; the oldest-message age is the alarm and the scaling signal for messages received fewer than 3 times, because a message received 3 or more times drops out of that metric s27.",
             "cites": [
               "s23",
@@ -1743,7 +1783,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 36\n  participant O as Operator\n  participant DLQ as Dead-letter queue\n  participant Q as Source queue\n  O->>DLQ: look at the messages and their last errors\n  alt replay\n    O->>DLQ: start a redrive to the source queue\n    DLQ-)Q: the messages move back\n    Note over DLQ,Q: the adapter's status check lets them<br/>through, the record says dead, not sent\n  else discard\n    O->>DLQ: delete the messages\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber 64\n  participant O as Operator\n  participant DLQ as Dead-letter queue\n  participant Q as Source queue\n  O->>DLQ: look at the messages and their last errors\n  alt replay\n    O->>DLQ: start a redrive to the source queue\n    DLQ-)Q: the messages move back\n    Note over DLQ,Q: the adapter's status check lets them<br/>through, the record says dead, not sent\n  else discard\n    O->>DLQ: delete the messages\n  end",
             "legend": "Solid arrows are synchronous calls with their replies dashed; open arrows are asynchronous hand-offs. Edge is the internal Application Load Balancer, drawn as one lane here and in every sequence diagram below. Dead-letter queue redrive moves unconsumed messages from the dead-letter queue to a source queue s68.",
             "cites": [
               "s68"
@@ -1755,7 +1795,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 40\n  participant X as SES or SMS\n  participant N as SNS topic\n  participant F as Callback fn\n  participant D as DynamoDB\n  X-)N: delivery, bounce or complaint event\n  N-)F: invokes the function\n  F->>D: Query the index by provider message id\n  D-->>F: the notification\n  F->>D: UpdateItem the state\n  Note over F,D: a bounce also marks the<br/>address suppressed",
+            "mermaid": "sequenceDiagram\n  autonumber 68\n  participant X as SES or SMS\n  participant N as SNS topic\n  participant F as Callback fn\n  participant D as DynamoDB\n  X-)N: delivery, bounce or complaint event\n  N-)F: invokes the function\n  F->>D: Query the index by provider message id\n  D-->>F: the notification\n  F->>D: UpdateItem the state\n  Note over F,D: a bounce also marks the<br/>address suppressed",
             "legend": "Solid arrows are synchronous calls with their replies dashed; open arrows are asynchronous hand-offs. Edge is the internal Application Load Balancer, drawn as one lane here and in every sequence diagram below. SES publishes events through a configuration set to an SNS topic among other destinations s13; End User Messaging SMS routes its events to an event destination such as an SNS topic s14; SNS delivers to a Lambda function at no charge s29; the record is found by a global secondary index, which costs extra write units s30.",
             "cites": [
               "s13",
@@ -1774,7 +1814,7 @@
           },
           {
             "type": "table",
-            "caption": "Identity and network: who may call what, over which endpoint, and what is public. Nothing here accepts a connection from the internet: the load balancer is internal, the services run in private subnets across three Availability Zones, and the NAT gateways in public subnets only send out; each Fargate task runs in awsvpc mode under its own IAM task role, each function under its execution role. Phone numbers and device tokens are readable only by the adapters' role.",
+            "caption": "Identity and network: who may call what, over which endpoint, and what is public. Nothing here accepts a connection from the internet: the load balancer is internal, the services run in private subnets across three Availability Zones, and the NAT gateways in public subnets only send out; each Fargate task runs in awsvpc mode under its own IAM task role, each function under its execution role. Phone numbers and device tokens are readable only by the adapters' role. A task in a private subnet pulls its image through the Amazon ECR interface endpoints and an S3 gateway endpoint (or through a NAT gateway), and this design uses the endpoints s69.",
             "columns": [
               "service",
               "may call",
@@ -1790,13 +1830,13 @@
               ],
               [
                 "Notification API (task role)",
-                "GetItem and TransactWriteItems on the notifications and held tables; GetItem on preferences; SendMessage on the six queues; the cache",
+                "GetItem, BatchGetItem and TransactWriteItems on the notifications table, Query on its index by user; Query and TransactWriteItems on the held table; GetItem and PutItem on the preferences and templates tables; SendMessage on the six queues; the cache (read, write, DEL)",
                 "DynamoDB gateway endpoint; SQS interface endpoint; the Valkey port inside the VPC",
                 "no; private subnet, admits the load balancer's security group only"
               ],
               [
                 "Channel adapters (task roles, one per channel)",
-                "ReceiveMessage, DeleteMessage and ChangeMessageVisibility on their own queue; GetItem and UpdateItem on the notifications table; the device token and address tables; SendEmail or SendTextMessage",
+                "ReceiveMessage, DeleteMessage and ChangeMessageVisibility on their own queue; GetItem and UpdateItem on the notifications table; the device token table (read, delete) and the address table (read); SendEmail or SendTextMessage",
                 "SQS, DynamoDB and SES endpoints inside the VPC; NAT gateways to APNs and FCM",
                 "no; private subnets, no inbound rule at all; the only way out is the NAT gateway"
               ],
@@ -1842,7 +1882,8 @@
               "s34",
               "s35",
               "s36",
-              "s68"
+              "s68",
+              "s69"
             ]
           },
           {
@@ -2128,7 +2169,7 @@
             "rows": [
               [
                 "SMS",
-                "AWS End User Messaging SMS, 10DLC: $0.00774 per message plus a $0.00421 carrier fee; 75 million a month",
+                "AWS End User Messaging SMS, 10DLC: $0.00774 per message (one segment, assumption) plus a $0.00421 carrier fee; 75 million a month",
                 "about $896,000",
                 "about $8,962,000"
               ],
@@ -2182,7 +2223,7 @@
               ],
               [
                 "Total",
-                "the lines above; push providers' own terms, SNS events, the poller, interface endpoints, data transfer out and CloudWatch not priced",
+                "the lines above; push providers' own terms, SNS events, the poller, template and preference writes, ECR and S3 endpoints, interface endpoints, data transfer out and CloudWatch not priced",
                 "about $950,000, about 94 percent of it SMS",
                 "about $9,467,000, about 95 percent of it SMS"
               ]
@@ -2714,6 +2755,11 @@
       "version": 7,
       "date": "2026-10-16",
       "change": "Third read of the AWS pass (batch E1A), Claude (Sonnet 5.5), a different instance from the writer and the two earlier readers; mechanical fixes only: the release-poller and push-adapter sequences use alt and else where a record past its expiry or already sent must not reach the send step (they were opt blocks followed by an unconditional send); the second diagram labelled Part c is now Part d; the identity-table caption no longer says nothing is public without naming the NAT gateways in public subnets; the adapter row gives GetItem as well as UpdateItem and the handler row its index Query; the oldest-message age is limited to messages received fewer than 3 times, as the SQS pages say; findings for the writer in reviews/learning-center-F2-E1A-reread.md; reviewed_by stays null"
+    },
+    {
+      "version": 8,
+      "date": "2026-10-16",
+      "change": "fix round 2 after the re-read (batch E1A): every call of the neutral API table has a path, a store and a permission: GET status (edge, step, sequence, Query on the index by user), PUT preferences with the cache delete, POST templates (templates inside the preferences box, a template read through the cache and a render step in the accept diagram, a kill switch), the held-set cap (a Query of the user's held items before the transaction, the oldest dropped in it), the cancelled-transaction branch of two concurrent first requests, record states read on a known key, token removal and the address read in the delivery diagram; the SMS cell states one segment a message as an assumption; the image-pull clause; reviewed_by stays null"
     }
   ]
 }
