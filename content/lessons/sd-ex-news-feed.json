@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-news-feed",
-  "version": 13,
+  "version": 14,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: news feed",
@@ -1444,7 +1444,7 @@
                 "caption": "CloudFront to S3: media on an edge miss, HTTPS"
               }
             ],
-            "legend": "The read half, the neutral diagram's read path: the feed service and the ranking service are ECS on Fargate tasks, the two caches are ElastiCache for Valkey clusters, the posts table is the same DynamoDB table as in the write half, and S3 is the media store behind CloudFront. CloudFront, the load balancer and the timeline cache appear in both halves. Every arrow here is synchronous: HTTPS from clients, HTTP inside the VPC, a named SDK call over the gateway endpoint, cache reads; the cache clusters keep one replica per shard in another zone. The flow draws the main path of a read; the sequence diagrams below also show the follows-table reads for a rebuild, the celebrity set, the pending followees, the content fill and the cache fills. Where the flow says MGET, keys that sit in different hash slots cannot share one MGET, so the feed service sends one MGET per node or GETs pipelined per node."
+            "legend": "The read half, the neutral diagram's read path: the feed service and the ranking service are ECS on Fargate tasks, the two caches are ElastiCache for Valkey clusters, the posts table is the same DynamoDB table as in the write half, and S3 is the media store behind CloudFront. CloudFront, the load balancer and the timeline cache appear in both halves. Every arrow here is synchronous: HTTPS from clients, HTTP inside the VPC, a named SDK call over the gateway endpoint, cache reads; the cache clusters keep one replica per shard in another zone. The flow draws the main path of a read; the sequence diagrams below also show the follows-table reads for a rebuild, the celebrity set, the pending followees, the content fill and the cache fills. Where the flow says MGET, keys that sit in different hash slots cannot share one MGET, so the feed service sends one MGET per hash slot or GETs pipelined per node."
           },
           {
             "type": "p",
@@ -1706,7 +1706,7 @@
           {
             "type": "diagram",
             "mermaid": "sequenceDiagram\n  autonumber 24\n  participant App as Reader's app\n  participant Edge\n  participant FS as Feed svc\n  participant PC as Content cache\n  participant DDB as DynamoDB posts\n  Note over FS: ranked ids from part b\n  FS->>PC: GET the entries,<br/>pipelined per node\n  PC-->>FS: content, with misses\n  opt content misses\n    FS->>DDB: BatchGetItem, gateway endpoint\n    DDB-->>FS: items, written back to the cache\n  end\n  FS->>FS: drop deleted entries\n  FS-->>Edge: page with a cursor\n  Edge-->>App: page\n  Note over App,Edge: media URLs on CloudFront",
-            "legend": "Sources: the content cache and DAX as its alternative s26; the gateway endpoint s37; media on CloudFront s25. Keys of different slots cannot share one MGET, so the content reads go out as GETs pipelined per node, or one MGET per node s49.",
+            "legend": "Sources: the content cache and DAX as its alternative s26; the gateway endpoint s37; media on CloudFront s25. Keys of different slots cannot share one MGET, so the content reads go out as GETs pipelined per node, or one MGET per hash slot s49.",
             "cites": [
               "s25",
               "s26",
@@ -2134,12 +2134,12 @@
           },
           {
             "type": "p",
-            "text": "Part b: the hand-off to the queue and the fan-out of the post id into the followers' timelines. The celebrity branch is decided at post time: the post service compares the author's follower count with the threshold and the event carries the flag, which is what the diagram's mark is. A redelivered event appends the same id again, and the feed service drops repeated ids when it merges."
+            "text": "Part b: the hand-off to the queue and the fan-out of the post id into the followers' timelines."
           },
           {
             "type": "diagram",
             "mermaid": "sequenceDiagram\n  autonumber 5\n  participant PS as Post service\n  participant Q as Queue\n  participant FO as Fan-out workers\n  participant G as Social graph\n  participant TL as Timeline cache\n  PS-)Q: post event\n  Q-)FO: event\n  FO->>G: followers, by page\n  Note over FO,G: pages of 10,000\n  G-->>FO: a page\n  alt below the celebrity threshold (1 million followers, assumption)\n    loop each follower\n      FO->>TL: append the post id, trim to 800\n    end\n  else celebrity\n    FO->>FO: skip fan-out, mark celebrity-only\n  end",
-            "legend": "The open arrows are the hand-offs through the queue; nothing here is on the author's path."
+            "legend": "The open arrows are the hand-offs through the queue; nothing here is on the author's path. The celebrity branch is decided at post time: the post service compares the author's follower count with the threshold and the event carries the flag, which is what the diagram's mark is. A redelivered event appends the same id again, and the feed service drops repeated ids when it merges."
           },
           {
             "type": "p",
@@ -2594,6 +2594,11 @@
       "version": 13,
       "date": "2026-10-16",
       "change": "fix round after the third read (F2-NF-FIX), flow blocks and the look of the existing diagrams untouched: the client sends an idempotency key and the server mints the post id; the 201 follows the hand-off; the duplicate append is dropped on the read side (a drawn step); the follow calls, the follower count, the celebrity set and the lazy backfill have a path, a store and a permission (new diagrams, identity rows); pipelined per-node GETs instead of one MGET; the spare third of the fleet priced (about $5,500 and $52,000 a month); upload, thumbnails, features and the failure rows told; reviewed_by stays null"
+    },
+    {
+      "version": 14,
+      "date": "2026-10-16",
+      "change": "second read of v13 (F2-NF-READ addendum): two legends corrected (keys of different hash slots cannot share an MGET, so one MGET per hash slot, not per node); the neutral part b lead-in cut to one sentence, its other two sentences moved into that diagram's legend; no diagram, flow block or price touched; changes needed on the celebrity set (an empty set is no key; a set created by SADD is partial; an author who crosses the threshold) (reviews/learning-center-F2-NF-read.md); reviewed_by stays null"
     }
   ]
 }

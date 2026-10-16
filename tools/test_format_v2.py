@@ -298,8 +298,8 @@ class Negative(Fixture):
         def in_a_concept_lesson(d): first(d, "diagram").update(mermaid=five + "\n  E->>F: implied")
         self.refuses(LESSON, in_a_concept_lesson, "a sequence diagram has 6 participants")
 
-    # The news-feed exercise as shipped (version 9): the two flow-block halves first, the write path in three parts, the identity table,
-    # the read path in three parts; the core flow in five; every sequence diagram at most five lanes, a one-sentence lead-in before it,
+    # The news-feed exercise as shipped (version 13): the two flow-block halves first, the write path in four parts, the identity table,
+    # the read path in four parts; the core flow in five; every sequence diagram at most five lanes, a one-sentence lead-in before it,
     # and the step numbers running on across the parts of a path.
     def test_news_feed_diagram_blocks(self) -> None:
         doc = self.docs["lessons/sd-ex-news-feed.json"]
@@ -321,10 +321,10 @@ class Negative(Fixture):
 
         aws = kinds("building-it-on-aws")
         self.assertEqual(aws[:2], ["flow", "flow"])
-        self.assertEqual(aws.count("seq"), 6)
+        self.assertEqual(aws.count("seq"), 8)
         seqs = [i for i, k in enumerate(aws) if k == "seq"]
-        self.assertEqual(aws[seqs[2] + 2], "table", "the identity table follows the fan-out diagram and its line")
-        self.assertEqual(aws[seqs[5] + 2], "decision", "the decisions follow the last read diagram and its line")
+        self.assertEqual(aws[seqs[3] + 2], "table", "the identity table follows the fan-out diagram and its line")
+        self.assertEqual(aws[seqs[7] + 2], "decision", "the decisions follow the last read diagram and its line")
         self.assertEqual(kinds("core-flow").count("seq"), 5)
         self.assertEqual(kinds("core-flow").count("flow"), 0)
         for sid in ("building-it-on-aws", "core-flow"):
@@ -335,10 +335,10 @@ class Negative(Fixture):
                     self.assertEqual(bl[i - 1]["type"], "p", f"{sid}[{i}]: a lead-in paragraph before every sequence diagram")
                     self.assertNotIn(". ", bl[i - 1]["text"], f"{sid}[{i}]: the lead-in is one sentence")
                     self.assertTrue(set(re.findall(r"\bs\d+\b", b.get("legend", ""))) <= set(b.get("cites", [])), f"{sid}[{i}]: legend ids are cites")
-        # write a, b, c run 1..13, 14..18, 19..28; read a, b, c run 1..9, 10..14, 15..20; the core flow 1..22 over five parts
+        # write a to d run 1..9, 10..24, 25..34, 35..51; read a to d run 1..9, 10..17, 18..23, 24..30; the core flow 1..22 over five parts
         c = chains("building-it-on-aws")
-        self.assertEqual([s for s, _ in c], [1, 14, 19, 1, 10, 15])
-        self.assertEqual([s + n - 1 for s, n in c], [13, 18, 28, 9, 14, 20])
+        self.assertEqual([s for s, _ in c], [1, 10, 25, 35, 1, 10, 18, 24])
+        self.assertEqual([s + n - 1 for s, n in c], [9, 24, 34, 51, 9, 17, 23, 30])
         c = chains("core-flow")
         self.assertEqual([s for s, _ in c], [1, 5, 11, 16, 20])
         self.assertEqual([s + n - 1 for s, n in c], [4, 10, 15, 19, 22])
@@ -597,9 +597,9 @@ class Pages(Fixture):
                            for b in blocks_of(doc)) if doc["schema_version"] == build.V2 else 0
             self.assertEqual(html_.count(marker), expected, page.parent.name)
             if page.parent.name == "sd-ex-news-feed":
-                self.assertEqual(html_.count(marker), 11)
+                self.assertEqual(html_.count(marker), 13)
                 marked = re.findall(r'<div class="mermaid-wrap" data-diagram-style="sequence"><pre class="mermaid">(.*?)</pre>', html_, re.S)
-                self.assertEqual(len(marked), 11)
+                self.assertEqual(len(marked), 13)
                 self.assertTrue(all(s.startswith("sequenceDiagram") for s in marked))
                 self.assertNotIn('<div class="mermaid-wrap"><pre class="mermaid">flowchart', html_)
                 self.assertEqual(html_.count('<section class="flow"'), 3)
