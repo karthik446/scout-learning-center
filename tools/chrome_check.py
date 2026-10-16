@@ -210,6 +210,14 @@ def check_page(ch: Chrome, base: str, name: str, path: str, width: int, shots: P
             "table_cite_rows": ev("document.querySelectorAll('.table-scroll + p.cite-row').length"),
             "captions_without_cites": ev("[...document.querySelectorAll('.table-scroll caption')].filter((c) => !c.querySelector('sup.cite')).length"),
             "broken_cite_links": ev("[...document.querySelectorAll('sup.cite a')].filter((a) => !document.getElementById(a.getAttribute('href').slice(1))).length"),
+            # diagrams: every Mermaid svg against the column it sits in (the box's clientWidth); a sequence diagram scales down to the
+            # column, a flowchart fills it, so at 1280 none is wider than its box and no box scrolls sideways (operator 2026-10-15)
+            "diagrams": ev("[...document.querySelectorAll('.mermaid svg')].map((s) => { const w = s.closest('.mermaid-wrap'); const r = s.getBoundingClientRect(); const t = s.querySelector('text.messageText, .nodeLabel, text');"
+                           " const vb = (s.getAttribute('viewBox') || '0 0 0 0').split(' ').map(Number); const scale = vb[2] ? r.width / vb[2] : 1;"
+                           " return {kind: s.getAttribute('aria-roledescription'), svg_width: Math.round(r.width), natural_width: Math.round(vb[2]), box_client: w.clientWidth, box_scroll: w.scrollWidth,"
+                           " wider_than_box: r.width > w.clientWidth + 1, box_scrolls: w.scrollWidth > w.clientWidth, text_px: t ? Math.round(parseFloat(getComputedStyle(t).fontSize) * scale * 10) / 10 : null}; })"),
+            "diagrams_wider_than_column": ev("[...document.querySelectorAll('.mermaid svg')].filter((s) => s.getBoundingClientRect().width > s.closest('.mermaid-wrap').clientWidth + 1).length"),
+            "diagram_boxes_scrolling": ev("[...document.querySelectorAll('.mermaid-wrap')].filter((w) => w.scrollWidth > w.clientWidth).length"),
         }
     if name == "search":
         facts["result_count"] = ev("document.getElementById('result-count').getAttribute('data-count')")
@@ -297,6 +305,9 @@ def check_page(ch: Chrome, base: str, name: str, path: str, width: int, shots: P
             errors.append(f"{v['table_cite_rows']} bare cite row(s) after a table")
         if facts["v2"]["broken_cite_links"] or facts["v2"]["boxes_wider_than_column"]:
             errors.append(f"v2 page facts: {json.dumps(facts['v2'])}")
+        if width >= 1280 and (v["diagrams_wider_than_column"] or v["diagram_boxes_scrolling"]):
+            errors.append(f"1280 rule: {v['diagrams_wider_than_column']} diagram(s) wider than the column, {v['diagram_boxes_scrolling']} diagram box(es) scrolling sideways: "
+                          f"{json.dumps(v['diagrams'])}")
     return {"name": name, "path": path, "width": width, "reduced_motion": reduced, "nav_frame": nav.get("frameId", ""), "facts": facts, "console_errors": errors,
             "console_warnings": warnings, "csp_violations": csp, "failed_requests": failed, "hosts": sorted(hosts)}
 

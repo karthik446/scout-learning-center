@@ -258,6 +258,76 @@ class Negative(Fixture):
         def two_sequences(s): s["blocks"].insert(4, copy.deepcopy(s["blocks"][2]))
         self.assertEqual(self.problems_after(EXERCISE, self.with_aws(two_sequences)), [])
 
+    # The split (2026-10-15): the architecture may come as two leading flowcharts (write half, read half); a third is a later diagram.
+    def test_aws_section_two_leading_flowcharts(self) -> None:
+        def two_halves(s): s["blocks"].insert(1, copy.deepcopy(s["blocks"][0]))
+        self.assertEqual(self.problems_after(EXERCISE, self.with_aws(two_halves)), [])
+        def three(s): s["blocks"][1:1] = [copy.deepcopy(s["blocks"][0]), copy.deepcopy(s["blocks"][0])]
+        self.refuses(EXERCISE, self.with_aws(three), "a later diagram (block 2) must be a sequence diagram")
+        def flowchart_after_a_sequence(s): s["blocks"].insert(3, copy.deepcopy(s["blocks"][0]))
+        self.refuses(EXERCISE, self.with_aws(flowchart_after_a_sequence), "a later diagram (block 3) must be a sequence diagram")
+
+    # A sequence diagram has at most five lanes, declared or implied by its arrows (five is what the 1280 column holds).
+    def test_sequence_diagram_participants(self) -> None:
+        five = "sequenceDiagram\n  autonumber\n  participant A\n  participant B as Bee\n  actor C\n  participant D\n  participant E\n  A->>B: x\n  B-->>A: y\n  C-)D: z\n  D-xE: w"
+        self.assertEqual(scan.sequence_participants(five), {"A", "B", "C", "D", "E"})
+        self.assertEqual(scan.sequence_participants(five + "\n  E->>+F: f\n  F-->>-E: g"), {"A", "B", "C", "D", "E", "F"})
+        def ok(d): section(d, "core-flow")["blocks"] = [{"type": "diagram", "mermaid": five}]
+        self.assertEqual(self.problems_after(EXERCISE, ok), [])
+        def six_declared(d): section(d, "core-flow")["blocks"] = [{"type": "diagram", "mermaid": five.replace("  participant E\n", "  participant E\n  participant F\n")}]
+        self.refuses(EXERCISE, six_declared, "a sequence diagram has 6 participants (at most 5, declared or implied by its arrows)")
+        def six_implied(d): section(d, "core-flow")["blocks"] = [{"type": "diagram", "mermaid": five + "\n  E->>F: implied"}]
+        self.refuses(EXERCISE, six_implied, "a sequence diagram has 6 participants (at most 5")
+        def in_aws(s): s["blocks"][2]["mermaid"] = five + "\n  E->>F: implied"
+        self.refuses(EXERCISE, self.with_aws(in_aws), "a sequence diagram has 6 participants")
+        def in_a_concept_lesson(d): first(d, "diagram").update(mermaid=five + "\n  E->>F: implied")
+        self.refuses(LESSON, in_a_concept_lesson, "a sequence diagram has 6 participants")
+
+    # The news-feed exercise as shipped (version 9): the two flowchart halves first, the write path in three parts, the identity table,
+    # the read path in three parts; the core flow in five; every sequence diagram at most five lanes, a one-sentence lead-in before it,
+    # and the step numbers running on across the parts of a path.
+    def test_news_feed_diagram_blocks(self) -> None:
+        doc = self.docs["lessons/sd-ex-news-feed.json"]
+        arrow = re.compile(r"^\s*\S+\s*(?:-->>|->>|--\)|-\)|--x|-x)[+-]?\s*\S+\s*:")
+
+        def kinds(sid):
+            return ["flow" if b["type"] == "diagram" and b["mermaid"].startswith("flowchart") else "seq" if b["type"] == "diagram" else b["type"]
+                    for b in section(doc, sid)["blocks"]]
+
+        def chains(sid):
+            """(start, count) of each sequence diagram, in order, from its autonumber line and its arrows."""
+            out = []
+            for b in section(doc, sid)["blocks"]:
+                if b["type"] == "diagram" and b["mermaid"].startswith("sequenceDiagram"):
+                    m = re.search(r"^\s*autonumber(?: (\d+))?\s*$", b["mermaid"], re.M)
+                    self.assertIsNotNone(m, "every sequence diagram carries autonumber")
+                    out.append((int(m.group(1) or 1), sum(1 for l in b["mermaid"].splitlines() if arrow.match(l))))
+            return out
+
+        aws = kinds("building-it-on-aws")
+        self.assertEqual(aws[:2], ["flow", "flow"])
+        self.assertEqual(aws.count("seq"), 6)
+        seqs = [i for i, k in enumerate(aws) if k == "seq"]
+        self.assertEqual(aws[seqs[2] + 2], "table", "the identity table follows the fan-out diagram and its line")
+        self.assertEqual(aws[seqs[5] + 2], "decision", "the decisions follow the last read diagram and its line")
+        self.assertEqual(kinds("core-flow").count("seq"), 5)
+        self.assertEqual(kinds("core-flow").count("flow"), 0)
+        for sid in ("building-it-on-aws", "core-flow"):
+            bl = section(doc, sid)["blocks"]
+            for i, b in enumerate(bl):
+                if b["type"] == "diagram" and b["mermaid"].startswith("sequenceDiagram"):
+                    self.assertLessEqual(len(scan.sequence_participants(b["mermaid"])), 5, f"{sid}[{i}]")
+                    self.assertEqual(bl[i - 1]["type"], "p", f"{sid}[{i}]: a lead-in paragraph before every sequence diagram")
+                    self.assertNotIn(". ", bl[i - 1]["text"], f"{sid}[{i}]: the lead-in is one sentence")
+                    self.assertTrue(set(re.findall(r"\bs\d+\b", b.get("legend", ""))) <= set(b.get("cites", [])), f"{sid}[{i}]: legend ids are cites")
+        # write a, b, c run 1..13, 14..18, 19..28; read a, b, c run 1..9, 10..14, 15..20; the core flow 1..22 over five parts
+        c = chains("building-it-on-aws")
+        self.assertEqual([s for s, _ in c], [1, 14, 19, 1, 10, 15])
+        self.assertEqual([s + n - 1 for s, n in c], [13, 18, 28, 9, 14, 20])
+        c = chains("core-flow")
+        self.assertEqual([s for s, _ in c], [1, 5, 11, 16, 20])
+        self.assertEqual([s + n - 1 for s, n in c], [4, 10, 15, 19, 22])
+
     def test_aws_diagram_cites_must_resolve(self) -> None:
         def bad(s): s["blocks"][2]["cites"] = ["s1", "s9"]
         self.assertTrue(any("s9" in p for p in self.problems_after(EXERCISE, self.with_aws(bad))))

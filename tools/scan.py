@@ -157,17 +157,38 @@ EXERCISE_SECTION_IDS = ["requirements-and-estimates", "high-level-design", "data
                         "failure-modes", "trade-offs", "at-10x"]
 AWS_SECTION = "building-it-on-aws"   # :2 only, optional, right after high-level-design (format v2 addendum B)
 EXERCISE2_SECTION_IDS = EXERCISE_SECTION_IDS[:2] + [AWS_SECTION] + EXERCISE_SECTION_IDS[2:]
-# The AWS section's shape (orchestrator #46 and #50, 2026-10-15): it opens with the AWS architecture diagram (a flowchart,
-# the first block), may carry further diagram blocks after it (sequence diagrams: the write and read paths through the
-# services, with their failure branches), carries at least one decision block (the choices as decisions, not prices) and
-# holds at most one cost table, which comes last. A table is a cost table when any column header contains "monthly", "cost"
-# or "price" (case-insensitive). Elsewhere in an exercise a diagram belongs in high-level-design (one flowchart) or in
-# core-flow (a sequence diagram may stand in for the steps block).
+# The AWS section's shape (orchestrator #46 and #50, 2026-10-15; the split of 2026-10-15): it opens with the AWS architecture
+# as one flowchart or as two (a write half and a read half), the leading blocks; every later diagram block is a sequence
+# diagram (the write and read paths through the services, split at their boundaries, with their failure branches); it
+# carries at least one decision block (the choices as decisions, not prices) and holds at most one cost table, which comes
+# last. A table is a cost table when any column header contains "monthly", "cost" or "price" (case-insensitive). Elsewhere
+# in an exercise a diagram belongs in high-level-design (one flowchart) or in core-flow (sequence diagrams may stand in for
+# the steps block). A sequence diagram anywhere has at most MAX_SEQUENCE_PARTICIPANTS lanes, declared or implied by its
+# arrows: Mermaid gives each lane about 200 px, so five is what the 1280 lesson column holds without sideways scrolling.
 AWS_COST_COLUMN = re.compile(r"(?i)monthly|cost|price")
+AWS_MAX_LEADING_FLOWCHARTS = 2
+MAX_SEQUENCE_PARTICIPANTS = 5
 TITLED_BODY = {"title": str, "body": str}
 FLOWCHART_START = re.compile(r"^\s*(flowchart|graph)\s")
 SEQUENCE_START = re.compile(r"^\s*sequenceDiagram\s")
 DIAGRAM_START = re.compile(r"^\s*(flowchart|graph|sequenceDiagram)\s")
+SEQUENCE_PARTICIPANT = re.compile(r"^\s*(?:participant|actor)\s+([^\s:]+)")
+SEQUENCE_ARROW = re.compile(r"^\s*([^\s:<>+-][^\s:<>]*?)\s*(?:-->>|->>|--\)|-\)|--x|-x|-->|->)[+-]?\s*([^\s:<>+-][^\s:<>]*?)\s*:")
+
+
+def sequence_participants(mermaid: str) -> set[str]:
+    """The lanes of a Mermaid sequence diagram: the declared participants and actors plus the ends of every arrow."""
+    names: set[str] = set()
+    for line in mermaid.splitlines():
+        m = SEQUENCE_PARTICIPANT.match(line)
+        if m:
+            names.add(m.group(1))
+            continue
+        m = SEQUENCE_ARROW.match(line)
+        if m:
+            names.update(m.groups())
+    return names
+
 
 # --- the written practice pages (kind "case" and "artifact"): the generator's shapes and text checks ----------------------
 # Bounds as gigai.scout.learning_case (copied, never imported): (min, max) counts.
@@ -1003,6 +1024,11 @@ def lesson2_checks(l: dict) -> list[str]:
                                    "split the row or move the arithmetic to a steps block")
         if t == "diagram" and exercise and not DIAGRAM_START.match(b["mermaid"]):
             out.append(f"{path}: the diagram must be a Mermaid flowchart or sequence diagram (starts with 'flowchart', 'graph' or 'sequenceDiagram')")
+        if t == "diagram" and SEQUENCE_START.match(b["mermaid"]):
+            n = len(sequence_participants(b["mermaid"]))
+            if n > MAX_SEQUENCE_PARTICIPANTS:
+                out.append(f"{path}: a sequence diagram has {n} participants (at most {MAX_SEQUENCE_PARTICIPANTS}, declared or implied by its arrows); "
+                           "split it at a boundary of the flow so it fits the 1280 column without sideways scrolling")
     if not exercise:
         types = {b["type"] for _, _, b in blocks}
         if not types & {"table", "decision"}:
@@ -1049,10 +1075,13 @@ def exercise2_checks(l: dict) -> list[str]:
                            f"the first block is {first!r}")
             elif not FLOWCHART_START.match(bl[0]["mermaid"]):
                 out.append(f"section {sid}: must start with a flowchart (the AWS architecture); a sequence diagram comes after it")
-            for i, b in enumerate(bl[1:], 1):
+            lead = 0   # the architecture: one flowchart, or its write half and read half
+            while lead < min(len(bl), AWS_MAX_LEADING_FLOWCHARTS) and bl[lead].get("type") == "diagram" and FLOWCHART_START.match(bl[lead]["mermaid"]):
+                lead += 1
+            for i, b in enumerate(bl[lead:], lead):
                 if b.get("type") == "diagram" and not SEQUENCE_START.match(b["mermaid"]):
                     out.append(f"section {sid}: a later diagram (block {i}) must be a sequence diagram (the paths through the services); "
-                               f"the architecture flowchart is the first block only")
+                               f"the architecture flowchart, or its write and read halves, comes first only")
             if not any(b.get("type") == "decision" for b in bl):
                 out.append(f"section {sid}: needs at least one decision block (the choices as decisions: option, pick when, avoid when, for this design)")
             cost_tables = [t for t in tables if any(AWS_COST_COLUMN.search(c) for c in t["columns"])]
