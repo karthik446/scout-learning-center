@@ -201,8 +201,7 @@ def tail_scripts(*, mermaid: bool = False, code: bool = False, extra: tuple[str,
     return "\n".join(s) + "\n</body>\n</html>\n"
 
 
-NAV = (("/", "Scout", "scout"), ("/learn/", "Learning center", "learn"), ("/learn/modules/", "Modules", "modules"),
-       ("/learn/search/", "Search", "search"))
+NAV = (("/", "Scout", "scout"), ("/learn/", "Learning center", "learn"), ("/learn/search/", "Search", "search"))
 
 
 def site_page(title: str, body: str, *, current: str = "", crumbs: list[tuple[str, str]] | None = None, description: str = "",
