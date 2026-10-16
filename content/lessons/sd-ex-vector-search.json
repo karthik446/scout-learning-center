@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-vector-search",
-  "version": 2,
+  "version": 3,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: vector search service",
@@ -611,6 +611,11 @@
                 "id": "BLD",
                 "label": "Offline segment builders",
                 "kind": "service"
+              },
+              {
+                "id": "LOCAL",
+                "label": "Replica local raw snapshot and delta",
+                "kind": "store"
               }
             ],
             "edges": [
@@ -653,7 +658,7 @@
                 "from": "BLD",
                 "to": "LOG",
                 "kind": "sync",
-                "label": "Read snapshot watermark and mutations",
+                "label": "Read shard-qualified snapshot watermarks and mutations",
                 "short": "Read log"
               },
               {
@@ -688,7 +693,7 @@
                 "from": "SH",
                 "to": "SEG",
                 "kind": "sync",
-                "label": "Load pinned immutable generation",
+                "label": "Hydrate pinned segments and raw snapshot onto local disk",
                 "short": "Load"
               },
               {
@@ -700,9 +705,9 @@
               },
               {
                 "from": "SH",
-                "to": "RAW",
+                "to": "LOCAL",
                 "kind": "sync",
-                "label": "Fetch candidate vectors and metadata",
+                "label": "Read local candidate vectors at the query watermark",
                 "short": "Rerank"
               }
             ],
@@ -730,7 +735,7 @@
               },
               {
                 "edge": 5,
-                "caption": "BLD to LOG: Read snapshot watermark and mutations"
+                "caption": "BLD to LOG: Read shard-qualified snapshot watermarks and mutations"
               },
               {
                 "edge": 6,
@@ -750,7 +755,7 @@
               },
               {
                 "edge": 10,
-                "caption": "SH to SEG: Load pinned immutable generation"
+                "caption": "SH to SEG: Hydrate pinned segments and raw snapshot onto local disk"
               },
               {
                 "edge": 11,
@@ -758,10 +763,10 @@
               },
               {
                 "edge": 12,
-                "caption": "SH to RAW: Fetch candidate vectors and metadata"
+                "caption": "SH to LOCAL: Read local candidate vectors at the query watermark; replay also updates local raw state"
               }
             ],
-            "legend": "The raw store and mutation log are logical tables in the same transactional authority. Segment builders and serving replicas read independently; the queue is not the mutation history. APIs, router and replica internals are application code."
+            "legend": "Abbreviated build dependencies: the builder also reads raw vectors and shard counters from the same database snapshot, then conditionally publishes to the catalogue after artifact upload and recall validation; the AWS build sequence shows that order. Raw, log and catalogue are logical tables in one transactional authority. Local raw is internal replica storage (inside the AWS serving box), hydrated with segments and updated by contiguous replay. Query reranking reads only this local snapshot-plus-delta state, not the transactional raw authority. Replicas replay independently; the queue is not mutation history."
           },
           {
             "type": "p",
@@ -1048,7 +1053,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 1\n  participant W as Writer\n  participant I as Ingest\n  participant D as Aurora\n  W->>I: id, version and payload\n  I->>D: vector and revision transaction\n  alt version advances\n   D-->>I: committed revision\n   I-->>W: accepted with revision\n  else same version and hash\n   D-->>I: existing revision\n   I-->>W: idempotent status\n  else stale or conflicting version\n   D-->>I: reject\n   I-->>W: conflict\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber 1\n  participant W as Writer\n  participant I as Ingest\n  participant D as Aurora\n  W->>I: id, version and payload\n  I->>D: vector and revision transaction\n  alt version advances\n   D-->>I: shard-qualified revision\n   I-->>W: collection, shard, revision\n  else same version and hash\n   D-->>I: existing qualified token\n   I-->>W: idempotent token\n  else stale or conflicting version\n   D-->>I: reject\n   I-->>W: conflict\n  end",
             "legend": "Solid calls and dashed replies are synchronous; open arrows hand work off asynchronously. Failure branches are mutually exclusive. Sources: s8.",
             "cites": [
               "s8"
@@ -1056,11 +1061,11 @@
           },
           {
             "type": "p",
-            "text": "Builds publish a complete generation at a contiguous revision watermark; stale builders cannot replace a newer generation."
+            "text": "Builds publish a complete generation with a snapshot-watermark map keyed by shard; stale builders cannot replace a newer generation."
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 9\n  participant B as Builder\n  participant D as Aurora\n  participant S as S3\n  B->>D: consistent snapshot and watermark\n  D-->>B: snapshot revision\n  B->>B: build and recall gate\n  alt gate passes\n   B->>S: PutObject checked artifacts\n   S-->>B: stored\n   B->>D: compare-and-publish manifest\n   D-->>B: published or superseded\n  else gate fails\n   Note over B,D: old manifest stays live\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber 9\n  participant B as Builder\n  participant D as Aurora\n  participant S as S3\n  B->>D: raw and counters, same snapshot\n  D-->>B: raw plus shard watermark map\n  B->>B: build and recall gate\n  alt gate passes\n   B->>S: PutObject checked artifacts\n   S-->>B: stored\n   B->>D: compare-and-publish manifest\n   D-->>B: published or superseded\n  else gate fails\n   Note over B,D: old manifest stays live\n  end",
             "legend": "Solid calls and dashed replies are synchronous; open arrows hand work off asynchronously. Failure branches are mutually exclusive. Sources: s8, s12.",
             "cites": [
               "s8",
@@ -1073,7 +1078,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 1\n  participant H as Replica\n  participant D as Aurora\n  participant S as S3\n  H->>D: pin manifest and watermark\n  D-->>H: generation plus revision\n  H->>S: GetObject segment and raw\n  S-->>H: verified artifacts\n  H->>D: revisions after watermark\n  D-->>H: contiguous mutations\n  alt caught up within target\n   H->>H: apply delta and tombstones\n   Note over H: ready for pinned generation\n  else missing retained history\n   H->>D: request fresh snapshot\n   Note over H: remain unhealthy\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber 1\n  participant H as Replica\n  participant D as Aurora\n  participant S as S3\n  H->>D: pin manifest for own shard\n  D-->>H: generation and shard watermark\n  H->>S: GetObject segment and raw\n  S-->>H: verified artifacts\n  H->>D: shard revisions above watermark\n  D-->>H: contiguous shard mutations\n  alt caught up within target\n   H->>H: apply delta and tombstones\n   Note over H: ready for pinned generation\n  else missing retained history\n   H->>D: request fresh snapshot\n   Note over H: remain unhealthy\n  end",
             "legend": "Solid calls and dashed replies are synchronous; open arrows hand work off asynchronously. Failure branches are mutually exclusive. Sources: s8, s12.",
             "cites": [
               "s8",
@@ -1086,7 +1091,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 9\n  participant A as Router\n  participant H as Primary\n  participant R as Replica\n  A->>H: query, generation, deadline\n  alt result before hedge delay\n   H-->>A: reranked local candidates\n  else hedge allowed by budget\n   A->>R: same query and generation\n   R-->>A: local candidates\n   Note over A: first valid response wins\n  end\n  alt all shards answered\n   A->>A: merge and return full result\n  else deadline exceeded\n   A->>A: mark degraded with coverage\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber 9\n  participant A as Router\n  participant H as Primary\n  participant R as Replica\n  A->>H: query and shard minimum\n  Note over A,H: pinned generation and deadline\n  alt result before hedge delay\n   H-->>A: candidates and shard watermark\n  else hedge allowed by budget\n   A->>R: same query and shard minimum\n   R-->>A: candidates and shard watermark\n   Note over A: first valid response wins\n  end\n  alt minima met and all shards answered\n   A->>A: merge and return full result\n  else required minimum not met\n   A->>A: return not-ready, no matches\n  else ordinary query deadline\n   A->>A: mark degraded with coverage\n  end",
             "legend": "Solid calls and dashed replies are synchronous; open arrows hand work off asynchronously. Failure branches are mutually exclusive. Sources: s5.",
             "cites": [
               "s5"
@@ -1379,7 +1384,7 @@
               ],
               [
                 "Manifest / Segment",
-                "generation, shard files, snapshot_revision, raw_snapshot_ref, checksums, recall report",
+                "generation, shard files, snapshot_watermarks[shard_id], raw_snapshot_refs[shard_id], checksums, recall report",
                 "collection, generation",
                 "Published conditionally against prior generation after artifact validation and recall gate."
               ],
@@ -1412,22 +1417,22 @@
                 "POST",
                 "/collections/{id}/vectors",
                 "id, caller_version, payload_hash, embedding, metadata",
-                "accepted revision per item",
+                "accepted (collection_id, shard_id, revision) token per item",
                 "Batch reports per-item results; retry only failed items; no implied batch atomicity."
               ],
               [
                 "DELETE",
                 "/collections/{id}/vectors/{vector_id}",
                 "new caller_version, payload_hash",
-                "accepted tombstone revision",
+                "accepted (collection_id, shard_id, revision) tombstone token",
                 "Same version semantics as upsert."
               ],
               [
                 "POST",
                 "/collections/{id}/query",
-                "vector, k, filter, recall tier, optional minimum_revision",
-                "matches, generation, applied revisions, shards_answered, degraded",
-                "A read-your-write request waits or returns not-ready; default permits bounded freshness lag."
+                "vector, k, filter, recall tier, optional minimum_revisions[shard_id]",
+                "matches, generation, applied_revisions[shard_id], shards_answered, degraded",
+                "Minima belong to this collection and fixed shard map. Wait or return not-ready without matches if any requested minimum is unmet; never claim read-your-delete on a degraded substitute."
               ],
               [
                 "POST",
@@ -1447,11 +1452,11 @@
           },
           {
             "type": "p",
-            "text": "A writer locks the shard counter, conditionally advances the vector’s caller version and inserts the matching mutation in the same database transaction. Only committed increments are visible. Duplicate or stale writes do not allocate a new mutation. This serialization is a capacity limit to benchmark. Snapshot building reads raw vectors and the counter from the same consistent database snapshot, so its watermark actually covers the snapshot rather than racing later writes."
+            "text": "This design fixes the shard map for a collection's lifetime; online repartitioning is not supported by this protocol. A writer locks the target shard counter, conditionally advances the vector's caller version and inserts the mutation in the same transaction. Only committed increments are visible; duplicate or stale writes allocate no new mutation. Return a collection-and-shard-qualified token, never a bare revision. Snapshot building reads raw vectors and all shard counters from the same consistent snapshot and stores the counter map in the manifest. Counter serialization is a capacity limit to benchmark; the map is not a global revision."
           },
           {
             "type": "p",
-            "text": "Pin each request to one manifest generation. New replicas load every listed segment and raw snapshot, then replay revisions above the snapshot watermark in order, with per-vector version checks. Publish a new manifest only after recall evaluation over the complete candidate segment set. Keep old artifacts and required revisions until in-flight readers, rollback policy and active replicas no longer need them. A missing history range means remain unhealthy and take a fresh snapshot, not silently skip ahead."
+            "text": "Pin each request to one manifest generation. A replica loads its shard's listed segments and raw snapshot, then replays that shard's revisions above snapshot_watermarks[shard_id] contiguously with per-vector version checks. The router combines write tokens by taking the maximum requested revision separately for each shard, and accepts only responses meeting every supplied minimum for this collection; replicas of other shards cannot satisfy it. Unmet minima yield not-ready without matches, not a degraded success. Publish only after whole-collection recall evaluation. Retain old artifacts and each shard's required history until pinned readers, rollback policy and replicas no longer need them; a missing range means remain unhealthy and reload a fresh snapshot."
           }
         ]
       },
@@ -1465,7 +1470,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 1\n  participant W as Writer\n  participant I as Ingest\n  participant D as Raw and log\n  W->>I: versioned upsert or delete\n  I->>D: atomic version and mutation\n  alt commit succeeds\n   D-->>I: revision\n   I-->>W: accepted\n  else version conflict\n   D-->>I: conflict\n   I-->>W: reject or existing status\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber 1\n  participant W as Writer\n  participant I as Ingest\n  participant D as Raw and log\n  W->>I: versioned upsert or delete\n  I->>D: atomic version and mutation\n  alt commit succeeds\n   D-->>I: shard-qualified revision\n   I-->>W: collection, shard, revision\n  else version conflict\n   D-->>I: conflict\n   I-->>W: reject or existing token\n  end",
             "legend": "Solid calls and dashed replies are synchronous; open arrows hand work off asynchronously. Failure branches are mutually exclusive. This is the proposed application protocol, not a service guarantee."
           },
           {
@@ -1474,7 +1479,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 7\n  participant R as Router\n  participant S as Shard\n  participant L as Local raw and delta\n  R->>S: query, filter, generation\n  S->>L: current versions and filter\n  L-->>S: allowed ids and raw vectors\n  alt selective filter\n   S->>S: score filtered ids exactly\n  else broad filter\n   S->>S: graph candidates plus delta\n   S->>L: candidate raw vectors\n   L-->>S: same-watermark vectors\n   S->>S: exact rerank candidates\n  end\n  S-->>R: candidates and watermark\n  R->>R: merge with coverage flag",
+            "mermaid": "sequenceDiagram\n  autonumber 7\n  participant R as Router\n  participant S as Shard\n  participant L as Local raw and delta\n  R->>S: query and shard minimum\n  Note over R,S: pinned generation and filter\n  alt required watermark unmet\n   S-->>R: not-ready, no candidates\n  else watermark satisfies request\n   S->>L: versions and filter metadata\n   L-->>S: matching ids, no raw payload\n   alt selective filter\n    S->>L: exact subset raw vectors\n    L-->>S: same-watermark vectors\n    S->>S: score filtered ids exactly\n   else broad filter\n    S->>S: graph candidates plus delta\n    S->>L: candidate-only raw vectors\n    L-->>S: same-watermark vectors\n    S->>S: exact rerank candidates\n   end\n   S-->>R: candidates and shard watermark\n  end\n  R->>R: enforce minima and coverage",
             "legend": "Solid calls and dashed replies are synchronous; open arrows hand work off asynchronously. Failure branches are mutually exclusive. This is the proposed application protocol, not a service guarantee."
           },
           {
@@ -1486,9 +1491,9 @@
               "For selective filters, obtain the matching id set from a metadata index and exact-score it. Benchmark the crossover instead of assuming every small set is cheaper.",
               "Query the mutable delta as well as pinned immutable segments. Suppress tombstoned and superseded versions before scoring candidates, then rerank raw vectors from the same snapshot-plus-delta state.",
               "Scatter only to the collection’s shards. Hedge only within an explicit extra-work budget; return the number of healthy shard replies and mark a deadline-shortened response degraded.",
-              "Build from a consistent raw snapshot at a committed watermark, write checked immutable artifacts, run the collection’s filtered and unfiltered recall suite, and conditionally publish the manifest.",
-              "At swap, retain post-watermark delta updates and tombstones. Discard only mutations covered by the new snapshot; old readers continue on their pinned generation.",
-              "Logical deletion becomes visible when the replica applies its tombstone within the freshness target. A minimum-revision query prevents stale reads for callers needing read-your-delete. Physical erasure from old snapshots/backups has a separate retention policy."
+              "Build raw vectors and the shard-counter map from the same consistent snapshot, write checked artifacts, run the collection's filtered and unfiltered recall suite, and conditionally publish the manifest with per-shard watermarks.",
+              "At swap, retain each shard's updates and tombstones above its own new snapshot watermark. Discard only mutations covered for that shard; old readers continue on their pinned generation.",
+              "Logical deletion becomes visible when its shard replica applies the tombstone. For read-your-delete, pass the returned token in minimum_revisions keyed by shard; the router requires that shard's watermark or returns not-ready without matches. Physical erasure from snapshots/backups has a separate retention policy."
             ],
             "cites": [
               "s3",
@@ -1809,7 +1814,7 @@
         "0:05 to 0:10: Entities and API: Collection with index parameters and a test set, Vector with version and metadata, Segment, Delta, Tombstones; the upsert, delete, query and rebuild endpoints with the recall tier.",
         "0:10 to 0:20: High-level design with the diagram: query router, shards with immutable segments and a delta, the change log, the segment builder, object storage, the raw store. Say why segments are immutable.",
         "0:20 to 0:40: Two deep dives: memory and the build-versus-serve split (M, ef, quantisation, re-ranking, recall as a gate, rollback), then filtered search and isolation (in-walk versus exact scoring by selectivity, tenant as filter versus collection, hedging the tail).",
-        "0:40 to 0:45: Failure modes from the table, the 10x plan (quantise everything, disk-resident graphs, partition keys for routing, quotas and cost per million vectors), and the L3 sentence: an index is a derived, disposable view with a measured recall; the design is about who builds it, when, and at what memory cost."
+        "0:40 to 0:45: Failure modes from the table, the 10x plan (evaluate quantisation and disk-resident graphs per collection against recall gates, partition-key routing, quotas and cost per million vectors), and the L3 sentence: an index is a derived, disposable view with a measured recall; the design is about who builds it, when, and at what memory cost."
       ]
     },
     "design_doc_frame": {
@@ -1846,6 +1851,11 @@
       "version": 2,
       "date": "2026-10-16",
       "change": "Codex gpt-6-astra by hand: format v2 tables, neutral and AWS flow/sequence diagrams, primary-source AWS decisions and dated costs; correctness assumptions and protocols clarified. Original attribution retained; reviewed_by cleared for independent second read."
+    },
+    {
+      "version": 3,
+      "date": "2026-10-16",
+      "change": "Address E2B S1-S3: shard-qualified revision tokens and manifest/read watermarks, consistent local snapshot-plus-delta reranking and build dependencies, and evaluated per-collection quantisation. Review provenance remains unset."
     }
   ]
 }

@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-rag-service",
-  "version": 3,
+  "version": 4,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: RAG service (retrieval-augmented generation)",
@@ -345,6 +345,17 @@
         "http": 200,
         "section_found": "outputs a vector of 1,024 dimensions"
       }
+    },
+    {
+      "id": "s28",
+      "title": "Amazon S3 API: GetObject",
+      "url": "https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Retrieves an object from Amazon S3"
+      }
     }
   ],
   "practice": null,
@@ -387,7 +398,7 @@
       },
       {
         "q": "How strict are permissions?",
-        "a": "Strict at release of text to the model: current source authorisation or a synchronously maintained authority, with unknown access denied; periodic ACL sync alone is insufficient."
+        "a": "Authorisation linearises at a successful current-authority check for specified immutable document versions. That request may subsequently send those versions to its reranker and generator despite a later revocation; new checks deny revoked access. Unknown access fails closed; periodic ACL sync alone is insufficient."
       },
       {
         "q": "What counts as good?",
@@ -670,8 +681,8 @@
                 "from": "CH",
                 "to": "DOC",
                 "kind": "sync",
-                "label": "Publish ready version conditionally",
-                "short": "Publish"
+                "label": "Read immutable original, then conditionally publish",
+                "short": "Read / publish"
               },
               {
                 "from": "U",
@@ -744,7 +755,7 @@
               },
               {
                 "edge": 6,
-                "caption": "CH to DOC: Publish ready version conditionally"
+                "caption": "CH to DOC: Read immutable original before embedding, then publish ready version conditionally"
               },
               {
                 "edge": 7,
@@ -771,7 +782,7 @@
                 "caption": "ASK to LOG: Record permitted evaluation metadata"
               }
             ],
-            "legend": "The neutral pipelines share versioned documents. The gateway handles embedding and generation. Source authorisation checks at query time are an additional call through the connector; source unavailability fails closed. This is the proposed design, informed by s2 and s3.",
+            "legend": "Abbreviated dependency view: the neutral document store includes immutable originals (S3 in AWS) and metadata. The worker's document connection covers reading originals before embedding and later publication. Ask also calls the connector's current source authority for specified versions, shown explicitly in the query sequence. Source unavailability fails closed. The gateway handles embedding and generation. Proposed design informed by s2 and s3.",
             "cites": [
               "s2",
               "s3"
@@ -962,7 +973,7 @@
                 "caption": "CH to DOC: SQL compare-and-publish active version"
               }
             ],
-            "legend": "Ingestion half; Aurora boxes are schemas in the same cluster, not independent databases. One VPC spans multiple Availability Zones; S3, SQS and Bedrock are regional services outside it. Source fetches need controlled outbound connectivity; AWS service calls use endpoints. SQS carries retryable work, not the source of truth. Sources: s23, s13, s11, s25.",
+            "legend": "Abbreviated ingestion dependencies: the worker also reads the immutable S3 original with GetObject before embedding, as shown in the worker sequence. Aurora boxes are schemas in the same cluster. One VPC spans multiple Availability Zones; S3, SQS and Bedrock are regional services outside it. Source fetches need controlled outbound connectivity; AWS service calls use endpoints. SQS carries retryable work, not the source of truth. Sources: s23, s13, s11, s25.",
             "cites": [
               "s23",
               "s13",
@@ -1173,20 +1184,21 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 7\n  participant W as Worker\n  participant G as Gateway\n  participant D as Aurora\n  participant Q as SQS\n  W->>Q: ReceiveMessage\n  Q-->>W: version job\n  W->>G: embed contextual chunks\n  alt model call succeeds\n   G-->>W: vectors\n   W->>D: stage and validate rows\n   D-->>W: complete\n   W->>D: conditional publish\n   D-->>W: active or superseded\n   W->>Q: DeleteMessage\n  else model unavailable\n   G-->>W: retryable error\n   Note over W,Q: retain work for retry\n  end",
-            "legend": "Solid calls and dashed replies are synchronous; open arrows hand work off asynchronously. Failure branches are mutually exclusive. Sources: s16, s23.",
+            "mermaid": "sequenceDiagram\n  autonumber 7\n  participant W as Worker\n  participant S as S3\n  participant G as Gateway\n  participant D as Aurora\n  participant Q as SQS\n  W->>Q: ReceiveMessage\n  Q-->>W: version job\n  W->>S: GetObject exact version\n  S-->>W: immutable source text\n  W->>G: embed contextual chunks\n  alt model call succeeds\n   G-->>W: vectors\n   W->>D: stage and validate rows\n   D-->>W: complete\n   W->>D: conditional publish\n   D-->>W: active or superseded\n   W->>Q: DeleteMessage\n  else model unavailable\n   G-->>W: retryable error\n   Note over W,Q: retain work for retry\n  end",
+            "legend": "Solid calls and dashed replies are synchronous; open arrows hand work off asynchronously. Failure branches are mutually exclusive. Originals use immutable per-source-version object keys; GetObject reads that exact key. A read failure retains the job without embedding or publication. Sources: s16, s23, s28.",
             "cites": [
               "s16",
-              "s23"
+              "s23",
+              "s28"
             ]
           },
           {
             "type": "p",
-            "text": "The read path refuses forbidden or stale-version chunks before any reranker or generative model receives their text."
+            "text": "The read path authorises specified immutable versions at the successful authority check; that request may then release those versions to both models despite a later revocation."
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 1\n  participant A as Ask\n  participant D as Aurora\n  participant C as Source auth\n  participant R as Reranker\n  A->>D: hybrid candidate ids\n  D-->>A: ids and versions\n  A->>C: authorise candidate docs\n  alt current access confirmed\n   C-->>A: allowed ids\n   A->>D: active authorised text\n   D-->>A: current chunks\n   A->>R: rank permitted text\n   R-->>A: selected chunks\n  else unknown or revoked\n   C-->>A: deny\n   Note over A: omit or fail closed\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber 1\n  participant A as Ask\n  participant D as Aurora\n  participant C as Source auth\n  participant R as Reranker\n  A->>D: hybrid candidate ids\n  D-->>A: ids and exact versions\n  A->>C: authorise ids and versions\n  alt current access confirmed\n   C-->>A: allowed version tuples\n   A->>D: fetch those exact versions\n   D-->>A: immutable chunks\n   A->>R: rank authorised versions\n   R-->>A: selected chunks\n  else unknown or revoked\n   C-->>A: deny\n   Note over A: omit or fail closed\n  end",
             "legend": "Solid calls and dashed replies are synchronous; open arrows hand work off asynchronously. Failure branches are mutually exclusive. Sources: s23.",
             "cites": [
               "s23"
@@ -1198,7 +1210,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 10\n  participant A as Ask\n  participant G as Gateway\n  participant B as Bedrock\n  participant U as User\n  A->>G: context and question\n  G->>B: ConverseStream\n  alt stream succeeds\n   B-->>G: token events and usage\n   G-->>A: streamed events\n   A-->>U: tokens and valid citations\n  else error or timeout\n   B-->>G: error\n   G-->>A: interrupted\n   A-->>U: explicit failure\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber 10\n  participant A as Ask\n  participant G as Gateway\n  participant B as Bedrock\n  participant U as User\n  A->>G: authorised version context\n  G->>B: ConverseStream\n  alt stream succeeds\n   B-->>G: token events and usage\n   G-->>A: streamed events\n   A-->>U: provisional answer events\n   alt citations pass checks\n    A-->>U: final cited answer status\n   else missing or invalid evidence\n    A-->>U: answer rejected, abstain\n   end\n  else error or timeout\n   B-->>G: error\n   G-->>A: interrupted\n   A-->>U: explicit failure\n  end",
             "legend": "Solid calls and dashed replies are synchronous; open arrows hand work off asynchronously. Failure branches are mutually exclusive. Sources: s24.",
             "cites": [
               "s24"
@@ -1530,8 +1542,8 @@
                 "POST",
                 "/ask",
                 "question, collections[], request_id",
-                "token stream then validated citations",
-                "Authenticate and authorise collections; aborted stream has an explicit error, not resumable text."
+                "provisional token stream, then final cited status or abstention",
+                "Provisional text is not a validated answer. On rejection the client marks it rejected; emitted text cannot be recalled. No resumability."
               ],
               [
                 "POST",
@@ -1551,7 +1563,7 @@
           },
           {
             "type": "p",
-            "text": "Strict permission means authorisation at the point text is released to a model, against the source’s current permission service or a synchronously maintained local authority. Periodic ACL copying alone cannot provide this. A source that supplies only eventually refreshed ACLs cannot onboard under this strict contract; unknown access fails closed. Revocation during an already authorised in-flight generation cannot recall text already sent, so that linearisation boundary is explicit."
+            "text": "This application's permission check linearises at the successful source-authority response for explicit tenant, user, document and immutable version tuples. The authority must validate that those versions are permitted at that instant; an eventually refreshed ACL copy cannot do so and unknown access fails closed. Fetch only those exact versions, never substitute a newer active version; missing bytes require fresh retrieval and authorisation. Both reranker and generator may use the authorised version set for this request even if revocation or a new version commits afterward. New requests require new checks. This is permitted in-flight continuation, not atomic check-and-release across services."
           }
         ]
       },
@@ -1565,7 +1577,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 1\n  participant C as Connector\n  participant D as Documents\n  participant W as Worker\n  participant I as Indexes\n  C->>D: version plus pending intent\n  D-->>C: committed\n  C-)W: dispatch version work\n  W->>I: stage complete version\n  I-->>W: validated\n  W->>D: publish if still current\n  alt newer version already exists\n   D-->>W: superseded, no rollback\n  else publication succeeds\n   D-->>W: active\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber 1\n  participant C as Connector\n  participant D as Documents\n  participant W as Worker\n  participant I as Indexes\n  C->>D: version plus pending intent\n  D-->>C: committed\n  C-)W: dispatch version work\n  W->>D: read immutable original\n  D-->>W: version text\n  W->>I: stage complete version\n  I-->>W: validated\n  W->>D: publish if still current\n  alt newer version already exists\n   D-->>W: superseded, no rollback\n  else publication succeeds\n   D-->>W: active\n  end",
             "legend": "Solid calls and dashed replies are synchronous; open arrows hand work off asynchronously. Failure branches are mutually exclusive. This is the proposed application protocol, not a service guarantee."
           },
           {
@@ -1574,7 +1586,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 9\n  participant U as User\n  participant A as Ask\n  participant D as Retrieval and ACLs\n  participant G as Models\n  U->>A: question and collections\n  A->>D: candidate ids and access\n  alt authorised evidence exists\n   D-->>A: active permitted chunks\n   A->>G: rerank then generate\n   G-->>A: answer and chunk ids\n   A-->>U: validated citations\n  else no usable evidence\n   D-->>A: empty or denied\n   A-->>U: abstain\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber 11\n  participant U as User\n  participant A as Ask\n  participant D as Retrieval\n  participant C as Source auth\n  participant G as Models\n  U->>A: question and collections\n  A->>D: retrieve candidate tuples\n  D-->>A: ids and exact versions\n  A->>C: authorise version tuples\n  alt authorised evidence exists\n   C-->>A: allowed version tuples\n   A->>D: fetch those exact versions\n   D-->>A: immutable permitted text\n   A->>G: rerank then generate\n   G-->>A: provisional text and ids\n   A-->>U: provisional answer events\n   alt citation checks pass\n    A-->>U: final cited status\n   else invalid or missing evidence\n    A-->>U: reject answer, abstain\n   end\n  else no usable evidence\n   C-->>A: empty or denied\n   A-->>U: abstain\n  end",
             "legend": "Solid calls and dashed replies are synchronous; open arrows hand work off asynchronously. Failure branches are mutually exclusive. This is the proposed application protocol, not a service guarantee."
           },
           {
@@ -1582,11 +1594,11 @@
             "title": "Publication, deletion and reconciliation rules",
             "items": [
               "Stage the entire new document version; workers may retry deterministic chunk ids without duplicating visible content.",
-              "Publish with a conditional version check after completeness validation. Retrieval joins to that active version; old and staged chunks cannot leak into the context.",
-              "A delete marks the authoritative document denied immediately when observed, then removes all derived entries within the freshness target. Source authorisation closes the polling gap for query access.",
+              "Publish with a conditional version check after completeness validation. Retrieval selects active candidate versions; once authorised for a request, their immutable bytes remain pinned for its in-flight continuation.",
+              "A delete denies new authority checks immediately when committed at that authority, then removes derived entries within the freshness target. Earlier authorised requests may continue under the stated contract.",
               "Reconciliation compares source versions, active pointers and derived chunk counts; repair missing work from durable intents, not from assumed queue history.",
-              "Before reranking, revalidate active version and source permissions; oversample or retry retrieval within a deadline if filtering removes candidates.",
-              "Validate every cited chunk id against the authorised context. Missing or unsupported evidence causes abstention; membership validation alone is not a faithfulness proof."
+              "Authorise exact candidate version tuples at the current authority, then fetch only those immutable versions. The same request authorisation covers reranker and generator despite later revocation; retry retrieval and authorisation if bytes are missing.",
+              "Before emitting text, reject absent authorised context and require citation instructions. Stream text only as provisional. Validate cited ids against that context and require citations before final success; missing or invalid citations or detected unsupported claims reject the whole answer and end with abstention, not a citation-free success. The client marks prior text rejected, but cannot retract bytes already seen. Membership is not proof of faithfulness: undetected unsupported claims remain a quality risk measured by evaluation."
             ]
           }
         ]
@@ -1711,7 +1723,7 @@
               [
                 "Hallucinated citations",
                 "wrong source shown",
-                "citations are chunk ids the service validates against the retrieved set; anything else is dropped"
+                "invalid or missing citations reject the whole answer and end with abstention; prior provisional text is marked rejected, not silently accepted; membership does not prove faithfulness"
               ],
               [
                 "Index host loss",
@@ -1883,7 +1895,7 @@
       "L3": [
         "The vector index as a rebuildable derived view; evaluation as a release gate across teams.",
         "Provider abstraction and fallback; tenancy and cost attribution as the platform questions.",
-        "What the service must refuse (answers without citations, questions over collections the user cannot name), and when the right answer is not RAG at all (a small, static FAQ; or search without generation)."
+        "The service refuses final success without citations or over unauthorised collections. Streamed text is provisional and is marked rejected on failed evidence checks; membership cannot prove faithfulness. Explain when search without generation or a small static FAQ is better."
       ]
     },
     "interview_frame": {
@@ -1893,7 +1905,7 @@
         "0:00 to 0:05: Requirements: the six clarifying questions, the non-goals, and the numbers aloud: 20 million chunks, 81.92 GB of raw vectors (roughly 80 GB), 120 million input tokens per day (all assumptions), 2 questions per second at peak, 15-minute freshness.",
         "0:05 to 0:10: Entities and API: Collection, Document, Chunk, Question, EvalSet; the streaming ask endpoint, the idempotent sync endpoint, the evaluation run.",
         "0:10 to 0:20: High-level design with the diagram: the two pipelines, one index per collection, the permission filter before the reranker, the gateway in front of the model, the question log that feeds evaluation.",
-        "0:20 to 0:40: Two deep dives: retrieval quality as an evaluation loop (contextual chunks, hybrid retrieval, rerank, per-team eval sets as a release gate, re-embedding as a backfill), then permissions and tenancy (filter by ACL version before rerank, per-collection indexes, deletion, per-team budgets and cost per answer).",
+        "0:20 to 0:40: Two deep dives: retrieval quality as an evaluation loop (contextual chunks, hybrid retrieval, rerank, per-team eval sets as a release gate, re-embedding as a backfill), then permissions and tenancy (version-bound authority checks and permitted in-flight continuation, per-collection indexes, deletion, per-team budgets and cost per answer).",
         "0:40 to 0:45: Failure modes from the table, the 10x plan, and the L3 sentence: the index is a derived view; the design is really about the document store, the ACLs and the evaluation loop."
       ]
     },
@@ -1936,6 +1948,11 @@
       "version": 3,
       "date": "2026-10-16",
       "change": "Codex gpt-6-astra by hand: format v2 tables, neutral and AWS flow/sequence diagrams, primary-source AWS decisions and dated costs; correctness assumptions and protocols clarified. Original attribution retained; reviewed_by cleared for independent second read."
+    },
+    {
+      "version": 4,
+      "date": "2026-10-16",
+      "change": "Address E2B R1-R3: version-bound authority-check contract with explicit in-flight continuation, provisional streaming and citation rejection, and original-object ingestion dependencies. Review provenance remains unset."
     }
   ]
 }

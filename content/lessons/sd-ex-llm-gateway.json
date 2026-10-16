@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-llm-gateway",
-  "version": 3,
+  "version": 4,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: LLM gateway",
@@ -398,7 +398,7 @@
     "clarifying_questions": [
       {
         "q": "Whose rate limits matter?",
-        "a": "Both: the provider's limits per model class, expressed in requests per minute, input tokens per minute and output tokens per minute and signalled by a 429 with a retry-after header, and the gateway's own per-team limits, which must sum to less than the provider's."
+        "a": "Both: the provider's limits per model class, expressed in requests per minute, input tokens per minute and output tokens per minute and signalled by a 429, and the gateway's own per-team limits, which must sum to less than the provider's. Honor a retry-after header when present."
       },
       {
         "q": "What is a safe retry?",
@@ -1052,7 +1052,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 1\n  participant A as App\n  participant G as Gateway\n  participant D as DynamoDB\n  A->>G: request id and payload\n  G->>D: claim id and reserve cost\n  alt claim and budget succeed\n   D-->>G: admitted\n  else duplicate or budget full\n   D-->>G: condition failure\n   G->>D: consistent request read\n   D-->>G: existing hash and status\n   G-->>A: existing status or reject\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber 1\n  participant A as App\n  participant G as Gateway\n  participant D as DynamoDB\n  A->>G: request id and payload\n  G->>D: claim id and reserve cost\n  alt claim and budget succeed\n   D-->>G: admitted\n  else condition failure\n   D-->>G: transaction rejected\n   G->>D: consistent request read\n   alt existing request\n    D-->>G: stored hash and status\n    alt same payload\n     G-->>A: existing status\n    else payload conflict\n     G-->>A: reject conflicting id\n    end\n   else absent request\n    D-->>G: not found\n    G-->>A: reject exhausted budget\n   end\n  end",
             "legend": "Solid calls and dashed replies are synchronous; open arrows hand work off asynchronously. Failure branches are mutually exclusive. Sources: s21.",
             "cites": [
               "s21"
@@ -1064,7 +1064,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 8\n  participant G as Gateway\n  participant B as Bedrock\n  participant A as App\n  G->>B: ConverseStream\n  alt stream completes\n   B-->>G: tokens and usage\n   G-->>A: tokens and usage\n  else fails before output\n   B-->>G: error or timeout\n   G-->>A: retryable or unknown\n  else fails after output\n   B-->>G: stream error\n   G-->>A: interrupted marker\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber 11\n  participant G as Gateway\n  participant B as Bedrock\n  participant A as App\n  G->>B: ConverseStream\n  alt stream completes\n   B-->>G: tokens and usage\n   G-->>A: tokens and usage\n  else fails before output\n   B-->>G: error or timeout\n   G-->>A: retryable or unknown\n  else fails after output\n   B-->>G: stream error\n   G-->>A: interrupted marker\n  end",
             "legend": "Solid calls and dashed replies are synchronous; open arrows hand work off asynchronously. Failure branches are mutually exclusive. Sources: s23.",
             "cites": [
               "s23"
@@ -1076,7 +1076,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 15\n  participant G as Gateway\n  participant D as DynamoDB\n  participant Q as SQS\n  participant W as Aggregator\n  G->>D: settle and usage intent\n  D-->>G: committed\n  G-)Q: usage event\n  Q-)W: usage delivery\n  W->>D: event dedupe plus rollup\n  alt first delivery\n   D-->>W: applied\n  else duplicate\n   D-->>W: already applied\n  end\n  W->>Q: DeleteMessage",
+            "mermaid": "sequenceDiagram\n  autonumber 18\n  participant G as Gateway\n  participant D as DynamoDB\n  participant X as Dispatcher\n  participant Q as SQS\n  participant W as Aggregator\n  G->>D: conditional settle and intent\n  alt expected version matches\n   D-->>G: delta committed once\n  else stale settlement version\n   D-->>G: reject, reread request\n  end\n  X->>D: read durable pending intent\n  D-->>X: request and usage version\n  X-)Q: usage event\n  Q-)W: usage delivery\n  W->>D: event dedupe plus rollup\n  alt first delivery\n   D-->>W: applied\n  else duplicate\n   D-->>W: already applied\n  end\n  W->>Q: DeleteMessage",
             "legend": "Solid calls and dashed replies are synchronous; open arrows hand work off asynchronously. Failure branches are mutually exclusive. Sources: s21, s9.",
             "cites": [
               "s21",
@@ -1377,9 +1377,9 @@
               ],
               [
                 "Request",
-                "payload_hash, owner, state, maximum_cost, actual/unknown_cost, attempts, usage_intent",
+                "payload_hash, owner, state, budget_month, reservation_amount, settlement_version, booked_spend, held_exposure, attempts, usage_intent",
                 "tenant_id, client_request_id",
-                "Conditional claim at this exact primary key; mismatch rejected; claimed request is never re-dispatched by another owner."
+                "Immutable original month and reservation amount; conditional settlement version protects balance deltas. Same primary-key claim prevents another owner redispatching inference."
               ],
               [
                 "DeploymentState",
@@ -1444,14 +1444,14 @@
           },
           {
             "type": "p",
-            "text": "Reserve the upper cost of all allowed attempts before first dispatch, using the maximum accepted input, output cap and most expensive permitted route. Each attempt is charged or remains reserved when usage is unknown. A final atomic settlement moves known cost to spent, retains unknown exposure and releases only provably unused budget. Never release a crashed request’s reservation merely because its owner lease expired; reconciliation or conservative maximum charging resolves it.",
+            "text": "Reserve the upper cost of all allowed attempts before first dispatch, using maximum accepted input, output cap and most expensive permitted route. Store that immutable reservation amount and original budget-month key on Request. Initially booked_spend is zero and held_exposure equals the reservation. Never release a crashed request's exposure merely because its owner lease expired; reconciliation or conservative maximum charging resolves it. These are application invariants implemented with conditional transactions, not guarantees supplied by atomicity alone.",
             "cites": [
               "s21"
             ]
           },
           {
             "type": "p",
-            "text": "The request record is both the idempotency claim and usage outbox. A transaction creates that record and increases the team’s reserved balance; a separate settlement transaction updates both records. Unknown requests cannot be resubmitted under the same id. This avoids pretending a provider call and a database transaction can commit atomically. A fresh id is a new billable request with its own reservation."
+            "text": "Settlement reads the request's settlement_version, booked_spend and held_exposure. Compute new cumulative booked spend and remaining unknown exposure from durable attempt evidence, bounded by the reserved attempt ceiling. In one transaction, condition the Request update on the expected settlement version, advance it, store the new totals and usage intent, and change Team.spent by new booked spend minus old booked spend and Team.reserved by new held exposure minus old held exposure. Always update the original budget month, even after month rollover. A lost reply or racing reconciler cannot apply that version twice: on conflict reread, return the already-applied result or recompute from newer evidence. Later unknown-to-known evidence uses the same versioned delta transition, not another subtraction of the original reservation. Retain per-attempt evidence identities and cumulative values so replayed evidence is a no-op. Request is the durable outbox; only the dispatcher sends its versioned events. Unknown requests cannot be resubmitted under the same id; a fresh id is a new billable request."
           }
         ]
       },
@@ -1465,7 +1465,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 1\n  participant A as App\n  participant G as Gateway\n  participant L as Ledger\n  A->>G: id and request\n  G->>L: claim and reserve maximum\n  alt admitted\n   L-->>G: exclusive claim\n  else not admitted\n   L-->>G: duplicate or exhausted\n   G-->>A: status or reject\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber 1\n  participant A as App\n  participant G as Gateway\n  participant L as Ledger\n  A->>G: id and request\n  G->>L: claim and reserve maximum\n  alt admitted\n   L-->>G: exclusive claim\n  else condition failure\n   L-->>G: transaction rejected\n   G->>L: consistent request read\n   alt existing request\n    L-->>G: stored hash and status\n    alt same payload\n     G-->>A: existing status\n    else payload conflict\n     G-->>A: reject conflicting id\n    end\n   else absent request\n    L-->>G: not found\n    G-->>A: reject exhausted budget\n   end\n  end",
             "legend": "Solid calls and dashed replies are synchronous; open arrows hand work off asynchronously. Failure branches are mutually exclusive. This is the proposed application protocol, not a service guarantee."
           },
           {
@@ -1474,7 +1474,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 6\n  participant G as Gateway\n  participant P as Provider\n  participant A as App\n  G->>P: bounded inference\n  alt successful stream\n   P-->>G: tokens and usage\n   G-->>A: stream\n  else ambiguous timeout\n   Note over G,P: reserve unknown attempt cost\n   G-->>A: unknown outcome\n  else interrupted output\n   P-->>G: error\n   G-->>A: explicit interruption\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber 11\n  participant G as Gateway\n  participant P as Provider\n  participant A as App\n  G->>P: bounded inference\n  alt successful stream\n   P-->>G: tokens and usage\n   G-->>A: stream\n  else ambiguous timeout\n   Note over G,P: reserve unknown attempt cost\n   G-->>A: unknown outcome\n  else interrupted output\n   P-->>G: error\n   G-->>A: explicit interruption\n  end",
             "legend": "Solid calls and dashed replies are synchronous; open arrows hand work off asynchronously. Failure branches are mutually exclusive. This is the proposed application protocol, not a service guarantee."
           },
           {
@@ -1482,11 +1482,11 @@
             "title": "Admission, routing and settlement",
             "items": [
               "Authenticate key and scope, enforce policy lease and count input locally. Lease global rate shares to nodes; expire old leases conservatively so a partition cannot multiply capacity.",
-              "Atomically claim the tenant/request key with payload hash and reserve the maximum of all permitted attempts. Insufficient budget fails closed; a duplicate reads existing status rather than dispatching again.",
+              "Atomically claim the tenant/request key with payload hash, original budget month and immutable maximum reservation. On a failed condition, consistently read the request: matching payload returns status, conflicting payload is rejected, and an absent record means no admission occurred and budget exhaustion is returned.",
               "Choose a route allowed for this alias and data classification. Check per-provider request, input-token, output-token and concurrency dimensions; cache hits may affect these differently by provider.",
               "A confirmed rejection before inference may permit bounded failover. An ambiguous timeout can have incurred usage even with no first byte; failover is allowed only under an explicit duplicate-inference policy with both attempt costs reserved. Never retry a tool side effect; tools are out of scope.",
               "After any client-visible output, do not splice another completion into the same stream. Return an interrupted marker, not a fabricated resume cursor. The client may choose a new request with a new id and budget.",
-              "Settle known usage atomically against the reservation; retain unknown attempt exposure. Store the usage intent in the request record so a dispatcher can recover after a gateway crash.",
+              "Settle by conditional settlement-version transition with cumulative spend/exposure deltas and the usage intent in the same transaction against the original month. Replay or racing reconciliation rereads on conflict; later known usage adjusts only the prior totals once. Unknown attempt exposure remains reserved. The dispatcher alone reads durable intents and sends usage events.",
               "Project usage asynchronously with event deduplication; the rollup’s delay never authorises additional spending. Show spent, reserved and unknown usage separately."
             ],
             "cites": [
@@ -1836,6 +1836,11 @@
       "version": 3,
       "date": "2026-10-16",
       "change": "Codex gpt-6-astra by hand: format v2 tables, neutral and AWS flow/sequence diagrams, primary-source AWS decisions and dated costs; correctness assumptions and protocols clarified. Original attribution retained; reviewed_by cleared for independent second read."
+    },
+    {
+      "version": 4,
+      "date": "2026-10-16",
+      "change": "Address E2B G1-G3: replay-safe conditional settlement tied to original budget month, dispatcher-only usage path, distinct absent/duplicate/conflict admission outcomes, and retained retry-after qualification. Review provenance remains unset."
     }
   ]
 }
