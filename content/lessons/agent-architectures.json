@@ -1,7 +1,7 @@
 {
-  "schema_version": "learning-center-lesson:1",
+  "schema_version": "learning-center-lesson:2",
   "id": "agent-architectures",
-  "version": 1,
+  "version": 2,
   "status": "published",
   "superseded_by": null,
   "title": "Agent architectures and agentic workflows with agent SDKs",
@@ -14,72 +14,1330 @@
     "agentic-ai",
     "sdk"
   ],
-  "summary": "An agentic system sits somewhere between a fixed workflow, where code decides the order of model calls, and an autonomous agent, where the model decides its next step in a loop with tools. The engineering skill is choosing the least autonomy that solves the problem, then expressing it with a small set of primitives: instructions, tools, handoffs and a run loop. Agent SDKs package those primitives so the team spends time on tool design and task definition instead of plumbing.",
+  "summary": "Choose who controls the next action before choosing an SDK. This lesson compares fixed workflows, bounded agent loops and multi-agent delegation, then follows their tools, memory, approvals and recovery paths. Interactive flows show the architectures; sequence diagrams expose who owns each request and what happens when execution fails.",
   "detail": [],
-  "in_practice": "A forward deployed team usually begins with the customer's process written as steps, marks which steps are fixed and which need judgement, and builds the fixed parts as a coded workflow with model calls at the judgement points. A full agent loop is introduced only for the open-ended part, with a small tool set, a turn limit and tracing on from day one. The team reads traces daily in the first weeks, fixes tool descriptions before touching prompts, and keeps an eval set of real customer cases so each change to the architecture is compared against the simpler baseline.",
+  "in_practice": {
+    "blocks": [
+      {
+        "type": "p",
+        "text": "Anthropic’s Research team uses a lead agent to delegate searches to parallel subagents and synthesize findings. Its report describes the task decomposition and token overhead together, rather than treating more agents as a free improvement.",
+        "cites": [
+          "s3"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Anthropic describes Claude Code compaction as preserving architectural decisions, unresolved bugs and implementation details while removing redundant outputs. This is context maintenance inside a coding workflow, not a claim that all past messages remain available in the active window.",
+        "cites": [
+          "s2"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "The OpenAI Agents SDK team supplies a built-in loop, function tools, handoffs, sessions and tracing as documented as of 2026-10. Applications can still own lower-level paths directly instead of adopting the SDK globally.",
+        "cites": [
+          "s5"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "The tau-bench authors evaluate whether the database reaches the annotated goal state after a conversation, and measure reliability across repeated trials. That evaluates the effect of the interaction rather than just whether the final answer sounds convincing.",
+        "cites": [
+          "s12"
+        ]
+      }
+    ]
+  },
   "subtopics": [
     {
-      "body": [
-        {
-          "body": "A workflow orchestrates model calls through predefined code paths; an agent lets the model direct its own process and tool usage. Workflows give predictability and are easier to test, agents give flexibility when the number of steps cannot be known in advance. The standard advice is to start with a single well-prompted model call plus retrieval, and add structure only when measurement shows it helps, because every layer of autonomy trades latency and cost for task performance.",
-          "heading": "Two ends of one spectrum"
-        },
-        {
-          "body": "Five workflow patterns cover most deployments. Prompt chaining splits a task into sequential steps with programmatic checks between them. Routing classifies an input and sends it to a specialized prompt or model. Parallelization runs independent subtasks at once, or runs the same task several times and votes. Orchestrator-workers lets one model break a task down dynamically and delegate pieces. Evaluator-optimizer loops a generator against a critic until criteria are met. Naming the pattern in a design doc makes the control flow reviewable.",
-          "heading": "The named patterns"
-        }
-      ],
       "id": "workflows-vs-agents",
-      "title": "Workflows versus agents and the common patterns"
-    },
-    {
-      "body": [
+      "title": "Workflows: put control in code until it needs to move",
+      "blocks": [
         {
-          "body": "The ReAct formulation interleaves reasoning with actions: the model writes a thought about what it needs, emits an action such as a tool call, receives an observation from the environment, and repeats until it can answer. Reasoning helps the model plan and handle exceptions, while actions ground it in external information instead of its own recall. Modern tool-calling APIs implement the same cycle natively: the model returns a structured tool request, the host executes it, and the result is appended to the conversation for the next turn.",
-          "heading": "How the loop works"
+          "type": "p",
+          "text": "A workflow puts the order of operations in code; an agent lets a model choose its next action from observations. The boundary is control, not whether an application calls a language model. Anthropic recommends starting with the simplest solution, including a single call augmented by retrieval. Move control into the model only when the path genuinely depends on discoveries made during execution. Otherwise autonomy buys uncertainty without solving a new problem.",
+          "cites": [
+            "s1"
+          ]
         },
         {
-          "body": "A loop needs explicit stopping conditions: a final answer without tool calls, a maximum number of turns, a token or cost budget, or a human checkpoint. Typical failures are repeated identical tool calls, drifting from the goal as context fills with observations, and compounding errors where one wrong observation steers every later step. Mitigations are concise tool results, clear error messages returned to the model as observations, turn limits, and environment feedback such as test results that give the loop ground truth at each step.",
-          "heading": "Stopping and failure modes"
+          "type": "p",
+          "text": "Prompt chaining suits a stable decomposition: draft, check, then transform. The programmatic gate should reject a bad intermediate result rather than allow it to contaminate later stages. Routing suits distinct request categories, each with a specialized prompt or tool set. Its main risk is misclassification; for this design, an uncertain route returns to clarification rather than silently choosing a powerful specialist.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Parallelization suits independent sections or independent judgments combined by an aggregator. Sectioning divides the work; voting repeats a judgment. Neither means agents must converse. Orchestrator-workers looks similar on a diagram, but its subtasks are discovered dynamically by the orchestrator instead of predetermined by code. Require a concrete deliverable and boundary for each worker, or decomposition creates duplicate effort rather than useful coverage.",
+          "cites": [
+            "s1",
+            "s3"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Evaluator-optimizer separates generation from critique. It pays when feedback can identify a specific defect and another attempt can improve it. A critic that merely prefers different wording is not an objective completion test. For this design, acceptance criteria and an execution budget belong outside the critic; reaching the budget produces an explicit incomplete result rather than an endless debate.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The flows below are alternatives, not stages that every request must traverse. A practical application can combine them: route a request, run a fixed chain, then delegate only its uncertain research step. Review each boundary by asking who selects the next action, who can authorize effects, and what observable result permits progress. Framework names do not answer those questions.",
+          "cites": [
+            "s1",
+            "s5"
+          ]
+        },
+        {
+          "type": "flow",
+          "nodes": [
+            {
+              "id": "0",
+              "label": "Draft",
+              "kind": "service"
+            },
+            {
+              "id": "1",
+              "label": "Gate",
+              "kind": "service"
+            },
+            {
+              "id": "2",
+              "label": "Transform",
+              "kind": "service"
+            },
+            {
+              "id": "3",
+              "label": "Reject",
+              "kind": "service"
+            }
+          ],
+          "edges": [
+            {
+              "from": "0",
+              "to": "1",
+              "kind": "sync",
+              "label": "Check draft",
+              "short": "Check draft"
+            },
+            {
+              "from": "1",
+              "to": "2",
+              "kind": "sync",
+              "label": "If valid",
+              "short": "If valid"
+            },
+            {
+              "from": "1",
+              "to": "3",
+              "kind": "sync",
+              "label": "If invalid",
+              "short": "If invalid"
+            }
+          ],
+          "steps": [
+            {
+              "edge": 0,
+              "caption": "Check draft"
+            },
+            {
+              "edge": 1,
+              "caption": "If valid"
+            },
+            {
+              "edge": 2,
+              "caption": "If invalid"
+            }
+          ],
+          "legend": "Prompt chaining; synchronous calls return to the caller; asynchronous arrows transfer work. Architectural sketch, not an SDK execution trace. Sources: s1.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "flow",
+          "nodes": [
+            {
+              "id": "0",
+              "label": "Classify",
+              "kind": "service"
+            },
+            {
+              "id": "1",
+              "label": "Billing",
+              "kind": "service"
+            },
+            {
+              "id": "2",
+              "label": "Support",
+              "kind": "service"
+            }
+          ],
+          "edges": [
+            {
+              "from": "0",
+              "to": "1",
+              "kind": "sync",
+              "label": "Billing route",
+              "short": "Billing route"
+            },
+            {
+              "from": "0",
+              "to": "2",
+              "kind": "sync",
+              "label": "Support route",
+              "short": "Support route"
+            }
+          ],
+          "steps": [
+            {
+              "edge": 0,
+              "caption": "Billing route"
+            },
+            {
+              "edge": 1,
+              "caption": "Support route"
+            }
+          ],
+          "legend": "Routing; synchronous calls return to the caller; asynchronous arrows transfer work. Architectural sketch, not an SDK execution trace. Sources: s1.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "flow",
+          "nodes": [
+            {
+              "id": "0",
+              "label": "Dispatch",
+              "kind": "service"
+            },
+            {
+              "id": "1",
+              "label": "Worker A",
+              "kind": "service"
+            },
+            {
+              "id": "2",
+              "label": "Worker B",
+              "kind": "service"
+            },
+            {
+              "id": "3",
+              "label": "Aggregate",
+              "kind": "service"
+            }
+          ],
+          "edges": [
+            {
+              "from": "0",
+              "to": "1",
+              "kind": "async",
+              "label": "Independent A",
+              "short": "Independent A"
+            },
+            {
+              "from": "0",
+              "to": "2",
+              "kind": "async",
+              "label": "Independent B",
+              "short": "Independent B"
+            },
+            {
+              "from": "1",
+              "to": "3",
+              "kind": "async",
+              "label": "Result A",
+              "short": "Result A"
+            },
+            {
+              "from": "2",
+              "to": "3",
+              "kind": "async",
+              "label": "Result B",
+              "short": "Result B"
+            }
+          ],
+          "steps": [
+            {
+              "edge": 0,
+              "caption": "Independent A"
+            },
+            {
+              "edge": 1,
+              "caption": "Independent B"
+            },
+            {
+              "edge": 2,
+              "caption": "Result A"
+            },
+            {
+              "edge": 3,
+              "caption": "Result B"
+            }
+          ],
+          "legend": "Parallelization: sectioning or voting; synchronous calls return to the caller; asynchronous arrows transfer work. Architectural sketch, not an SDK execution trace. Sources: s1.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "flow",
+          "nodes": [
+            {
+              "id": "0",
+              "label": "Orchestrator",
+              "kind": "service"
+            },
+            {
+              "id": "1",
+              "label": "Worker A",
+              "kind": "service"
+            },
+            {
+              "id": "2",
+              "label": "Worker B",
+              "kind": "service"
+            },
+            {
+              "id": "3",
+              "label": "Synthesis",
+              "kind": "service"
+            }
+          ],
+          "edges": [
+            {
+              "from": "0",
+              "to": "1",
+              "kind": "sync",
+              "label": "Discover task A",
+              "short": "Discover task A"
+            },
+            {
+              "from": "0",
+              "to": "2",
+              "kind": "sync",
+              "label": "Discover task B",
+              "short": "Discover task B"
+            },
+            {
+              "from": "0",
+              "to": "3",
+              "kind": "sync",
+              "label": "Combine results",
+              "short": "Combine results"
+            }
+          ],
+          "steps": [
+            {
+              "edge": 0,
+              "caption": "Discover task A"
+            },
+            {
+              "edge": 1,
+              "caption": "Discover task B"
+            },
+            {
+              "edge": 2,
+              "caption": "Combine results"
+            }
+          ],
+          "legend": "Orchestrator-workers; synchronous calls return to the caller; asynchronous arrows transfer work. Architectural sketch, not an SDK execution trace. Sources: s1, s3.",
+          "cites": [
+            "s1",
+            "s3"
+          ]
+        },
+        {
+          "type": "flow",
+          "nodes": [
+            {
+              "id": "0",
+              "label": "Generator",
+              "kind": "service"
+            },
+            {
+              "id": "1",
+              "label": "Evaluator",
+              "kind": "service"
+            },
+            {
+              "id": "2",
+              "label": "Accepted",
+              "kind": "service"
+            }
+          ],
+          "edges": [
+            {
+              "from": "0",
+              "to": "1",
+              "kind": "sync",
+              "label": "Evaluate draft",
+              "short": "Evaluate draft"
+            },
+            {
+              "from": "1",
+              "to": "0",
+              "kind": "sync",
+              "label": "Revise if needed",
+              "short": "Revise if needed"
+            },
+            {
+              "from": "1",
+              "to": "2",
+              "kind": "sync",
+              "label": "Criteria met",
+              "short": "Criteria met"
+            }
+          ],
+          "steps": [
+            {
+              "edge": 0,
+              "caption": "Evaluate draft"
+            },
+            {
+              "edge": 1,
+              "caption": "Revise if needed"
+            },
+            {
+              "edge": 2,
+              "caption": "Criteria met"
+            }
+          ],
+          "legend": "Evaluator-optimizer; synchronous calls return to the caller; asynchronous arrows transfer work. Architectural sketch, not an SDK execution trace. Sources: s1.",
+          "cites": [
+            "s1"
+          ]
         }
-      ],
+      ]
+    },
+    {
       "id": "react-agent-loop",
-      "title": "The reason and act loop"
-    },
-    {
-      "body": [
+      "title": "The agent loop: model proposes, host executes",
+      "blocks": [
         {
-          "body": "The OpenAI Agents SDK is a representative example. An Agent is a model configured with a name, instructions, tools and optionally an output type that forces structured final output. A Runner executes the loop: call the model, run requested tools, feed back results, stop on final output or a turn limit. Tools can be plain Python functions whose signature and docstring become the schema, hosted tools, or other agents exposed as tools. Guardrails validate input and output alongside the run, sessions hold conversation history, and built-in tracing records each step.",
-          "heading": "What an SDK gives you"
+          "type": "p",
+          "text": "ReAct interleaves reasoning and task-specific actions with observations from an environment. The important engineering idea is a feedback loop: a search result or test failure changes what happens next. This is not permission to treat a model’s narrative as proof of execution. The host must distinguish a proposed action, an executed tool call, its observed result and the final answer.",
+          "cites": [
+            "s9",
+            "s1"
+          ]
         },
         {
-          "body": "A handoff transfers control of the conversation to another agent; it is presented to the model as a tool, and the receiving agent sees the history and takes over. Agents as tools keep the calling agent in charge: the sub-agent runs, returns a result, and the caller continues. Use handoffs for triage where a specialist should own the rest of the interaction, and agents as tools when a manager must combine several specialist outputs into one answer.",
-          "heading": "Handoffs versus agents as tools"
+          "type": "p",
+          "text": "In a tool-calling implementation, the host supplies instructions, relevant context and tool definitions. The model returns an answer or structured tool requests. The host validates and dispatches permitted requests, appends their results, then asks the model what to do next. As of 2026-10, the OpenAI Agents SDK packages this loop with tools, handoffs, sessions, guardrails and tracing; using an SDK does not remove application responsibility for permissions.",
+          "cites": [
+            "s5",
+            "s7"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "For this design, a lookup request is read-only. A tool response carries both the record and its provenance so the answer can distinguish evidence from inference. Invalid arguments return an actionable error; missing data remains missing instead of being replaced with a plausible answer. Anthropic’s tool guidance recommends meaningful, concise context and clear error handling because observations become the next decision’s input.",
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Stopping is part of the architecture. Completion means the task’s acceptance condition is satisfied, not merely that the model stopped requesting tools. Exhausted budgets, repeated unproductive actions and unavailable prerequisites need distinct outcomes. For this design, the runtime owns those checks and returns a resumable incomplete status when it cannot finish safely. A model can propose further work but cannot grant itself additional authority or budget.",
+          "cites": [
+            "s1",
+            "s5"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Keep the business process separate from the reasoning trace. An order lookup can succeed while the answer remains unsupported, and an apparently correct answer can conceal a failed tool call. Evaluate the resulting state and the evidence presented to the user. The sequence shows an ordinary successful read and a denied request without conflating either branch with a mutation.",
+          "cites": [
+            "s12",
+            "s4"
+          ]
+        },
+        {
+          "type": "flow",
+          "nodes": [
+            {
+              "id": "0",
+              "label": "Request",
+              "kind": "service"
+            },
+            {
+              "id": "1",
+              "label": "Model",
+              "kind": "service"
+            },
+            {
+              "id": "2",
+              "label": "Tool host",
+              "kind": "service"
+            },
+            {
+              "id": "3",
+              "label": "Observation",
+              "kind": "service"
+            },
+            {
+              "id": "4",
+              "label": "Answer",
+              "kind": "service"
+            }
+          ],
+          "edges": [
+            {
+              "from": "0",
+              "to": "1",
+              "kind": "sync",
+              "label": "Task context",
+              "short": "Task context"
+            },
+            {
+              "from": "1",
+              "to": "2",
+              "kind": "sync",
+              "label": "Propose tool",
+              "short": "Propose tool"
+            },
+            {
+              "from": "2",
+              "to": "3",
+              "kind": "sync",
+              "label": "Run allowed call",
+              "short": "Run allowed call"
+            },
+            {
+              "from": "3",
+              "to": "1",
+              "kind": "sync",
+              "label": "Observe result",
+              "short": "Observe result"
+            },
+            {
+              "from": "1",
+              "to": "4",
+              "kind": "sync",
+              "label": "Finish or stop",
+              "short": "Finish or stop"
+            }
+          ],
+          "steps": [
+            {
+              "edge": 0,
+              "caption": "Task context"
+            },
+            {
+              "edge": 1,
+              "caption": "Propose tool"
+            },
+            {
+              "edge": 2,
+              "caption": "Run allowed call"
+            },
+            {
+              "edge": 3,
+              "caption": "Observe result"
+            },
+            {
+              "edge": 4,
+              "caption": "Finish or stop"
+            }
+          ],
+          "legend": "Single-agent loop; synchronous calls return to the caller; asynchronous arrows transfer work. Architectural sketch, not an SDK execution trace. Sources: s9, s5.",
+          "cites": [
+            "s9",
+            "s5"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "A lookup passes through the host’s authorization boundary before any tool runs.",
+          "cites": [
+            "s5",
+            "s7"
+          ]
+        },
+        {
+          "type": "diagram",
+          "mermaid": "sequenceDiagram\n  autonumber\n  participant U as User\n  participant H as Host\n  participant M as Model\n  participant T as Lookup tool\n  U->>H: Find order status\n  H->>M: Task and allowed tools\n  M-->>H: Proposed lookup\n  alt authorized arguments\n    H->>T: Read order\n    T-->>H: Record and provenance\n    H->>M: Tool observation\n    M-->>H: Grounded answer\n  else denied\n    H->>H: Record denied action\n  end\n  H-->>U: Answer or denial",
+          "legend": "Solid calls have dashed replies; host policy is a design boundary, not a model promise. Sources: s5, s7.",
+          "cites": [
+            "s5",
+            "s7"
+          ]
         }
-      ],
-      "id": "agent-sdk-primitives",
-      "title": "Agent SDK primitives: agents, tools, handoffs, runner"
+      ]
     },
     {
-      "body": [
+      "id": "agent-sdk-primitives",
+      "title": "Single or multi-agent: choose who owns the conversation",
+      "blocks": [
         {
-          "body": "The model only knows a tool through its name, description and parameter schema, so those deserve the same care as the system prompt. Good definitions say when to use the tool, give example inputs, state edge cases, and draw boundaries against similar tools. Choose formats the model writes easily: avoid formats that need exact counts or heavy escaping, prefer absolute identifiers over relative ones, and shape arguments so mistakes are hard to make. Then test by running many example inputs, reading where the model misuses a tool, and rewriting the definition.",
-          "heading": "Tools are prompts"
+          "type": "p",
+          "text": "A single agent keeps task state and tool decisions together. Splitting it is useful when work needs separate contexts, specialist tools or independent exploration, not merely because several roles sound convincing. Anthropic’s research system delegates parallel searches to subagents and synthesizes their findings. Its report also warns that tightly dependent tasks and shared-context work can be poor fits for multi-agent execution.",
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "A supervisor retains ownership: specialists act as tools and return results for synthesis. A hierarchy repeats that relationship through team leads. It can isolate large domains, but each extra boundary must carry objectives, evidence and unresolved issues. The hierarchical flow here is a design variant of supervision, not a claim that deeper delegation improves quality. Missing context at a boundary can become a confidently repeated error upstream.",
+          "cites": [
+            "s3",
+            "s2",
+            "s5"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "A handoff transfers responsibility instead of returning a specialist answer to a manager. A swarm-style arrangement makes that transfer locally among agents rather than always through a central supervisor. For this design, only the active owner can respond or propose effects; the host records ownership changes, transfers the necessary context and stops circular transfers. Parallel specialist work and handoffs solve different coordination problems.",
+          "cites": [
+            "s5"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Control comparison: criteria are rows; choices are columns. These are design judgments grounded in the cited patterns, not measured rankings.",
+          "columns": [
+            "criterion",
+            "Single LLM call",
+            "Workflow",
+            "Single agent",
+            "Supervisor multi-agent",
+            "Swarm / handoffs",
+            "Plan-and-execute"
+          ],
+          "rows": [
+            [
+              "Next action",
+              "None [s1]",
+              "Code [s1]",
+              "Model [s9]",
+              "Manager [s3]",
+              "Active specialist [s5]",
+              "Plan plus feedback [s9, s10]"
+            ],
+            [
+              "Best fit",
+              "Bounded answer [s1]",
+              "Known stages [s1]",
+              "Adaptive exploration [s1]",
+              "Independent searches [s3]",
+              "Changing ownership [s5]",
+              "Explicit dependencies [s9]"
+            ],
+            [
+              "Main cost",
+              "Limited adaptability [s1]",
+              "Rigid path [s1]",
+              "Serial discovery [s9]",
+              "Context transfer [s3]",
+              "Ownership ambiguity [s5]",
+              "Replanning overhead [s10]"
+            ]
+          ],
+          "cites": [
+            "s1",
+            "s3",
+            "s5",
+            "s9",
+            "s10"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The choice is therefore about information and authority boundaries. Start with a shared trace and explicit output contracts; do not give every specialist every tool. The handoff sequence illustrates an accepted transfer and a rejected transfer. Rejecting a transfer leaves ownership unchanged, so the user is not abandoned between agents.",
+          "cites": [
+            "s3",
+            "s5"
+          ]
+        },
+        {
+          "type": "flow",
+          "nodes": [
+            {
+              "id": "0",
+              "label": "Supervisor",
+              "kind": "service"
+            },
+            {
+              "id": "1",
+              "label": "Researcher",
+              "kind": "service"
+            },
+            {
+              "id": "2",
+              "label": "Reviewer",
+              "kind": "service"
+            },
+            {
+              "id": "3",
+              "label": "Answer",
+              "kind": "service"
+            }
+          ],
+          "edges": [
+            {
+              "from": "0",
+              "to": "1",
+              "kind": "sync",
+              "label": "Research task",
+              "short": "Research task"
+            },
+            {
+              "from": "0",
+              "to": "2",
+              "kind": "sync",
+              "label": "Review findings",
+              "short": "Review findings"
+            },
+            {
+              "from": "0",
+              "to": "3",
+              "kind": "sync",
+              "label": "Synthesize",
+              "short": "Synthesize"
+            }
+          ],
+          "steps": [
+            {
+              "edge": 0,
+              "caption": "Research task"
+            },
+            {
+              "edge": 1,
+              "caption": "Review findings"
+            },
+            {
+              "edge": 2,
+              "caption": "Synthesize"
+            }
+          ],
+          "legend": "Supervisor; synchronous calls return to the caller; asynchronous arrows transfer work. Architectural sketch, not an SDK execution trace. Sources: s3, s5.",
+          "cites": [
+            "s3",
+            "s5"
+          ]
+        },
+        {
+          "type": "flow",
+          "nodes": [
+            {
+              "id": "0",
+              "label": "Lead",
+              "kind": "service"
+            },
+            {
+              "id": "1",
+              "label": "Team lead",
+              "kind": "service"
+            },
+            {
+              "id": "2",
+              "label": "Specialist",
+              "kind": "service"
+            },
+            {
+              "id": "3",
+              "label": "Answer",
+              "kind": "service"
+            }
+          ],
+          "edges": [
+            {
+              "from": "0",
+              "to": "1",
+              "kind": "sync",
+              "label": "Delegate domain",
+              "short": "Delegate domain"
+            },
+            {
+              "from": "1",
+              "to": "2",
+              "kind": "sync",
+              "label": "Delegate detail",
+              "short": "Delegate detail"
+            },
+            {
+              "from": "0",
+              "to": "3",
+              "kind": "sync",
+              "label": "Integrate evidence",
+              "short": "Integrate evidence"
+            }
+          ],
+          "steps": [
+            {
+              "edge": 0,
+              "caption": "Delegate domain"
+            },
+            {
+              "edge": 1,
+              "caption": "Delegate detail"
+            },
+            {
+              "edge": 2,
+              "caption": "Integrate evidence"
+            }
+          ],
+          "legend": "Hierarchical supervisor variant; synchronous calls return to the caller; asynchronous arrows transfer work. Architectural sketch, not an SDK execution trace. Sources: s3, s2.",
+          "cites": [
+            "s3",
+            "s2"
+          ]
+        },
+        {
+          "type": "flow",
+          "nodes": [
+            {
+              "id": "0",
+              "label": "Triage",
+              "kind": "service"
+            },
+            {
+              "id": "1",
+              "label": "Specialist",
+              "kind": "service"
+            },
+            {
+              "id": "2",
+              "label": "User",
+              "kind": "service"
+            }
+          ],
+          "edges": [
+            {
+              "from": "0",
+              "to": "1",
+              "kind": "async",
+              "label": "Transfer ownership",
+              "short": "Transfer ownership"
+            },
+            {
+              "from": "1",
+              "to": "2",
+              "kind": "sync",
+              "label": "Specialist answers",
+              "short": "Specialist answers"
+            }
+          ],
+          "steps": [
+            {
+              "edge": 0,
+              "caption": "Transfer ownership"
+            },
+            {
+              "edge": 1,
+              "caption": "Specialist answers"
+            }
+          ],
+          "legend": "Handoff / swarm variant; synchronous calls return to the caller; asynchronous arrows transfer work. Architectural sketch, not an SDK execution trace. Sources: s5.",
+          "cites": [
+            "s5"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "A transfer commits only when the receiving specialist is available and permitted to own the request.",
+          "cites": [
+            "s5"
+          ]
+        },
+        {
+          "type": "diagram",
+          "mermaid": "sequenceDiagram\n  autonumber\n  participant U as User\n  participant H as Host\n  participant A as Triage\n  participant B as Billing\n  U->>H: Resolve billing issue\n  H->>A: Current request\n  A-->>H: Propose billing handoff\n  alt transfer permitted\n    H-)B: Context and ownership\n    B->>H: Specialist response\n    H-->>B: Response recorded\n    H-->>U: Billing response\n  else transfer rejected\n    H->>A: Ownership unchanged\n    A-->>H: Ask for clarification\n    H-->>U: Clarifying question\n  end",
+          "legend": "Open arrow is a logical control handoff, not a claim about network transport; ownership checks are for this design. Sources: s5.",
+          "cites": [
+            "s5"
+          ]
         }
-      ],
-      "id": "tool-interface-design",
-      "title": "Designing the agent-computer interface"
-    }
-  ],
-  "diagram": {
-    "source": "flowchart TD\n  U[User request] --> A[Agent: instructions plus tools]\n  A --> M[Model call]\n  M --> D{Tool call requested?}\n  D -- yes --> T[Execute tool]\n  T --> O[Observation appended to context]\n  O --> M\n  D -- handoff --> H[Specialist agent takes over]\n  H --> M\n  D -- no --> F[Final output]\n  M --> L{Turn or budget limit hit?}\n  L -- yes --> S[Stop and escalate to human]"
-  },
-  "code": [
+      ]
+    },
     {
-      "code": "from agents import Agent, Runner, function_tool\n\n@function_tool\ndef lookup_order(order_id: str) -> str:\n    \"\"\"Return the shipping status for one order id.\"\"\"\n    return \"shipped\"\n\nbilling = Agent(name=\"Billing\", instructions=\"Handle refund requests.\")\n\ntriage = Agent(\n    name=\"Triage\",\n    instructions=\"Answer order questions. Hand off refunds to Billing.\",\n    tools=[lookup_order],\n    handoffs=[billing],\n)\n\nresult = Runner.run_sync(triage, \"Where is order 42?\", max_turns=6)\nprint(result.final_output)",
-      "lang": "python"
+      "id": "planning-and-reflection",
+      "title": "Planning, reflection and search: pay for useful feedback",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Planning makes intended dependencies explicit before action; it does not make the plan true. In a plan-and-execute design, a planner names deliverables, an executor attempts them, and observations determine whether to continue or replan. ReAct already allows action plans to evolve with feedback. Separating the planner is an engineering choice when a long task benefits from a stable goal and narrower execution contexts.",
+          "cites": [
+            "s9",
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "For this design, the plan records prerequisites and completion evidence rather than a persuasive narrative. Independent read-only steps may run concurrently; a dependent step waits for the required artifact. A failed prerequisite invalidates downstream assumptions. Replanning should explain what changed in the environment, not repeatedly rewrite the same checklist while consuming the remaining budget. This is a proposed control policy, not an SDK default.",
+          "cites": [
+            "s9",
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Reflexion is more specific than asking a model to think again. Its actor attempts a task, an evaluator supplies feedback, and a reflection summarizes lessons into episodic memory for later trials. The model weights are not updated. The useful feedback might come from tests or an environment, while a self-generated judgment remains fallible. Preserve the observed failure alongside the reflection so a mistaken explanation can be challenged.",
+          "cites": [
+            "s10"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Tree search explores alternative action trajectories rather than committing immediately to a single continuation. LATS combines Monte Carlo tree search, language-model value judgments, reflection and external feedback. It spends additional inference and environment interactions to compare branches. That is attractive when candidate actions can be evaluated safely; it is not a license to explore irreversible purchases or production writes as though the environment were a reversible simulator.",
+          "cites": [
+            "s11",
+            "s7"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The shared flow groups these as planning variants: execution produces evidence, assessment either accepts a result or returns feedback, and a revised plan starts another attempt. For tree search, candidate branches belong inside the executor and assessor boundary. Choose this extra machinery only when an evaluation shows that the feedback improves success enough to justify its overhead. Otherwise keep the bounded agent loop.",
+          "cites": [
+            "s10",
+            "s11",
+            "s1"
+          ]
+        },
+        {
+          "type": "flow",
+          "nodes": [
+            {
+              "id": "0",
+              "label": "Planner",
+              "kind": "service"
+            },
+            {
+              "id": "1",
+              "label": "Executor",
+              "kind": "service"
+            },
+            {
+              "id": "2",
+              "label": "Environment",
+              "kind": "service"
+            },
+            {
+              "id": "3",
+              "label": "Assessor",
+              "kind": "service"
+            },
+            {
+              "id": "4",
+              "label": "Memory",
+              "kind": "service"
+            },
+            {
+              "id": "5",
+              "label": "Accepted",
+              "kind": "service"
+            }
+          ],
+          "edges": [
+            {
+              "from": "0",
+              "to": "1",
+              "kind": "sync",
+              "label": "Plan next work",
+              "short": "Plan next work"
+            },
+            {
+              "from": "1",
+              "to": "2",
+              "kind": "sync",
+              "label": "Attempt candidate",
+              "short": "Attempt candidate"
+            },
+            {
+              "from": "1",
+              "to": "3",
+              "kind": "sync",
+              "label": "Assess evidence",
+              "short": "Assess evidence"
+            },
+            {
+              "from": "3",
+              "to": "4",
+              "kind": "sync",
+              "label": "Store reflection",
+              "short": "Store reflection"
+            },
+            {
+              "from": "4",
+              "to": "0",
+              "kind": "sync",
+              "label": "Revise plan",
+              "short": "Revise plan"
+            },
+            {
+              "from": "3",
+              "to": "5",
+              "kind": "sync",
+              "label": "Accept result",
+              "short": "Accept result"
+            }
+          ],
+          "steps": [
+            {
+              "edge": 0,
+              "caption": "Plan next work"
+            },
+            {
+              "edge": 1,
+              "caption": "Attempt candidate"
+            },
+            {
+              "edge": 2,
+              "caption": "Assess evidence"
+            },
+            {
+              "edge": 3,
+              "caption": "Store reflection"
+            },
+            {
+              "edge": 4,
+              "caption": "Revise plan"
+            },
+            {
+              "edge": 5,
+              "caption": "Accept result"
+            }
+          ],
+          "legend": "Plan-and-execute with reflection; tree search expands candidates inside execution; synchronous calls return to the caller; asynchronous arrows transfer work. Architectural sketch, not an SDK execution trace. Sources: s9, s10, s11.",
+          "cites": [
+            "s9",
+            "s10",
+            "s11"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "memory-and-context",
+      "title": "Memory is stored state; context is selected evidence",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "A context window is the information available to the model for the next decision, not a durable database of everything an application knows. Anthropic treats context as a finite attention budget: irrelevant observations and overlapping tools can crowd out important instructions. Context engineering selects what belongs in that budget, including the current goal, constraints, relevant evidence and unresolved work. More text is not automatically better grounding.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Short-term memory carries the current conversation and working state. Long-term memory persists information across sessions, but persistence alone does not make a fact correct or appropriate to retrieve. For this design, saved facts include provenance, scope and freshness; a user preference is not silently promoted into a global policy. Retrieval should select evidence for the present task instead of pasting every stored note into every request.",
+          "cites": [
+            "s2",
+            "s6"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Compaction summarizes a long interaction and restarts with a smaller working context. Anthropic describes preserving architectural decisions, unresolved bugs and implementation details while dropping redundant output in Claude Code. The loss boundary matters: a compressed summary can omit the exception that explained a decision. Keep a route back to source artifacts, and evaluate whether a resumed agent can recover the facts needed to continue correctly.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Structured notes serve a different purpose: an agent writes durable task state outside the conversation and reloads it when needed. Separate observed facts from tentative plans and reflections. A reflection is a hypothesis about how to improve the next attempt, not authoritative evidence that a tool succeeded. Reflexion’s episodic memory illustrates this distinction: it changes the next trial’s context rather than training the model’s weights.",
+          "cites": [
+            "s2",
+            "s10"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Subagents offer another context boundary. Each can explore deeply and return a concise result, leaving the lead agent room to synthesize. The savings are in the lead’s window, not necessarily in total billed tokens. For this design, a specialist returns its conclusion, supporting references, unresolved uncertainty and any failed checks. A polished summary without those anchors hides the very information the supervisor needs to decide whether to trust it.",
+          "cites": [
+            "s2",
+            "s3"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Context admission policy for this design",
+          "columns": [
+            "keep in working context",
+            "store or retrieve separately"
+          ],
+          "rows": [
+            [
+              "Current goal and authority",
+              "Old conversations unrelated to this task"
+            ],
+            [
+              "Relevant evidence with provenance",
+              "Full raw outputs after extracting needed facts"
+            ],
+            [
+              "Unresolved blockers and commitments",
+              "Completed exploration recoverable from artifacts"
+            ]
+          ],
+          "cites": [
+            "s2"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tool-interface-design",
+      "title": "Tool contracts, MCP and A2A: interoperability is not authority",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The agent-computer interface is the surface through which a model can affect the world. A tool name, description and argument schema must explain what the tool does, when to choose it and what its result means. Anthropic recommends designing tools around useful tasks rather than mechanically exposing every backend endpoint. Overlapping tools and opaque identifiers make selection harder even when each individual API is correct.",
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Return enough evidence to support the next decision, not every internal field. Concise results can reduce context pressure, but removing identifiers needed for follow-up calls breaks the workflow. Describe recoverable errors in terms the agent can act on. For this design, lookup and mutation are separate capabilities; a convenient search tool cannot silently authorize a purchase. Tool evaluation should inspect incorrect selections and unnecessary calls, not just successful examples.",
+          "cites": [
+            "s4",
+            "s7"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "As of 2026-10, MCP standardizes how applications connect to external context and capabilities. Its specification distinguishes hosts, clients and servers, and exposes resources, prompts and tools. It is not the planner or the permission policy for the application. The specification explicitly treats tool execution and data access as security-sensitive and says protocol mechanisms cannot themselves enforce all consent and safety principles.",
+          "cites": [
+            "s7"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "As of 2026-10, A2A standardizes interaction with another agent through a protocol data model, operations and transport bindings. Agent Cards describe agents; messages and tasks support interaction; artifacts carry outputs. This differs from choosing a local subagent function: the remote agent may have its own runtime and state. Interoperability does not mean shared trust, shared memory or permission to forward all conversation history.",
+          "cites": [
+            "s8"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "For this design, use an MCP integration when the host needs a tool or resource, and an A2A integration when it needs another agent’s task-facing interface. The distinction is not an absolute law: an agent can expose tools, and either boundary can be remote. Review authentication, authorization, data minimization and ownership separately from the wire format. A protocol-compliant request can still be an unauthorized business action.",
+          "cites": [
+            "s7",
+            "s8"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Protocol snapshot checked as of 2026-10; pin the implemented revision before integrating",
+          "columns": [
+            "interface",
+            "scope",
+            "not supplied by the protocol"
+          ],
+          "rows": [
+            [
+              "MCP",
+              "Host/client/server context and capability exchange",
+              "Business authorization or trustworthy tool descriptions"
+            ],
+            [
+              "A2A",
+              "Agent discovery, task interaction and artifacts",
+              "A shared planner or automatic mutual trust"
+            ]
+          ],
+          "cites": [
+            "s7",
+            "s8"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "approval-and-recovery",
+      "title": "Approval and recovery: pause the effect, not just the chat",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Human-in-the-loop is an execution boundary, not a reassuring message after an action already happened. For this design, the agent proposes a mutation with its target, arguments and expected effect. The runtime checks policy and records a pending operation before asking a person to approve. Denial ends that operation; a changed proposal requires a fresh decision. Consent to investigate is not consent to execute every resulting recommendation.",
+          "cites": [
+            "s7",
+            "s5"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "As of 2026-10, LangGraph documents persistence, human oversight and a mixture of deterministic and agentic steps. These are useful foundations for durable execution: a process can stop while state survives, then resume from recorded progress. They do not automatically make an external side effect transactional with a checkpoint. A remote service may have accepted an operation even if the response never reached the agent.",
+          "cites": [
+            "s6"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "For this design, persist the operation identity and the exact approved arguments. On resume, recheck authorization and whether the proposal is still applicable before attempting the effect. If an external result is ambiguous, query the authoritative system rather than blindly repeating the write. Use the service’s supported idempotency mechanism where available; otherwise make reconciliation or human review an explicit recovery state. These are application obligations, not guarantees of an agent graph.",
+          "cites": [
+            "s6",
+            "s8"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Guardrails check inputs, outputs or tool usage; they are not a substitute for isolation. Limit credentials and network access, isolate generated-code execution, and keep sensitive actions behind an enforcement boundary the model cannot bypass. The OpenAI SDK documentation describes guardrails and isolated workspaces as distinct facilities. The MCP specification warns that tool descriptions themselves can be untrusted, so retrieved text cannot be allowed to rewrite host policy.",
+          "cites": [
+            "s5",
+            "s7"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The sequence below is a proposed approval protocol rather than a specific SDK API. The durable record holds the proposal while execution is paused. Approval resumes the same operation, not a newly improvised tool call; denial records a terminal outcome. If the process crashes after the side effect, recovery reconciles against the service before deciding whether to retry.",
+          "cites": [
+            "s6",
+            "s8"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "A pending operation survives the pause, while the human decision controls whether its effect may proceed.",
+          "cites": [
+            "s6",
+            "s7"
+          ]
+        },
+        {
+          "type": "diagram",
+          "mermaid": "sequenceDiagram\n  autonumber\n  participant A as Agent\n  participant H as Host\n  participant S as State store\n  participant U as Approver\n  participant T as Service\n  A->>H: Proposed mutation\n  H->>S: Save pending operation\n  S-->>H: Durable\n  H-)U: Request approval\n  Note over H,S: Execution paused\n  U-)H: Approval decision\n  H->>S: Load exact proposal\n  S-->>H: Proposal and operation id\n  alt approved and still valid\n    H->>T: Apply approved operation\n    T-->>H: Authoritative result\n    H->>S: Save completed result\n    S-->>H: Durable\n  else denied or stale\n    H->>S: Record no execution\n    S-->>H: Durable\n  end\n  H-->>A: Resume with outcome",
+          "legend": "Open arrows are asynchronous approval messages; solid calls have dashed replies. Recovery must reconcile ambiguous external effects. Sources: s6, s7, s8.",
+          "cites": [
+            "s6",
+            "s7",
+            "s8"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "evaluation-and-budgets",
+      "title": "Budget, evaluate, and know when not to use an agent",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Measure the completed task, not the number of agents or the confidence of the final answer. Tau-bench evaluates tool-using conversations against policy and final database state, then tests consistency across repeated trials. Its findings are historical evidence of a failure mode, not a leaderboard for today’s models. Use representative tasks, forbidden-action cases and ambiguous tool outcomes to evaluate your own system.",
+          "cites": [
+            "s12"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Historical observations, checked as of 2026-10; not prices, current leaders or universal multipliers",
+          "columns": [
+            "source and date",
+            "reported quantity",
+            "scope"
+          ],
+          "rows": [
+            [
+              "Anthropic research report, 2025-06-13 [s3]",
+              "Agents about 4× chat tokens; multi-agent about 15×",
+              "Reported workload mix, not a dollar-cost ratio"
+            ],
+            [
+              "Same internal research evaluation [s3]",
+              "90.2% improvement over single-agent baseline",
+              "Lead Opus 4 and Sonnet 4 workers versus Opus 4; not percentage points"
+            ],
+            [
+              "tau-bench paper, 2024 [s12]",
+              "Task success below 50%; retail pass^8 below 25%",
+              "Reported function-calling agents; consistency across repeated trials"
+            ]
+          ],
+          "cites": [
+            "s3",
+            "s12"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "For this design, compare alternatives on success, policy compliance, tool calls, aggregate tokens and elapsed time. Parallel work can shorten the critical path while increasing total work. Context duplication, failed attempts and synthesis still count. Token multipliers do not translate directly into price multipliers because model selection, cache accounting and tool charges differ. Obtain current prices for the actual deployment instead of inventing a universal agent surcharge.",
+          "cites": [
+            "s3",
+            "s1"
+          ]
+        },
+        {
+          "type": "decision",
+          "caption": "For this design: start at the least autonomous option that meets measured requirements. The preceding comparison table carries criteria across options.",
+          "rows": [
+            {
+              "option": "Single LLM call",
+              "pick_when": "Bounded answer with supplied evidence [s1].",
+              "avoid_when": "Must discover missing facts iteratively [s9].",
+              "example": "For this design: summarize a known record."
+            },
+            {
+              "option": "Workflow",
+              "pick_when": "Stable stages and explicit gates [s1].",
+              "avoid_when": "Subtasks cannot be predicted [s1].",
+              "example": "For this design: validate then draft."
+            },
+            {
+              "option": "Single agent",
+              "pick_when": "Exploration needs feedback [s9].",
+              "avoid_when": "Fixed code already suffices [s1].",
+              "example": "For this design: bounded investigation."
+            },
+            {
+              "option": "Supervisor multi-agent",
+              "pick_when": "Independent research contexts [s3].",
+              "avoid_when": "Workers need constant coordination [s3].",
+              "example": "For this design: combine sourced findings."
+            },
+            {
+              "option": "Swarm / handoffs",
+              "pick_when": "Specialist should own conversation [s5].",
+              "avoid_when": "Central synthesis must retain control [s5].",
+              "example": "For this design: transfer to billing."
+            },
+            {
+              "option": "Plan-and-execute",
+              "pick_when": "Explicit dependencies guide attempts [s9].",
+              "avoid_when": "Replanning lacks useful feedback [s10].",
+              "example": "For this design: evidence before revision."
+            }
+          ],
+          "cites": [
+            "s1",
+            "s3",
+            "s5",
+            "s9",
+            "s10"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "A retry is additional work, not recovery by definition. For this design, retry only a transient, safe-to-repeat lookup while the global allowance remains. Surface permanent failures and stop at the budget rather than changing the task to manufacture success. The worked example states illustrative limits; production limits require workload measurement.",
+          "cites": [
+            "s4",
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "A failed read can be retried only while the host’s remaining allowance permits it.",
+          "cites": [
+            "s1",
+            "s4"
+          ]
+        },
+        {
+          "type": "diagram",
+          "mermaid": "sequenceDiagram\n  autonumber\n  participant A as Agent\n  participant H as Host\n  participant T as Read tool\n  A->>H: Request lookup\n  H->>T: Read request\n  T-->>H: Transient failure\n  alt safe and budget remains\n    H->>T: Retry read\n    T-->>H: Result or failure\n    H-->>A: Observed outcome\n  else budget exhausted\n    H-->>A: Stop with incomplete status\n  end\n  opt retry failed\n    A->>H: Propose more work\n    H-->>A: Deny if allowance spent\n  end",
+          "legend": "Retry consumes the same global allowance as ordinary work. This read-only design does not blindly retry mutations. Sources: s1, s4.",
+          "cites": [
+            "s1",
+            "s4"
+          ]
+        }
+      ]
     }
   ],
+  "code": [],
   "technologies": [
     "OpenAI Agents SDK",
     "Claude Agent SDK",
@@ -98,40 +1356,142 @@
   ],
   "sources": [
     {
-      "kind": "guide",
+      "id": "s1",
       "title": "Building effective agents",
-      "url": "https://www.anthropic.com/engineering/building-effective-agents"
+      "url": "https://www.anthropic.com/engineering/building-effective-agents",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Workflows are systems where LLMs and tools are orchestrated through predefined code paths."
+      }
     },
     {
-      "kind": "paper",
-      "title": "ReAct: Synergizing Reasoning and Acting in Language Models",
-      "url": "https://arxiv.org/abs/2210.03629"
+      "id": "s2",
+      "title": "Effective context engineering for AI agents",
+      "url": "https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Context is a critical but finite resource for AI agents."
+      }
     },
     {
-      "kind": "doc",
+      "id": "s3",
+      "title": "How we built our multi-agent research system",
+      "url": "https://www.anthropic.com/engineering/multi-agent-research-system",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "multi-agent systems use about 15× more tokens than chats."
+      }
+    },
+    {
+      "id": "s4",
+      "title": "Writing effective tools for AI agents",
+      "url": "https://www.anthropic.com/engineering/writing-tools-for-agents",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Agents are only as effective as the tools we give them."
+      }
+    },
+    {
+      "id": "s5",
       "title": "OpenAI Agents SDK",
-      "url": "https://openai.github.io/openai-agents-python/"
+      "url": "https://openai.github.io/openai-agents-python/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "A persistent memory layer for maintaining working context within an agent loop."
+      }
     },
     {
+      "id": "s6",
+      "title": "LangGraph overview",
+      "url": "https://docs.langchain.com/oss/python/langgraph/overview",
       "kind": "doc",
-      "title": "OpenAI Agents SDK: Agents",
-      "url": "https://openai.github.io/openai-agents-python/agents/"
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Mix deterministic and agentic steps"
+      }
     },
     {
+      "id": "s7",
+      "title": "Model Context Protocol specification",
+      "url": "https://modelcontextprotocol.io/specification/latest",
       "kind": "doc",
-      "title": "OpenAI Agents SDK: Tools",
-      "url": "https://openai.github.io/openai-agents-python/tools/"
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "MCP provides a standardized way for applications to:"
+      }
     },
     {
+      "id": "s8",
+      "title": "Agent2Agent protocol specification",
+      "url": "https://a2a-protocol.org/latest/specification/",
       "kind": "doc",
-      "title": "OpenAI Agents SDK: Handoffs",
-      "url": "https://openai.github.io/openai-agents-python/handoffs/"
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Canonical Data Model"
+      }
+    },
+    {
+      "id": "s9",
+      "title": "ReAct: Synergizing Reasoning and Acting in Language Models",
+      "url": "https://arxiv.org/abs/2210.03629",
+      "kind": "paper",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "reasoning traces and task-specific actions in an interleaved manner"
+      }
+    },
+    {
+      "id": "s10",
+      "title": "Reflexion: Language Agents with Verbal Reinforcement Learning",
+      "url": "https://arxiv.org/html/2303.11366",
+      "kind": "paper",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "not by updating weights, but instead"
+      }
+    },
+    {
+      "id": "s11",
+      "title": "Language Agent Tree Search",
+      "url": "https://arxiv.org/abs/2310.04406",
+      "kind": "paper",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "we integrate Monte Carlo Tree Search into LATS"
+      }
+    },
+    {
+      "id": "s12",
+      "title": "tau-bench: Tool-Agent-User Interaction in Real-World Domains",
+      "url": "https://arxiv.org/html/2406.12045",
+      "kind": "paper",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "compares the database state at the end of a conversation with the annotated goal state."
+      }
     }
   ],
   "practice": null,
   "provenance": {
-    "generated_by": "Claude through GigAI 0.1.11.10",
-    "generated_on": "2026-10-12",
+    "generated_by": "Codex gpt-6-astra by hand, Scout learning center, format v2 agent architectures",
+    "generated_on": "2026-10-16",
     "reviewed_by": null,
     "reviewed_on": null
   },
@@ -140,6 +1500,76 @@
       "version": 1,
       "date": "2026-10-12",
       "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-16",
+      "change": "Rewritten as a cited format v2 concept lesson with interactive architecture flows, request sequences, architecture decisions and bounded execution. Original attribution: Claude through GigAI 0.1.11.10."
     }
-  ]
+  ],
+  "worked_example": {
+    "title": "A bounded read-only investigation: explicit assumptions",
+    "blocks": [
+      {
+        "type": "table",
+        "caption": "Illustrative budget, not a measured SDK default or vendor price",
+        "columns": [
+          "quantity",
+          "assumption"
+        ],
+        "rows": [
+          [
+            "Model turns",
+            "6"
+          ],
+          [
+            "Tokens per model turn",
+            "2,000"
+          ],
+          [
+            "Total model-token ceiling",
+            "12,000"
+          ],
+          [
+            "Tool calls",
+            "4"
+          ],
+          [
+            "Seconds per model turn",
+            "2"
+          ],
+          [
+            "Seconds per tool call",
+            "1"
+          ],
+          [
+            "Serial execution ceiling excluding queues and approval",
+            "16 seconds"
+          ],
+          [
+            "Retries within the tool-call allowance",
+            "1"
+          ]
+        ],
+        "cites": []
+      },
+      {
+        "type": "steps",
+        "items": [
+          "Set the model-turn ceiling to 6; the host enforces it.",
+          "Reserve 2,000 tokens per turn, counting all model input and output for this simplified estimate.",
+          "Cap aggregate model tokens at 12,000; this is the turn allowance multiplied by the per-turn allowance.",
+          "Allow 4 read-only tool calls in total, including retries.",
+          "Budget 12 seconds for model calls under the stated per-turn timing assumption.",
+          "Budget 4 seconds for tool calls under the stated per-call timing assumption.",
+          "The serial estimate is 16 seconds, excluding queues, network variance and human approval.",
+          "Permit 1 retry only if the tool and global budgets still allow it."
+        ],
+        "cites": [
+          "s1"
+        ]
+      }
+    ]
+  },
+  "diagram": null
 }
