@@ -1,7 +1,7 @@
 {
   "schema_version": "learning-center-lesson:2",
   "id": "agent-architectures",
-  "version": 2,
+  "version": 3,
   "status": "published",
   "superseded_by": null,
   "title": "Agent architectures and agentic workflows with agent SDKs",
@@ -34,7 +34,7 @@
       },
       {
         "type": "p",
-        "text": "The OpenAI Agents SDK team supplies a built-in loop, function tools, handoffs, sessions and tracing as documented as of 2026-10. Applications can still own lower-level paths directly instead of adopting the SDK globally.",
+        "text": "As of 2026-10, the OpenAI Agents SDK orchestration guide distinguishes agents as tools, where a manager retains the conversation, from handoffs, where a specialist owns the rest of the turn. It also describes combining model-led decisions with coded chaining, routing, evaluation loops and parallel execution.",
         "cites": [
           "s5"
         ]
@@ -55,7 +55,7 @@
       "blocks": [
         {
           "type": "p",
-          "text": "A workflow puts the order of operations in code; an agent lets a model choose its next action from observations. The boundary is control, not whether an application calls a language model. Anthropic recommends starting with the simplest solution, including a single call augmented by retrieval. Move control into the model only when the path genuinely depends on discoveries made during execution. Otherwise autonomy buys uncertainty without solving a new problem.",
+          "text": "A workflow fixes an orchestration skeleton in code; an agent lets a model choose its next action from observations. The boundary is control, not simply whether a model is called. Anthropic still classifies orchestrator-workers as a workflow: its skeleton delegates and synthesizes while the model discovers subtasks. Start with the simplest solution, including a single call with retrieval, and add model-directed control only where the task needs it.",
           "cites": [
             "s1"
           ]
@@ -427,7 +427,7 @@
         },
         {
           "type": "p",
-          "text": "In a tool-calling implementation, the host supplies instructions, relevant context and tool definitions. The model returns an answer or structured tool requests. The host validates and dispatches permitted requests, appends their results, then asks the model what to do next. As of 2026-10, the OpenAI Agents SDK packages this loop with tools, handoffs, sessions, guardrails and tracing; using an SDK does not remove application responsibility for permissions.",
+          "text": "For this design, the host supplies instructions, relevant context and tool definitions. The model proposes an answer or tool request; the host validates permitted requests and returns observations for the next decision. As of 2026-10, OpenAI's orchestration guide describes agents equipped with instructions, tools and handoffs, and distinguishes model-led orchestration from coded control. Neither approach removes the application's responsibility for permissions or establishes that a proposed action actually ran.",
           "cites": [
             "s5",
             "s7"
@@ -591,18 +591,18 @@
         },
         {
           "type": "p",
-          "text": "A handoff transfers responsibility instead of returning a specialist answer to a manager. A swarm-style arrangement makes that transfer locally among agents rather than always through a central supervisor. For this design, only the active owner can respond or propose effects; the host records ownership changes, transfers the necessary context and stops circular transfers. Parallel specialist work and handoffs solve different coordination problems.",
+          "text": "OpenAI's handoff pattern makes the receiving specialist the active agent for the rest of the turn, rather than returning a bounded subtask result to a manager. Here, swarm-style is this lesson's convention for local handoffs among specialists, not a separate SDK guarantee. For this design, the host records the active owner, transfers necessary context and stops circular transfers. Parallel specialist work and transfers of conversation ownership solve different coordination problems.",
           "cites": [
             "s5"
           ]
         },
         {
           "type": "table",
-          "caption": "Control comparison: criteria are rows; choices are columns. These are design judgments grounded in the cited patterns, not measured rankings.",
+          "caption": "Control comparison for the illustrated designs, not measured rankings. Fixed workflow means predetermined stages, not every workflow: orchestrator-workers discovers subtasks inside a coded skeleton. Uncited risk cells are author judgments.",
           "columns": [
             "criterion",
             "Single LLM call",
-            "Workflow",
+            "Fixed workflow",
             "Single agent",
             "Supervisor multi-agent",
             "Swarm / handoffs",
@@ -616,7 +616,7 @@
               "Model [s9]",
               "Manager [s3]",
               "Active specialist [s5]",
-              "Plan plus feedback [s9, s10]"
+              "Planner, then executor [s9]"
             ],
             [
               "Best fit",
@@ -625,7 +625,7 @@
               "Adaptive exploration [s1]",
               "Independent searches [s3]",
               "Changing ownership [s5]",
-              "Explicit dependencies [s9]"
+              "Multi-step tool work [s9]"
             ],
             [
               "Main cost",
@@ -633,21 +633,20 @@
               "Rigid path [s1]",
               "Serial discovery [s9]",
               "Context transfer [s3]",
-              "Ownership ambiguity [s5]",
-              "Replanning overhead [s10]"
+              "For this design: tracking ownership",
+              "Serial tools in the basic variant [s9]"
             ]
           ],
           "cites": [
             "s1",
             "s3",
             "s5",
-            "s9",
-            "s10"
+            "s9"
           ]
         },
         {
           "type": "p",
-          "text": "The choice is therefore about information and authority boundaries. Start with a shared trace and explicit output contracts; do not give every specialist every tool. The handoff sequence illustrates an accepted transfer and a rejected transfer. Rejecting a transfer leaves ownership unchanged, so the user is not abandoned between agents.",
+          "text": "For this design, choose information and authority boundaries explicitly: retain a shared trace, require output contracts and restrict specialist tools. The handoff sequence is our proposed acceptance policy, not an SDK availability guarantee. If a transfer is rejected, the current owner remains responsible for responding instead of abandoning the user between agents.",
           "cites": [
             "s3",
             "s5"
@@ -839,7 +838,7 @@
         },
         {
           "type": "p",
-          "text": "A transfer commits only when the receiving specialist is available and permitted to own the request.",
+          "text": "For this design, the host commits a transfer only when the receiving specialist is available and permitted to own the request.",
           "cites": [
             "s5"
           ]
@@ -860,7 +859,7 @@
       "blocks": [
         {
           "type": "p",
-          "text": "Planning makes intended dependencies explicit before action; it does not make the plan true. In a plan-and-execute design, a planner names deliverables, an executor attempts them, and observations determine whether to continue or replan. ReAct already allows action plans to evolve with feedback. Separating the planner is an engineering choice when a long task benefits from a stable goal and narrower execution contexts.",
+          "text": "LangChain's plan-and-execute article separates a planner that produces a multi-step plan from executors that perform its steps using tools. After execution, a replanning call decides whether to finish or generate a follow-up plan. This differs from its ReAct baseline, which selects each action after an observation. The benefit sought is avoiding a large planner call for every tool invocation, not a guarantee that the initial plan is correct.",
           "cites": [
             "s9",
             "s2"
@@ -891,7 +890,7 @@
         },
         {
           "type": "p",
-          "text": "The shared flow groups these as planning variants: execution produces evidence, assessment either accepts a result or returns feedback, and a revised plan starts another attempt. For tree search, candidate branches belong inside the executor and assessor boundary. Choose this extra machinery only when an evaluation shows that the feedback improves success enough to justify its overhead. Otherwise keep the bounded agent loop.",
+          "text": "The flow is a proposed plan-and-execute design with Reflexion-inspired feedback, not a LATS algorithm diagram. It does not show tree selection, expansion or backpropagation, and its Planner is not asserted to be a LATS component. Assessment either accepts evidence or records feedback before another budgeted attempt. Stop incomplete when the allowance is spent; add this machinery only when useful feedback measurably improves the simpler loop.",
           "cites": [
             "s10",
             "s11",
@@ -958,22 +957,22 @@
               "from": "3",
               "to": "4",
               "kind": "sync",
-              "label": "Store reflection",
-              "short": "Store reflection"
+              "label": "If failed: reflect",
+              "short": "If failed: reflect"
             },
             {
               "from": "4",
               "to": "0",
               "kind": "sync",
-              "label": "Revise plan",
-              "short": "Revise plan"
+              "label": "If budget: replan",
+              "short": "If budget: replan"
             },
             {
               "from": "3",
               "to": "5",
               "kind": "sync",
-              "label": "Accept result",
-              "short": "Accept result"
+              "label": "If valid: accept",
+              "short": "If valid: accept"
             }
           ],
           "steps": [
@@ -991,22 +990,21 @@
             },
             {
               "edge": 3,
-              "caption": "Store reflection"
+              "caption": "If evidence fails, store a reflection rather than accept."
             },
             {
               "edge": 4,
-              "caption": "Revise plan"
+              "caption": "If budget remains, replan using the reflection; otherwise stop incomplete."
             },
             {
               "edge": 5,
-              "caption": "Accept result"
+              "caption": "If evidence satisfies the criteria, accept instead of reflecting."
             }
           ],
-          "legend": "Plan-and-execute with reflection; tree search expands candidates inside execution; synchronous calls return to the caller; asynchronous arrows transfer work. Architectural sketch, not an SDK execution trace. Sources: s9, s10, s11.",
+          "legend": "Proposed plan-and-execute/reflection sketch, not LATS pseudocode or an SDK execution trace. Failure/feedback and acceptance are alternatives; exhausted budget stops incomplete outside this sketch. Synchronous calls return to the caller. Sources: s9, s10.",
           "cites": [
             "s9",
-            "s10",
-            "s11"
+            "s10"
           ]
         }
       ]
@@ -1122,6 +1120,11 @@
           ]
         },
         {
+          "type": "p",
+          "text": "A2A requires task retrieval to verify the authenticated client's access. For this design, test a remote-agent request carrying another tenant's task identifier and require denial: possession of an identifier is not authorization. Keep that access check outside model judgment.",
+          "cites": ["s8"]
+        },
+        {
           "type": "table",
           "caption": "Protocol snapshot checked as of 2026-10; pin the implemented revision before integrating",
           "columns": [
@@ -1156,8 +1159,7 @@
           "type": "p",
           "text": "Human-in-the-loop is an execution boundary, not a reassuring message after an action already happened. For this design, the agent proposes a mutation with its target, arguments and expected effect. The runtime checks policy and records a pending operation before asking a person to approve. Denial ends that operation; a changed proposal requires a fresh decision. Consent to investigate is not consent to execute every resulting recommendation.",
           "cites": [
-            "s7",
-            "s5"
+            "s7"
           ]
         },
         {
@@ -1177,11 +1179,15 @@
         },
         {
           "type": "p",
-          "text": "Guardrails check inputs, outputs or tool usage; they are not a substitute for isolation. Limit credentials and network access, isolate generated-code execution, and keep sensitive actions behind an enforcement boundary the model cannot bypass. The OpenAI SDK documentation describes guardrails and isolated workspaces as distinct facilities. The MCP specification warns that tool descriptions themselves can be untrusted, so retrieved text cannot be allowed to rewrite host policy.",
+          "text": "Guardrails are not a substitute for an enforced permission boundary. For this design, limit credentials and network access, isolate generated-code execution, and prevent retrieved content from changing host policy. MCP explicitly says tool descriptions and annotations can be untrusted. A concrete prompt-injection test for this design supplies a description that requests secret data: success means rejecting that instruction, not merely producing a polite final answer.",
           "cites": [
-            "s5",
             "s7"
           ]
+        },
+        {
+          "type": "p",
+          "text": "A2A cancellation can fail because a task already completed or cannot be canceled at its current stage. For this design, a supervisor must record the returned task state and reconcile effects, not announce that every worker stopped merely because it sent cancellation requests.",
+          "cites": ["s8"]
         },
         {
           "type": "p",
@@ -1242,9 +1248,9 @@
               "Lead Opus 4 and Sonnet 4 workers versus Opus 4; not percentage points"
             ],
             [
-              "tau-bench paper, 2024 [s12]",
-              "Task success below 50%; retail pass^8 below 25%",
-              "Reported function-calling agents; consistency across repeated trials"
+              "tau-bench v1, 2024-06-17 [s12]",
+              "Abstract: task success below 50%; retail pass^8 below 25%",
+              "Historical function-calling agents including GPT-4o; aggregate/abstract finding, not a per-domain ceiling. pass^8 means success on all eight trials, not any successful trial."
             ]
           ],
           "cites": [
@@ -1271,9 +1277,9 @@
               "example": "For this design: summarize a known record."
             },
             {
-              "option": "Workflow",
+              "option": "Fixed workflow",
               "pick_when": "Stable stages and explicit gates [s1].",
-              "avoid_when": "Subtasks cannot be predicted [s1].",
+              "avoid_when": "Predetermined stages do not fit; consider dynamic orchestrator-workers [s1].",
               "example": "For this design: validate then draft."
             },
             {
@@ -1290,14 +1296,14 @@
             },
             {
               "option": "Swarm / handoffs",
-              "pick_when": "Specialist should own conversation [s5].",
+              "pick_when": "Specialist should own the rest of the turn [s5].",
               "avoid_when": "Central synthesis must retain control [s5].",
               "example": "For this design: transfer to billing."
             },
             {
               "option": "Plan-and-execute",
-              "pick_when": "Explicit dependencies guide attempts [s9].",
-              "avoid_when": "Replanning lacks useful feedback [s10].",
+              "pick_when": "Multi-step tool work can use a separate planner [s9].",
+              "avoid_when": "For this design: replanning adds no measured benefit.",
               "example": "For this design: evidence before revision."
             }
           ],
@@ -1305,13 +1311,12 @@
             "s1",
             "s3",
             "s5",
-            "s9",
-            "s10"
+            "s9"
           ]
         },
         {
           "type": "p",
-          "text": "A retry is additional work, not recovery by definition. For this design, retry only a transient, safe-to-repeat lookup while the global allowance remains. Surface permanent failures and stop at the budget rather than changing the task to manufacture success. The worked example states illustrative limits; production limits require workload measurement.",
+          "text": "For this design, retry a transient failure only when repetition is safe and the shared allowance remains. Exhaustion stops incomplete; an unsafe repeat requires reconciliation even with budget left. A failed permitted retry ends incomplete without another retry. These are proposed policies, not SDK defaults; the worked example includes retries within its total tool allowance.",
           "cites": [
             "s4",
             "s1"
@@ -1319,7 +1324,7 @@
         },
         {
           "type": "p",
-          "text": "A failed read can be retried only while the host’s remaining allowance permits it.",
+          "text": "The host checks remaining allowance and repeat safety before retrying a failed tool request.",
           "cites": [
             "s1",
             "s4"
@@ -1327,8 +1332,8 @@
         },
         {
           "type": "diagram",
-          "mermaid": "sequenceDiagram\n  autonumber\n  participant A as Agent\n  participant H as Host\n  participant T as Read tool\n  A->>H: Request lookup\n  H->>T: Read request\n  T-->>H: Transient failure\n  alt safe and budget remains\n    H->>T: Retry read\n    T-->>H: Result or failure\n    H-->>A: Observed outcome\n  else budget exhausted\n    H-->>A: Stop with incomplete status\n  end\n  opt retry failed\n    A->>H: Propose more work\n    H-->>A: Deny if allowance spent\n  end",
-          "legend": "Retry consumes the same global allowance as ordinary work. This read-only design does not blindly retry mutations. Sources: s1, s4.",
+          "mermaid": "sequenceDiagram\n  autonumber\n  participant A as Agent\n  participant H as Host\n  participant T as Tool\n  A->>H: Request operation\n  H->>T: Execute request\n  T-->>H: Transient failure\n  alt exhausted\n    H-->>A: Stop incomplete\n  else budget left\n    alt unsafe repeat\n      H-->>A: Reconcile before more work\n    else safe repeat\n      H->>T: Retry within allowance\n      T-->>H: Retry outcome\n      alt retry succeeded\n        H-->>A: Observed result\n      else retry failed\n        H-->>A: Stop incomplete\n      end\n    end\n  end",
+          "legend": "For this design, budget exhaustion takes precedence. With budget left, unsafe repetition requires reconciliation; a safe read or idempotent operation may be retried. The retry uses the same global allowance and a failed retry stops incomplete. These are exhaustive alternatives, not successive attempts. Sources: s1, s4.",
           "cites": [
             "s1",
             "s4"
@@ -1401,13 +1406,13 @@
     },
     {
       "id": "s5",
-      "title": "OpenAI Agents SDK",
-      "url": "https://openai.github.io/openai-agents-python/",
+      "title": "OpenAI Agents SDK: Agent orchestration",
+      "url": "https://openai.github.io/openai-agents-python/multi_agent/",
       "kind": "doc",
       "verified": {
         "checked": "2026-10-16",
         "http": 200,
-        "section_found": "A persistent memory layer for maintaining working context within an agent loop."
+        "section_found": "A manager agent keeps control of the conversation and calls specialist agents through"
       }
     },
     {
@@ -1445,13 +1450,13 @@
     },
     {
       "id": "s9",
-      "title": "ReAct: Synergizing Reasoning and Acting in Language Models",
-      "url": "https://arxiv.org/abs/2210.03629",
-      "kind": "paper",
+      "title": "LangChain: Plan-and-Execute Agents",
+      "url": "https://blog.langchain.com/planning-agents/",
+      "kind": "article",
       "verified": {
         "checked": "2026-10-16",
         "http": 200,
-        "section_found": "reasoning traces and task-specific actions in an interleaved manner"
+        "section_found": "Once execution is completed, the agent is called again with a re-planning prompt"
       }
     },
     {
@@ -1505,6 +1510,11 @@
       "version": 2,
       "date": "2026-10-16",
       "change": "Rewritten as a cited format v2 concept lesson with interactive architecture flows, request sequences, architecture decisions and bounded execution. Original attribution: Claude through GigAI 0.1.11.10."
+    },
+    {
+      "version": 3,
+      "date": "2026-10-16",
+      "change": "Addressed independent review: fixed-workflow taxonomy, direct ownership and planning citations, exhaustive retry safety/budget branches, historical benchmark scope, and explicit planning-sketch limits. Review remains pending."
     }
   ],
   "worked_example": {
