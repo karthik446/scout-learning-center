@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-url-shortener",
-  "version": 7,
+  "version": 8,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: URL shortener and key-value service",
@@ -694,6 +694,28 @@
         "http": 200,
         "section_found": "$0.6250 per million writes"
       }
+    },
+    {
+      "id": "s60",
+      "title": "Amazon DynamoDB Developer Guide: Working with Query (all items of one partition key value, narrowed by a sort key condition)",
+      "url": "https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Query.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Query returns all items with that partition key value"
+      }
+    },
+    {
+      "id": "s61",
+      "title": "Amazon ECR User Guide: Amazon ECR interface VPC endpoints (AWS PrivateLink)",
+      "url": "https://docs.aws.amazon.com/AmazonECR/latest/userguide/vpc-endpoints.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Amazon ECR interface VPC endpoints (AWS PrivateLink)"
+      }
     }
   ],
   "practice": null,
@@ -1025,8 +1047,15 @@
                 "from": "W",
                 "to": "C",
                 "kind": "sync",
-                "label": "invalidate",
+                "label": "invalidate on a create or a disable",
                 "short": "Invalidate"
+              },
+              {
+                "from": "W",
+                "to": "S",
+                "kind": "sync",
+                "label": "Link API to click counts by day: read the stats",
+                "short": "Stats"
               }
             ],
             "steps": [
@@ -1068,7 +1097,11 @@
               },
               {
                 "edge": 9,
-                "caption": "Link API invalidates the cache entry"
+                "caption": "Link API invalidates the cache entry on a create or a disable"
+              },
+              {
+                "edge": 10,
+                "caption": "Link API reads the click counts by day for the owner's stats"
               }
             ],
             "legend": "Boxes are containers; cylinders are stores; double brackets are queues or logs. The two frames are the read-only redirect path and the creation path; they share the database and nothing else."
@@ -1234,8 +1267,15 @@
                 "from": "W",
                 "to": "C",
                 "kind": "sync",
-                "label": "DEL the entry, cache write, sync",
+                "label": "DEL the code's entry on a create or a disable, cache write, sync",
                 "short": "DEL"
+              },
+              {
+                "from": "W",
+                "to": "CNT",
+                "kind": "sync",
+                "label": "Query the counts by code for the stats, sync",
+                "short": "Query"
               }
             ],
             "steps": [
@@ -1281,16 +1321,21 @@
               },
               {
                 "edge": 10,
-                "caption": "Link API to cache: DEL the entry on a disable, cache write, sync"
+                "caption": "Link API to cache: DEL the code's entry on a create or a disable, cache write, sync"
+              },
+              {
+                "edge": 11,
+                "caption": "Link API to DynamoDB click counts: Query the days of a code for the stats, sync"
               }
             ],
-            "legend": "The same boxes as the neutral diagram, one AWS service each: the edge is an Application Load Balancer (the front-door decision below says why not CloudFront), the redirect service is an ECS on Fargate service, the link API and the aggregator are Lambda functions, the cache is an ElastiCache for Valkey cluster, the primary with its replicas is one DynamoDB table whose replicas AWS runs, the click log is a Kinesis data stream and the click counts are a second DynamoDB table. Both owners and browsers enter through the load balancer, which sends a path to a task or to a function s8. Each arrow says how the call is made: HTTPS from clients, HTTP inside the VPC, a direct invoke from the load balancer to a function, named SDK calls over the gateway endpoint s9 and the Kinesis interface endpoint s10, cache reads and writes, and the event source mapping that polls the stream in batches s11. Sync means the caller waits for the answer; async means the work goes on after the caller has been answered. The VPC frames are one VPC in one Region across three Availability Zones; the link API function is attached to the VPC through private subnets s12, the aggregator is not.",
+            "legend": "The same boxes as the neutral diagram, one AWS service each: the edge is an Application Load Balancer (the front-door decision below says why not CloudFront), the redirect service is an ECS on Fargate service, the link API and the aggregator are Lambda functions, the cache is an ElastiCache for Valkey cluster, the primary with its replicas is one DynamoDB table whose replicas AWS runs, the click log is a Kinesis data stream and the click counts are a second DynamoDB table. Both owners and browsers enter through the load balancer, which sends a path to a task or to a function s8. Each arrow says how the call is made: HTTPS from clients, HTTP inside the VPC, a direct invoke from the load balancer to a function, named SDK calls over the gateway endpoint s9 and the Kinesis interface endpoint s10, cache reads and writes, and the event source mapping that polls the stream in batches s11. Sync means the caller waits for the answer; async means the work goes on after the caller has been answered. The VPC frames are one VPC in one Region across three Availability Zones; the link API function is attached to the VPC through private subnets s12, the aggregator is not. The link API also serves the stats endpoint: it checks the owner on the links table and reads the click counts table.",
             "cites": [
               "s8",
               "s9",
               "s10",
               "s11",
-              "s12"
+              "s12",
+              "s60"
             ]
           },
           {
@@ -1299,8 +1344,8 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber\n  participant App as Owner's app\n  participant Edge\n  participant L as Link API\n  participant DDB as DynamoDB links\n  App->>Edge: POST /links, idempotency key\n  Edge->>L: invoke, a Lambda target\n  Note over Edge,L: validate the scheme<br/>and the block list\n  L->>DDB: TransactWriteItems,<br/>key item and link item\n  Note over L,DDB: both conditional with<br/>attribute_not_exists\n  alt the key is known\n    DDB-->>L: cancelled, the key item exists\n    L->>DDB: GetItem the stored code\n    DDB-->>L: the first code\n    L-->>Edge: 200 with the first code\n  else the code is taken, rare\n    DDB-->>L: cancelled, the link item exists\n    L->>DDB: TransactWriteItems, a new code\n    DDB-->>L: ok\n    L-->>Edge: 201 with the code\n  else both written\n    DDB-->>L: ok\n    L-->>Edge: 201 with the code and URL\n  end\n  Edge-->>App: the response\n  opt throttled or a 5xx\n    L->>DDB: SDK retry with<br/>backoff and jitter\n  end",
-            "legend": "Solid arrows are synchronous calls with their replies dashed; open arrows are asynchronous hand-offs. Edge is the Application Load Balancer, drawn as one lane here and in every sequence diagram below. The load balancer invokes the function directly s8. The conditional writes and the all-or-nothing transaction s13, s14; the SDK retry with backoff and jitter s15; the write goes over the gateway endpoint s9.",
+            "mermaid": "sequenceDiagram\n  autonumber\n  participant App as Owner's app\n  participant Edge\n  participant L as Link API\n  participant DDB as DynamoDB links\n  participant C as Cache\n  App->>Edge: POST /links, idempotency key\n  Edge->>L: invoke, a Lambda target\n  Note over Edge,L: validate the scheme<br/>and the block list\n  L->>DDB: TransactWriteItems,<br/>key item and link item\n  Note over L,DDB: both conditional with<br/>attribute_not_exists\n  alt the key is known\n    DDB-->>L: cancelled, the key item exists\n    L->>DDB: GetItem the stored code\n    DDB-->>L: the first code\n    L-->>Edge: 200 with the first code\n  else the code is taken, rare\n    DDB-->>L: cancelled, the link item exists\n    L->>DDB: TransactWriteItems, a new code\n    DDB-->>L: ok\n    L->>C: DEL code\n    L-->>Edge: 201 with the code\n  else both written\n    DDB-->>L: ok\n    L->>C: DEL code\n    Note over L,C: a negative entry from an earlier lookup<br/>of this code must not hide the new link\n    L-->>Edge: 201 with the code and URL\n  end\n  Edge-->>App: the response\n  opt throttled or a 5xx\n    L->>DDB: SDK retry with<br/>backoff and jitter\n  end",
+            "legend": "Solid arrows are synchronous calls with their replies dashed; open arrows are asynchronous hand-offs. Edge is the Application Load Balancer, drawn as one lane here and in every sequence diagram below. The load balancer invokes the function directly s8. The conditional writes and the all-or-nothing transaction s13, s14; the SDK retry with backoff and jitter s15; the write goes over the gateway endpoint s9. The DEL is the same cache delete as on a disable; a code looked up before it existed has a negative entry with a shorter TTL, and this delete is what keeps it from hiding the new link.",
             "cites": [
               "s8",
               "s9",
@@ -1311,7 +1356,7 @@
           },
           {
             "type": "p",
-            "text": "The rare collision is the design's uniqueness check doing its job: the transaction is cancelled with a reason per item, the function reads which item failed, and a taken code means a fresh random code, while a custom alias goes through the same condition. A request that repeats the idempotency key returns the first code, so a client that never saw the 201 can retry safely. The key item carries a TTL attribute and is deleted by DynamoDB later; the deletion may lag by days, which is harmless because a key only has to exist while retries are plausible.",
+            "text": "The rare collision is the design's uniqueness check doing its job: the transaction is cancelled with a reason per item, the function reads which item failed, and a taken code means a fresh random code, while a custom alias goes through the same condition. A request that repeats the idempotency key returns the first code, so a client that never saw the 201 can retry safely. After a successful create the function deletes the code's cache entry, for a random code and for a custom alias alike, so a negative entry cached by an earlier lookup of that code is gone before the owner shares the link. The key item carries a TTL attribute and is deleted by DynamoDB later; the deletion may lag by days, which is harmless because a key only has to exist while retries are plausible.",
             "cites": [
               "s14",
               "s16"
@@ -1323,7 +1368,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 16\n  participant App as Owner's app\n  participant Edge\n  participant L as Link API\n  participant DDB as DynamoDB links\n  participant C as Cache\n  App->>Edge: DELETE /links/code\n  Edge->>L: invoke\n  L->>DDB: UpdateItem state = disabled,<br/>condition the owner matches\n  DDB-->>L: ok\n  L->>C: DEL code\n  C-->>L: ok\n  L-->>Edge: 204\n  Edge-->>App: 204\n  Note over L,C: reads are eventually consistent, so a<br/>redirect may still see the old item\n  opt the DEL fails\n    L->>C: DEL again\n    Note over L,C: else the entry expires by its TTL\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber 18\n  participant App as Owner's app\n  participant Edge\n  participant L as Link API\n  participant DDB as DynamoDB links\n  participant C as Cache\n  App->>Edge: DELETE /links/code\n  Edge->>L: invoke\n  L->>DDB: UpdateItem state = disabled,<br/>condition the owner matches\n  DDB-->>L: ok\n  L->>C: DEL code\n  C-->>L: ok\n  L-->>Edge: 204\n  Edge-->>App: 204\n  Note over L,C: reads are eventually consistent, so a<br/>redirect may still see the old item\n  opt the DEL fails\n    L->>C: DEL again\n    Note over L,C: else the entry expires by its TTL\n  end",
             "legend": "Solid arrows are synchronous calls with their replies dashed; open arrows are asynchronous hand-offs. Edge is the Application Load Balancer, drawn as one lane here and in every sequence diagram below. Eventually consistent reads are the default and half the price of strongly consistent ones s17; the cache delete is a plain DEL on the Valkey cluster.",
             "cites": [
               "s17"
@@ -1334,8 +1379,27 @@
             "text": "The cache entry is deleted after the table is updated, never before. A redirect that read the old item just before the update can still write it back after the delete, and that entry lives until its TTL, which is therefore the upper bound on the staleness; the neutral design accepts a stale active link for a short window and states it, and on AWS the window is the table's eventual consistency plus this race."
           },
           {
+            "type": "p",
+            "text": "Part c: reading the stats, which the neutral design serves from the click counts and the aggregator alone writes."
+          },
+          {
+            "type": "diagram",
+            "mermaid": "sequenceDiagram\n  autonumber 27\n  participant App as Owner's app\n  participant Edge\n  participant L as Link API\n  participant D as DynamoDB\n  App->>Edge: GET /links/code/stats\n  Edge->>L: invoke\n  L->>D: GetItem the link, the owner matches\n  D-->>L: the link record\n  L->>D: Query the counts of the code\n  D-->>L: the days and their counts\n  L-->>Edge: 200 with the total and by_day\n  Edge-->>App: 200\n  Note over L,D: the counts are approximate<br/>within a minute, by contract",
+            "legend": "Solid arrows are synchronous calls with their replies dashed. Edge is the Application Load Balancer, drawn as one lane here and in every sequence diagram below. The stats read is one Query on the counts table, whose key is the code and the day s60.",
+            "cites": [
+              "s60"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "The link API serves the stats call: it checks that the caller owns the link on the links table and reads the counts with one Query. The aggregator is the only writer of the counts table; the redirect path never touches it.",
+            "cites": [
+              "s60"
+            ]
+          },
+          {
             "type": "table",
-            "caption": "Identity and network: who may call what, over which endpoint, and what is public. The load balancer is the only public entry; the services run in private subnets across three Availability Zones, the Fargate tasks in awsvpc mode with one elastic network interface each, each under its own IAM role, so permissions belong to the task or the function, not to a host.",
+            "caption": "Identity and network: who may call what, over which endpoint, and what is public. The load balancer is the only public entry; the services run in private subnets across three Availability Zones, the Fargate tasks in awsvpc mode with one elastic network interface each, each under its own IAM role, so permissions belong to the task or the function, not to a host. A task in a private subnet pulls its image through an Amazon ECR interface endpoint (or a NAT gateway), and this design uses the endpoint.",
             "columns": [
               "service",
               "may call",
@@ -1357,7 +1421,7 @@
               ],
               [
                 "Link API (function role)",
-                "TransactWriteItems, UpdateItem and GetItem on the links table; the cache by DEL",
+                "TransactWriteItems, UpdateItem and GetItem on the links table; Query on the click counts table; the cache by DEL",
                 "attached to the VPC through private subnets; DynamoDB gateway endpoint; the Valkey port",
                 "no; a function has no inbound port, only the load balancer's permission to invoke it"
               ],
@@ -1388,7 +1452,9 @@
               "s20",
               "s21",
               "s22",
-              "s23"
+              "s23",
+              "s60",
+              "s61"
             ]
           },
           {
@@ -1541,7 +1607,7 @@
                 "option": "Amazon Kinesis Data Streams, provisioned shards",
                 "pick_when": "the rate is steady and known, so shard-hours plus payload units cost less than on-demand's price per GB",
                 "avoid_when": "the rate swings, or nobody wants to watch the shard count",
-                "example": "For this design: not yet. At 3,200 events a second it is 4 shards and the saving is small; at 10x the price lists make provisioned about half of on-demand, the point to switch."
+                "example": "For this design: not yet. At 3,200 events a second it is 4 shards and the saving is about $68 a month, too little to take on shard sizing; at 10x the price lists make provisioned about half of on-demand, the point to switch."
               },
               {
                 "option": "Amazon SQS standard queue",
@@ -1552,7 +1618,7 @@
               {
                 "option": "Amazon MSK",
                 "pick_when": "the team already runs Kafka, or needs its ecosystem and retention beyond what a stream offers",
-                "avoid_when": "there is no Kafka estate: brokers to size, patch and keep balanced",
+                "avoid_when": "there is no Kafka estate, so the brokers would be new things to size and operate",
                 "example": "For this design: not chosen. Nothing here needs Kafka's protocol, and a stream with no brokers to run does the same job."
               }
             ],
@@ -1756,15 +1822,15 @@
               ],
               [
                 "Aggregator",
-                "Lambda on Arm, 1 GB for 10 s per batch, a batch a minute per shard, 3 shards at the base size (assumption)",
-                "about $18",
-                "about $180"
+                "Lambda on Arm, 1 GB for 10 s per batch, a batch a minute per shard, 4 shards at the base size (assumption)",
+                "about $23",
+                "about $230"
               ],
               [
                 "Total",
                 "the eight lines above; Route 53, interface endpoints, data transfer out, backups and CloudWatch not priced",
-                "about $1,520, about $1,840 per billion redirects",
-                "about $12,800, about $1,550 per billion redirects"
+                "about $1,520, about $1,850 per billion redirects",
+                "about $12,800, about $1,560 per billion redirects"
               ]
             ],
             "cites": [
@@ -1784,7 +1850,7 @@
           },
           {
             "type": "p",
-            "text": "Two lines dominate: the click counts, because DynamoDB charges for every write and the neutral estimates give a hot link a little over one click a day, so a per-minute sum compresses nothing, and the cache, because the hot set sits in memory all month. The redirect compute is about a tenth of the bill; the levers are which links get a live counter and the size of the cache nodes.",
+            "text": "Two lines dominate: the click counts, because DynamoDB charges for every write and the neutral estimates give a hot link a little over one click a day, so a per-minute sum compresses nothing, and the cache, because the hot set sits in memory all month. The redirect compute is about a tenth of the bill; the levers are which links get a live counter and the size of the cache nodes. The neutral fleet grows 4 times at 10x by assumption, while the per-click and cache lines grow with traffic, so the AWS cost per billion redirects falls only a little.",
             "cites": [
               "s34",
               "s59"
@@ -1941,12 +2007,12 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 12\n  participant O as Owner\n  participant W as Link API\n  participant P as Primary\n  participant C as Cache\n  O->>W: POST /links, idempotency key\n  Note over O,W: validate the scheme and the block list\n  W->>P: insert with the idempotency key\n  P-->>W: ok\n  W-->>O: code and short URL\n  O->>W: DELETE /links/code\n  W->>P: state = disabled\n  W->>C: delete the cache entry\n  Note over P,C: replicas lag a little, so the next read may<br/>serve a stale active link for the lag window",
-            "legend": "Solid arrows are synchronous calls with their replies dashed; the open arrow is the asynchronous hand-off. A disable updates the state and deletes the cache entry; the replicas lag a little, which the design accepts and states."
+            "mermaid": "sequenceDiagram\n  autonumber 12\n  participant O as Owner\n  participant W as Link API\n  participant P as Primary\n  participant C as Cache\n  O->>W: POST /links, idempotency key\n  Note over O,W: validate the scheme and the block list\n  W->>P: insert with the idempotency key\n  P-->>W: ok\n  W->>C: delete the cache entry of the code\n  Note over W,C: a negative entry from an earlier lookup<br/>must not hide the new link\n  W-->>O: code and short URL\n  O->>W: DELETE /links/code\n  W->>P: state = disabled\n  W->>C: delete the cache entry\n  Note over P,C: replicas lag a little, so the next read may<br/>serve a stale active link for the lag window",
+            "legend": "Solid arrows are synchronous calls with their replies dashed; the open arrow is the asynchronous hand-off. A create and a disable both delete the cache entry of the code; a disable updates the state and deletes the cache entry; the replicas lag a little, which the design accepts and states."
           },
           {
             "type": "p",
-            "text": "The cache fill carries a TTL plus jitter and the negative entry a shorter TTL, so a storm of bad codes does not reach the database. Losing a fraction of the click events is accepted by the approximate-count requirement.",
+            "text": "The cache fill carries a TTL plus jitter and the negative entry a shorter TTL, so a storm of bad codes does not reach the database. Creating a link also deletes the cache entry of its code, so a negative entry cached by an earlier lookup of a custom alias cannot hide the new link for its shorter TTL. Losing a fraction of the click events is accepted by the approximate-count requirement.",
             "cites": [
               "s5"
             ]
@@ -2317,6 +2383,11 @@
       "version": 7,
       "date": "2026-10-16",
       "change": "Second read of the AWS pass (batch E1A), Claude (Sonnet 5.5) as a different instance from the writer; mechanical fixes only: the link-store cost line says that the 25 GB free tier is deducted; the 10 ms at 512 MB behind the per-request Lambda price is stated; the DAX clause that no cited page supports is cut; the encryption claim is limited to what the cited DynamoDB page says; the DEL no longer cites the SET page; the Well-Architected security row says no NAT gateway on the request path, as the identity table does; interface endpoints are listed as not priced; reviewed_by stays empty, the remaining findings are in the review"
+    },
+    {
+      "version": 8,
+      "date": "2026-10-16",
+      "change": "fix round after the second read (batch E1A): the stats endpoint has a flow edge (neutral and AWS), a sequence diagram and the Query permission; a create deletes the cache entry of the code, so a negative entry cannot hide a new custom alias (stated in the core flow, drawn in the neutral core flow and the AWS create sequence); aggregator sized at 4 and 40 shards with its cost cells and totals recomputed; provisioned-shard and MSK wording; ECR path clause; cost-per-billion sentence; reviewed_by stays null"
     }
   ]
 }
