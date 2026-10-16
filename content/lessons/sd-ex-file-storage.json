@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-file-storage",
-  "version": 6,
+  "version": 7,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: file storage and sync",
@@ -36,8 +36,7 @@
     "Amazon DynamoDB Streams",
     "AWS Lambda",
     "Amazon API Gateway",
-    "Amazon EventBridge Scheduler",
-    "Amazon SNS"
+    "Amazon EventBridge Scheduler"
   ],
   "related": [
     "sd-storage-engines",
@@ -531,6 +530,50 @@
         "http": 200,
         "section_found": "attribute_not_exists() to check whether an item with the same primary key already exists"
       }
+    },
+    {
+      "id": "s45",
+      "title": "Amazon ECR User Guide: Amazon ECR interface VPC endpoints (AWS PrivateLink)",
+      "url": "https://docs.aws.amazon.com/AmazonECR/latest/userguide/vpc-endpoints.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Amazon ECR interface VPC endpoints (AWS PrivateLink)"
+      }
+    },
+    {
+      "id": "s46",
+      "title": "Amazon DynamoDB API Reference: CancellationReason (the reason of each item of a cancelled transaction)",
+      "url": "https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_CancellationReason.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Status code for the result of the cancelled transaction"
+      }
+    },
+    {
+      "id": "s47",
+      "title": "Amazon API Gateway Developer Guide: Control access to WebSocket APIs with AWS Lambda REQUEST authorizers (only on the $connect route)",
+      "url": "https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-websocket-api-lambda-auth.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "You can only use a Lambda authorizer function for the $connect route"
+      }
+    },
+    {
+      "id": "s48",
+      "title": "Amazon S3 User Guide: Constraints and considerations for lifecycle transitions (objects smaller than 128 KB do not transition by default)",
+      "url": "https://docs.aws.amazon.com/AmazonS3/latest/userguide/lifecycle-transition-general-considerations.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Objects smaller than 128 KB will not transition by default to any storage class"
+      }
     }
   ],
   "practice": null,
@@ -1002,7 +1045,7 @@
               },
               {
                 "id": "BS",
-                "label": "ECS on Fargate: block service, signs S3 URLs",
+                "label": "ECS on Fargate: block service, signs upload URLs",
                 "kind": "service"
               },
               {
@@ -1022,7 +1065,7 @@
               },
               {
                 "id": "GCF",
-                "label": "AWS Lambda: reference counter and sweep functions",
+                "label": "AWS Lambda: reference-counting stream function and sweep function",
                 "kind": "service"
               },
               {
@@ -1074,8 +1117,8 @@
                 "from": "MS",
                 "to": "MDB",
                 "kind": "sync",
-                "label": "GetItem on the node, then one TransactWriteItems (the version, the node, a feed item, the sequence and the TTL of the superseded version; a share writes one per member), over the gateway endpoint, sync",
-                "short": "GetItem, Transaction"
+                "label": "GetItem of the node and of the sequence, then one TransactWriteItems (the version, the node, a feed item, the sequence and the TTL of the superseded version; a share writes one per member), over the gateway endpoint, sync",
+                "short": "Reads, Transaction"
               },
               {
                 "from": "ALB",
@@ -1102,7 +1145,7 @@
                 "from": "BS",
                 "to": "BT",
                 "kind": "sync",
-                "label": "PutItem for a confirmed block, over the gateway endpoint, sync",
+                "label": "PutItem if the hash is new, for a confirmed block, over the gateway endpoint, sync",
                 "short": "PutItem"
               },
               {
@@ -1156,7 +1199,7 @@
               },
               {
                 "edge": 3,
-                "caption": "Metadata service to Metadata table: GetItem on the node, then one TransactWriteItems (the version, the node, a feed item, the sequence and the TTL of the superseded version; a share writes one per member), over the gateway endpoint, sync"
+                "caption": "Metadata service to Metadata table: GetItem of the node and of the sequence, then one TransactWriteItems (the version, the node, a feed item, the sequence and the TTL of the superseded version; a share writes one per member), over the gateway endpoint, sync"
               },
               {
                 "edge": 4,
@@ -1172,36 +1215,37 @@
               },
               {
                 "edge": 7,
-                "caption": "Block service to Blocks table: PutItem for a confirmed block, over the gateway endpoint, sync"
+                "caption": "Block service to Blocks table: PutItem if the hash is new, for a confirmed block, over the gateway endpoint, sync"
               },
               {
                 "edge": 8,
-                "caption": "Metadata table to Reference and sweep functions: DynamoDB Streams records of version puts and TTL deletions, async"
+                "caption": "Metadata table to Stream and sweep functions: DynamoDB Streams records of version puts and TTL deletions, async"
               },
               {
                 "edge": 9,
-                "caption": "Scheduler to Reference and sweep functions: invoke the sweep every hour, async"
+                "caption": "Scheduler to Stream and sweep functions: invoke the sweep every hour, async"
               },
               {
                 "edge": 10,
-                "caption": "Reference and sweep functions to Blocks table: UpdateItem of reference counts and marker items, Query of the sparse index, sync"
+                "caption": "Stream and sweep functions to Blocks table: UpdateItem of reference counts and marker items, Query of the sparse index, sync"
               },
               {
                 "edge": 11,
-                "caption": "Reference and sweep functions to S3 Standard: DeleteObject for a swept block, in whichever class it is, sync"
+                "caption": "Stream and sweep functions to S3 Standard: DeleteObject for a swept block, in whichever class it is, sync"
               },
               {
                 "edge": 12,
                 "caption": "S3 Standard to S3 Glacier Instant Retrieval: S3 Lifecycle transition after 30 days, async"
               }
             ],
-            "legend": "The write half of the architecture, the neutral diagram's boxes with one AWS service each: the metadata service and the block service are ECS on Fargate tasks behind the load balancer, and the neutral sharing box is the metadata service's sharing routes, so it has no box of its own; the metadata DB is a DynamoDB table with one partition key per account, whose commit is one transaction s12; the change feed is items of that same table, written in the commit's transaction; the blocks are S3 objects named by their hash, hot in S3 Standard and cold in Glacier Instant Retrieval, which keep millisecond access s23. The client uploads each block straight to S3 with a URL the block service signed s21, so no block passes through a task; where the neutral API has PUT and GET /blocks/{hash} and GET /notify, this section has POST /blocks/urls and /blocks/done, presigned PUT and GET calls to S3, and a WebSocket. The repair and tiering workers have no box of their own: S3 repairs its own storage across a minimum of three Availability Zones s24, and the tiering is a lifecycle rule s25; what remains of the neutral workers is the garbage collector, shown at the bottom as one Lambda box that stands for the reference-counting function (fed by DynamoDB Streams) and the hourly sweep function, which the write half carries so that the read half stays within 12 nodes. The blocks table is the one box the neutral diagram leaves implicit. Sync means the caller waits for the answer; async means the work goes on after the caller has been answered. The load balancer sits in the public subnets of one VPC and every task in its private subnets, across three Availability Zones in one Region.",
+            "legend": "The write half of the architecture, the neutral diagram's boxes with one AWS service each: the metadata service and the block service are ECS on Fargate tasks behind the load balancer, and the neutral sharing box is the metadata service's sharing routes, so it has no box of its own; the metadata DB is a DynamoDB table with one partition key per account, whose commit is one transaction s12; the change feed is items of that same table, written in the commit's transaction; the blocks are S3 objects named by their hash, hot in S3 Standard and cold in Glacier Instant Retrieval, which keep millisecond access s23. The client uploads each block straight to S3 with a URL the block service signed s21, so no block passes through a task; where the neutral API has PUT and GET /blocks/{hash} and GET /notify, this section has POST /blocks/urls and /blocks/done, presigned PUT and GET calls to S3, and a WebSocket; the neutral Cursor is the cursor the client holds and sends, and Account quota, rename, restore and share revocation are plain items of the same table that this pass does not draw. The repair and tiering workers have no box of their own: S3 repairs its own storage across a minimum of three Availability Zones s24, and the tiering is a lifecycle rule s25; what remains of the neutral workers is the garbage collector, shown at the bottom as one Lambda box that stands for two functions: the stream function that counts references, and the hourly sweep. The write half carries them so that the read half stays within 12 nodes; the stream has at most two functions, the other being the notification function, which also copies commits to a shared folder into each member's feed s18. The blocks table is the one box the neutral diagram leaves implicit. Sync means the caller waits for the answer; async means the work goes on after the caller has been answered. The load balancer sits in the public subnets of one VPC and every task in its private subnets, across three Availability Zones in one Region.",
             "cites": [
               "s12",
               "s23",
               "s21",
               "s24",
-              "s25"
+              "s25",
+              "s18"
             ]
           },
           {
@@ -1219,7 +1263,7 @@
               },
               {
                 "id": "MS",
-                "label": "ECS on Fargate: metadata service",
+                "label": "ECS on Fargate: metadata service, signs download URLs",
                 "kind": "service"
               },
               {
@@ -1234,12 +1278,7 @@
               },
               {
                 "id": "NS",
-                "label": "Amazon API Gateway WebSocket API with a Lambda function: notification",
-                "kind": "service"
-              },
-              {
-                "id": "BS",
-                "label": "ECS on Fargate: block service, signs S3 URLs",
+                "label": "Amazon API Gateway WebSocket API, with a Lambda authorizer and function: notification and share fan-out",
                 "kind": "service"
               },
               {
@@ -1270,8 +1309,7 @@
                 "id": "TASKS",
                 "title": "VPC private: services",
                 "nodes": [
-                  "MS",
-                  "BS"
+                  "MS"
                 ]
               },
               {
@@ -1295,28 +1333,21 @@
                 "from": "ALB",
                 "to": "MS",
                 "kind": "sync",
-                "label": "HTTP: GET /changes with the cursor, sync",
-                "short": "HTTP /changes"
+                "label": "HTTP: GET /changes with the cursor, and POST /blocks/urls for the blocks it lacks, sync",
+                "short": "HTTP"
               },
               {
                 "from": "MS",
                 "to": "MDB",
                 "kind": "sync",
-                "label": "Query of the feed items after the cursor, strongly consistent, over the gateway endpoint, sync",
-                "short": "Query"
-              },
-              {
-                "from": "ALB",
-                "to": "BS",
-                "kind": "sync",
-                "label": "HTTP: download URLs for the blocks the device lacks, sync",
-                "short": "HTTP /blocks"
+                "label": "Query of the feed after the cursor, then GetItem of the version and, in a shared folder, of the share, strongly consistent, over the gateway endpoint, sync",
+                "short": "Query, GetItem"
               },
               {
                 "from": "D",
                 "to": "HOT",
                 "kind": "sync",
-                "label": "HTTPS GET of a block from its presigned URL, sync",
+                "label": "HTTPS GET of a block from the presigned URL the metadata service signed, sync",
                 "short": "GET block"
               },
               {
@@ -1330,7 +1361,7 @@
                 "from": "D",
                 "to": "NS",
                 "kind": "sync",
-                "label": "WebSocket connect: the $connect route runs the function, which authorises the device, sync",
+                "label": "WebSocket connect: the $connect authorizer checks the device's token, then the function runs, sync",
                 "short": "Connect"
               },
               {
@@ -1351,8 +1382,8 @@
                 "from": "NS",
                 "to": "MDB",
                 "kind": "sync",
-                "label": "PutItem of the connection id with its account on $connect, Delete on $disconnect, Query by account to notify, over the gateway endpoint, sync",
-                "short": "Register, query"
+                "label": "PutItem of the connection id with its account on $connect, Delete on $disconnect, Query by account to notify, and for a commit to a shared folder one TransactWriteItems in each member's partition, over the gateway endpoint, sync",
+                "short": "Register, query, fan-out"
               },
               {
                 "from": "NS",
@@ -1369,53 +1400,50 @@
               },
               {
                 "edge": 1,
-                "caption": "Load balancer to Metadata service: HTTP: GET /changes with the cursor, sync"
+                "caption": "Load balancer to Metadata service: HTTP: GET /changes with the cursor, and POST /blocks/urls for the blocks it lacks, sync"
               },
               {
                 "edge": 2,
-                "caption": "Metadata service to Metadata table: Query of the feed items after the cursor, strongly consistent, over the gateway endpoint, sync"
+                "caption": "Metadata service to Metadata table: Query of the feed after the cursor, then GetItem of the version and, in a shared folder, of the share, strongly consistent, over the gateway endpoint, sync"
               },
               {
                 "edge": 3,
-                "caption": "Load balancer to Block service: HTTP: download URLs for the blocks the device lacks, sync"
+                "caption": "Devices to S3 Standard: HTTPS GET of a block from the presigned URL the metadata service signed, sync"
               },
               {
                 "edge": 4,
-                "caption": "Devices to S3 Standard: HTTPS GET of a block from its presigned URL, sync"
-              },
-              {
-                "edge": 5,
                 "caption": "Devices to S3 Glacier Instant Retrieval: HTTPS GET of a cold block, with millisecond access, sync"
               },
               {
-                "edge": 6,
-                "caption": "Devices to notification service: WebSocket connect: the $connect route runs the function, which authorises the device, sync"
+                "edge": 5,
+                "caption": "Devices to Notification service: WebSocket connect: the $connect authorizer checks the device's token, then the function runs, sync"
               },
               {
-                "edge": 7,
+                "edge": 6,
                 "caption": "Metadata table to DynamoDB Streams: a record of every commit's feed item, async"
               },
               {
-                "edge": 8,
+                "edge": 7,
                 "caption": "DynamoDB Streams to Notification service: the Lambda event source mapping polls the stream, async"
               },
               {
-                "edge": 9,
-                "caption": "Notification service to metadata table: PutItem of the connection id with its account on $connect, Delete on $disconnect, Query by account to notify, over the gateway endpoint, sync"
+                "edge": 8,
+                "caption": "Notification service to Metadata table: PutItem of the connection id with its account on $connect, Delete on $disconnect, Query by account to notify, and for a commit to a shared folder one TransactWriteItems in each member's partition, over the gateway endpoint, sync"
               },
               {
-                "edge": 10,
+                "edge": 9,
                 "caption": "Notification service to Devices on the WebSocket: PostToConnection over the device's WebSocket: a hint, async"
               }
             ],
-            "legend": "The read half: the neutral diagram's sync path, one AWS service each. A device fetches the changes after its cursor from the metadata service, which queries the feed items of its account with a strongly consistent read s14, then gets presigned URLs from the block service and downloads only the blocks it lacks straight from S3 s21. The notification service is an API Gateway WebSocket API whose backend is a Lambda function: DynamoDB Streams records each commit's feed item for 24 hours s17, the function reads the stream through an event source mapping s18, registers each connection on its $connect route (the function authorises the device there, the only place API Gateway allows authorisation, and stores the connection id with the device's account) s43, removes it on $disconnect, looks up the account's connections in the connections table and posts a hint to each over the WebSocket s29. The hint carries no data; the cursor fetch does. The devices appear twice, once calling the API and once holding the WebSocket; they are the same devices. Sync means the caller waits for the answer; async means the work goes on after the caller has moved on. The connections table is the one box the neutral diagram leaves implicit.",
+            "legend": "The read half: the neutral diagram's sync path, one AWS service each. A device fetches the changes after its cursor from the metadata service, which queries the feed items of its account with a strongly consistent read s14. To download, the device names the version and the hashes it lacks; the metadata service, which owns the permission check (the neutral sharing and permissions box), reads the version item and, when the folder is not the caller's, the share item, and only then signs a download URL with its task role s21, so a hash alone is never enough to read a block; the device then downloads straight from S3, and the block service is not in the read half. The notification service is an API Gateway WebSocket API whose backend is a Lambda function: a Lambda authorizer on the $connect route checks the device's token (the only route on which API Gateway allows an authorizer) s47, the function then stores the connection id with the device's account s43 and removes it on $disconnect; DynamoDB Streams records each commit's feed item for 24 hours s17, the function reads the stream through an event source mapping s18, looks up the account's connections and posts a hint to each over the WebSocket s29. The hint carries no data; the cursor fetch does. The devices appear twice, once calling the API and once holding the WebSocket; they are the same devices. Waking a sleeping phone is the extension that the notification decision names; it is not drawn. Sync means the caller waits for the answer; async means the work goes on after the caller has moved on. The connections table is the one box the neutral diagram leaves implicit.",
             "cites": [
               "s14",
               "s21",
+              "s47",
+              "s43",
               "s17",
               "s18",
-              "s29",
-              "s43"
+              "s29"
             ]
           },
           {
@@ -1443,17 +1471,18 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 11\n  participant C as Client\n  participant Edge as Load balancer\n  participant BS as Block svc\n  participant S3 as S3\n  participant DDB as DynamoDB\n  C->>Edge: POST /blocks/urls, hashes\n  Edge->>BS: HTTP\n  BS-->>Edge: one presigned PUT per hash\n  Edge-->>C: the URLs\n  Note over BS: signed with the task role,<br/>SHA-256 of the block bound\n  loop each missing block\n    C->>S3: PUT the block, presigned URL\n    opt the connection drops mid-PUT\n      C->>S3: PUT the same block again\n    end\n    S3-->>C: 200, checksum verified\n  end\n  C->>Edge: POST /blocks/done, hashes\n  Edge->>BS: HTTP\n  BS->>S3: HeadObject per hash\n  S3-->>BS: the sizes\n  BS->>DDB: PutItem, blocks table\n  Note over BS,DDB: count 0, zero_since now\n  BS-->>Edge: 200\n  Edge-->>C: 200",
-            "legend": "The block service signs each URL with its own task role, and the URL carries that role's permissions and an expiry s21; a SHA-256 supplied with the upload is checked by S3 against the body s22. A PUT that S3 acknowledges is stored across at least three Availability Zones s24, which is the neutral rule that a block is replicated before it is acknowledged. If two clients race on the same hash, the second PUT replaces the first with identical bytes, which is harmless. Block bytes never pass through a task; the HeadObject confirms the object before the table says it exists.",
+            "mermaid": "sequenceDiagram\n  autonumber 11\n  participant C as Client\n  participant Edge as Load balancer\n  participant BS as Block svc\n  participant S3 as S3\n  participant DDB as DynamoDB\n  C->>Edge: POST /blocks/urls, hashes\n  Edge->>BS: HTTP\n  BS-->>Edge: one presigned PUT per hash\n  Edge-->>C: the URLs\n  Note over BS: signed with the task role,<br/>SHA-256 of the block bound\n  loop each missing block\n    C->>S3: PUT the block, presigned URL\n    opt the connection drops mid-PUT\n      C->>S3: PUT the same block again\n    end\n    S3-->>C: 200, checksum verified\n  end\n  C->>Edge: POST /blocks/done, hashes\n  Edge->>BS: HTTP\n  BS->>S3: HeadObject per hash\n  S3-->>BS: the sizes\n  BS->>DDB: PutItem, if the hash is new\n  Note over BS,DDB: count 0, zero_since now,<br/>a failed condition counts as done\n  BS-->>Edge: 200\n  Edge-->>C: 200",
+            "legend": "The block service signs each URL with its own task role, and the URL carries that role's permissions and an expiry s21; a SHA-256 supplied with the upload is checked by S3 against the body s22. A PUT that S3 acknowledges is stored across at least three Availability Zones s24, which is the neutral rule that a block is replicated before it is acknowledged. If two clients race on the same hash, the second PUT replaces the first with identical bytes, which is harmless. Block bytes never pass through a task; the HeadObject confirms the object before the table says it exists. The PutItem on the blocks table carries a condition that the hash does not exist s44: if two clients uploaded the same new block, the second PutItem fails the condition and counts as done, so it can never reset the count of a block that a version already references.",
             "cites": [
               "s21",
               "s22",
-              "s24"
+              "s24",
+              "s44"
             ]
           },
           {
             "type": "p",
-            "text": "Nothing in this part changes a version: an upload that never reaches the second commit leaves a block with a zero reference count, which the sweep removes after a day."
+            "text": "Nothing in this part changes a version: an upload that never reaches the second commit leaves a block with a zero reference count, which the sweep removes after two days."
           },
           {
             "type": "p",
@@ -1461,12 +1490,13 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 25\n  participant C as Client\n  participant Edge as Load balancer\n  participant MS as Metadata svc\n  participant DDB as DynamoDB\n  C->>Edge: POST /commit, same list\n  Edge->>MS: HTTP\n  MS->>DDB: TransactWriteItems\n  Note over MS,DDB: conditions on the parent version<br/>and the sequence number, then<br/>put version, update node, put feed item,<br/>set the TTL of the superseded version\n  alt the transaction commits\n    DDB-->>MS: durable\n    MS-->>Edge: 200, the version\n    Edge-->>C: 200, the version\n  else a condition fails\n    DDB-->>MS: canceled, condition failed\n    MS-->>Edge: 412\n    Edge-->>C: 412, save a conflicted copy\n  end",
-            "legend": "One transaction carries every item of the commit, five actions, one of them the update that gives the version this commit supersedes a TTL of 30 days, so only noncurrent versions ever expire and the current version of an untouched file never does (a delete does the same for the current version, 30 days after the soft delete); all actions succeed or none does s12, and DynamoDB writes each item twice underneath, one to prepare and one to commit s13. The condition on the sequence number is what makes the feed a log with a monotonic sequence: two commits racing on one account cannot take the same number. All of an account's items share one partition key, so a very busy account is where the limit of 1,000 write units a second that a partition delivers would show first s15; the namespace split by folder subtree in the 10x section is the remedy.",
+            "mermaid": "sequenceDiagram\n  autonumber 25\n  participant C as Client\n  participant Edge as Load balancer\n  participant MS as Metadata svc\n  participant DDB as DynamoDB\n  C->>Edge: POST /commit, same list\n  Edge->>MS: HTTP\n  MS->>DDB: GetItem, the account's sequence number\n  DDB-->>MS: N, strongly consistent\n  MS->>DDB: TransactWriteItems\n  Note over MS,DDB: conditions on the parent version<br/>and on the sequence number N, then<br/>put version, update node, put feed item<br/>with N+1, set the TTL of the superseded version\n  alt the transaction commits\n    DDB-->>MS: durable\n    MS-->>Edge: 200, the version\n    Edge-->>C: 200, the version\n  else the parent version moved\n    DDB-->>MS: canceled, the version condition\n    MS-->>Edge: 412\n    Edge-->>C: 412, save a conflicted copy\n  else the sequence moved\n    DDB-->>MS: canceled, the sequence condition\n    Note over MS: another commit of the account got N first:<br/>read the number again and retry\n  end",
+            "legend": "One transaction carries every item of the commit, five actions, one of them the update that gives the version this commit supersedes a TTL of 30 days, so only noncurrent versions ever expire and the current version of an untouched file never does (a delete does the same for the current version, 30 days after the soft delete); all actions succeed or none does s12, and DynamoDB writes each item twice underneath, one to prepare and one to commit s13. The service reads the sequence item first, because an update inside a transaction returns no value, and conditions the transaction on it; the condition is what makes the feed a log with a monotonic sequence: two commits racing on one account cannot take the same number. A cancelled transaction names the condition that failed, item by item s46: only a failed parent-version condition is a real conflict and becomes the 412, while a failed sequence condition means a commit of another file got the number first, so the service reads the number again and retries, and the client never sees it. All of an account's items share one partition key, so a very busy account is where the limit of 1,000 write units a second that a partition delivers would show first s15; the namespace split by folder subtree in the 10x section is the remedy.",
             "cites": [
               "s12",
               "s13",
-              "s15"
+              "s15",
+              "s46"
             ]
           },
           {
@@ -1475,7 +1505,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 34\n  participant Own as Owner\n  participant Edge as Load balancer\n  participant MS as Metadata svc\n  participant DDB as DynamoDB\n  Own->>Edge: POST /shares, folder, member, role\n  Edge->>MS: HTTP, a healthy task\n  MS->>DDB: transaction in the owner's partition\n  Note over MS,DDB: the share item, the sequence<br/>condition, a feed item\n  DDB-->>MS: durable\n  loop each member\n    MS->>DDB: transaction in the member's partition\n    Note over MS,DDB: a marker item (once only),<br/>the sequence condition, a feed item\n    DDB-->>MS: durable\n  end\n  MS-->>Edge: 200\n  Edge-->>Own: 200\n  opt a member's transaction fails\n    MS-->>Edge: 503, the client repeats the call\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber 37\n  participant Own as Owner\n  participant Edge as Load balancer\n  participant MS as Metadata svc\n  participant DDB as DynamoDB\n  Own->>Edge: POST /shares, folder, member, role\n  Edge->>MS: HTTP, a healthy task\n  MS->>DDB: transaction in the owner's partition\n  Note over MS,DDB: the share item, the sequence<br/>condition, a feed item\n  DDB-->>MS: durable\n  loop each member\n    MS->>DDB: transaction in the member's partition\n    Note over MS,DDB: a marker item (once only),<br/>the sequence condition, a feed item\n    DDB-->>MS: durable\n  end\n  alt every member is done\n    MS-->>Edge: 200\n    Edge-->>Own: 200\n  else a member's transaction failed\n    MS-->>Edge: 503, the client repeats the call\n    Edge-->>Own: 503\n  end",
             "legend": "Sharing is the same commit pattern with a different payload: the membership is written in the owner's partition, and each member gets a feed item in their own partition through one transaction that increments that member's sequence under a condition s12, so a member's feed stays a log with a monotonic sequence whoever writes to it. No transaction crosses accounts, which keeps sharing eventual on purpose, as in the neutral design. The marker item, written once with a condition that it does not exist s44, makes a repeated call after a failure a no-op for the members already done.",
             "cites": [
               "s12",
@@ -1484,7 +1514,7 @@
           },
           {
             "type": "p",
-            "text": "A member whose transaction fails is retried by the client's repeat of the call; the members already done are skipped by their marker items, so a share is complete when the call finally returns 200."
+            "text": "A member whose transaction fails makes the whole call return 503; the client repeats it, and the members already done are skipped by their marker items, so a share is complete when the call finally returns 200. Later commits to a shared folder reach each member's feed through the notification function (see the read path), so a member sees the owner's edits and not only the share."
           },
           {
             "type": "p",
@@ -1492,13 +1522,14 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber\n  participant DDB as DynamoDB\n  participant Fn as Notification fn\n  participant WS as WebSocket API\n  participant Dev as Device\n  Dev->>WS: connect, with its token\n  WS->>Fn: the $connect route\n  Fn->>DDB: PutItem, connection id and account\n  Fn-->>WS: authorised\n  WS-->>Dev: connected\n  Note over DDB: a commit wrote a feed item\n  DDB-)Fn: stream record\n  Fn->>DDB: Query the connections table\n  DDB-->>Fn: connection ids of the account\n  Fn->>WS: PostToConnection, account and sequence\n  WS-)Dev: a hint over the WebSocket\n  opt the connection is gone\n    WS-->>Fn: 410 Gone\n    Fn->>DDB: delete the connection id\n  end\n  opt the device disconnects\n    WS->>Fn: the $disconnect route\n    Fn->>DDB: delete the connection id\n  end",
-            "legend": "The device registers when it connects: the $connect route is the one place API Gateway allows authorisation, and the route's function stores the connection id with the device's account s43; the same function handles $disconnect and the stream. The open arrows are hand-offs: the stream record reaches the function through the event source mapping, and the hint reaches the device whenever the connection is up. A WebSocket connection lasts at most 2 hours and is dropped after 10 idle minutes s28, so a device reconnects and fetches by cursor; the hint is an optimisation and the cursor fetch is the guarantee. The stream keeps records for 24 hours s17. The function posts through the connection commands of the API s29.",
+            "mermaid": "sequenceDiagram\n  autonumber 47\n  participant Dev as Device\n  participant WS as WebSocket API\n  participant Auth as Authorizer fn\n  participant Fn as Notification fn\n  participant DDB as DynamoDB\n  Dev->>WS: connect, with its token\n  WS->>Auth: the $connect authorizer\n  Auth-->>WS: allow, with the account id\n  WS->>Fn: the $connect route\n  Fn->>DDB: PutItem, connection id and account\n  WS-->>Dev: connected\n  Note over DDB: a commit wrote a feed item\n  DDB-)Fn: stream record\n  opt a commit to a shared folder\n    Fn->>DDB: transaction in each member's partition\n  end\n  Fn->>DDB: Query the connections table\n  DDB-->>Fn: connection ids of the account\n  Fn->>WS: PostToConnection, account and sequence\n  WS-)Dev: a hint over the WebSocket\n  opt the connection is gone\n    WS-->>Fn: 410 Gone\n    Fn->>DDB: delete the connection id\n  end\n  opt the device disconnects\n    WS->>Fn: the $disconnect route\n    Fn->>DDB: delete the connection id\n  end",
+            "legend": "The device registers when it connects: the $connect route is the one place API Gateway allows an authorizer, and a Lambda authorizer there can check a token and pass on the account id s47; only after it allows the connection does the route's function store the connection id with the account s43. The token comes from the sign-in of the product, which is outside this lesson. The same function handles $disconnect and the stream. For a commit to a shared folder it also writes the change into each member's feed, in one transaction per member like the share call; each such insert reaches the same function through the stream, so the members' devices are notified by the same path. The open arrows are hand-offs: the stream record reaches the function through the event source mapping, and the hint reaches the device whenever the connection is up. A WebSocket connection lasts at most 2 hours and is dropped after 10 idle minutes s28, so a device reconnects and fetches by cursor; the hint is an optimisation and the cursor fetch is the guarantee. The stream keeps records for 24 hours s17. The function posts through the connection commands of the API s29.",
             "cites": [
               "s28",
               "s17",
               "s29",
-              "s43"
+              "s43",
+              "s47"
             ]
           },
           {
@@ -1511,16 +1542,16 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 15\n  participant Dev as Device\n  participant Edge as Load balancer\n  participant MS as Metadata svc\n  participant BS as Block svc\n  participant S3 as S3\n  Dev->>Edge: GET /changes?cursor=\n  Edge->>MS: HTTP\n  Note over MS: Query the account's feed items<br/>after the cursor, strongly consistent\n  MS-->>Edge: changes and next_cursor\n  Edge-->>Dev: changes and next_cursor\n  Dev->>Edge: POST /blocks/urls, the block it lacks\n  Edge->>BS: HTTP\n  BS-->>Edge: a presigned GET URL\n  Edge-->>Dev: the URL\n  Dev->>S3: GET the block\n  S3-->>Dev: the bytes\n  Note over Dev: hash verified on read",
-            "legend": "The device downloads only the block it does not have: the new version's block list is compared with the blocks already on the device. A block in Glacier Instant Retrieval is read the same way, with millisecond access s23; the neutral reassembly cost of the cold tier is S3's, not the client's. The URL is the block service's signature, valid until it expires s21.",
+            "mermaid": "sequenceDiagram\n  autonumber 63\n  participant Dev as Device\n  participant Edge as Load balancer\n  participant MS as Metadata svc\n  participant DDB as DynamoDB\n  participant S3 as S3\n  Dev->>Edge: GET /changes?cursor=\n  Edge->>MS: HTTP\n  MS->>DDB: Query the account's feed after the cursor\n  DDB-->>MS: the changes\n  MS-->>Edge: changes and next_cursor\n  Edge-->>Dev: changes and next_cursor\n  Dev->>Edge: POST /blocks/urls, the version, the hashes it lacks\n  Edge->>MS: HTTP\n  MS->>DDB: GetItem, the version, and the share if not the caller's\n  DDB-->>MS: the block list, the membership\n  alt the hashes are in a version the caller may read\n    MS-->>Edge: presigned GET URLs\n    Edge-->>Dev: the URLs\n    Dev->>S3: GET the block\n    S3-->>Dev: the bytes\n    Note over Dev: hash verified on read\n  else not readable\n    MS-->>Edge: 403\n    Edge-->>Dev: 403\n  end",
+            "legend": "The device downloads only the block it does not have: the new version's block list is compared with the blocks already on the device. The metadata service signs a download URL only for hashes that belong to the version it just read, in an account the caller owns or a folder shared with the caller; the signature is the task role's and is valid until it expires s21. A block in Glacier Instant Retrieval is read the same way, with millisecond access s23; the neutral reassembly cost of the cold tier is S3's, not the client's.",
             "cites": [
-              "s23",
-              "s21"
+              "s21",
+              "s23"
             ]
           },
           {
             "type": "p",
-            "text": "Only the version check and this cursor fetch use strongly consistent reads; every other lookup can read eventually consistent data."
+            "text": "Only the version check, the sequence read and this cursor fetch use strongly consistent reads; every other lookup can read eventually consistent data."
           },
           {
             "type": "p",
@@ -1528,8 +1559,8 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber\n  participant DDB as DynamoDB\n  participant RC as Reference fn\n  participant Sch as Scheduler\n  participant GC as Sweep fn\n  participant S3 as S3\n  Note over DDB: a version item is put, or<br/>a superseded one expires by TTL\n  DDB-)RC: stream record\n  RC->>DDB: refcount +1 or -1 per block, once per version\n  Note over RC,DDB: zero_since is set when a count is 0<br/>and removed when it rises above 0\n  Sch-)GC: invoke, every hour\n  GC->>DDB: Query the sparse index, zero_since older than a day\n  DDB-->>GC: block hashes\n  GC->>DDB: delete the item if refcount is still 0\n  GC->>S3: DeleteObject",
-            "legend": "This is the neutral tiering and garbage-collection step, and none of it is on a request path. The tiering itself needs no worker: a lifecycle rule moves blocks to Glacier Instant Retrieval by age s25. For the references, a version item gets a TTL of 30 days only when a commit supersedes it (or when its file is deleted), never while it is current, and a TTL delete, which DynamoDB performs within a few days of the expiry time, reaches the stream as a service deletion s19; the reference function counts once per version with a marker item, so a retried record counts nothing twice. Only blocks with a zero count appear in the sparse index s16, and the sweep waits a day so that a block uploaded but not yet committed is not removed. The schedule is EventBridge Scheduler s36.",
+            "mermaid": "sequenceDiagram\n  autonumber 79\n  participant DDB as DynamoDB\n  participant RC as Stream fn\n  participant Sch as Scheduler\n  participant GC as Sweep fn\n  participant S3 as S3\n  Note over DDB: a version item is put, or<br/>a superseded one expires by TTL\n  DDB-)RC: stream record\n  RC->>DDB: refcount +1 or -1 per block, once per version\n  Note over RC,DDB: zero_since is set when a count is 0<br/>and removed when it rises above 0\n  Sch-)GC: invoke, every hour\n  GC->>DDB: Query the sparse index, zero_since older than two days\n  DDB-->>GC: block hashes\n  GC->>DDB: delete the item if refcount is still 0\n  GC->>S3: DeleteObject",
+            "legend": "This is the neutral tiering and garbage-collection step, and none of it is on a request path. The tiering itself needs no worker: a lifecycle rule moves blocks to Glacier Instant Retrieval by age s25. For the references, a version item gets a TTL of 30 days only when a commit supersedes it (or when its file is deleted), never while it is current, and a TTL delete, which DynamoDB performs within a few days of the expiry time, reaches the stream as a service deletion s19; the stream function counts once per version with a marker item, so a retried record counts nothing twice. Only blocks with a zero count appear in the sparse index s16, and the sweep waits two days, longer than the 24 hours the stream keeps its records, so that neither a block uploaded but not yet committed nor a count still on its way through the stream can make it delete a block that a version references. The schedule is EventBridge Scheduler, and its execution role may invoke the sweep function s36.",
             "cites": [
               "s25",
               "s19",
@@ -1539,14 +1570,14 @@
           },
           {
             "type": "p",
-            "text": "The tiering has no worker here: the lifecycle rule runs inside S3. A block deleted from the cold class within 90 days of its move is still billed for those days, which the cost pillar row names.",
+            "text": "The tiering has no worker here: the lifecycle rule runs inside S3. S3 does not transition objects smaller than 128 KB by default s48, so the rule carries a size filter that lets the small last block of a file move too. A block deleted from the cold class within 90 days of its move is still billed for those days, which the cost pillar row names.",
             "cites": [
               "s42"
             ]
           },
           {
             "type": "table",
-            "caption": "Identity and network: who may call what, over which endpoint, and what is public. Three entries are public: the load balancer (in public subnets), the WebSocket API and, for presigned URLs only, the S3 endpoint. Every ECS service runs in private subnets across three Availability Zones in awsvpc mode, one network interface per task, each service under its own IAM task role, so permissions go to the task and not to a host.",
+            "caption": "Identity and network: who may call what, over which endpoint, and what is public. Three entries are public: the load balancer (in public subnets), the WebSocket API and, for presigned URLs only, the S3 endpoint. Every ECS service runs in private subnets across three Availability Zones in awsvpc mode, one network interface per task, each service under its own IAM task role, so permissions go to the task and not to a host. A task in a private subnet pulls its image through the Amazon ECR interface endpoints and an S3 gateway endpoint, and this design uses those, not a NAT gateway.",
             "columns": [
               "service",
               "may call",
@@ -1556,20 +1587,20 @@
             "rows": [
               [
                 "Application Load Balancer",
-                "the metadata, block and sharing services over HTTP",
+                "the metadata and block services over HTTP",
                 "VPC public subnets; HTTPS from clients",
-                "yes, the only entry for the API"
+                "yes, the entry for the HTTPS API (the WebSocket API is the entry for connections)"
               ],
               [
                 "Metadata service, with the sharing routes (task role)",
-                "TransactWriteItems, GetItem and Query on the metadata table, including the update that sets the TTL of a superseded version and the share and feed items; BatchGetItem on the blocks table",
-                "DynamoDB gateway endpoint",
+                "TransactWriteItems, GetItem and Query on the metadata table, including the update that sets the TTL of a superseded version and the share and feed items; BatchGetItem on the blocks table; GetObject on the bucket, which the download URLs it signs inherit, signed only after a GetItem of the version and, in a shared folder, of the share",
+                "DynamoDB gateway endpoint; the ECR interface endpoints and the S3 gateway endpoint to pull the image",
                 "no; private subnet, admits the load balancer's security group only"
               ],
               [
                 "Block service (task role)",
-                "PutItem and GetItem on the blocks table; PutObject and GetObject on the bucket, which the presigned URLs it signs inherit; HeadObject",
-                "DynamoDB and S3 gateway endpoints",
+                "PutItem, with a condition that the hash is new, on the blocks table; PutObject on the bucket, which the upload URLs it signs inherit; GetObject for HeadObject; nothing on the metadata table",
+                "DynamoDB and S3 gateway endpoints; the ECR interface endpoints",
                 "no; private subnet, admits the load balancer's security group only"
               ],
               [
@@ -1579,15 +1610,21 @@
                 "yes, but the bucket accepts signed requests only"
               ],
               [
-                "Notification: WebSocket API and its function",
-                "the function reads the stream; writes, queries and deletes in the connections table (it registers on $connect and removes on $disconnect); may post to connections of the API",
-                "devices connect over a WebSocket to the API, which runs the function on $connect; the function calls the connection commands signed with SigV4",
-                "yes, the API is the other public entry; the function is not"
+                "Notification: WebSocket API, its authorizer and its function",
+                "the authorizer validates the device token and returns the account id; the function reads the stream; writes, queries and deletes in the connections table (it registers on $connect and removes on $disconnect); writes one transaction per member into the members' partitions of the metadata table; may post to connections of the API",
+                "devices connect over a WebSocket to the API, which runs the authorizer and then the function on $connect; the function calls the connection commands signed with SigV4",
+                "yes, the API is the other public entry; the functions are not"
               ],
               [
-                "Reference and sweep functions",
-                "read the stream; UpdateItem and marker puts and deletes on the blocks table; Query the sparse index; DeleteObject on the bucket",
+                "Stream function (reference counting) and sweep function",
+                "the stream function reads the stream and runs UpdateItem and marker puts and deletes on the blocks table; the sweep Queries the sparse index, deletes items and calls DeleteObject on the bucket",
                 "DynamoDB and S3 gateway endpoints",
+                "no"
+              ],
+              [
+                "EventBridge Scheduler",
+                "lambda:InvokeFunction on the sweep function, through its execution role, and nothing else",
+                "the Lambda API",
                 "no"
               ],
               [
@@ -1604,7 +1641,10 @@
               "s11",
               "s21",
               "s29",
-              "s43"
+              "s43",
+              "s45",
+              "s47",
+              "s44"
             ]
           },
           {
@@ -1694,7 +1734,7 @@
           },
           {
             "type": "decision",
-            "caption": "The change feed and the notification: DynamoDB items with Streams and a WebSocket API, Kinesis, long polling on ECS, or SNS mobile push.",
+            "caption": "The change feed and the notification: DynamoDB items with Streams and a WebSocket API, Kinesis, or long polling on ECS; SNS mobile push as an extension.",
             "rows": [
               {
                 "option": "Feed items in the metadata table, DynamoDB Streams to a Lambda function, an API Gateway WebSocket API",
@@ -1715,10 +1755,10 @@
                 "example": "For this design: not chosen. It is the neutral default and works at small scale, but the routing from a commit to the right task is what API Gateway's connection ids already give."
               },
               {
-                "option": "Amazon SNS mobile push",
+                "option": "Amazon SNS mobile push, the extension",
                 "pick_when": "the app is asleep on a phone and only the push service of the platform can wake it",
                 "avoid_when": "the device is a desktop that holds its own connection",
-                "example": "For this design: added for the phones, as the neutral design says push on mobile; the payload is the same hint, and the cursor fetch still guarantees completeness."
+                "example": "For this design: not part of this pass. A connected phone is already pushed to over the WebSocket; waking a sleeping app would add a platform endpoint per phone and a publish from the notification function, with the same hint as payload, and is not drawn here."
               }
             ],
             "cites": [
@@ -1745,7 +1785,7 @@
                 "option": "AWS Lambda",
                 "pick_when": "event-shaped work with uneven volume: one invocation per batch of stream records or per schedule tick",
                 "avoid_when": "steady, high-rate request traffic, where per-request billing exceeds the tasks",
-                "example": "For this design: chosen for the notification function, the reference counter and the sweep, which react to stream records and a schedule; not for the request-path services."
+                "example": "For this design: chosen for the notification function, the stream function and the sweep, which react to stream records and a schedule; not for the request-path services."
               },
               {
                 "option": "Amazon EKS",
@@ -1782,7 +1822,7 @@
               [
                 "Security",
                 "a strong identity foundation; security at all layers; protect data in transit and at rest; keep people away from data",
-                "one IAM task role per service; blocks private in a bucket that accepts signed requests only; URLs that carry the block service's role and expire; HTTPS everywhere",
+                "one IAM task role per service; blocks private in a bucket that accepts signed requests only; URLs that carry the block service's role and expire; HTTPS everywhere; download URLs signed only after the access check",
                 "a presigned URL works for anyone who holds it until it expires, so the expiry is kept short and the URL is never logged",
                 "s38, s21"
               ],
@@ -1796,7 +1836,7 @@
               [
                 "Performance efficiency",
                 "consider mechanical sympathy; use serverless architectures where they fit",
-                "bytes go between the client and S3, not through a task; one PutObject per block, no multipart; strongly consistent reads only for the version check and the cursor fetch",
+                "bytes go between the client and S3, not through a task; one PutObject per block, no multipart; strongly consistent reads only for the version check, the sequence read and the cursor fetch",
                 "a block read from the cold class costs more per request and per GB than one from Standard",
                 "s38, s20"
               ],
@@ -1843,21 +1883,21 @@
               ],
               [
                 "Block requests",
-                "S3 PUT and one lifecycle transition per new block: 2.1 billion a month at 1 MB a block (assumption)",
+                "S3 PUT and one lifecycle transition per new block: 2.1 billion a month at 1 MB a block (assumption), the rule's size filter lowered so that blocks under 128 KB move too",
                 "about $52,500",
                 "about $525,000"
               ],
               [
                 "Metadata requests",
-                "DynamoDB on-demand: 3 billion commits a month at 10 write units, with the reference counting at 4 (one block a commit, assumption), 2.1 billion block puts, and one strongly consistent and one half-unit read per commit",
-                "about $28,100",
-                "about $281,000"
+                "DynamoDB on-demand: 3 billion commits a month at 10 write units, with the reference counting at 4 (one block a commit, assumption), 2.1 billion block puts, and per commit two strongly consistent reads (the node, the sequence) and a half-unit batch read",
+                "about $28,500",
+                "about $285,000"
               ],
               [
                 "Metadata storage",
-                "DynamoDB Standard: 18 TB after a year of growth",
-                "about $4,500",
-                "about $45,000"
+                "DynamoDB Standard: 36 TB after a year (the neutral 18 TB, doubled for the per-item overhead of a version, a feed item and a marker; assumption)",
+                "about $9,000",
+                "about $90,000"
               ],
               [
                 "Services",
@@ -1867,9 +1907,9 @@
               ],
               [
                 "Total",
-                "the five lines above; the load balancer, block reads and retrievals, the HeadObject calls, the storage of the blocks table, change notification, the Lambda functions, the sharing writes and data transfer are not priced, because the exercise states no read rate, no connected devices and no members per share",
+                "the five lines above; the load balancer, block reads and retrievals, change notification, the Lambda functions, the sharing and fan-out writes, the interface endpoints (ECR) and data transfer are not priced, because the exercise states no read rate, no connected devices and no members per share",
                 "about $1.13 million",
-                "about $11.2 million"
+                "about $11.3 million"
               ]
             ],
             "cites": [
@@ -2401,6 +2441,11 @@
       "version": 6,
       "date": "2026-10-16",
       "change": "fix round on the second read (E1B): the hot fraction is derived from the lesson's own ingest (2.1 billion new 1 MB blocks a month under the 30-day age rule, about 2.1 PB or 0.84 percent, not 10 percent), so block storage, the total and the closing line are recomputed and the cost and sustainability pillar rows reworded; WebSocket connections are registered on $connect and removed on $disconnect (flow edge, sequence diagram, identity row, source s43); only superseded versions get a TTL, set by the commit transaction (five actions, 10 write units) and by a delete; sharing is one TransactWriteItems per member with a marker item and the sequence condition everywhere, with a sharing sequence diagram; the write half now shows HeadObject and the background reference-count and sweep path (the sharing box merged into the metadata service to stay within 12 nodes); the upload diagram's retry sits in the loop; the legend says the AWS API replaces the neutral blocks and notify calls; the metadata cost row states its basis; the identity caption names the public entries; the AWS sequence diagrams are renumbered; reviewed_by stays null"
+    },
+    {
+      "version": 7,
+      "date": "2026-10-16",
+      "change": "fix round 2 on the third read (E1B): the blocks PutItem is conditional on the hash being new; the commit reads the account sequence item and retries when only the sequence condition fails, so a 412 means the parent version moved; the SNS mobile push is reworded as an extension that is not drawn and leaves the technologies list; download URLs are signed by the metadata service after an access check (the block service leaves the read half); commits to a shared folder are copied into each member's feed by the notification function; the connect path has an authorizer and registers the connection after it allows; the sharing response is an alt; the sweep waits two days, longer than the stream's retention; the lifecycle rule carries a size filter; the Scheduler has a row; the legend names the neutral entities this pass leaves out; metadata storage doubled; the identity caption names the ECR interface endpoints and the S3 gateway endpoint; one running autonumber through the section; sources s45 to s48 added; reviewed_by stays null"
     }
   ]
 }

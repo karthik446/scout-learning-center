@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-rate-limiter",
-  "version": 5,
+  "version": 6,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: API rate limiter",
@@ -505,6 +505,28 @@
         "http": 200,
         "section_found": "$3.50/million requests - first 333 million requests/month"
       }
+    },
+    {
+      "id": "s43",
+      "title": "Elastic Load Balancing: Authenticate users using an Application Load Balancer (authenticate-oidc and authenticate-cognito listener actions)",
+      "url": "https://docs.aws.amazon.com/elasticloadbalancing/latest/application/listener-authenticate-users.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "The authenticate-cognito and authenticate-oidc action types are supported only with HTTPS listeners"
+      }
+    },
+    {
+      "id": "s44",
+      "title": "Amazon ECR User Guide: Amazon ECR interface VPC endpoints (AWS PrivateLink)",
+      "url": "https://docs.aws.amazon.com/AmazonECR/latest/userguide/vpc-endpoints.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Amazon ECR interface VPC endpoints (AWS PrivateLink)"
+      }
     }
   ],
   "practice": null,
@@ -920,7 +942,7 @@
               },
               {
                 "id": "PS",
-                "label": "ECS on Fargate: policy service",
+                "label": "ECS on Fargate: 2 policy service tasks",
                 "kind": "service"
               },
               {
@@ -932,6 +954,11 @@
                 "id": "CW",
                 "label": "Amazon CloudWatch: metrics",
                 "kind": "store"
+              },
+              {
+                "id": "O",
+                "label": "Operators",
+                "kind": "actor"
               }
             ],
             "frames": [
@@ -984,7 +1011,7 @@
                 "from": "GW",
                 "to": "BE",
                 "kind": "sync",
-                "label": "HTTP to a backend task found by Cloud Map DNS, sync",
+                "label": "HTTP to a backend task by its Cloud Map DNS name, sync",
                 "short": "HTTP"
               },
               {
@@ -995,25 +1022,32 @@
                 "short": "Pipeline / 100 ms"
               },
               {
-                "from": "PS",
-                "to": "GW",
-                "kind": "async",
-                "label": "HTTP push of a changed policy to every task found by Cloud Map DNS, async",
-                "short": "Push"
-              },
-              {
                 "from": "GW",
                 "to": "PS",
+                "kind": "async",
+                "label": "HTTP: GET the policies newer than its version, every 5 s, by the policy service's Cloud Map DNS name, async",
+                "short": "Poll / 5 s"
+              },
+              {
+                "from": "O",
+                "to": "ALB",
                 "kind": "sync",
-                "label": "HTTP: policies() at start and after a missed push, found by Cloud Map DNS, sync",
-                "short": "policies()"
+                "label": "HTTPS: edit a policy; the admin listener rule authenticates the operator first, sync",
+                "short": "HTTPS admin"
+              },
+              {
+                "from": "ALB",
+                "to": "PS",
+                "kind": "sync",
+                "label": "HTTP: the admin path, after authentication, sync",
+                "short": "HTTP admin"
               },
               {
                 "from": "PS",
                 "to": "PT",
                 "kind": "sync",
-                "label": "Query and PutItem over the gateway endpoint, sync",
-                "short": "Query, PutItem"
+                "label": "TransactWriteItems to edit; GetItem of the version and Query of the changes, once a second, over the gateway endpoint, sync",
+                "short": "Edit, refresh"
               },
               {
                 "from": "GW",
@@ -1034,7 +1068,7 @@
               },
               {
                 "edge": 2,
-                "caption": "Gateway tasks to Backend services: HTTP to a backend task found by Cloud Map DNS, sync"
+                "caption": "Gateway tasks to Backend services: HTTP to a backend task by its Cloud Map DNS name, sync"
               },
               {
                 "edge": 3,
@@ -1042,22 +1076,26 @@
               },
               {
                 "edge": 4,
-                "caption": "Policy service to Gateway tasks: HTTP push of a changed policy to every task found by Cloud Map DNS, async"
+                "caption": "Gateway tasks to Policy service: HTTP: GET the policies newer than its version, every 5 s, by the policy service's Cloud Map DNS name, async"
               },
               {
                 "edge": 5,
-                "caption": "Gateway tasks to policy service: HTTP: policies() at start and after a missed push, found by Cloud Map DNS, sync"
+                "caption": "Operators to Load balancer: HTTPS: edit a policy; the admin listener rule authenticates the operator first, sync"
               },
               {
                 "edge": 6,
-                "caption": "Policy service to Policies table: Query and PutItem over the gateway endpoint, sync"
+                "caption": "Load balancer to Policy service: HTTP: the admin path, after authentication, sync"
               },
               {
                 "edge": 7,
+                "caption": "Policy service to Policies table: TransactWriteItems to edit; GetItem of the version and Query of the changes, once a second, over the gateway endpoint, sync"
+              },
+              {
+                "edge": 8,
                 "caption": "Gateway tasks to CloudWatch: PutMetricData with statistic sets every 10 s over the interface endpoint, async"
               }
             ],
-            "legend": "The architecture, the same boxes as the neutral diagram, one AWS service each: the load balancer is an Application Load Balancer, the 20 gateway nodes are ECS on Fargate tasks that keep the local buckets in memory, the shared counter store is an ElastiCache for Valkey cluster with a replica in another zone that takes over on failure s14, the backend services and the policy service are ECS on Fargate services, and the metrics go to CloudWatch. The policies table is the one box the neutral diagram leaves implicit, as the load balancer is; the clients reach only the load balancer. Tasks find each other through AWS Cloud Map DNS names s13. Calls to DynamoDB go over a gateway endpoint s18 and the metrics over an interface endpoint s19; the counter correction is one pipelined call per report s15. A task pulls the whole policy set from the policy service when it starts and after a push it missed. Sync means the caller waits for the answer; async means the work goes on after the request has been answered. The VPC frames are one VPC in one Region across three Availability Zones.",
+            "legend": "The architecture, the same boxes as the neutral diagram, one AWS service each: the load balancer is an Application Load Balancer, the 20 gateway nodes are ECS on Fargate tasks that keep the local buckets in memory, the shared counter store is an ElastiCache for Valkey cluster with a replica in another zone that takes over on failure s14, the backend services and the policy service are ECS on Fargate services, and the metrics go to CloudWatch. The policies table is the one box the neutral diagram leaves implicit, as the load balancer is; the clients and the operators reach only the load balancer. The neutral diagram's push becomes the poll. The CloudWatch alarms that the operators watch are the reader of the metrics. Tasks find the backends and the policy service through AWS Cloud Map DNS names s13; a lookup returns up to eight healthy records, which is enough for the two policy tasks and enough to spread load over the backends, and it is why no box here depends on one lookup reaching every gateway task. Policies are not pushed: each gateway task asks the policy service for anything newer than its version every 5 seconds, so an edit reaches every task within about 6 seconds (the policy service refreshes from the table once a second, then the 5 s poll), and a task that cannot reach the policy service keeps the set it has. Operators edit through the load balancer: its admin listener rule authenticates them with Amazon Cognito or an OIDC provider before forwarding s43. Calls to DynamoDB go over a gateway endpoint s18 and the metrics over an interface endpoint s19; the counter correction is one pipelined call per report s15. Sync means the caller waits for the answer; async means the work goes on after the request has been answered. The VPC frames are one VPC in one Region across three Availability Zones.",
             "cites": [
               "s11",
               "s12",
@@ -1066,7 +1104,8 @@
               "s18",
               "s19",
               "s17",
-              "s15"
+              "s15",
+              "s43"
             ]
           },
           {
@@ -1107,12 +1146,12 @@
           },
           {
             "type": "p",
-            "text": "The policy path: an edit is written to DynamoDB, pushed to every task, and read again by any task that starts or missed the push."
+            "text": "The policy path: an operator edit is written to DynamoDB by the policy service, and every gateway task polls for anything newer than its version, every 5 seconds."
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 14\n  participant Op as Operator\n  participant PS as Policy service\n  participant DDB as DynamoDB\n  participant GW as Gateway task\n  Op->>PS: edit a policy\n  PS->>DDB: PutItem\n  DDB-->>PS: ok\n  PS-->>Op: saved\n  PS-)GW: HTTP push to every task\n  Note over PS,GW: tasks found by DNS<br/>through Cloud Map\n  Note over GW: cached with a long TTL\n  opt a task starts or missed a push\n    GW->>PS: policies()\n    PS->>DDB: Query the policy set\n    DDB-->>PS: policies\n    PS-->>GW: the current set\n  end\n  opt the policy service is down\n    Note over GW: cached policies still apply\n  end",
-            "legend": "The open arrow at step 18 is the push; the call at step 19 is the policies() call of the neutral API. The tasks are found through the service discovery DNS name s13, and DynamoDB is reached over a gateway endpoint s18. A policy-service outage delays changes but never a decision.",
+            "mermaid": "sequenceDiagram\n  autonumber 14\n  participant Op as Operator\n  participant Edge as Load balancer\n  participant PS as Policy service\n  participant DDB as DynamoDB\n  participant GW as Gateway task\n  Op->>Edge: HTTPS, edit a policy\n  Note over Op,Edge: the admin rule authenticates<br/>the operator first\n  Edge->>PS: HTTP, the admin path\n  PS->>DDB: transaction: policy item, version +1\n  DDB-->>PS: ok\n  PS-->>Edge: saved\n  Edge-->>Op: saved\n  loop every second, each policy task\n    PS->>DDB: GetItem, the version<br/>(a Query if it moved)\n    DDB-->>PS: the version\n  end\n  loop every 5 s, each gateway task\n    GW->>PS: GET policies newer than version N\n    alt nothing newer\n      PS-->>GW: 304, same version\n    else a newer version\n      PS-->>GW: the changed policies, version N+1\n    end\n  end\n  Note over GW: cached until the next poll\n  opt the policy service is down\n    Note over GW: cached policies still apply\n  end",
+            "legend": "A new task starts with an empty set and its first poll, \"newer than version 0\", returns the whole set; this is the policies() call of the neutral API, now the same call every 5 seconds. An edit is one transaction on the policy item and a version item, so a reader never sees a new version with old policies. The two policy tasks answer from memory and re-read the version once a second; the bound from an edit to every task is about 6 seconds, and a policy-service outage delays changes but never a decision. The policy service is found by its service discovery DNS name s13, and DynamoDB is reached over a gateway endpoint s18.",
             "cites": [
               "s13",
               "s18"
@@ -1120,7 +1159,7 @@
           },
           {
             "type": "table",
-            "caption": "Identity and network: who may call what, over which endpoint, and what is public. Only the load balancer is public: it sits in the VPC's public subnets. Every ECS service and the cache run in private subnets across three Availability Zones in awsvpc mode, one network interface per task, each service under its own IAM task role, so permissions go to the task and not to a host.",
+            "caption": "Identity and network: who may call what, over which endpoint, and what is public. Only the load balancer is public: it sits in the VPC's public subnets. Every ECS service and the cache run in private subnets across three Availability Zones in awsvpc mode, one network interface per task, each service under its own IAM task role, so permissions go to the task and not to a host. A task in a private subnet pulls its image through the Amazon ECR interface endpoints and an S3 gateway endpoint, and this design uses those, not a NAT gateway.",
             "columns": [
               "service",
               "may call",
@@ -1130,21 +1169,21 @@
             "rows": [
               [
                 "Application Load Balancer",
-                "the gateway tasks over HTTP",
-                "VPC public subnets; HTTPS from clients",
-                "yes, the only entry for clients"
+                "the gateway tasks over HTTP; the policy service over HTTP on the admin path only",
+                "VPC public subnets; HTTPS from clients and operators; the admin listener rule authenticates operators with Amazon Cognito or an OIDC provider before it forwards",
+                "yes, the only entry for clients and operators"
               ],
               [
                 "Gateway tasks (task role)",
-                "the backend tasks; the Valkey cluster; the policy service for the policy set, at start and after a missed push; PutMetricData on CloudWatch; nothing on DynamoDB",
-                "the Valkey port and Cloud Map DNS names inside the VPC; the CloudWatch interface endpoint",
-                "no; private subnet, admits the load balancer's and the policy service's security groups"
+                "the backend tasks; the Valkey cluster; the policy service, every 5 seconds, for policies newer than their version; PutMetricData on CloudWatch; nothing on DynamoDB",
+                "the Valkey port and Cloud Map DNS names inside the VPC; the CloudWatch interface endpoint; the ECR interface endpoints and the S3 gateway endpoint to pull the image",
+                "no; private subnet, admits the load balancer's security group only"
               ],
               [
                 "Policy service (task role)",
-                "Query and PutItem on the policies table; HTTP push to the gateway tasks",
-                "DynamoDB gateway endpoint; Cloud Map DNS names",
-                "no; private subnet, reached by the operators' tooling and the gateway tasks, nothing else"
+                "TransactWriteItems, GetItem and Query on the policies table, and nothing else; it makes no call to the gateway tasks",
+                "DynamoDB gateway endpoint; called by Cloud Map DNS name; the ECR interface endpoints and the S3 gateway endpoint to pull the image",
+                "no; private subnet, admits the load balancer's security group (the admin path) and the gateway tasks' security group"
               ],
               [
                 "Backend services",
@@ -1171,7 +1210,9 @@
               "s21",
               "s18",
               "s19",
-              "s13"
+              "s13",
+              "s43",
+              "s44"
             ]
           },
           {
@@ -1246,7 +1287,7 @@
                 "option": "Amazon ECS on AWS Fargate",
                 "pick_when": "long-lived container processes that hold state in memory and run their own timers, behind a load balancer, with no cluster to patch",
                 "avoid_when": "the load is bursty and mostly idle, or the team already runs Kubernetes for everything else",
-                "example": "For this design: chosen for the gateway tasks and the policy service. Each gateway task holds its buckets in memory and runs the correction timer, on Arm tasks across three Availability Zones, scaled on request rate."
+                "example": "For this design: chosen for the gateway tasks and the policy service. Each gateway task holds its buckets in memory and runs the correction timer, on Arm tasks across three Availability Zones. The fleet is fixed at 20 tasks, so each bucket's share is a constant; a change of the count is a change of policy."
               },
               {
                 "option": "AWS Lambda",
@@ -1276,7 +1317,7 @@
                 "option": "Amazon DynamoDB, on-demand",
                 "pick_when": "policies are read by key or pattern, the set is read in full only at start, and writes are rare",
                 "avoid_when": "policy administration needs joins across tiers, customers and endpoints, or ad hoc reporting",
-                "example": "For this design: chosen. A policy is looked up by key or pattern, and the whole set (about 100 MB) is read only at task start and after a missed push."
+                "example": "For this design: chosen. A policy is looked up by key or pattern, and the whole set (about 100 MB) is read by the policy service and polled by the tasks."
               },
               {
                 "option": "Amazon Aurora PostgreSQL or Amazon RDS",
@@ -1397,9 +1438,9 @@
               ],
               [
                 "Policies",
-                "DynamoDB on-demand, about 100 MB stored, read only at task start and on a missed push",
-                "under $1",
-                "under $1"
+                "ECS on Fargate, 2 policy service tasks of 0.5 vCPU and 1 GB, and DynamoDB on-demand for about 100 MB, read once a second by each task",
+                "about $29",
+                "about $29"
               ],
               [
                 "Metrics",
@@ -1409,9 +1450,9 @@
               ],
               [
                 "Total",
-                "the four lines above; the load balancer, the backend services and data transfer are not priced, because they depend on bytes per request and on the API, which the exercise does not state",
+                "the four lines above; the load balancer, the backend services, the interface endpoints (ECR, CloudWatch) and data transfer are not priced, because they depend on bytes per request and on the API, which the exercise does not state",
                 "about $1,400",
-                "about $12,600"
+                "about $12,700"
               ]
             ],
             "cites": [
@@ -1423,7 +1464,7 @@
           },
           {
             "type": "p",
-            "text": "The gateway tasks dominate the priced total, about four fifths of it at the design point, and they exist with or without a limiter; the limiter's own lines, the counters and the metrics, are about $250 at the design point and about $1,080 at ten times. For comparison at the same list prices, one DynamoDB write per request would be about $81,000 a month and an API Gateway REST API about $214,000 at the design point.",
+            "text": "The gateway tasks dominate the priced total, about four fifths of it at the design point, and they exist with or without a limiter; the limiter's own lines, the counters, the metrics and the policy service, are about $275 at the design point and about $1,120 at ten times. For comparison at the same list prices, one DynamoDB write per request would be about $81,000 a month and an API Gateway REST API about $214,000 at the design point.",
             "cites": [
               "s40",
               "s42",
@@ -1433,7 +1474,7 @@
           },
           {
             "type": "p",
-            "text": "The neutral ten-times table prices store operations at an assumed $0.20 per million, so its limiter rows differ from these lines by a floor: two cache nodes and 30 custom metrics are paid at any traffic, and at ten times the two tables agree to within a few percent. The neutral exact design ($26,000 at that assumed price) is the same count of operations as the DynamoDB figure above ($81,000 at its list price)."
+            "text": "The neutral ten-times table prices store operations at an assumed $0.20 per million, so its limiter rows differ from these lines by a floor: two cache nodes, 30 custom metrics and two policy tasks are paid at any traffic, and at ten times the two tables agree to within about ten percent. The neutral exact design ($26,000 at that assumed price) is the same count of operations as the DynamoDB figure above ($81,000 at its list price)."
           }
         ]
       },
@@ -1898,6 +1939,11 @@
       "version": 5,
       "date": "2026-10-16",
       "change": "fix round on the second read (E1B): the AWS flow and the neutral flow now draw the policies() pull (gateway tasks to the policy service, at start and after a missed push) with a step each; the identity caption says only the load balancer is public and the tasks and cache are private; one paragraph reconciles the AWS limiter lines and the DynamoDB comparison with the neutral 10x table; reviewed_by stays null"
+    },
+    {
+      "version": 6,
+      "date": "2026-10-16",
+      "change": "fix round 2 on the third read (E1B): the policy push by DNS (a Cloud Map lookup returns at most eight tasks) is replaced by a poll: every gateway task asks the policy service for policies newer than its version every 5 seconds, so an edit reaches every task within about 6 seconds; operators edit through the load balancer, whose admin listener rule authenticates them (flow edges, steps, diagram, identity rows); the fleet is fixed at 20 tasks; the identity caption names the ECR interface endpoints and the S3 gateway endpoint for image pulls; the policy service tasks are priced (about $29) and the interface endpoints are in the not-priced list; sources s43 and s44 added; reviewed_by stays null"
     }
   ],
   "sim": {

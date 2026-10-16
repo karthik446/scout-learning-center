@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-autocomplete",
-  "version": 7,
+  "version": 8,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: search autocomplete",
@@ -553,6 +553,83 @@
         "http": 200,
         "section_found": "iam:PassRole"
       }
+    },
+    {
+      "id": "s47",
+      "title": "Amazon ECR User Guide: Amazon ECR interface VPC endpoints (AWS PrivateLink)",
+      "url": "https://docs.aws.amazon.com/AmazonECR/latest/userguide/vpc-endpoints.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Amazon ECR interface VPC endpoints (AWS PrivateLink)"
+      }
+    },
+    {
+      "id": "s48",
+      "title": "Elastic Load Balancing: Authenticate users using an Application Load Balancer (authenticate-oidc and authenticate-cognito listener actions)",
+      "url": "https://docs.aws.amazon.com/elasticloadbalancing/latest/application/listener-authenticate-users.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "The authenticate-cognito and authenticate-oidc action types are supported only with HTTPS listeners"
+      }
+    },
+    {
+      "id": "s49",
+      "title": "Amazon CloudFront Developer Guide: Cache behavior settings (the allowed HTTP methods; only the last set forwards POST)",
+      "url": "https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/DownloadDistValuesCacheBehavior.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE: You can use CloudFront to get, add, update, and delete objects"
+      }
+    },
+    {
+      "id": "s50",
+      "title": "Amazon CloudFront Developer Guide: Use managed cache policies (CachingDisabled)",
+      "url": "https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/using-managed-cache-policies.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "CachingDisabled"
+      }
+    },
+    {
+      "id": "s51",
+      "title": "Amazon EMR Serverless User Guide: Configuring VPC access for EMR Serverless applications to connect to data",
+      "url": "https://docs.aws.amazon.com/emr/latest/EMR-Serverless-UserGuide/vpc-access.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Configuring VPC access for EMR Serverless applications to connect to data"
+      }
+    },
+    {
+      "id": "s52",
+      "title": "OpenSearch documentation: Bulk API (index, update, upsert and delete many documents in one request)",
+      "url": "https://docs.opensearch.org/latest/api-reference/document-apis/bulk/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Bulk API"
+      }
+    },
+    {
+      "id": "s53",
+      "title": "Amazon OpenSearch Service Developer Guide: Identity and Access Management in Amazon OpenSearch Service (es:ESHttp actions on a domain, an index and _search)",
+      "url": "https://docs.aws.amazon.com/opensearch-service/latest/developerguide/ac.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "es:ESHttpGet"
+      }
     }
   ],
   "practice": null,
@@ -1084,6 +1161,11 @@
                 "kind": "service"
               },
               {
+                "id": "S3Q",
+                "label": "Amazon S3: index versions, with the query table",
+                "kind": "store"
+              },
+              {
                 "id": "O",
                 "label": "Operators",
                 "kind": "actor"
@@ -1123,21 +1205,14 @@
                 "from": "U",
                 "to": "CF",
                 "kind": "sync",
-                "label": "HTTPS, sync",
+                "label": "HTTPS: /suggest is cached by prefix alone, /me/suggest is never cached, sync",
                 "short": "HTTPS"
-              },
-              {
-                "from": "O",
-                "to": "CF",
-                "kind": "sync",
-                "label": "HTTPS: POST /blocklist, never cached, sync",
-                "short": "POST /blocklist"
               },
               {
                 "from": "CF",
                 "to": "ALB",
                 "kind": "sync",
-                "label": "HTTPS to the origin on a miss, sync",
+                "label": "HTTPS to the origin on a miss, and always for /me/suggest, sync",
                 "short": "HTTPS origin"
               },
               {
@@ -1155,11 +1230,32 @@
                 "short": "HTTP by name"
               },
               {
+                "from": "S3Q",
+                "to": "AS",
+                "kind": "async",
+                "label": "each service task polls the version pointer and loads the query table (id to text), async",
+                "short": "Query table"
+              },
+              {
                 "from": "AS",
                 "to": "UH",
                 "kind": "sync",
-                "label": "GetItem on the recents, and a Scan of the block list every minute, over the gateway endpoint, sync",
-                "short": "GetItem"
+                "label": "Query of the user's newest 50 recents on /me/suggest, and a Scan of the block list every minute, over the gateway endpoint, sync",
+                "short": "Query, Scan"
+              },
+              {
+                "from": "AS",
+                "to": "FB",
+                "kind": "sync",
+                "label": "HTTPS suggest request when the prefix has no entry, 10 ms deadline, sync",
+                "short": "Suggest / 10 ms"
+              },
+              {
+                "from": "O",
+                "to": "CF",
+                "kind": "sync",
+                "label": "HTTPS: POST /blocklist, never cached; the load balancer authenticates the operator, sync",
+                "short": "POST /blocklist"
               },
               {
                 "from": "AS",
@@ -1172,63 +1268,62 @@
                 "from": "AS",
                 "to": "CFAPI",
                 "kind": "sync",
-                "label": "CreateInvalidation for the prefixes of the blocked term, through the CloudFront interface endpoint, sync",
+                "label": "CreateInvalidation for the prefixes of the blocked term, sync",
                 "short": "CreateInvalidation"
-              },
-              {
-                "from": "AS",
-                "to": "FB",
-                "kind": "sync",
-                "label": "HTTPS suggest request when the prefix has no entry, 10 ms deadline, sync",
-                "short": "Suggest / 10 ms"
               }
             ],
             "steps": [
               {
                 "edge": 0,
-                "caption": "Clients to CloudFront: HTTPS, sync"
+                "caption": "Clients to CloudFront: HTTPS: /suggest is cached by prefix alone, /me/suggest is never cached, sync"
               },
               {
                 "edge": 1,
-                "caption": "Operators to CloudFront: HTTPS: POST /blocklist, never cached, sync (it follows the same edges to the service)"
+                "caption": "CloudFront to Load balancer: HTTPS to the origin on a miss, and always for /me/suggest, sync"
               },
               {
                 "edge": 2,
-                "caption": "CloudFront to Load balancer: HTTPS to the origin on a miss, sync"
-              },
-              {
-                "edge": 3,
                 "caption": "Load balancer to Autocomplete service: HTTP, sync"
               },
               {
-                "edge": 4,
+                "edge": 3,
                 "caption": "Autocomplete service to Shard tasks: HTTP by Service Connect name, round robin over the replicas, sync"
               },
               {
+                "edge": 4,
+                "caption": "S3 index versions to Autocomplete service: each service task polls the version pointer and loads the query table (id to text), async"
+              },
+              {
                 "edge": 5,
-                "caption": "Autocomplete service to DynamoDB: GetItem on the recents, and a Scan of the block list every minute, over the gateway endpoint, sync"
+                "caption": "Autocomplete service to DynamoDB: Query of the user's newest 50 recents on /me/suggest, and a Scan of the block list every minute, over the gateway endpoint, sync"
               },
               {
                 "edge": 6,
-                "caption": "Autocomplete service to DynamoDB: PutItem on the block list table over the gateway endpoint, sync"
+                "caption": "Autocomplete service to Fallback suggester: HTTPS suggest request when the prefix has no entry, 10 ms deadline, sync"
               },
               {
                 "edge": 7,
-                "caption": "Autocomplete service to CloudFront API: CreateInvalidation for the prefixes of the blocked term, through the CloudFront interface endpoint, sync"
+                "caption": "Operators to CloudFront: HTTPS: POST /blocklist, never cached; the load balancer authenticates the operator, sync"
               },
               {
                 "edge": 8,
-                "caption": "Autocomplete service to Fallback suggester: HTTPS suggest request when the prefix has no entry, 10 ms deadline, sync"
+                "caption": "Autocomplete service to DynamoDB: PutItem on the block list table over the gateway endpoint, sync"
+              },
+              {
+                "edge": 9,
+                "caption": "Autocomplete service to CloudFront API: CreateInvalidation for the prefixes of the blocked term, sync"
               }
             ],
-            "legend": "The serving half of the architecture, the same boxes as the neutral diagram's serving frame, one AWS service each: the edge cache is CloudFront, which keeps a response for the max-age its origin sends s7; the load balancer admits only CloudFront s8; the autocomplete service and the prefix shards are ECS on Fargate tasks that call each other by Service Connect names, which balance round robin and remember failures s11; the recent queries and the block list are DynamoDB tables; the fallback suggester is an OpenSearch Service domain with term and phrase suggesters s15, s13. The neutral re-rank box is a code path inside the service task, so it has no box of its own. The block list is changed by operators: the POST follows the client edges to the service (it is never cached), which writes the table and then calls the CloudFront API to invalidate the term's prefixes s45, through the interface endpoint CloudFront offers s43; the invalidation call has its own box because it goes to CloudFront's API and not to the edge. Sync means the caller waits for the answer. The VPC frames are one VPC in one Region across three Availability Zones.",
+            "legend": "The serving half of the architecture, the same boxes as the neutral diagram's serving frame, one AWS service each: the edge cache is CloudFront, which keeps a response for the max-age its origin sends s7; the load balancer admits only CloudFront s8; the autocomplete service and the prefix shards are ECS on Fargate tasks that call each other by Service Connect names, which balance round robin and remember failures s11; the recent queries and the block list are DynamoDB tables; the fallback suggester is an OpenSearch Service domain with term and phrase suggesters s15, s13. The neutral re-rank box is a code path inside the service task, so it has no box of its own. Two routes keep the neutral rule that a user's list is never shown to anyone else: /suggest has a cache key of the path, the prefix and the locale alone, so the edge shares its answer; a known user's client calls /me/suggest, whose behaviour has caching disabled s50 and whose answer is private, so it always reaches the service, which merges the user's recents with the shared list; the neutral API note says the edge and browser caches share the response, and this section does that for the shared list only. The shard answer is ids, so each service task also loads the query table (id to text, the same file as the score file of the build) when the version pointer moves. The block list is changed by operators: the POST goes through a CloudFront behaviour that allows POST s49 and a load balancer rule that authenticates them with Amazon Cognito or an OIDC provider s48; the service writes the table and then calls the CloudFront API to invalidate the term's prefixes s45, a call to its own box because it goes to CloudFront's API and not to the edge. Sync means the caller waits for the answer; async means the work goes on after the caller has moved on. The VPC frames are one VPC in one Region across three Availability Zones.",
             "cites": [
               "s7",
               "s8",
               "s11",
               "s15",
               "s13",
-              "s43",
+              "s50",
+              "s49",
+              "s48",
               "s45"
             ]
           },
@@ -1237,7 +1332,7 @@
             "nodes": [
               {
                 "id": "SS",
-                "label": "Search service: writes each search to the log",
+                "label": "Search service: writes each search to the log and to the recents",
                 "kind": "service"
               },
               {
@@ -1252,27 +1347,27 @@
               },
               {
                 "id": "AG",
-                "label": "Stage 1: counts with decay",
+                "label": "EMR Serverless job, stage 1: counts with decay",
                 "kind": "service"
               },
               {
                 "id": "FL",
-                "label": "Stage 2: filter, block list and minimum count",
+                "label": "EMR Serverless job, stage 2: filter, block list, minimum count",
                 "kind": "service"
               },
               {
                 "id": "BU",
-                "label": "Stage 3: top 10 per prefix, versioned",
+                "label": "EMR Serverless job, stage 3: top 10 per prefix, versioned",
                 "kind": "service"
               },
               {
                 "id": "BL",
-                "label": "Amazon DynamoDB: block list",
+                "label": "Amazon DynamoDB: recent queries, block list",
                 "kind": "store"
               },
               {
                 "id": "OS",
-                "label": "Amazon S3: index versions",
+                "label": "Amazon S3: index versions, with the query table and scores",
                 "kind": "store"
               },
               {
@@ -1281,27 +1376,9 @@
                 "kind": "store"
               },
               {
-                "id": "SC",
-                "label": "Amazon S3: decayed scores, one file per version",
-                "kind": "store"
-              }
-            ],
-            "frames": [
-              {
-                "id": "JOB",
-                "title": "EMR Serverless job",
-                "nodes": [
-                  "AG",
-                  "FL",
-                  "BU"
-                ]
-              },
-              {
-                "id": "TASKS",
-                "title": "VPC private: tasks",
-                "nodes": [
-                  "SH"
-                ]
+                "id": "FB",
+                "label": "Amazon OpenSearch Service: fallback suggester",
+                "kind": "service"
               }
             ],
             "edges": [
@@ -1311,6 +1388,13 @@
                 "kind": "async",
                 "label": "PutRecord to the Firehose stream, async",
                 "short": "PutRecord"
+              },
+              {
+                "from": "SS",
+                "to": "BL",
+                "kind": "sync",
+                "label": "PutItem: the search as an item of the user's recents, with a TTL of 30 days, over the gateway endpoint, sync",
+                "short": "PutItem recents"
               },
               {
                 "from": "SCH",
@@ -1328,9 +1412,9 @@
               },
               {
                 "from": "AG",
-                "to": "SC",
+                "to": "OS",
                 "kind": "sync",
-                "label": "GET the previous score file and, once the version is accepted, PutObject the new one, sync",
+                "label": "GET the previous query table and scores; the new ones are written with the accepted version, sync",
                 "short": "Scores"
               },
               {
@@ -1358,8 +1442,15 @@
                 "from": "BU",
                 "to": "OS",
                 "kind": "sync",
-                "label": "PutObject of each shard file, then the version pointer, sync",
+                "label": "PutObject of each shard file and the query table, then the version pointer, sync",
                 "short": "PutObject"
+              },
+              {
+                "from": "BU",
+                "to": "FB",
+                "kind": "sync",
+                "label": "_bulk request: upsert the queries whose score changed, delete the blocked terms, sync",
+                "short": "Bulk"
               },
               {
                 "from": "OS",
@@ -1376,57 +1467,68 @@
               },
               {
                 "edge": 1,
-                "caption": "Scheduler to aggregator stage: StartJobRun every hour through a universal target, async"
+                "caption": "Search service to DynamoDB: PutItem: the search as an item of the user's recents, with a TTL of 30 days, over the gateway endpoint, sync"
               },
               {
                 "edge": 2,
-                "caption": "Query log to Aggregator stage: the last hour of log objects read from S3, sync"
+                "caption": "Scheduler to Aggregator stage: StartJobRun every hour through a universal target, async"
               },
               {
                 "edge": 3,
-                "caption": "Aggregator stage to S3 scores: GET the previous score file and, once the version is accepted, PutObject the new one, sync"
+                "caption": "Query log to Aggregator stage: the last hour of log objects read from S3, sync"
               },
               {
                 "edge": 4,
-                "caption": "Aggregator stage to Filter stage: the next stage of the same Spark job"
+                "caption": "Aggregator stage to S3 index versions: GET the previous query table and scores; the new ones are written with the accepted version, sync"
               },
               {
                 "edge": 5,
-                "caption": "Filter stage to DynamoDB block list: Scan of the block list, sync"
+                "caption": "Aggregator stage to Filter stage: the next stage of the same Spark job"
               },
               {
                 "edge": 6,
-                "caption": "Filter stage to Builder stage: the next stage of the same Spark job"
+                "caption": "Filter stage to DynamoDB: Scan of the block list, sync"
               },
               {
                 "edge": 7,
-                "caption": "Builder stage to S3 index versions: PutObject of each shard file, then the version pointer, sync"
+                "caption": "Filter stage to Builder stage: the next stage of the same Spark job"
               },
               {
                 "edge": 8,
+                "caption": "Builder stage to S3 index versions: PutObject of each shard file and the query table, then the version pointer, sync"
+              },
+              {
+                "edge": 9,
+                "caption": "Builder stage to Fallback suggester: _bulk request: upsert the queries whose score changed, delete the blocked terms, sync"
+              },
+              {
+                "edge": 10,
                 "caption": "S3 index versions to Shard tasks: each shard task polls the pointer, reads its file, then switches (pull), async"
               }
             ],
-            "legend": "The build half of the neutral diagram, one AWS service each: the search service writes each search to an Amazon Data Firehose stream, which delivers objects to S3 under a yyyy/MM/dd/HH prefix s17, s18; EventBridge Scheduler starts one EMR Serverless job every hour; this is a design choice: a universal target may call any API operation that is not read-only s19, and StartJobRun is an EMR Serverless operation s44, and the three stages are the neutral aggregator, filter and builder, run as one Spark application s20; the builder writes the shard files to S3 and the shard tasks pull each new version, which S3's read-after-write consistency makes safe s21. The decayed scores (the neutral Query entity's score) live in a score file in S3, one per version: the job reads the previous file, decays the old scores (yesterday weighs half, assumption), adds the last hour, and writes the new file with the version. The block list table and the score files are the boxes the neutral diagram leaves implicit. Sync means the caller waits for the answer; async means the work goes on after the caller has moved on.",
+            "legend": "The build half of the neutral diagram, one AWS service each: the search service writes each search to an Amazon Data Firehose stream, which delivers objects to S3 under a yyyy/MM/dd/HH prefix s17, s18, and appends it to the user's recents (one item per search, with a TTL of 30 days, mapping the neutral entity's capped list: a read takes the newest 50); EventBridge Scheduler starts one EMR Serverless job every hour; this is a design choice: a universal target may call any API operation that is not read-only s19, and StartJobRun is an EMR Serverless operation s44. The three stages are the neutral aggregator, filter and builder, run as one Spark application s20 that is configured with the VPC's private subnets, so that it can reach the OpenSearch domain s51. The builder writes the shard files and the query table to S3 and the shard tasks pull each new version, which S3's read-after-write consistency makes safe s21; it also bulk-updates the fallback suggester's index in the OpenSearch domain, upserting the queries whose score changed and deleting the blocked ones s52. The decayed scores (the neutral Query entity's score) are the query table, one file per version with the id, the text and the score: the job reads the previous file, decays the old scores (yesterday weighs half, assumption), adds the last hour, and writes the new file with the version; the service tasks read the same file to turn ids into text. The block list and recents tables are the boxes the neutral diagram leaves implicit. Sync means the caller waits for the answer; async means the work goes on after the caller has moved on.",
             "cites": [
               "s17",
               "s18",
               "s19",
+              "s44",
               "s20",
+              "s51",
               "s21",
-              "s44"
+              "s52"
             ]
           },
           {
             "type": "p",
-            "text": "The read path through AWS, part a: the keystroke reaches the edge, and a miss goes through the load balancer to a shard."
+            "text": "The read path through AWS, part a: the keystroke reaches the edge; a shared request that the edge has seen is answered there, and any other goes through the load balancer to a shard."
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber\n  participant C as Client\n  participant Edge as Edge\n  participant AS as Autocomplete svc\n  participant SH as Shard task\n  C->>Edge: GET /suggest?q=prefix\n  Note over C,Edge: sent 100 ms after<br/>the last keystroke\n  alt a hit, under 60 s old\n    Edge-->>C: top 10, from the edge\n  else a miss\n    Edge->>AS: HTTP, a healthy task\n    AS->>SH: HTTP, by shard name\n    Note over AS,SH: first characters pick the<br/>shard group, replicas round robin\n    SH-->>AS: up to 10 ids and scores\n    opt the replica is slow or down\n      AS->>SH: retry on another replica\n    end\n  end",
-            "legend": "Solid arrows are synchronous calls with their replies dashed. Edge is CloudFront in front of the load balancer, drawn as one lane here and in every sequence diagram below; a hit is answered at the edge for as long as the origin's Cache-Control max-age allows s7, and the load balancer sends a miss only to a healthy task s10, s9. The shard name is a Service Connect name, whose proxy picks a replica round robin and remembers failures s11.",
+            "mermaid": "sequenceDiagram\n  autonumber\n  participant C as Client\n  participant Edge as Edge\n  participant AS as Autocomplete svc\n  participant SH as Shard task\n  C->>Edge: GET /suggest?q=prefix, or /me/suggest\n  Note over C,Edge: sent 100 ms after<br/>the last keystroke\n  alt /suggest, a hit under 60 s old\n    Edge-->>C: top 10, from the edge\n  else a miss, or /me/suggest\n    Edge->>AS: HTTP, a healthy task\n    AS->>SH: HTTP, by shard name\n    Note over AS,SH: first characters pick the<br/>shard group, replicas round robin\n    opt the replica is slow or down\n      AS->>SH: retry on another replica\n    end\n    SH-->>AS: up to 10 ids and scores\n  end",
+            "legend": "Solid arrows are synchronous calls with their replies dashed. Edge is CloudFront in front of the load balancer, drawn as one lane here and in every sequence diagram below. A /suggest request has a cache key of the prefix and the locale alone, so a hit is answered at the edge for as long as the origin's Cache-Control max-age allows s7; a /me/suggest request always continues, because its behaviour has caching disabled s50. The load balancer sends a request only to a healthy task s10, s9. The shard name is a Service Connect name, whose proxy picks a replica round robin and remembers failures s11; a retry goes to another replica before any reply.",
             "cites": [
               "s7",
+              "s50",
               "s10",
               "s9",
               "s11"
@@ -1434,16 +1536,16 @@
           },
           {
             "type": "p",
-            "text": "A hit never leaves the edge. On a miss the service picks the shard group from the first characters of the prefix; if the replica it was given is slow or down, the next attempt goes to another replica of the same group."
+            "text": "A hit on /suggest never leaves the edge; a /me/suggest request never hits. The service picks the shard group from the first characters of the prefix; if the replica it was given is slow or down, the retry goes to another replica of the same group."
           },
           {
             "type": "p",
-            "text": "Part b: the personalisation, the fallback and the answer, on a miss."
+            "text": "Part b: the ids become text, the user's recents are merged in for /me/suggest, the fallback is asked when the prefix has no entry, and the answer goes back with the cache header that fits it."
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 7\n  participant C as Client\n  participant Edge as Edge\n  participant AS as Autocomplete svc\n  participant UH as DynamoDB\n  participant FB as OpenSearch\n  Note over AS: drop blocked terms,<br/>from the in-memory list\n  opt the user is known\n    AS->>UH: GetItem, the user's recents\n    UH-->>AS: up to 50 recents\n    Note over AS,UH: newer than 30 days, own only,<br/>boosted ahead of global results\n  end\n  opt the prefix has no entry\n    AS->>FB: term or phrase suggest\n    Note over AS,FB: 10 ms deadline,<br/>else an empty list\n    FB-->>AS: a correction\n  end\n  AS-->>Edge: top 10, max-age=60\n  Edge-->>C: top 10, kept 60 s",
-            "legend": "The recents are one DynamoDB item per user, which TTL deletes within a few days of the expiry time s12, so the service also ignores entries older than 30 days when it reads. A term or phrase suggester is what OpenSearch offers for corrections s15. If the DynamoDB read is throttled or slow the service answers with the global list; personalisation is optional.",
+            "mermaid": "sequenceDiagram\n  autonumber 7\n  participant C as Client\n  participant Edge as Edge\n  participant AS as Autocomplete svc\n  participant UH as DynamoDB\n  participant FB as OpenSearch\n  Note over AS: ids become text from the query table,<br/>blocked terms are dropped, both in memory\n  opt /me/suggest, a known user\n    AS->>UH: Query the user's newest 50 recents\n    UH-->>AS: the recents\n    Note over AS,UH: newer than 30 days, own only,<br/>boosted ahead of the shared list\n  end\n  opt the prefix has no entry\n    AS->>FB: term or phrase suggest\n    Note over AS,FB: 10 ms deadline,<br/>else an empty list\n    FB-->>AS: a correction\n  end\n  alt a shared request\n    AS-->>Edge: top 10, public, max-age=60\n    Edge-->>C: top 10, kept 60 s for everyone\n  else a known user\n    AS-->>Edge: the merged top 10, private, no-store\n    Edge-->>C: the merged top 10, not kept\n  end",
+            "legend": "A user's recents are items under the user id, one per search, each with a TTL that DynamoDB deletes within a few days of the expiry time s12, so the service ignores entries older than 30 days when it reads; the newest 50 are what a read takes. The shared list is the same for everyone and is cached; the merged list contains one user's queries and is marked private with no-store, so no shared cache keeps it, which is the neutral rule that a user's queries are never shown to another user. A term or phrase suggester is what OpenSearch offers for corrections s15. If the DynamoDB read is throttled or slow the service answers with the shared list; personalisation is optional.",
             "cites": [
               "s12",
               "s15"
@@ -1451,26 +1553,43 @@
           },
           {
             "type": "p",
-            "text": "The recents are an optional boost: without them, or with a failed read, the global list is returned. The answer carries Cache-Control max-age=60, which is what the edge keeps it for."
+            "text": "The recents are an optional boost: without them, or with a failed read, the shared list is returned. The shared answer carries Cache-Control max-age=60; a merged answer never does."
           },
           {
             "type": "p",
-            "text": "The build path through AWS: one run an hour, nothing on the request path waits for it; the step numbers run on from the read path."
+            "text": "The search write path: what the search service writes when a user searches, before any build."
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 13\n  participant Sch as Scheduler\n  participant Job as EMR Serverless job\n  participant S3 as S3\n  participant DDB as DynamoDB\n  participant SH as Shard task\n  Sch->>Job: StartJobRun, every hour\n  Job->>S3: GET the last hour of the log\n  S3-->>Job: log objects\n  Job->>S3: GET the previous score file\n  S3-->>Job: the decayed scores\n  Note over Job: add the hour to the scores,<br/>yesterday weighs half (assumption)\n  Job->>DDB: Scan the block list\n  DDB-->>Job: blocked terms\n  Note over Job: drop blocked and rare terms,<br/>top 10 per prefix\n  alt no smaller than 80 percent of the last version\n    Job->>S3: PUT shard files, new scores, pointer\n  else shrank by more than 20 percent\n    Note over Job,S3: refuse the version and the scores,<br/>alarm\n  end\n  loop every shard task, on its poll\n    SH->>S3: GET the version pointer\n    S3-->>SH: a new version\n    SH->>S3: GET its shard file\n    Note over SH: load beside the old,<br/>then switch pointers\n  end",
-            "legend": "Each shard task polls the pointer and reads its own file; because S3 reads after a write always return the new object s21, a task that sees the new pointer finds every file under it. A failed or refused job leaves the pointer alone, so the shards keep serving the last good version while the age alarm (over 2 hours) fires. The schedule starts the job with a universal target, a design choice: the Scheduler page says universal targets may call API operations of many services and refuses only read-only ones s19, and StartJobRun is an EMR Serverless operation s44; the job releases its capacity when it finishes s20. The score file is read at step 16 and written at step 20, in the same step as the shard files and before the pointer, so a refused version keeps the previous scores.",
+            "mermaid": "sequenceDiagram\n  autonumber 15\n  participant Svc as Search service\n  participant UH as DynamoDB\n  participant FH as Firehose\n  Svc->>UH: PutItem, the search as a recents item\n  Note over Svc,UH: user id, time, text,<br/>TTL 30 days\n  UH-->>Svc: ok\n  Svc-)FH: PutRecord, one record per search\n  Note over FH: delivers objects to S3<br/>under the hour's prefix",
+            "legend": "This is the neutral write of the query log, plus the neutral recents: the search service, which already writes the log, appends the search to the user's recents with one conditionless PutItem of about 100 bytes, one write unit; Firehose buffers records before delivering them to S3 s17. The open arrow is a hand-off the search does not wait on.",
             "cites": [
-              "s21",
-              "s19",
-              "s20",
-              "s44"
+              "s17"
             ]
           },
           {
             "type": "p",
-            "text": "The pointer is written last, after every shard file, so a shard that reads the new pointer never finds a missing file; the old version stays in the bucket so that an operator can pin it."
+            "text": "Both writes are the search service's own, off the suggestion path: the recents table makes the next /me/suggest request personal, and the log feeds the next hourly build."
+          },
+          {
+            "type": "p",
+            "text": "The build path through AWS: one run an hour, nothing on the request path waits for it; the step numbers run on through the whole section."
+          },
+          {
+            "type": "diagram",
+            "mermaid": "sequenceDiagram\n  autonumber 18\n  participant Job as EMR Serverless job\n  participant S3 as S3\n  participant DDB as DynamoDB\n  participant OS as OpenSearch\n  participant TK as Shard and service tasks\n  Note over Job: started every hour by the Scheduler,<br/>StartJobRun\n  Job->>S3: GET the last hour of the log\n  S3-->>Job: log objects\n  Job->>S3: GET the previous query table\n  S3-->>Job: ids, texts, decayed scores\n  Note over Job: decay the scores (yesterday weighs half,<br/>assumption), add the hour\n  Job->>DDB: Scan the block list\n  DDB-->>Job: blocked terms\n  Note over Job: drop blocked and rare terms,<br/>top 10 per prefix\n  alt no smaller than 80 percent of the last version\n    Job->>S3: PUT shard files, the new query table\n    Job->>OS: _bulk, upsert changed queries, delete blocked\n    OS-->>Job: ok\n    Job->>S3: PUT the version pointer, last\n  else shrank by more than 20 percent\n    Note over Job,S3: refuse the version and the scores,<br/>alarm\n  end\n  loop every task, on its poll\n    TK->>S3: GET the version pointer\n    S3-->>TK: a new version\n    TK->>S3: GET its shard file or the query table\n    Note over TK: load beside the old,<br/>then switch\n  end",
+            "legend": "Each task polls the pointer and reads its own file: a shard task its shard file, a service task the query table; because S3 reads after a write always return the new object s21, a task that sees the new pointer finds every file under it, and the pointer is written after the files and after the domain update. A failed or refused job leaves the pointer alone, so the shards keep serving the last good version while the age alarm (over 2 hours) fires. The schedule starts the job with a universal target, a design choice: the Scheduler page says universal targets may call API operations of many services and refuses only read-only ones s19, and StartJobRun is an EMR Serverless operation s44; the job releases its capacity when it finishes s20. The query table is read at step 20 and written, with the shard files, at step 24, so a refused version keeps the previous scores. The _bulk request upserts the queries whose score changed and deletes the blocked terms in the domain's index s52.",
+            "cites": [
+              "s21",
+              "s19",
+              "s44",
+              "s20",
+              "s52"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "The pointer is written last, after every shard file, the query table and the domain update, so a task that reads the new pointer never finds a missing file; the old version stays in the bucket so that an operator can pin it."
           },
           {
             "type": "p",
@@ -1478,17 +1597,19 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 24\n  participant Op as Operator\n  participant Edge as Edge\n  participant AS as Autocomplete svc\n  participant DDB as DynamoDB\n  participant CFA as CloudFront API\n  Op->>Edge: POST /blocklist, term and locale\n  Edge->>AS: HTTP, a healthy task\n  AS->>DDB: PutItem, the blocked term\n  DDB-->>AS: ok\n  Note over AS: every task re-reads the list<br/>within a minute (assumption)\n  AS->>CFA: CreateInvalidation, the prefixes\n  Note over AS,CFA: one path per prefix,<br/>through the interface endpoint\n  CFA-->>AS: in progress\n  AS-->>Edge: 204\n  Edge-->>Op: 204\n  Note over CFA: the next request for each prefix<br/>returns to the origin",
-            "legend": "The operator endpoint is part of the service, as in the neutral design: it writes the list and purges the prefix keys itself, with a task role that may call CreateInvalidation on the distribution s45; the call reaches the CloudFront API through its interface endpoint s43. The list takes effect at the service within a minute and at the edge when the invalidation completes, without waiting for a build; the next build drops the term from the index. Invalidation removes the cached copies before they expire s24; without it the term lingers for up to the 60 s of the TTL.",
+            "mermaid": "sequenceDiagram\n  autonumber 31\n  participant Op as Operator\n  participant Edge as Edge\n  participant AS as Autocomplete svc\n  participant DDB as DynamoDB\n  participant CFA as CloudFront API\n  Op->>Edge: POST /blocklist, term and locale\n  Note over Op,Edge: the load balancer rule authenticates<br/>the operator, the behaviour allows POST\n  Edge->>AS: HTTP, a healthy task\n  AS->>DDB: PutItem, the blocked term\n  DDB-->>AS: ok\n  AS->>CFA: CreateInvalidation, the prefixes\n  Note over AS,CFA: one path per prefix,<br/>through the interface endpoint\n  CFA-->>AS: in progress\n  AS-->>Edge: 204\n  Edge-->>Op: 204\n  Note over CFA: the next request for each prefix<br/>returns to the origin\n  loop every minute, each service task\n    AS->>DDB: Scan the block list\n    DDB-->>AS: the blocked terms\n  end",
+            "legend": "The operator endpoint is part of the service, as in the neutral design: it writes the list and purges the prefix keys itself, with a task role that may call CreateInvalidation on the distribution s45; the call reaches the CloudFront API through the interface endpoint that AWS PrivateLink lists for CloudFront s43, which this lesson assumes carries CreateInvalidation (no page says so; a NAT gateway is the alternative for that one call). The POST is allowed through CloudFront only on this path s49 and is authenticated at the load balancer s48, so no client can change the list. The list takes effect at every task within a minute, at its next Scan, and at the edge when the invalidation completes, without waiting for a build; the next build drops the term from the index. Invalidation removes the cached copies before they expire s24; without it the term lingers for up to the 60 s of the TTL. Invalidation paths are priced beyond a free monthly allowance, and a blocked term has up to 20 prefixes per locale.",
             "cites": [
               "s24",
               "s45",
-              "s43"
+              "s43",
+              "s49",
+              "s48"
             ]
           },
           {
             "type": "table",
-            "caption": "Identity and network: who may call what, over which endpoint, and what is public. The public entries are CloudFront and the load balancer behind it, which sits in public subnets and admits only CloudFront. The ECS services, the shard tasks, the OpenSearch domain and the job run in private subnets across three Availability Zones in awsvpc mode, one network interface per task, each service under its own IAM task role, so permissions go to the task and not to a host.",
+            "caption": "Identity and network: who may call what, over which endpoint, and what is public. The public entries are CloudFront and the load balancer behind it, which sits in public subnets and admits only CloudFront. The ECS services, the shard tasks, the OpenSearch domain and the job run in private subnets across three Availability Zones in awsvpc mode, one network interface per task, each service under its own IAM task role, so permissions go to the task and not to a host. A task in a private subnet pulls its image through the Amazon ECR interface endpoints and an S3 gateway endpoint, and this design uses those, not a NAT gateway.",
             "columns": [
               "service",
               "may call",
@@ -1498,44 +1619,44 @@
             "rows": [
               [
                 "Amazon CloudFront",
-                "the load balancer (HTTPS plus a secret header)",
+                "the load balancer (HTTPS plus a secret header); /suggest is cached with a key of the path, the prefix and the locale; /me/suggest and /blocklist have caching disabled, and /blocklist allows POST",
                 "the public internet to the edge; HTTPS to the origin",
-                "yes, the only entry for clients"
+                "yes, an entry for clients and for operators"
               ],
               [
                 "Application Load Balancer",
-                "the autocomplete service tasks over HTTP",
+                "the autocomplete service tasks over HTTP; its /blocklist rule authenticates the operator with Amazon Cognito or an OIDC provider before it forwards",
                 "VPC public subnets; its security group admits the CloudFront managed prefix list only",
                 "yes, but it refuses requests without the CloudFront header"
               ],
               [
                 "Autocomplete service (task role)",
-                "GetItem on the recents table; Scan and PutItem on the block list table; CreateInvalidation on the distribution, for the block list endpoint; the shard tasks by Service Connect name; the OpenSearch domain",
-                "DynamoDB gateway endpoint; the CloudFront interface endpoint; the Service Connect proxy and the domain inside the VPC",
+                "Query on the recents table; Scan and PutItem on the block list table; CreateInvalidation on the distribution, for the block list endpoint; GetObject on the index bucket (the version pointer and the query table); es:ESHttpPost on the domain's suggest index; the shard tasks by Service Connect name",
+                "DynamoDB and S3 gateway endpoints; the CloudFront interface endpoint (AWS PrivateLink lists com.amazonaws.cloudfront; the lesson assumes it carries CreateInvalidation, and a NAT gateway is the alternative for that one call); the Service Connect proxy and the domain inside the VPC; the ECR interface endpoints",
                 "no; private subnet, admits the load balancer's security group only"
               ],
               [
                 "Shard tasks (task role)",
-                "GetObject on the index bucket, under their own shard prefix; nothing else",
-                "S3 gateway endpoint; called by the service tasks by Service Connect name",
+                "GetObject on the index bucket: their own shard file and the version pointer; nothing else",
+                "S3 gateway endpoint; called by the service tasks by Service Connect name; the ECR interface endpoints",
                 "no; admits the service tasks' security group only"
               ],
               [
                 "EMR Serverless job (job runtime role)",
-                "GetObject on the log prefix; GetObject and PutObject on the index bucket, including the score files; Scan on the block list table",
-                "S3 and DynamoDB, Regional services; started by the scheduler's role",
+                "GetObject on the log prefix; GetObject and PutObject on the index bucket (shard files, query table, pointer); Scan on the block list table; es:ESHttpPost on the domain (the _bulk request)",
+                "the application is configured with the VPC's private subnets; S3 and DynamoDB over the gateway endpoints; the domain inside the VPC; started by the scheduler's role",
                 "no; the job is not reachable from outside"
               ],
               [
                 "Search service and Firehose",
-                "the search service may PutRecord on the one stream; Firehose writes objects to the log bucket under its own role",
-                "the Firehose API; S3 delivery",
+                "the search service may PutRecord on the one stream and PutItem on the recents table, with a TTL attribute 30 days ahead; Firehose writes objects to the log bucket under its own role",
+                "the Firehose API; DynamoDB gateway endpoint; S3 delivery",
                 "no"
               ],
               [
                 "OpenSearch Service domain",
                 "nothing; it is called",
-                "a domain placed in the VPC; its security group admits the service tasks only",
+                "a domain placed in the VPC; its access policy admits the service task role and the job runtime role, and its security group admits the service tasks and the job only",
                 "no"
               ],
               [
@@ -1556,7 +1677,13 @@
               "s19",
               "s45",
               "s43",
-              "s46"
+              "s46",
+              "s47",
+              "s48",
+              "s49",
+              "s51",
+              "s53",
+              "s50"
             ]
           },
           {
@@ -1689,15 +1816,15 @@
             "rows": [
               {
                 "option": "Amazon DynamoDB, on-demand, with TTL",
-                "pick_when": "per-user records are read by key, expire by age and must survive a restart, and the reads are modest because the edge cache answers most requests",
+                "pick_when": "per-user records are read by key, expire by age and must survive a restart, and the reads are moderate because the shared lists come from the edge",
                 "avoid_when": "every request would read the record at a latency only a memory cache gives, and losing the data would not matter",
-                "example": "For this design: chosen. A user's recents are one item read by user id on an edge miss and expire by TTL; the block list is a small table that the same service reads every minute."
+                "example": "For this design: chosen. A user's recents are items under the user id, one per search, written by the search service with an expiry; the service queries the newest 50 for a known user; the block list is a small table that the same service reads every minute."
               },
               {
                 "option": "Amazon ElastiCache for Valkey, with expiry",
                 "pick_when": "the per-user data is a cache, it is read on every request, and losing it is fine",
                 "avoid_when": "the records must survive a node loss because they are what the user typed",
-                "example": "For this design: not chosen. The recents are read only on edge misses, so DynamoDB's latency is enough, and a cluster bought by the node-hour to hold personal data in memory buys little."
+                "example": "For this design: not chosen. The recents are read only for known users' requests, so DynamoDB's latency is enough, and a cluster bought by the node-hour to hold personal data in memory buys little."
               }
             ],
             "cites": [
@@ -1727,29 +1854,29 @@
               [
                 "Security",
                 "a strong identity foundation; security at all layers; protect data in transit and at rest; keep people away from data",
-                "one IAM task role per service with least privilege; CloudFront the only public entry, the load balancer admitting only it; shard tasks, the domain and the job in private subnets; blocked terms enforced at build and at serve time",
+                "one IAM task role per service with least privilege; CloudFront the only public entry, the load balancer admitting only it; a known user's merged list private and never cached; POST /blocklist authenticated at the load balancer; shard tasks, the domain and the job in private subnets; blocked terms enforced at build and at serve time",
                 "the query log and the recents are personal data; their retention and who may read them are policy decisions this design does not make",
                 "s34, s25"
               ],
               [
                 "Reliability",
                 "automatically recover from failure; scale horizontally; stop guessing capacity",
-                "three replicas per shard group across three zones, ECS replacing a failed task; the shards keep serving the last good version when a build fails; the edge cache absorbs most requests; a multi-zone OpenSearch domain for the fallback",
+                "three replicas per shard group across three zones, ECS replacing a failed task; the shards keep serving the last good version when a build fails; the edge cache absorbs the shared requests; a multi-zone OpenSearch domain for the fallback",
                 "suggestions go stale if builds keep failing, which the age alarm reports; a new shard task serves nothing until its file is loaded",
                 "s34, s13"
               ],
               [
                 "Performance efficiency",
                 "consider mechanical sympathy; use serverless architectures where they fit",
-                "precomputed lists in process memory, one map read per miss; CloudFront answering from the edge; the build on EMR Serverless instead of a standing cluster",
+                "precomputed lists in process memory, one map read per request that reaches the service; CloudFront answering from the edge; the build on EMR Serverless instead of a standing cluster",
                 "freshness is one build interval plus the edge TTL; the trending lane for minutes is the next step, not built here",
                 "s34, s20"
               ],
               [
                 "Cost optimization",
                 "adopt a consumption model; analyze and attribute expenditure",
-                "the edge requests are the bill, so the hit ratio and the 60 s TTL are the levers; EMR Serverless pays only while a build runs; Firehose bills 5 KB per record, so the search service may batch several searches into one record",
-                "a lower hit ratio multiplies the origin lines; the TTL is tuned from measurement, not guessed",
+                "the edge requests are the bill, so the hit ratio of the shared requests, the 60 s TTL and the share of known users, whose requests are never cached, are the levers; EMR Serverless pays only while a build runs; Firehose bills 5 KB per record, so the search service may batch several searches into one record",
+                "a lower hit ratio or more known users multiplies the origin lines; the TTL and the share are tuned from measurement, not guessed",
                 "s34, s36"
               ],
               [
@@ -1787,9 +1914,9 @@
               ],
               [
                 "Autocomplete service",
-                "ECS on Fargate, Arm tasks of 1 vCPU and 2 GB; the origin sees a tenth of the requests (assumption: a 90 percent hit ratio)",
-                "about $175 (6 tasks)",
-                "about $1,730 (60 tasks)"
+                "ECS on Fargate, Arm tasks of 1 vCPU and 2 GB; 37 percent of the requests reach it (assumption: 30 percent from known users, never cached, plus a tenth of the rest)",
+                "about $635 (22 tasks)",
+                "about $6,340 (220 tasks)"
               ],
               [
                 "Prefix shards",
@@ -1799,9 +1926,9 @@
               ],
               [
                 "Recent queries",
-                "DynamoDB on-demand, eventually consistent reads of one item under 4 KB (half a read unit), every user known, 10 percent of requests reach the service; storage not priced",
-                "about $94",
-                "about $940"
+                "DynamoDB on-demand: one write unit per search, 3 billion a month, and for known users one Query of the newest 50 items, an eventually consistent read of one unit; storage not priced",
+                "about $2,440",
+                "about $24,400"
               ],
               [
                 "Query log ingestion",
@@ -1829,9 +1956,9 @@
               ],
               [
                 "Total",
-                "the eight lines above; the load balancer, data transfer out, log retention, DynamoDB storage and the OpenSearch storage volumes are not priced",
-                "about $17,100",
-                "about $163,700"
+                "the eight lines above; the load balancer, data transfer out, the interface endpoints (ECR, CloudFront), log retention, DynamoDB and OpenSearch storage and CloudFront invalidation paths beyond the free 1,000 a month are not priced",
+                "about $19,900",
+                "about $191,700"
               ]
             ],
             "cites": [
@@ -1847,12 +1974,16 @@
           },
           {
             "type": "p",
-            "text": "The edge requests are about seven eighths of the priced total at the design point and about eleven twelfths at ten times; the neutral table shows more than ninety-five percent because this one also prices the shard tasks, the fallback domain and the log ingestion. The point is the neutral one again: the serving path is a cache in front of a lookup, and the hit ratio is the lever. The fallback suggester, a domain of six nodes for a path taken only when a prefix has no entry, costs more at the design point than the shard tasks it backs up.",
+            "text": "The edge requests are about three quarters of the priced total at the design point and about four fifths at ten times; the neutral table shows more than ninety-five percent because this one also prices the origin tasks for known users, the shard tasks, the reads and writes of the recents, the fallback domain and the log ingestion. The levers are the hit ratio of the shared requests and the share of requests from known users, which the edge never keeps. The fallback suggester, a domain of six nodes for a path taken only when a prefix has no entry, costs more at the design point than the shard tasks it backs up.",
             "cites": [
               "s36",
               "s42",
               "s37"
             ]
+          },
+          {
+            "type": "p",
+            "text": "Sizing assumptions behind the task counts: a service task answers about a thousand requests a second and a shard task about two thousand lookups a second, so the peak of 21,460 requests a second that reaches the service needs 22 service tasks and fits the 12 shard tasks that the index memory already requires."
           }
         ]
       },
@@ -2332,6 +2463,11 @@
       "version": 7,
       "date": "2026-10-16",
       "change": "third read of the AWS pass (E1B, after the fix round): mechanical corrections only; the build flow legend no longer says the old scores are halved at every run (the decay is yesterday weighs half, as in the neutral build); the serving flow edge 5 names the Scan of the block list that the identity row already gives the service; the Scheduler row adds iam:PassRole on the job runtime role, which StartJobRun needs (source s46 added); findings left for the writer in reviews/learning-center-F2-E1B-reread.md; reviewed_by stays null"
+    },
+    {
+      "version": 8,
+      "date": "2026-10-16",
+      "change": "fix round 2 on the third read (E1B): personalised answers are never cached at the edge (/suggest has a cache key of the prefix and locale alone; /me/suggest has caching disabled and a private, no-store answer; origin share, service tasks, recents reads and the closing line recomputed); the fallback suggester's index is loaded by the hourly job (_bulk upsert and delete: flow edge, step, job role, VPC frame text); the recents have a writer (the search service, one item per search with a 30-day TTL: flow edge, write-path diagram, permission, cost); the query table (id, text, score) is the score file, loaded by the service tasks to turn ids into text; /blocklist is authenticated at the load balancer and allowed through a POST behaviour; the replica retry precedes the reply; the block list reload has a step; one running autonumber through the section; the identity caption names the ECR interface endpoints and the S3 gateway endpoint; the CloudFront endpoint is stated as an assumption with the NAT alternative; sources s47 to s53 added; reviewed_by stays null"
     }
   ]
 }
