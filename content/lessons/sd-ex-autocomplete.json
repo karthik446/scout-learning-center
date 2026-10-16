@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-autocomplete",
-  "version": 6,
+  "version": 7,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: search autocomplete",
@@ -541,6 +541,17 @@
         "checked": "2026-10-16",
         "http": 200,
         "section_found": "Create a new invalidation."
+      }
+    },
+    {
+      "id": "s46",
+      "title": "Amazon EMR Serverless User Guide: Job runtime roles for Amazon EMR Serverless (a user who submits a job run needs iam:PassRole on the runtime role)",
+      "url": "https://docs.aws.amazon.com/emr/latest/EMR-Serverless-UserGuide/security-iam-runtime-role.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "iam:PassRole"
       }
     }
   ],
@@ -1147,7 +1158,7 @@
                 "from": "AS",
                 "to": "UH",
                 "kind": "sync",
-                "label": "GetItem on the recents, and the block list read every minute, over the gateway endpoint, sync",
+                "label": "GetItem on the recents, and a Scan of the block list every minute, over the gateway endpoint, sync",
                 "short": "GetItem"
               },
               {
@@ -1195,7 +1206,7 @@
               },
               {
                 "edge": 5,
-                "caption": "Autocomplete service to DynamoDB: GetItem on the recents, and the block list read every minute, over the gateway endpoint, sync"
+                "caption": "Autocomplete service to DynamoDB: GetItem on the recents, and a Scan of the block list every minute, over the gateway endpoint, sync"
               },
               {
                 "edge": 6,
@@ -1396,7 +1407,7 @@
                 "caption": "S3 index versions to Shard tasks: each shard task polls the pointer, reads its file, then switches (pull), async"
               }
             ],
-            "legend": "The build half of the neutral diagram, one AWS service each: the search service writes each search to an Amazon Data Firehose stream, which delivers objects to S3 under a yyyy/MM/dd/HH prefix s17, s18; EventBridge Scheduler starts one EMR Serverless job every hour; this is a design choice: a universal target may call any API operation that is not read-only s19, and StartJobRun is an EMR Serverless operation s44, and the three stages are the neutral aggregator, filter and builder, run as one Spark application s20; the builder writes the shard files to S3 and the shard tasks pull each new version, which S3's read-after-write consistency makes safe s21. The decayed scores (the neutral Query entity's score) live in a score file in S3, one per version: the job reads the previous file, adds the last hour with the old scores halved, and writes the new file with the version. The block list table and the score files are the boxes the neutral diagram leaves implicit. Sync means the caller waits for the answer; async means the work goes on after the caller has moved on.",
+            "legend": "The build half of the neutral diagram, one AWS service each: the search service writes each search to an Amazon Data Firehose stream, which delivers objects to S3 under a yyyy/MM/dd/HH prefix s17, s18; EventBridge Scheduler starts one EMR Serverless job every hour; this is a design choice: a universal target may call any API operation that is not read-only s19, and StartJobRun is an EMR Serverless operation s44, and the three stages are the neutral aggregator, filter and builder, run as one Spark application s20; the builder writes the shard files to S3 and the shard tasks pull each new version, which S3's read-after-write consistency makes safe s21. The decayed scores (the neutral Query entity's score) live in a score file in S3, one per version: the job reads the previous file, decays the old scores (yesterday weighs half, assumption), adds the last hour, and writes the new file with the version. The block list table and the score files are the boxes the neutral diagram leaves implicit. Sync means the caller waits for the answer; async means the work goes on after the caller has moved on.",
             "cites": [
               "s17",
               "s18",
@@ -1529,7 +1540,7 @@
               ],
               [
                 "EventBridge Scheduler",
-                "StartJobRun on the one EMR Serverless application, through its execution role, and nothing else",
+                "StartJobRun on the one EMR Serverless application and iam:PassRole on the job runtime role, through its execution role, and nothing else",
                 "the EMR Serverless API",
                 "no"
               ]
@@ -1544,7 +1555,8 @@
               "s11",
               "s19",
               "s45",
-              "s43"
+              "s43",
+              "s46"
             ]
           },
           {
@@ -2315,6 +2327,11 @@
       "version": 6,
       "date": "2026-10-16",
       "change": "fix round on the second read (E1B): the decayed scores now live in a score file in S3 beside each index version (a node, an edge and a read and write in the build sequence diagram, the job role row and the index-versions cost line, about $17 and $171); the block list write path is in the serving flow (operators, PutItem, CreateInvalidation through the CloudFront API and its interface endpoint) with the autocomplete service's task role as the caller of CreateInvalidation, in the identity table and the block list diagram; the Scheduler to EMR Serverless StartJobRun call is stated as a design choice and cited to the Scheduler and EMR Serverless API pages (sources s43 to s45 added); the AWS sequence diagrams run on in one numbering; the identity caption says CloudFront and the load balancer are public and the rest private; the closing line explains the edge share against the neutral table; Firehose units stated; reviewed_by stays null"
+    },
+    {
+      "version": 7,
+      "date": "2026-10-16",
+      "change": "third read of the AWS pass (E1B, after the fix round): mechanical corrections only; the build flow legend no longer says the old scores are halved at every run (the decay is yesterday weighs half, as in the neutral build); the serving flow edge 5 names the Scan of the block list that the identity row already gives the service; the Scheduler row adds iam:PassRole on the job runtime role, which StartJobRun needs (source s46 added); findings left for the writer in reviews/learning-center-F2-E1B-reread.md; reviewed_by stays null"
     }
   ]
 }
