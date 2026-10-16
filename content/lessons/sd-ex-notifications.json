@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-notifications",
-  "version": 6,
+  "version": 7,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: notifications",
@@ -1681,7 +1681,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 18\n  participant S as EventBridge Scheduler\n  participant R as Release poller\n  participant D as DynamoDB\n  participant Q as SQS channel queue\n  S-)R: every minute, rate schedule\n  R->>D: Query the due index, the sharded minute keys\n  D-->>R: the held items of this minute\n  loop each item\n    opt past its expires_at\n      R->>D: record dropped, the status says so\n    end\n    R-)Q: SendMessage on the channel queue\n    R->>D: record held to queued, held item deleted,<br/>one transaction\n  end\n  Note over R,Q: send first, then change the state, so a crash<br/>in between sends again, which is harmless",
+            "mermaid": "sequenceDiagram\n  autonumber 18\n  participant S as EventBridge Scheduler\n  participant R as Release poller\n  participant D as DynamoDB\n  participant Q as SQS channel queue\n  S-)R: every minute, rate schedule\n  R->>D: Query the due index, the sharded minute keys\n  D-->>R: the held items of this minute\n  loop each item\n    alt past its expires_at\n      R->>D: record dropped, the status says so\n    else still due\n      R-)Q: SendMessage on the channel queue\n      R->>D: record held to queued, held item deleted,<br/>one transaction\n    end\n  end\n  Note over R,Q: send first, then change the state, so a crash<br/>in between sends again, which is harmless",
             "legend": "Solid arrows are synchronous calls with their replies dashed; open arrows are asynchronous hand-offs. Edge is the internal Application Load Balancer, drawn as one lane here and in every sequence diagram below. A rate-based schedule invokes the poller every minute s10; a delay queue could not hold a message for hours, its maximum is 15 minutes s24. The held items and the records are changed together in one all-or-nothing transaction s19.",
             "cites": [
               "s10",
@@ -1699,7 +1699,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 24\n  participant Q as SQS push queue\n  participant W as Push adapter\n  participant D as DynamoDB\n  participant X as APNs or FCM\n  Q-)W: ReceiveMessage, long-poll\n  Note over Q,W: hidden for the visibility<br/>timeout of 30 s\n  W->>D: GetItem the record and the device tokens\n  opt the record already says sent\n    W->>Q: DeleteMessage, nothing to do\n  end\n  W->>X: HTTP/2, collapse id = event id,<br/>expiry = expires_at\n  X-->>W: accepted\n  W->>D: UpdateItem state sent, the attempt\n  W->>Q: DeleteMessage",
+            "mermaid": "sequenceDiagram\n  autonumber 24\n  participant Q as SQS push queue\n  participant W as Push adapter\n  participant D as DynamoDB\n  participant X as APNs or FCM\n  Q-)W: ReceiveMessage, long-poll\n  Note over Q,W: hidden for the visibility<br/>timeout of 30 s\n  W->>D: GetItem the record and the device tokens\n  alt the record already says sent\n    W->>Q: DeleteMessage, nothing to do\n  else not sent yet\n    W->>X: HTTP/2, collapse id = event id,<br/>expiry = expires_at\n    X-->>W: accepted\n    W->>D: UpdateItem state sent, the attempt\n    W->>Q: DeleteMessage\n  end",
             "legend": "Solid arrows are synchronous calls with their replies dashed; open arrows are asynchronous hand-offs. Edge is the internal Application Load Balancer, drawn as one lane here and in every sequence diagram below. Long polling waits up to 20 seconds s25; the visibility timeout defaults to 30 seconds s23; APNs takes the collapse identifier and the expiry on its provider API s2; the adapter's reads and writes go over the gateway endpoint s11.",
             "cites": [
               "s11",
@@ -1722,7 +1722,7 @@
           {
             "type": "diagram",
             "mermaid": "sequenceDiagram\n  autonumber 31\n  participant W as Adapter\n  participant Q as SQS queue\n  participant P1 as Primary provider\n  participant P2 as Secondary provider\n  participant DLQ as Dead-letter queue\n  W->>P1: send\n  P1--xW: a timeout or a 5xx\n  W->>Q: ChangeMessageVisibility,<br/>backoff with jitter\n  Note over W,P1: up to 3 attempts, a hard<br/>failure is not retried\n  opt the breaker is open\n    W->>P2: send through the secondary\n  end\n  opt the last receive fails\n    Note over W,Q: the record is marked dead with the last error,<br/>the message is not deleted\n    Q-)DLQ: the redrive policy moves it after<br/>6 receives, 3 on each provider\n  end",
-            "legend": "Solid arrows are synchronous calls with their replies dashed; open arrows are asynchronous hand-offs. Edge is the internal Application Load Balancer, drawn as one lane here and in every sequence diagram below. Each retry extends the visibility timeout with backoff and jitter s23; after maxReceiveCount receives the redrive policy moves the message to the dead-letter queue, and the adapter never sends to it itself s26; the oldest-message age is the alarm and the scaling signal s27.",
+            "legend": "Solid arrows are synchronous calls with their replies dashed; open arrows are asynchronous hand-offs. Edge is the internal Application Load Balancer, drawn as one lane here and in every sequence diagram below. Each retry extends the visibility timeout with backoff and jitter s23; after maxReceiveCount receives the redrive policy moves the message to the dead-letter queue, and the adapter never sends to it itself s26; the oldest-message age is the alarm and the scaling signal for messages received fewer than 3 times, because a message received 3 or more times drops out of that metric s27.",
             "cites": [
               "s23",
               "s26",
@@ -1731,7 +1731,7 @@
           },
           {
             "type": "p",
-            "text": "The adapter service scales on the age of the oldest message in its own queue, not on the queue length, because age is the number the delivery targets are written in. A provider outage shows up as a rising age in one channel's queue only; the other channels' queues are separate by construction. A message that is received 6 times without success moves to the dead-letter queue by itself, so the adapter holds no permission on it; its depth is an alarm.",
+            "text": "The adapter service scales on the age of the oldest message in its own queue, not on the queue length, because age is the number the delivery targets are written in. A provider that slows down shows up as a rising age in one channel's queue only; the other channels' queues are separate by construction. A message received 3 or more times drops out of the age metric, so for a provider that fails outright the breaker state and the dead-letter depth are the alarms. A message that is received 6 times without success moves to the dead-letter queue by itself, so the adapter holds no permission on it.",
             "cites": [
               "s27",
               "s28"
@@ -1751,7 +1751,7 @@
           },
           {
             "type": "p",
-            "text": "Part c: the provider callbacks that settle the status."
+            "text": "Part d: the provider callbacks that settle the status."
           },
           {
             "type": "diagram",
@@ -1774,7 +1774,7 @@
           },
           {
             "type": "table",
-            "caption": "Identity and network: who may call what, over which endpoint, and what is public. Nothing here is public: the load balancer is internal, the services run in private subnets across three Availability Zones, each Fargate task in awsvpc mode under its own IAM task role, each function under its execution role. Phone numbers and device tokens are readable only by the adapters' role.",
+            "caption": "Identity and network: who may call what, over which endpoint, and what is public. Nothing here accepts a connection from the internet: the load balancer is internal, the services run in private subnets across three Availability Zones, and the NAT gateways in public subnets only send out; each Fargate task runs in awsvpc mode under its own IAM task role, each function under its execution role. Phone numbers and device tokens are readable only by the adapters' role.",
             "columns": [
               "service",
               "may call",
@@ -1796,13 +1796,13 @@
               ],
               [
                 "Channel adapters (task roles, one per channel)",
-                "ReceiveMessage, DeleteMessage and ChangeMessageVisibility on their own queue; UpdateItem on the notifications table; the device token and address tables; SendEmail or SendTextMessage",
+                "ReceiveMessage, DeleteMessage and ChangeMessageVisibility on their own queue; GetItem and UpdateItem on the notifications table; the device token and address tables; SendEmail or SendTextMessage",
                 "SQS, DynamoDB and SES endpoints inside the VPC; NAT gateways to APNs and FCM",
                 "no; private subnets, no inbound rule at all; the only way out is the NAT gateway"
               ],
               [
                 "Release poller and callback handler (execution roles)",
-                "the poller queries the held index, sends to the queues and changes the notifications and held tables in one transaction; the handler updates the notifications table and the suppression flag of the address table",
+                "the poller queries the held index, sends to the queues and changes the notifications and held tables in one transaction; the handler queries the notifications index, updates the notifications table and sets the suppression flag of the address table",
                 "not attached to the VPC; regional endpoints with their roles; the handler is invoked by the SNS topic, whose policy admits SES and SMS events",
                 "no; nothing can call them except the schedule and the topic"
               ],
@@ -2709,6 +2709,11 @@
       "version": 6,
       "date": "2026-10-16",
       "change": "fix round after the second read (batch E1A): the quiet-hours decision is made before the transaction and the record starts in state held (the state the neutral data model already lists), the held item is written in the same transaction, a retry skips held records, the poller sends first and then moves held to queued; one dead-letter path, SQS's redrive after 6 receives (3 attempts on each of two providers), the adapter holds no permission on the dead-letter queue; the operator's replay or discard is drawn (flow node and edge, sequence diagram, identity row); the held table's keys and the sparse sharded index are named; EventBridge Scheduler is a box in the accept flow; the device-token, address and suppression tables are named in the legend; the API and adapter task counts say they include a zone's worth in reserve; reviewed_by stays null"
+    },
+    {
+      "version": 7,
+      "date": "2026-10-16",
+      "change": "Third read of the AWS pass (batch E1A), Claude (Sonnet 5.5), a different instance from the writer and the two earlier readers; mechanical fixes only: the release-poller and push-adapter sequences use alt and else where a record past its expiry or already sent must not reach the send step (they were opt blocks followed by an unconditional send); the second diagram labelled Part c is now Part d; the identity-table caption no longer says nothing is public without naming the NAT gateways in public subnets; the adapter row gives GetItem as well as UpdateItem and the handler row its index Query; the oldest-message age is limited to messages received fewer than 3 times, as the SQS pages say; findings for the writer in reviews/learning-center-F2-E1A-reread.md; reviewed_by stays null"
     }
   ]
 }

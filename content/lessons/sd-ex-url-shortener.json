@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-url-shortener",
-  "version": 8,
+  "version": 9,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: URL shortener and key-value service",
@@ -1399,7 +1399,7 @@
           },
           {
             "type": "table",
-            "caption": "Identity and network: who may call what, over which endpoint, and what is public. The load balancer is the only public entry; the services run in private subnets across three Availability Zones, the Fargate tasks in awsvpc mode with one elastic network interface each, each under its own IAM role, so permissions belong to the task or the function, not to a host. A task in a private subnet pulls its image through an Amazon ECR interface endpoint (or a NAT gateway), and this design uses the endpoint.",
+            "caption": "Identity and network: who may call what, over which endpoint, and what is public. The load balancer is the only public entry; the services run in private subnets across three Availability Zones, the Fargate tasks in awsvpc mode with one elastic network interface each, each under its own IAM role, so permissions belong to the task or the function, not to a host. A task in a private subnet pulls its image through the Amazon ECR interface endpoints and an S3 gateway endpoint (or through a NAT gateway), and this design uses the endpoints.",
             "columns": [
               "service",
               "may call",
@@ -1562,7 +1562,7 @@
                 "option": "Amazon ElastiCache for Valkey, a node-based cluster with a replica in a second zone",
                 "pick_when": "the working set is known and held all month, and the service wants its own TTL, jitter, negative entries and explicit invalidation",
                 "avoid_when": "the working set is small or swings widely, so sized nodes sit idle",
-                "example": "For this design: chosen. The 12 GB hot set fits one cache.r7g.xlarge node with room to spare, a replica in another zone covers a node loss, and the redirect service sets TTL with jitter, a shorter TTL for negative entries and the DEL on a disable itself."
+                "example": "For this design: chosen. The 12 GB hot set fits one cache.r7g.xlarge node with room to spare, a replica in another zone covers a node loss, the redirect service sets TTL with jitter and a shorter TTL for negative entries, and the link API does the DEL on a create or a disable."
               },
               {
                 "option": "Amazon ElastiCache Serverless",
@@ -2345,8 +2345,8 @@
   "provenance": {
     "generated_by": "Claude (Fable 5.1) by hand, Scout learning center M4a; format v2 restructure by hand, Claude (Fable 5.1), Scout learning center F2-E1",
     "generated_on": "2026-10-12",
-    "reviewed_by": null,
-    "reviewed_on": null
+    "reviewed_by": "a re-reader (Claude Sonnet 5.5, a different instance from the writer and the first reader), Scout learning center, format v2 E1A AWS pass, re-read",
+    "reviewed_on": "2026-10-16"
   },
   "changelog": [
     {
@@ -2388,6 +2388,11 @@
       "version": 8,
       "date": "2026-10-16",
       "change": "fix round after the second read (batch E1A): the stats endpoint has a flow edge (neutral and AWS), a sequence diagram and the Query permission; a create deletes the cache entry of the code, so a negative entry cannot hide a new custom alias (stated in the core flow, drawn in the neutral core flow and the AWS create sequence); aggregator sized at 4 and 40 shards with its cost cells and totals recomputed; provisioned-shard and MSK wording; ECR path clause; cost-per-billion sentence; reviewed_by stays null"
+    },
+    {
+      "version": 9,
+      "date": "2026-10-16",
+      "change": "Third read of the AWS pass (batch E1A), Claude (Sonnet 5.5), a different instance from the writer and the two earlier readers; accepted with reviewed_by set; two mechanical fixes: the redirect-cache decision said the redirect service does the DEL on a disable, it is the link API that does it, on a create as well as a disable (flow edge 10, the create and disable sequences, the identity table); the identity-table caption names the S3 gateway endpoint beside the ECR interface endpoints, which the cited ECR page requires for Fargate image pulls; every earlier finding confirmed fixed, prices and cost cells recomputed, findings left in reviews/learning-center-F2-E1A-reread.md"
     }
   ]
 }

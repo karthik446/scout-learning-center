@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-chat",
-  "version": 8,
+  "version": 9,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: chat and presence",
@@ -1433,7 +1433,7 @@
           },
           {
             "type": "table",
-            "caption": "Identity and network: who may call what, over which endpoint, and what is public. The load balancer is the only public entry; everything else runs in private subnets across three Availability Zones, the Fargate tasks in awsvpc mode with one elastic network interface each, each service under its own IAM task role.",
+            "caption": "Identity and network: who may call what, over which endpoint, and what is public. The load balancer is the only public entry; the services and both caches run in private subnets across three Availability Zones, and the NAT gateways in public subnets only send out; the Fargate tasks run in awsvpc mode with one elastic network interface each, each service under its own IAM task role.",
             "columns": [
               "service",
               "may call",
@@ -1510,7 +1510,7 @@
                 "option": "Network Load Balancer, TCP listener, TLS terminated in the gateways",
                 "pick_when": "the connection count is high enough that the TLS capacity unit dominates, and the team can deliver certificates to the tasks and spend their CPU on encryption",
                 "avoid_when": "nobody wants to manage certificates on tasks, or the encryption CPU is not available",
-                "example": "For this design: the first lever, not the first choice. A TCP unit holds 100,000 active connections, so the same sessions would cost about $290, set by the bytes processed (300 bytes a delivered frame, assumption), not by the connection count; the price is encryption work on 150 tasks and a certificate to distribute."
+                "example": "For this design: the first lever, not the first choice. A TCP unit holds 100,000 active connections, so the same sessions would cost about $290, set by the bytes processed (300 bytes a delivered frame, assumption; sends and heartbeats not counted), not by the connection count; the price is encryption work on 150 tasks and a certificate to distribute."
               },
               {
                 "option": "Application Load Balancer in front of Fargate tasks",
@@ -1551,7 +1551,7 @@
                 "option": "Amazon DynamoDB, the Standard table class",
                 "pick_when": "throughput is the dominant cost: little data, many requests",
                 "avoid_when": "storage is the dominant cost, as for a history that is kept for ever",
-                "example": "For this design: not chosen. Its storage is $0.25 per GB-month against $0.10 for Standard-IA, so the history would cost about $63,800 a month in all instead of about $41,400."
+                "example": "For this design: not chosen. Its storage is $0.25 per GB-month against $0.10 for Standard-IA, so the history would cost about $64,000 a month in all instead of about $41,700."
               },
               {
                 "option": "Amazon Keyspaces (for Apache Cassandra)",
@@ -1706,7 +1706,7 @@
               [
                 "Security",
                 "a strong identity foundation; security at all layers; protect data in transit and at rest",
-                "one IAM task role per service, the gateways with no write on the messages table; TLS on the listener; both caches and the services in private subnets; message bodies never logged",
+                "one IAM task role per service, the gateways writing only receipt cursors and never a message; TLS on the listener; both caches and the services in private subnets; message bodies never logged",
                 "the service can read message bodies, because end-to-end encryption is a non-goal",
                 "s18"
               ],
@@ -2314,7 +2314,12 @@
     {
       "version": 8,
       "date": "2026-10-16",
-      "change": "fix round after the second read (batch E1A): flow edges and steps for the push service reading the session registry, the gateway reading the message store for a resync and writing the receipt cursors, and the push providers box (neutral and AWS flows, 12 boxes each); the retry branch of the send sequence drawn before the persist step; a sentence reconciling the event stream with the neutral hand-off; NAT gateways in the identity table; SNS publish pricing with PublishBatch; MSK wording; reviewed_by stays null"
+      "change": "fix round after the second read (batch E1A): flow edges and steps for the push service reading the session registry, the gateway reading the message store for a resync and writing the receipt cursors, and a second session-registry box read by the push service (neutral and AWS flows, 12 boxes each; the push providers are not drawn); the retry branch of the send sequence drawn before the persist step; a sentence reconciling the event stream with the neutral hand-off; NAT gateways in the identity table; SNS publish pricing with PublishBatch; MSK wording; reviewed_by stays null"
+    },
+    {
+      "version": 9,
+      "date": "2026-10-16",
+      "change": "Third read of the AWS pass (batch E1A), Claude (Sonnet 5.5), a different instance from the writer and the two earlier readers; mechanical fixes only: the identity-table caption no longer says everything else runs in private subnets (the NAT gateways sit in public subnets); the Standard-class comparison uses the table's own $41,700 (with reads) and $64,000, not $41,400 and $63,800; the TCP listener cell says sends and heartbeats are not counted in its bytes; the security row says the gateways write only receipt cursors; the version 8 changelog line no longer claims a push providers box; findings for the writer in reviews/learning-center-F2-E1A-reread.md; reviewed_by stays null"
     }
   ]
 }
