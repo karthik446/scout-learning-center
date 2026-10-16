@@ -22,22 +22,55 @@
     }
   }
 
+  // Mermaid configuration is global: finish the default group before configuring
+  // the opt-in sequences, and serialize theme changes through the same queue.
+  var mermaidRender = Promise.resolve();
   function renderMermaid(theme) {
     if (!window.mermaid) { return; }
-    try {
+    mermaidRender = mermaidRender.then(async function () {
+      var styled = [];
+      var ordinary = [];
+      document.querySelectorAll(".mermaid").forEach(function (el) {
+        if (!el.hasAttribute("data-src")) { el.setAttribute("data-src", el.textContent); }
+        el.removeAttribute("data-processed");
+        el.textContent = el.getAttribute("data-src");
+        (el.parentElement.getAttribute("data-diagram-style") === "sequence" ? styled : ordinary).push(el);
+      });
       window.mermaid.initialize({
         startOnLoad: false,
         theme: theme === "dark" ? "dark" : "default",
         securityLevel: "strict",
       });
-      document.querySelectorAll(".mermaid").forEach(function (el) {
-        if (!el.hasAttribute("data-src")) { el.setAttribute("data-src", el.textContent); }
-        el.removeAttribute("data-processed");
-        el.textContent = el.getAttribute("data-src");
+      if (ordinary.length) { await window.mermaid.run({ nodes: ordinary }); }
+      if (!styled.length) { return; }
+      var dark = theme === "dark";
+      var fg = dark ? "#e6e6e6" : "#1a1a1a";
+      var line = dark ? "#b3b3b3" : "#4d4d4d";
+      var border = dark ? "#7b8aa5" : "#8795b1";
+      var chip = dark ? "#22273a" : "#eef2ff";
+      window.mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: "strict",
+        theme: "base",
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+        themeVariables: {
+          darkMode: dark, fontSize: "16px",
+          primaryColor: chip, primaryTextColor: fg, primaryBorderColor: border,
+          lineColor: line, actorBkg: chip, actorBorder: border, actorTextColor: fg,
+          signalColor: line, signalTextColor: fg,
+          noteBkgColor: dark ? "#1d2024" : "#f6f8fa",
+          noteTextColor: fg, noteBorderColor: border,
+          labelBoxBkgColor: chip, labelBoxBorderColor: border,
+          labelTextColor: fg, loopTextColor: fg,
+        },
+        sequence: {
+          useMaxWidth: true, actorMargin: 36, width: 130, height: 44,
+          boxMargin: 12, boxTextMargin: 8, noteMargin: 16, messageMargin: 36,
+          mirrorActors: false, wrap: true, wrapPadding: 12,
+        },
       });
-      var p = window.mermaid.run({ querySelector: ".mermaid" });
-      if (p && p.catch) { p.catch(function () { /* fallback text stays visible */ }); }
-    } catch (e) { /* fallback text stays visible */ }
+      await window.mermaid.run({ nodes: styled });
+    }).catch(function () { /* fallback text stays visible */ });
   }
 
   applyHljsTheme(currentTheme());

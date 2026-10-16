@@ -541,6 +541,32 @@ class Pages(Fixture):
         plain = build.render_block(pg, {"type": "diagram", "mermaid": "flowchart LR\n  A --> B", "legend": "No sources."})
         self.assertIn('<p class="muted diagram-legend">No sources.</p>', plain)
 
+    def test_news_feed_sequence_style_opt_in(self) -> None:
+        marker = 'data-diagram-style="sequence"'
+        for page in (self.site / "learn" / "lessons").glob("*/index.html"):
+            html_ = page.read_text(encoding="utf-8")
+            if page.parent.name == "sd-ex-news-feed":
+                self.assertEqual(html_.count(marker), 11)
+                marked = re.findall(r'<div class="mermaid-wrap" data-diagram-style="sequence"><pre class="mermaid">(.*?)</pre>', html_, re.S)
+                self.assertEqual(len(marked), 11)
+                self.assertTrue(all(s.startswith("sequenceDiagram") for s in marked))
+                self.assertEqual(html_.count('<div class="mermaid-wrap"><pre class="mermaid">flowchart'), 3)
+            else:
+                self.assertNotIn(marker, html_, page.parent.name)
+
+    def test_styled_diagram_source_stays_text(self) -> None:
+        block = {"type": "diagram", "mermaid": "sequenceDiagram\n  A->>B: call<br/>reply", "legend": "Calls."}
+        original = copy.deepcopy(block)
+        styled = build.render_block(build.Page([], styled_sequences=True), block)
+        plain = build.render_block(build.Page([]), block)
+        self.assertEqual(styled.replace(' data-diagram-style="sequence"', ""), plain)
+        self.assertIn('A-&gt;&gt;B: call&lt;br/&gt;reply', styled)
+        self.assertNotIn("<svg", styled)
+        self.assertEqual(block, original)
+        flow = {"type": "diagram", "mermaid": "flowchart LR\n  A --> B"}
+        self.assertEqual(build.render_block(build.Page([], styled_sequences=True), flow),
+                         build.render_block(build.Page([]), flow))
+
     def test_table_cites_print_once_in_the_caption(self) -> None:
         for page in (self.lesson, self.exercise):
             self.assertIsNone(re.search(r'</table></div>\s*<p class="cite-row">', page))

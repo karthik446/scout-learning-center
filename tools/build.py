@@ -423,11 +423,12 @@ class Page:
     """What the blocks of one :2 page need from the page shell: whether it holds code or a diagram, the numbered sources,
     and whether it is a design exercise (the decision table's last column reads 'For this design' there)."""
 
-    def __init__(self, sources: list[dict], *, exercise: bool = False) -> None:
+    def __init__(self, sources: list[dict], *, exercise: bool = False, styled_sequences: bool = False) -> None:
         self.number = {s["id"]: n for n, s in enumerate(sources, 1)}   # scan.py keeps ids s1..sN in order
         self.code = False
         self.diagram = False
         self.exercise = exercise
+        self.styled_sequences = styled_sequences
 
 
 def cite_marks(pg: Page, cites: list[str] | None) -> str:
@@ -490,7 +491,8 @@ def render_block(pg: Page, b: dict) -> str:
     if t == "diagram":
         pg.diagram = True
         src = esc(b["mermaid"])
-        return f'<div class="mermaid-wrap"><pre class="mermaid">{src}</pre><pre class="mermaid-fallback">{src}</pre></div>{legend_html(pg, b)}'
+        style = ' data-diagram-style="sequence"' if pg.styled_sequences and scan.SEQUENCE_START.match(b["mermaid"]) else ""
+        return f'<div class="mermaid-wrap"{style}><pre class="mermaid">{src}</pre><pre class="mermaid-fallback">{src}</pre></div>{legend_html(pg, b)}'
     raise BuildError(f"unknown block type {t!r}")
 
 
@@ -679,7 +681,7 @@ def render_exercise_v2(lib: Library, l: dict) -> tuple[str, str]:
     here = f"/learn/lessons/{lid}/"
     mid, _, entry = lib.home_of[lid]
     mod_here = f"/learn/modules/{mid}/"
-    pg = Page(l["sources"], exercise=True)
+    pg = Page(l["sources"], exercise=True, styled_sequences=lid == "sd-ex-news-feed")
     body = [f"<h1>{esc(l['title'])}</h1>", exercise_attribution(l["provenance"])]
     krow = ["Concept: " + a(f"/learn/keys/{l['primary_key']}/", esc(lib.keys[l["primary_key"]]["display"]))]
     if l["secondary_keys"]:
