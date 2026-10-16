@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-chat",
-  "version": 12,
+  "version": 13,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: chat and presence",
@@ -1447,7 +1447,7 @@
           },
           {
             "type": "p",
-            "text": "The condition on the sort key costs nothing extra and does one thing: if two conversation servers ever believe they own a conversation after a failover, the second write of a message id fails instead of replacing the first. Deduplication of a retried send is the owner's job: its in-memory tail holds the recent client_msg_ids and is rebuilt by a Query of the table when the conversation moves (part e), so no second item per message is written. The ack is sent only after DynamoDB answers 200, which is the neutral design's rule that the sender hears nothing before the message is durable. The send check reads membership from the gateway's own cache of the conversation record, filled by a GetItem when it is missing. The gateways refresh the list of conversation-server tasks by calling Cloud Map's DiscoverInstances on a timer, sort it by instance id and hash over it.",
+            "text": "The condition on the sort key does one thing: if two conversation servers ever believe they own a conversation after a failover, the second write of a message id fails instead of replacing the first. Deduplication of a retried send is the owner's job: its in-memory tail holds the recent client_msg_ids and is rebuilt by a Query of the table when the conversation moves (part e), so no second item per message is written. The ack is sent only after DynamoDB answers 200, which is the neutral design's rule that the sender hears nothing before the message is durable. The send check reads membership from the gateway's own cache of the conversation record, filled by a GetItem when it is missing. The gateways refresh the list of conversation-server tasks by calling Cloud Map's DiscoverInstances on a timer, sort it by instance id and hash over it.",
             "cites": [
               "s13",
               "s14"
@@ -1567,7 +1567,7 @@
               ],
               [
                 "Push service and search indexer (task roles)",
-                "read the event stream, each keeping its position in a lease table of its own (GetItem, PutItem and UpdateItem on it) and publishing metrics; the session registry and the push providers (push only)",
+                "read the event stream, each keeping its position in a lease table of its own (a DynamoDB table that its consumer library keeps, with the table actions the library needs) and publishing metrics; the session registry and the push providers (push only)",
                 "Kinesis interface endpoint; DynamoDB gateway endpoint; the Valkey port; NAT gateways to APNs and FCM",
                 "no; no inbound rule at all"
               ],
@@ -2450,6 +2450,11 @@
       "version": 12,
       "date": "2026-10-16",
       "change": "fix round 3 after the second re-read (batch E1A): the gateways list the conversation-server tasks with Cloud Map's DiscoverInstances (sorted by instance id, bound 1,000 a call, cells beyond), with the permission and endpoint; DynamoDB storage billed on 600 bytes an item (216 TB a year): message store about $45,300 and $453,000, totals about $67,600 and $673,000, the Standard-class and Standard-IA sentences moved with them; receipts are read (a resync Query) and delivered (the owner fans a receipt frame out); the failure branch of the send is an else of the write; consumer positions in lease tables; legends say what the boxes are and what is not drawn; presence reads sized by clause; reviewed_by stays null"
+    },
+    {
+      "version": 13,
+      "date": "2026-10-16",
+      "change": "Fourth read of the AWS pass (batch E1A), Claude (Sonnet 5.5), a different instance from the writer and the three earlier readers; mechanical fixes only: the send paragraph no longer says the sort-key condition costs nothing extra (the cited pages do not say it); the identity table no longer lists three actions (GetItem, PutItem, UpdateItem) as the whole access of the stream consumers to their lease tables, which AWS lists with more (Scan, DeleteItem, table creation) on its KCL permissions page; findings for the writer in reviews/learning-center-F2-E1A-reread3.md; reviewed_by stays null"
     }
   ]
 }
