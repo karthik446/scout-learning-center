@@ -1,8 +1,8 @@
 {
-  "schema_version": "learning-center-lesson:1",
+  "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-llm-gateway",
-  "version": 2,
+  "version": 3,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: LLM gateway",
@@ -19,13 +19,24 @@
     "scaling",
     "cost-efficiency"
   ],
-  "summary": "An AI-era design exercise: one internal API in front of hosted model providers and a self-hosted fleet, with per-team keys, token-based limits, budgets, safe failover, streaming and redacted logging. The reference answer sizes tokens per minute against per-minute provider limits, uses prompt caching deliberately with its documented pricing, retries only before the first byte, bounds budget overshoot to one aggregation interval, and treats the gateway as a rate limiter, a cost allocator and a privacy boundary.",
+  "summary": "Design a shared model gateway with tenant-scoped admission, streaming, provider-aware limits and privacy controls. Reserve worst-case request cost before dispatch, distinguish retry safety from billing certainty, and map hosted and self-hosted deployment choices to AWS.",
   "detail": [],
-  "in_practice": "",
+  "in_practice": {
+    "blocks": []
+  },
   "subtopics": [],
   "diagram": null,
   "code": [],
-  "technologies": [],
+  "technologies": [
+    "Amazon ECS",
+    "AWS Fargate",
+    "Amazon EC2",
+    "Application Load Balancer",
+    "Amazon DynamoDB",
+    "Amazon SQS",
+    "Amazon S3",
+    "Amazon Bedrock"
+  ],
   "related": [
     "sd-api-design",
     "sd-rate-limiting-overload",
@@ -34,268 +45,1725 @@
     "sd-observability",
     "sd-cost",
     "sd-multi-tenancy",
-    "sd-ex-rate-limiter"
+    "sd-ex-rate-limiter",
+    "sd-aws-well-architected"
   ],
   "sources": [
     {
+      "id": "s1",
+      "title": "LiteLLM gateway documentation",
+      "url": "https://docs.litellm.ai/docs/",
       "kind": "doc",
-      "title": "LiteLLM documentation",
-      "url": "https://docs.litellm.ai/docs/"
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "per-key/team/user budgets"
+      }
     },
     {
+      "id": "s2",
+      "title": "Claude API rate limits",
+      "url": "https://platform.claude.com/docs/en/api/rate-limits",
       "kind": "doc",
-      "title": "Claude Platform docs: Rate limits",
-      "url": "https://platform.claude.com/docs/en/api/rate-limits"
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "input tokens"
+      }
     },
     {
+      "id": "s3",
+      "title": "Claude prompt caching, checked 2026-10-16",
+      "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching",
       "kind": "doc",
-      "title": "Claude Platform docs: Prompt caching",
-      "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching"
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "cache write tokens are 1.25"
+      }
     },
     {
-      "kind": "doc",
+      "id": "s4",
       "title": "vLLM documentation",
-      "url": "https://docs.vllm.ai/en/latest/"
-    },
-    {
-      "kind": "blog",
-      "title": "Stripe: Scaling your API with rate limiters",
-      "url": "https://stripe.com/blog/rate-limiters"
-    },
-    {
+      "url": "https://docs.vllm.ai/en/latest/",
       "kind": "doc",
-      "title": "AWS Well-Architected: Generative AI Lens",
-      "url": "https://docs.aws.amazon.com/wellarchitected/latest/generative-ai-lens/generative-ai-lens.html"
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Continuous batching"
+      }
+    },
+    {
+      "id": "s5",
+      "title": "Stripe rate limiters",
+      "url": "https://stripe.com/blog/rate-limiters",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "token bucket"
+      }
+    },
+    {
+      "id": "s6",
+      "title": "AWS decision guide: Fargate or Lambda",
+      "url": "https://docs.aws.amazon.com/decision-guides/latest/decision-guides/fargate-or-lambda.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "persistent"
+      }
+    },
+    {
+      "id": "s7",
+      "title": "AWS decision guide: choosing containers",
+      "url": "https://docs.aws.amazon.com/decision-guides/latest/decision-guides/choosing-aws-container-service.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "EC2"
+      }
+    },
+    {
+      "id": "s8",
+      "title": "AWS decision guide: databases",
+      "url": "https://docs.aws.amazon.com/decision-guides/latest/decision-guides/databases-on-aws-how-to-choose.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Relational databases"
+      }
+    },
+    {
+      "id": "s9",
+      "title": "AWS decision guide: SQS, SNS or EventBridge",
+      "url": "https://docs.aws.amazon.com/decision-guides/latest/decision-guides/sns-or-sqs-or-eventbridge.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "at-least-once"
+      }
+    },
+    {
+      "id": "s10",
+      "title": "ECS task IAM roles",
+      "url": "https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-iam-roles.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "task IAM roles"
+      }
+    },
+    {
+      "id": "s11",
+      "title": "Fargate task networking",
+      "url": "https://docs.aws.amazon.com/AmazonECS/latest/developerguide/fargate-task-networking.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "private subnet"
+      }
+    },
+    {
+      "id": "s12",
+      "title": "S3 gateway endpoints",
+      "url": "https://docs.aws.amazon.com/vpc/latest/privatelink/vpc-endpoints-s3.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "without requiring an internet gateway"
+      }
+    },
+    {
+      "id": "s13",
+      "title": "SQS VPC endpoint traffic",
+      "url": "https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-internetwork-traffic-privacy.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "HTTPS"
+      }
+    },
+    {
+      "id": "s14",
+      "title": "SQS visibility timeout",
+      "url": "https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-visibility-timeout.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "at-least-once"
+      }
+    },
+    {
+      "id": "s15",
+      "title": "Well-Architected pillars",
+      "url": "https://docs.aws.amazon.com/wellarchitected/latest/framework/the-pillars-of-the-framework.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "sustainability"
+      }
+    },
+    {
+      "id": "s16",
+      "title": "Generative AI Lens",
+      "url": "https://docs.aws.amazon.com/wellarchitected/latest/generative-ai-lens/generative-ai-lens.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "generative AI"
+      }
+    },
+    {
+      "id": "s17",
+      "title": "AWS ECS offer: Linux ARM Fargate as of 2026-10-16; $0.03238/vCPU-hour and $0.00356/GB-hour in us-east-1",
+      "url": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonECS/current/us-east-1/index.json",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "0.0323800000"
+      }
+    },
+    {
+      "id": "s18",
+      "title": "Aurora pricing as of 2026-10-16; Standard Serverless v2 example $0.12/ACU-hour, excludes storage and I/O",
+      "url": "https://aws.amazon.com/rds/aurora/pricing/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "$0.12"
+      }
+    },
+    {
+      "id": "s19",
+      "title": "OpenSearch vector search",
+      "url": "https://docs.aws.amazon.com/opensearch-service/latest/developerguide/vector-search.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "vector"
+      }
+    },
+    {
+      "id": "s20",
+      "title": "OpenSearch pricing as of 2026-10-16; N. Virginia example r6g.xlarge.search $0.335/hour, not a vector capacity benchmark",
+      "url": "https://aws.amazon.com/opensearch-service/pricing/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "$0.335"
+      }
+    },
+    {
+      "id": "s21",
+      "title": "DynamoDB TransactWriteItems",
+      "url": "https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_TransactWriteItems.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "completed atomically"
+      }
+    },
+    {
+      "id": "s22",
+      "title": "DynamoDB transactions and capacity",
+      "url": "https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/transaction-apis.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "DynamoDB performs two underlying"
+      }
+    },
+    {
+      "id": "s23",
+      "title": "Bedrock ConverseStream API",
+      "url": "https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ConverseStream.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "bedrock:InvokeModelWithResponseStream"
+      }
+    },
+    {
+      "id": "s24",
+      "title": "Bedrock interface endpoints",
+      "url": "https://docs.aws.amazon.com/bedrock/latest/userguide/vpc-interface-endpoints.md",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "private"
+      }
+    },
+    {
+      "id": "s25",
+      "title": "Bedrock offer as of 2026-10-16, published 2026-10-14: us-east-1 Nova Lite $0.06/M input and $0.24/M output; Titan V2 $0.02/M input",
+      "url": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonBedrock/current/index.json",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "USE1-TitanEmbeddingV2-Text-input-tokens"
+      }
+    },
+    {
+      "id": "s26",
+      "title": "DynamoDB on-demand pricing as of 2026-10-16; us-east-1 $0.625 per million writes, $0.125 per million reads",
+      "url": "https://aws.amazon.com/dynamodb/pricing/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "$0.625"
+      }
+    },
+    {
+      "id": "s27",
+      "title": "AWS SQS offer as of 2026-10-16; us-east-1 standard requests $0.40 per million",
+      "url": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSQueueService/current/us-east-1/index.json",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "0.0000004000"
+      }
+    },
+    {
+      "id": "s28",
+      "title": "Bedrock Titan embeddings: request-rate quotas are not token-rate quotas",
+      "url": "https://docs.aws.amazon.com/bedrock/latest/userguide/titan-embedding-models.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Requests Per Minute (RPM), not Tokens Per Minute (TPM)"
+      }
     }
   ],
   "practice": null,
   "exercise": {
     "prompt": "Design the company's gateway to large language models: every internal application calls one API that fronts several hosted providers and a self-hosted model fleet. Teams get keys, quotas and budgets; the gateway retries and fails over safely, streams tokens, keeps spend visible, and logs enough to debug without leaking what users typed.",
-    "constraints": [
-      {
-        "heading": "Functional",
-        "body": "One request format for chat completions and embeddings with streaming; per-team keys, token-based rate limits and monthly budgets; routing of a model alias to one or more deployments with fallback; retries that never duplicate a side effect; prompt caching where the provider supports it; request logging with redaction; spend attribution per team and per key."
-      },
-      {
-        "heading": "Scale (assumption)",
-        "body": "200 teams; 5 million requests per day, peak 3x the average; an average request of 3,000 input tokens; 20 percent of requests are embeddings, which return a vector and no output tokens; a chat request averages 400 output tokens; two hosted providers and one self-hosted fleet of open-weight models. Chosen for the exercise; derive the request rate, the token rate and the daily token volume yourself."
-      },
-      {
-        "heading": "Targets (assumption)",
-        "body": "Gateway overhead under 10 ms at p99 on top of the provider; first token streamed within 1 s at p50 for chat; 99.9 percent availability of the gateway itself (providers have their own); a team can never exceed its budget by more than one minute of traffic; no raw prompt is stored unless the team opted in."
-      },
-      {
-        "heading": "Non-goals",
-        "body": "Model quality evaluation itself, prompt authoring tools, fine-tuning, agent orchestration, the self-hosted model servers' internals (treated as deployments with a known capacity)."
-      }
-    ],
+    "constraints": {
+      "type": "table",
+      "caption": "Exercise assumptions and targets; not measured production values.",
+      "columns": [
+        "kind",
+        "constraint"
+      ],
+      "rows": [
+        [
+          "Functional",
+          "One request format for chat completions and embeddings with streaming; per-team keys, token-based rate limits and monthly budgets; routing of a model alias to one or more deployments with fallback; retries that never duplicate a side effect; prompt caching where the provider supports it; request logging with redaction; spend attribution per team and per key."
+        ],
+        [
+          "Traffic assumptions",
+          "200 teams; 5 million requests/day; peak 3 times average."
+        ],
+        [
+          "Token assumptions",
+          "3,000 input tokens/request; 20 percent embeddings; chat averages 400 output tokens."
+        ],
+        [
+          "Deployment assumptions",
+          "Two hosted providers and one self-hosted open-weight fleet."
+        ],
+        [
+          "Targets",
+          "Gateway overhead under 10 ms at p99 on top of the provider; first token streamed within 1 s at p50 for chat; 99.9 percent availability of the gateway itself (providers have their own); a team can never exceed its budget by more than one minute of traffic; no raw prompt is stored unless the team opted in."
+        ],
+        [
+          "Non-goals",
+          "Model quality evaluation itself, prompt authoring tools, fine-tuning, agent orchestration, the self-hosted model servers' internals (treated as deployments with a known capacity)."
+        ]
+      ]
+    },
     "clarifying_questions": [
       {
-        "question": "Whose rate limits matter?",
-        "answer": "Both: the provider's limits per model class, expressed in requests per minute, input tokens per minute and output tokens per minute and signalled by a 429 with a retry-after header, and the gateway's own per-team limits, which must sum to less than the provider's."
+        "q": "Whose rate limits matter?",
+        "a": "Both: the provider's limits per model class, expressed in requests per minute, input tokens per minute and output tokens per minute and signalled by a 429 with a retry-after header, and the gateway's own per-team limits, which must sum to less than the provider's."
       },
       {
-        "question": "What is a safe retry?",
-        "answer": "A retry of a request that produced no output; a chat completion that failed mid-stream is not retried transparently (the client would see duplicated text), it is surfaced as an error with a resumable marker."
+        "q": "What is a safe retry?",
+        "a": "Only an explicitly retryable outcome within the attempt budget. No first byte does not prove no inference or bill. Interrupted streams are not resumed or restarted transparently; same request id returns status, never a second dispatch."
       },
       {
-        "question": "What does the cache cache?",
-        "answer": "Two things: the provider's prompt cache for a shared prefix (system prompt, tools, documents), and an opt-in exact-match response cache at the gateway for deterministic, repeated requests (embeddings, classification with temperature zero)."
+        "q": "What does the cache cache?",
+        "a": "Provider-supported prefixes, plus optional tenant-scoped exact responses under an explicit reuse policy. Temperature zero is not a determinism guarantee."
       },
       {
-        "question": "Can a request choose the provider?",
-        "answer": "It names a model alias; policy maps the alias to deployments in order. A team may pin a deployment for a test, never for production traffic."
+        "q": "Can a request choose the provider?",
+        "a": "It names a model alias; policy maps the alias to deployments in order. A team may pin a deployment for a test, never for production traffic."
       },
       {
-        "question": "What is logged?",
-        "answer": "Metadata always (team, key, model, route, tokens in and out, cached tokens, latency, status); prompt and completion text only for teams that opted in, after redaction of recognisable personal data, with a retention of 30 days (assumption)."
+        "q": "What is logged?",
+        "a": "Metadata always (team, key, model, route, tokens in and out, cached tokens, latency, status); prompt and completion text only for teams that opted in, after redaction of recognisable personal data, with a retention of 30 days (assumption)."
       },
       {
-        "question": "Budgets: hard or soft?",
-        "answer": "Hard at the monthly budget with a 90 percent warning; a team may request a raise, which is a policy change, not a code change."
+        "q": "Budgets: hard or soft?",
+        "a": "Hard admission uses worst-case reservations for all allowed attempts, including in-flight unknown usage; the original one-minute target is strengthened. A 90 percent warning remains a policy setting."
       }
     ],
     "reference_answer": [
       {
         "id": "requirements-and-estimates",
         "title": "Requirements and estimates",
-        "body": [
+        "blocks": [
           {
-            "heading": "Derived numbers: requests and tokens",
-            "body": "5 million requests per day is 58 per second average and 174 at peak. Tokens: 5 million times 3,000 input tokens is 15 billion input tokens per day; the 4 million chat requests (80 percent) times 400 output tokens is 1.6 billion output tokens per day, since the 1 million embedding requests produce none; at peak that is about 520,000 input tokens per second, or 31 million per minute, which is the number to compare against provider limits that are expressed per minute per model class. A provider's limit is a hard ceiling the gateway must stay under across all teams, so the sum of team limits is capped below it with headroom (assumption: 80 percent)."
+            "type": "table",
+            "caption": "Request and token rates; peak multiplies the average by the stated factor.",
+            "columns": [
+              "quantity",
+              "per day",
+              "average per second",
+              "peak per second",
+              "note"
+            ],
+            "rows": [
+              [
+                "All requests",
+                "5 million",
+                "57.87",
+                "173.61",
+                "Rounded interview values: 58 and 174."
+              ],
+              [
+                "Chat requests",
+                "4 million",
+                "46.30",
+                "138.89",
+                "80 percent of traffic."
+              ],
+              [
+                "Embedding requests",
+                "1 million",
+                "11.57",
+                "34.72",
+                "No output tokens."
+              ],
+              [
+                "All input tokens",
+                "15 billion",
+                "173,611",
+                "520,833",
+                "Peak is 31.25 million tokens/minute."
+              ],
+              [
+                "Chat output tokens",
+                "1.6 billion",
+                "18,519",
+                "55,556",
+                "Average output, not admission maximum."
+              ]
+            ]
           },
           {
-            "heading": "Derived numbers: what caching buys",
-            "body": "With a shared prefix of 2,000 of the 3,000 input tokens (system prompt, tool definitions, policy text, assumption), prompt caching changes the economics: the provider documentation prices a cache write at a small premium over the base input price (1.25x for the default five-minute cache) and a cache read at a fraction of it (10 percent of the base input price for most models), with a one-hour cache available at a higher write price; and for most models only uncached input tokens count toward the input-tokens-per-minute limit. The prefix applies to chat requests only (an embedding request carries the text to embed and no system prompt), so 8 billion of the 15 billion daily input tokens (2,000 of each chat request's 3,000; the 3 billion embedding tokens are not cacheable) can become cache reads, cutting both the bill and the limit pressure by a large factor; the gateway's job is to keep the cacheable prefix first and byte-identical across requests so the cache hits."
+            "type": "table",
+            "caption": "Caching and admission assumptions.",
+            "columns": [
+              "quantity",
+              "value",
+              "meaning"
+            ],
+            "rows": [
+              [
+                "Shared chat prefix",
+                "2,000 tokens",
+                "Of the average chat input; embeddings have no system prefix."
+              ],
+              [
+                "Potential cache reads",
+                "8 billion tokens/day",
+                "Prefix volume if every chat prefix hits; an upper bound, not expected hits."
+              ],
+              [
+                "Uncacheable input",
+                "7 billion tokens/day",
+                "Remaining chat input plus embedding input."
+              ],
+              [
+                "Provider headroom",
+                "80 percent of quota",
+                "Illustrative policy; real limits are per provider/model/account/Region."
+              ],
+              [
+                "Prompt cache write, default TTL",
+                "1.25 times base input price; 5 minutes",
+                "Claude documentation, not a universal Bedrock rate."
+              ],
+              [
+                "Longer cache write",
+                "2 times base input price; 1 hour",
+                "Claude documentation; eligible models and minimum prefix lengths vary."
+              ],
+              [
+                "Cache read multiplier",
+                "0.1 times base input for standard models",
+                "Newer named models have lower multipliers; check the selected model’s documentation."
+              ],
+              [
+                "Maximum output for costing",
+                "1,024 tokens per chat attempt",
+                "New explicit cap assumption; reservation uses maximum input size and allowed attempts too."
+              ],
+              [
+                "Usage retention",
+                "30 days",
+                "Original opt-in text retention assumption; metadata policy separately defined."
+              ]
+            ],
+            "cites": [
+              "s3",
+              "s2"
+            ]
           },
           {
-            "heading": "The latency shape",
-            "body": "The provider's time to first token is of the order of hundreds of milliseconds (assumption) and dominates; the gateway adds one authentication lookup, one limit check and one routing decision, all local or in-memory, so the 10 ms overhead target is met if nothing on the hot path crosses the network except the provider call itself."
+            "type": "p",
+            "text": "The original latency argument assumed no network call on the hot path. Shared hard budgets need coordinated state, so that is not a proof of the overhead target. Measure admission, TLS and streaming under load; the proposed durable reservation path may require revisiting the target rather than calling an unmeasured number achieved."
+          },
+          {
+            "type": "p",
+            "text": "A minute of delayed aggregation does not bound spend by itself: requests may be in flight much longer, and their final usage is unknown. This design strengthens the original contract with a worst-case reservation covering every allowed billable attempt before dispatch. The asynchronous usage log is for showback, not the authority that permits more spend."
           }
         ]
       },
       {
         "id": "high-level-design",
         "title": "High-level design",
-        "body": [
+        "blocks": [
           {
-            "heading": "Container view",
-            "body": "Stateless gateway nodes authenticate the key, check the team's token buckets and budget, pick a deployment through the router (alias to an ordered list of hosted or self-hosted deployments, with health and limit state per deployment), and proxy the request with streaming. Keys, policies and budgets live in a small store cached on every node; token counters live in a shared counter store with the same local-first correction loop as the rate limiter exercise. Every request writes a redacted log record; an aggregator turns the log into spend per team and per key, which feeds the budget check and a review of routing decisions. Self-hosted deployments are model servers with continuous batching behind an OpenAI-compatible API (the vLLM documentation describes that server shape); the open-source LiteLLM proxy documents the same feature set (virtual keys with budgets per key, team and user, spend tracking, fallbacks across deployments, guardrails) and is the reference for the shape."
+            "type": "p",
+            "text": "Stateless gateway tasks enforce policy and proxy streams; durable request reservations coordinate spend. Local token buckets receive leased shares of a global provider limit rather than each assuming it owns the whole quota. Exact response caches are optional, tenant-scoped and bypassed when semantics or privacy prohibit reuse."
+          },
+          {
+            "type": "flow",
+            "nodes": [
+              {
+                "id": "APP",
+                "label": "Internal applications",
+                "kind": "actor"
+              },
+              {
+                "id": "GW",
+                "label": "Gateway and router",
+                "kind": "service"
+              },
+              {
+                "id": "POL",
+                "label": "Keys and policy",
+                "kind": "store"
+              },
+              {
+                "id": "RES",
+                "label": "Budget and admission ledger",
+                "kind": "store"
+              },
+              {
+                "id": "CA",
+                "label": "Exact response cache",
+                "kind": "store"
+              },
+              {
+                "id": "P1",
+                "label": "Hosted provider A",
+                "kind": "service"
+              },
+              {
+                "id": "P2",
+                "label": "Hosted provider B",
+                "kind": "service"
+              },
+              {
+                "id": "SH",
+                "label": "Self-hosted model fleet",
+                "kind": "service"
+              },
+              {
+                "id": "LOG",
+                "label": "Durable usage work",
+                "kind": "queue"
+              },
+              {
+                "id": "AG",
+                "label": "Usage aggregator",
+                "kind": "service"
+              },
+              {
+                "id": "EV",
+                "label": "Usage and routing review",
+                "kind": "store"
+              }
+            ],
+            "edges": [
+              {
+                "from": "APP",
+                "to": "GW",
+                "kind": "sync",
+                "label": "Authenticated model request",
+                "short": "Request"
+              },
+              {
+                "from": "GW",
+                "to": "POL",
+                "kind": "sync",
+                "label": "Resolve key policy and revocation",
+                "short": "Policy"
+              },
+              {
+                "from": "GW",
+                "to": "RES",
+                "kind": "sync",
+                "label": "Reserve request and attempt budget",
+                "short": "Reserve"
+              },
+              {
+                "from": "GW",
+                "to": "CA",
+                "kind": "sync",
+                "label": "Tenant-scoped exact cache lookup",
+                "short": "Cache"
+              },
+              {
+                "from": "GW",
+                "to": "P1",
+                "kind": "sync",
+                "label": "Stream primary route",
+                "short": "Primary"
+              },
+              {
+                "from": "GW",
+                "to": "P2",
+                "kind": "sync",
+                "label": "Policy-approved fallback only",
+                "short": "Fallback"
+              },
+              {
+                "from": "GW",
+                "to": "SH",
+                "kind": "sync",
+                "label": "Self-hosted route when admitted",
+                "short": "Self-hosted"
+              },
+              {
+                "from": "GW",
+                "to": "RES",
+                "kind": "sync",
+                "label": "Settle or retain unknown reservation",
+                "short": "Settle"
+              },
+              {
+                "from": "GW",
+                "to": "LOG",
+                "kind": "async",
+                "label": "Dispatch durable usage intent",
+                "short": "Dispatch"
+              },
+              {
+                "from": "LOG",
+                "to": "AG",
+                "kind": "async",
+                "label": "Deliver usage event",
+                "short": "Deliver"
+              },
+              {
+                "from": "AG",
+                "to": "EV",
+                "kind": "sync",
+                "label": "Idempotent usage and review rollup",
+                "short": "Rollup"
+              }
+            ],
+            "frames": [],
+            "steps": [
+              {
+                "edge": 0,
+                "caption": "APP to GW: Authenticated model request"
+              },
+              {
+                "edge": 1,
+                "caption": "GW to POL: Resolve key policy and revocation"
+              },
+              {
+                "edge": 2,
+                "caption": "GW to RES: Reserve request and attempt budget"
+              },
+              {
+                "edge": 3,
+                "caption": "GW to CA: Tenant-scoped exact cache lookup"
+              },
+              {
+                "edge": 4,
+                "caption": "GW to P1: Stream primary route"
+              },
+              {
+                "edge": 5,
+                "caption": "GW to P2: Policy-approved fallback only"
+              },
+              {
+                "edge": 6,
+                "caption": "GW to SH: Self-hosted route when admitted"
+              },
+              {
+                "edge": 7,
+                "caption": "GW to RES: Settle or retain unknown reservation"
+              },
+              {
+                "edge": 8,
+                "caption": "GW to LOG: Dispatch durable usage intent"
+              },
+              {
+                "edge": 9,
+                "caption": "LOG to AG: Deliver usage event"
+              },
+              {
+                "edge": 10,
+                "caption": "AG to EV: Idempotent usage and review rollup"
+              }
+            ],
+            "legend": "Router is inside the gateway. Hosted routes are alternatives, not a fan-out to every provider. The usage queue is backed by durable intents; accounting remains correct if dispatch fails."
+          },
+          {
+            "type": "p",
+            "text": "LiteLLM documents virtual keys, team budgets, central logging and fallback routing. vLLM documents continuous batching and efficient attention-memory management. These are implementation references, not evidence that this gateway meets its latency or spend contract.",
+            "cites": [
+              "s1",
+              "s4"
+            ]
           }
-        ],
-        "diagram": {
-          "source": "flowchart LR\n  A[Internal apps and agents] -->|one API, streaming| GW[Gateway nodes: auth, limits, routing]\n  GW --> KEY[(Keys, teams, policies, budgets)]\n  GW --> CNT[(Token counters: per team per minute)]\n  GW --> RT[Router: model alias to deployments, fallback order]\n  RT --> P1{{Hosted provider A}}\n  RT --> P2{{Hosted provider B}}\n  RT --> SH[Self-hosted model servers: continuous batching]\n  GW --> CACHE[(Response cache: exact-match, opt-in)]\n  GW --> LOG[[request log: redacted prompts, tokens, latency, route]]\n  LOG --> SPEND[Spend and usage aggregator]\n  SPEND --> KEY\n  LOG --> EVAL[Evaluation and routing review]",
-          "legend": "Boxes are containers; cylinders are stores; double brackets are logs; hexagons are external providers."
-        }
+        ]
+      },
+      {
+        "id": "building-it-on-aws",
+        "title": "Building it on AWS",
+        "blocks": [
+          {
+            "type": "flow",
+            "nodes": [
+              {
+                "id": "APP",
+                "label": "Internal applications",
+                "kind": "actor"
+              },
+              {
+                "id": "EDGE",
+                "label": "Internal Application Load Balancer",
+                "kind": "service"
+              },
+              {
+                "id": "GW",
+                "label": "ECS Fargate gateway and router",
+                "kind": "service"
+              },
+              {
+                "id": "POL",
+                "label": "DynamoDB policy and requests",
+                "kind": "store"
+              },
+              {
+                "id": "P1",
+                "label": "Amazon Bedrock",
+                "kind": "service"
+              },
+              {
+                "id": "P2",
+                "label": "External hosted provider",
+                "kind": "service"
+              },
+              {
+                "id": "SH",
+                "label": "ECS on EC2 model servers",
+                "kind": "service"
+              },
+              {
+                "id": "CA",
+                "label": "Gateway local exact cache",
+                "kind": "store"
+              }
+            ],
+            "edges": [
+              {
+                "from": "APP",
+                "to": "EDGE",
+                "kind": "sync",
+                "label": "HTTPS over private corporate connectivity",
+                "short": "HTTPS"
+              },
+              {
+                "from": "EDGE",
+                "to": "GW",
+                "kind": "sync",
+                "label": "HTTPS stream proxy",
+                "short": "Forward"
+              },
+              {
+                "from": "GW",
+                "to": "POL",
+                "kind": "sync",
+                "label": "GetItem policy and TransactWriteItems reservation",
+                "short": "Reserve"
+              },
+              {
+                "from": "GW",
+                "to": "CA",
+                "kind": "sync",
+                "label": "Tenant-scoped local cache read",
+                "short": "Cache"
+              },
+              {
+                "from": "GW",
+                "to": "P1",
+                "kind": "sync",
+                "label": "ConverseStream or InvokeModel over endpoint",
+                "short": "Bedrock"
+              },
+              {
+                "from": "GW",
+                "to": "P2",
+                "kind": "sync",
+                "label": "HTTPS through controlled NAT egress",
+                "short": "External"
+              },
+              {
+                "from": "GW",
+                "to": "SH",
+                "kind": "sync",
+                "label": "HTTPS private model endpoint",
+                "short": "Self-hosted"
+              }
+            ],
+            "frames": [
+              {
+                "id": "apps",
+                "title": "VPC private services",
+                "nodes": [
+                  "EDGE",
+                  "GW",
+                  "CA"
+                ]
+              },
+              {
+                "id": "gpu",
+                "title": "VPC model fleet",
+                "nodes": [
+                  "SH"
+                ]
+              }
+            ],
+            "steps": [
+              {
+                "edge": 0,
+                "caption": "APP to EDGE: HTTPS over private corporate connectivity"
+              },
+              {
+                "edge": 1,
+                "caption": "EDGE to GW: HTTPS stream proxy"
+              },
+              {
+                "edge": 2,
+                "caption": "GW to POL: GetItem policy and TransactWriteItems reservation"
+              },
+              {
+                "edge": 3,
+                "caption": "GW to CA: Tenant-scoped local cache read"
+              },
+              {
+                "edge": 4,
+                "caption": "GW to P1: ConverseStream or InvokeModel over endpoint"
+              },
+              {
+                "edge": 5,
+                "caption": "GW to P2: HTTPS through controlled NAT egress"
+              },
+              {
+                "edge": 6,
+                "caption": "GW to SH: HTTPS private model endpoint"
+              }
+            ],
+            "legend": "Request half of the neutral gateway. Router and opt-in response cache live inside each gateway task; cache loss affects hit rate, not correctness. One VPC across multiple Availability Zones. Bedrock is a regional service reached by interface endpoint; external fallback explicitly needs internet egress. Sources: s7, s23, s24.",
+            "cites": [
+              "s7",
+              "s11",
+              "s23",
+              "s24"
+            ]
+          },
+          {
+            "type": "flow",
+            "nodes": [
+              {
+                "id": "GW",
+                "label": "ECS Fargate gateway",
+                "kind": "service"
+              },
+              {
+                "id": "DB",
+                "label": "DynamoDB request and budget ledger",
+                "kind": "store"
+              },
+              {
+                "id": "DIS",
+                "label": "ECS intent dispatcher",
+                "kind": "service"
+              },
+              {
+                "id": "Q",
+                "label": "SQS standard usage queue",
+                "kind": "queue"
+              },
+              {
+                "id": "AG",
+                "label": "ECS usage aggregator",
+                "kind": "service"
+              },
+              {
+                "id": "S3",
+                "label": "S3 redacted audit records",
+                "kind": "store"
+              },
+              {
+                "id": "VIEW",
+                "label": "DynamoDB usage rollups",
+                "kind": "store"
+              },
+              {
+                "id": "ADMIN",
+                "label": "Usage and routing reviewers",
+                "kind": "actor"
+              }
+            ],
+            "edges": [
+              {
+                "from": "GW",
+                "to": "DB",
+                "kind": "sync",
+                "label": "TransactWriteItems settlement plus usage intent",
+                "short": "Settle"
+              },
+              {
+                "from": "DIS",
+                "to": "DB",
+                "kind": "sync",
+                "label": "Query pending usage intents",
+                "short": "Query intents"
+              },
+              {
+                "from": "DIS",
+                "to": "Q",
+                "kind": "async",
+                "label": "SendMessage request usage version",
+                "short": "SendMessage"
+              },
+              {
+                "from": "Q",
+                "to": "AG",
+                "kind": "async",
+                "label": "ReceiveMessage long-poll",
+                "short": "Long-poll"
+              },
+              {
+                "from": "AG",
+                "to": "S3",
+                "kind": "sync",
+                "label": "PutObject deterministic redacted record",
+                "short": "PutObject"
+              },
+              {
+                "from": "AG",
+                "to": "VIEW",
+                "kind": "sync",
+                "label": "Transactional dedupe and rollup update",
+                "short": "Rollup"
+              },
+              {
+                "from": "ADMIN",
+                "to": "AG",
+                "kind": "sync",
+                "label": "HTTPS authorised usage request",
+                "short": "Usage"
+              }
+            ],
+            "frames": [
+              {
+                "id": "account",
+                "title": "VPC accounting tasks",
+                "nodes": [
+                  "GW",
+                  "DIS",
+                  "AG"
+                ]
+              }
+            ],
+            "steps": [
+              {
+                "edge": 0,
+                "caption": "GW to DB: TransactWriteItems settlement plus usage intent"
+              },
+              {
+                "edge": 1,
+                "caption": "DIS to DB: Query pending usage intents"
+              },
+              {
+                "edge": 2,
+                "caption": "DIS to Q: SendMessage request usage version"
+              },
+              {
+                "edge": 3,
+                "caption": "Q to AG: ReceiveMessage long-poll"
+              },
+              {
+                "edge": 4,
+                "caption": "AG to S3: PutObject deterministic redacted record"
+              },
+              {
+                "edge": 5,
+                "caption": "AG to VIEW: Transactional dedupe and rollup update"
+              },
+              {
+                "edge": 6,
+                "caption": "ADMIN to AG: HTTPS authorised usage request"
+              }
+            ],
+            "legend": "Accounting and usage-read half. SQS may duplicate or reorder events. The aggregator conditionally records a processed event key with its rollup delta, preventing double charges in showback; the live budget was already settled in the authoritative transaction. Sources: s21, s14.",
+            "cites": [
+              "s21",
+              "s14"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Admission claims a tenant-scoped request id and reserves a conservative attempt maximum in a single transaction."
+          },
+          {
+            "type": "diagram",
+            "mermaid": "sequenceDiagram\n  autonumber 1\n  participant A as App\n  participant G as Gateway\n  participant D as DynamoDB\n  A->>G: request id and payload\n  G->>D: claim id and reserve cost\n  alt claim and budget succeed\n   D-->>G: admitted\n  else duplicate or budget full\n   D-->>G: condition failure\n   G->>D: consistent request read\n   D-->>G: existing hash and status\n   G-->>A: existing status or reject\n  end",
+            "legend": "Solid calls and dashed replies are synchronous; open arrows hand work off asynchronously. Failure branches are mutually exclusive. Sources: s21.",
+            "cites": [
+              "s21"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "The provider stream is a separate phase: unknown results retain their reservation and are never declared free."
+          },
+          {
+            "type": "diagram",
+            "mermaid": "sequenceDiagram\n  autonumber 8\n  participant G as Gateway\n  participant B as Bedrock\n  participant A as App\n  G->>B: ConverseStream\n  alt stream completes\n   B-->>G: tokens and usage\n   G-->>A: tokens and usage\n  else fails before output\n   B-->>G: error or timeout\n   G-->>A: retryable or unknown\n  else fails after output\n   B-->>G: stream error\n   G-->>A: interrupted marker\n  end",
+            "legend": "Solid calls and dashed replies are synchronous; open arrows hand work off asynchronously. Failure branches are mutually exclusive. Sources: s23.",
+            "cites": [
+              "s23"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Settlement is durable before asynchronous showback dispatch; an ambiguous call keeps its worst-case charge reserved."
+          },
+          {
+            "type": "diagram",
+            "mermaid": "sequenceDiagram\n  autonumber 15\n  participant G as Gateway\n  participant D as DynamoDB\n  participant Q as SQS\n  participant W as Aggregator\n  G->>D: settle and usage intent\n  D-->>G: committed\n  G-)Q: usage event\n  Q-)W: usage delivery\n  W->>D: event dedupe plus rollup\n  alt first delivery\n   D-->>W: applied\n  else duplicate\n   D-->>W: already applied\n  end\n  W->>Q: DeleteMessage",
+            "legend": "Solid calls and dashed replies are synchronous; open arrows hand work off asynchronously. Failure branches are mutually exclusive. Sources: s21, s9.",
+            "cites": [
+              "s21",
+              "s9"
+            ]
+          },
+          {
+            "type": "table",
+            "caption": "Identity and network.",
+            "columns": [
+              "component",
+              "permission and connection",
+              "exposure"
+            ],
+            "rows": [
+              [
+                "Application edge",
+                "Internal ALB reached through existing corporate private connectivity; TLS and application authentication.",
+                "Not internet-facing."
+              ],
+              [
+                "Gateway task role",
+                "GetItem policy/request; TransactWriteItems budget and request records; Bedrock invoke permissions restricted to approved models.",
+                "Private; DynamoDB service access via approved endpoint/egress, Bedrock interface endpoint."
+              ],
+              [
+                "Provider routes",
+                "Bedrock endpoint; external provider through NAT/egress allowlist; EC2 model servers over private HTTPS.",
+                "External API is public; self-hosted servers are private."
+              ],
+              [
+                "Dispatcher role",
+                "Query intents; SendMessage; conditionally mark delivered.",
+                "SQS interface endpoint."
+              ],
+              [
+                "Aggregator role",
+                "Receive/DeleteMessage; conditional dedupe/rollup transaction; PutObject audit prefix.",
+                "SQS interface and S3 gateway endpoints."
+              ],
+              [
+                "Review API",
+                "Tenant-authorised rollup reads and restricted audit retrieval; no default prompt text.",
+                "Private service, audited access."
+              ]
+            ],
+            "cites": [
+              "s10",
+              "s11",
+              "s21",
+              "s23",
+              "s24",
+              "s13",
+              "s12"
+            ]
+          },
+          {
+            "type": "decision",
+            "caption": "Compute and model placement are different decisions.",
+            "rows": [
+              {
+                "option": "ECS Fargate gateway",
+                "pick_when": "Long-lived streaming proxy with bounded connection pools.",
+                "avoid_when": "The gateway itself needs GPUs or host-specific control.",
+                "example": "For this design: chosen; stateless task replacement never replays an interrupted stream automatically."
+              },
+              {
+                "option": "Lambda gateway",
+                "pick_when": "Short event-shaped work within measured runtime, streaming and concurrency limits.",
+                "avoid_when": "Assuming unlimited concurrent streams or ignoring integration limits.",
+                "example": "For this design: not chosen for the central proxy; no categorical claim that Lambda cannot stream."
+              },
+              {
+                "option": "ECS on EC2 model fleet",
+                "pick_when": "The self-hosted model requires accelerator instances and a managed container scheduler.",
+                "avoid_when": "No team owns model serving, node patching and capacity.",
+                "example": "For this design: chosen only for self-hosted deployment; vLLM concurrency is measured per model."
+              },
+              {
+                "option": "EKS model fleet",
+                "pick_when": "The organisation already uses Kubernetes model-serving tooling.",
+                "avoid_when": "Adding orchestration solely for a gateway.",
+                "example": "For this design: not chosen; ECS is the existing operating assumption."
+              }
+            ],
+            "cites": [
+              "s6",
+              "s7"
+            ]
+          },
+          {
+            "type": "decision",
+            "caption": "Budget authority versus cached policy.",
+            "rows": [
+              {
+                "option": "DynamoDB transactional request ledger",
+                "pick_when": "Key-based request claims and atomic budget reservation/settlement.",
+                "avoid_when": "A hot team budget item exceeds measured transaction capacity.",
+                "example": "For this design: chosen; conflicts are retried within a bounded deadline, never ignored."
+              },
+              {
+                "option": "Aurora relational ledger",
+                "pick_when": "Relational reporting or multi-entity SQL workflows justify a relational authority.",
+                "avoid_when": "The hot path only needs keyed transactional records.",
+                "example": "For this design: valid alternative, not rejected as unmanaged; no throughput superiority is claimed."
+              },
+              {
+                "option": "Local cache only",
+                "pick_when": "Advisory limits with explicitly bounded leases.",
+                "avoid_when": "Authoritative shared budget or immediate revocation is required.",
+                "example": "For this design: response cache and leased rate shares only; never a replacement for durable budget reservations."
+              }
+            ],
+            "cites": [
+              "s21",
+              "s8"
+            ]
+          },
+          {
+            "type": "decision",
+            "caption": "Usage delivery: avoid an accounting dependency on queue ordering.",
+            "rows": [
+              {
+                "option": "SQS standard",
+                "pick_when": "Background usage projection with durable source intent and event deduplication.",
+                "avoid_when": "The queue is expected to be a permanent audit log.",
+                "example": "For this design: chosen; spend admission never waits for a rollup."
+              },
+              {
+                "option": "Retained stream",
+                "pick_when": "Independent consumers must replay every historical event.",
+                "avoid_when": "A single projection can reconstruct from the request ledger.",
+                "example": "For this design: not required yet; S3 audit records and the ledger remain authoritative evidence."
+              }
+            ],
+            "cites": [
+              "s9"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "No vector-store fork applies to a gateway: embedding responses are passed through, not indexed here. A distributed response cache is deferred until measured repetition justifies it; temperature zero is not a determinism guarantee, and cached output is an explicit product reuse policy."
+          },
+          {
+            "type": "table",
+            "caption": "Well-Architected review; applications are design judgments, not AWS guarantees.",
+            "columns": [
+              "pillar",
+              "choice",
+              "accepted risk"
+            ],
+            "rows": [
+              [
+                "Operational excellence",
+                "Measure admission errors, first-token overhead, unknown reservations, route changes and token classes.",
+                "Provider usage can arrive too late for immediate reconciliation."
+              ],
+              [
+                "Security",
+                "Tenant-scoped keys and cache keys; no raw text unless opted in; short policy leases fail closed on expiry.",
+                "Redaction is imperfect; opted-in logs still need restricted access."
+              ],
+              [
+                "Reliability",
+                "Persist request state before provider calls; bound retries; stop on ambiguous state.",
+                "Availability is deliberately reduced rather than overspending during ledger outage."
+              ],
+              [
+                "Performance efficiency",
+                "Measure concurrent streams and model token ceilings separately.",
+                "Durable admission may exceed the original overhead target."
+              ],
+              [
+                "Cost optimization",
+                "Reserve bounded attempts; distinguish prompt cache reads/writes and actual usage.",
+                "Unknown usage conservatively consumes budget until reconciliation."
+              ],
+              [
+                "Sustainability",
+                "Reuse eligible responses/prefixes and shed low-priority inference first.",
+                "Fallback can move work to a less efficient model."
+              ],
+              [
+                "Generative AI Lens",
+                "Model aliases encode data policy, quality approval and output limits.",
+                "An alias-compatible fallback can still change answer quality."
+              ]
+            ],
+            "cites": [
+              "s15",
+              "s16"
+            ]
+          },
+          {
+            "type": "table",
+            "caption": "Partial monthly AWS estimate, us-east-1 as of 2026-10-16; 30 traffic-days and 730 task-hours. All demand on Bedrock is a costing scenario, not the actual routing split.",
+            "columns": [
+              "component",
+              "service and explicit assumption",
+              "monthly at base",
+              "monthly at 10x"
+            ],
+            "rows": [
+              [
+                "Chat generation",
+                "Nova Lite; no prompt-cache discount",
+                "$33,120",
+                "$331,200"
+              ],
+              [
+                "Embeddings",
+                "Titan V2 on all embedding input",
+                "$1,800",
+                "$18,000"
+              ],
+              [
+                "Gateway and accounting tasks",
+                "Fargate ARM: 10 tasks of 1 vCPU / 2 GB; tenfold fleet at larger scale",
+                "$288.35",
+                "$2,883.50"
+              ],
+              [
+                "Request budget transactions",
+                "DynamoDB: 8 write units/request, sub-KiB records, no retries/indexes",
+                "$750",
+                "$7,500"
+              ],
+              [
+                "Usage delivery",
+                "SQS: 3 unbatched standard requests/event, below payload billing chunk; free tier ignored",
+                "$180",
+                "$1,800"
+              ],
+              [
+                "Priced subtotal",
+                "Excludes the following unquantified lines",
+                "$36,138.35",
+                "$361,383.50"
+              ],
+              [
+                "Unpriced metadata and projections",
+                "DynamoDB policy reads, rollup/dedupe writes, storage, dispatcher scans and transaction retries need item sizes and rates.",
+                "Not priced",
+                "Not priced"
+              ],
+              [
+                "Unpriced routes and infrastructure",
+                "External model, EC2 GPU fleet, ALB, NAT/egress, endpoints, S3 audit, monitoring and transfer need route/fleet/byte measurements.",
+                "Not priced",
+                "Not priced"
+              ]
+            ],
+            "cites": [
+              "s25",
+              "s17",
+              "s26",
+              "s27",
+              "s22"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Model tokens dominate the priced scenario. The gateway does not make an expensive alias cheap by proxying it; caching, output caps and evaluated routing change the bill. No price or capacity is guessed for a self-hosted GPU fleet whose model and throughput have not been specified."
+          }
+        ]
       },
       {
         "id": "data-model",
         "title": "The data model",
-        "body": [
+        "blocks": [
           {
-            "heading": "Entities",
-            "body": "Team {team_id, monthly_budget, limits (requests per minute, input and output tokens per minute), allowed_aliases[], logging_policy}. Key {key_id, team_id, hash, scopes, created_at, revoked_at}. ModelAlias {alias, deployments[] of (provider, model, region, weight, max_tokens_per_minute), fallback_policy}. DeploymentState {deployment, healthy, open_breaker, observed_limit_remaining, p50_first_token}. RequestLog {request_id, team, key, alias, deployment_used, attempts[], tokens_in, tokens_cached, tokens_out, first_token_ms, total_ms, status, prompt_hash, prompt_text?, completion_text?}. Spend {team, day, deployment, tokens_in, tokens_cached, tokens_out, cost}."
+            "type": "table",
+            "caption": "Entities; key scope is part of correctness.",
+            "columns": [
+              "entity",
+              "fields",
+              "key or partition",
+              "notes"
+            ],
+            "rows": [
+              [
+                "Team",
+                "budget_month, total_budget, spent, reserved, provider-rate shares, allowed_aliases, logging_policy",
+                "tenant_id, budget_month",
+                "Money in fixed-point units; admit only when spent + reserved + request maximum fits."
+              ],
+              [
+                "Key",
+                "key_id, salted hash, scopes, policy_version, revoked_at",
+                "tenant_id, key_id",
+                "Never log raw keys; lease expiry bounds stale policy."
+              ],
+              [
+                "ModelAlias",
+                "deployment order, model/version, Region, token caps, maximum attempts, data policy",
+                "tenant_id, alias",
+                "Equivalent API does not imply equivalent model quality or data residency."
+              ],
+              [
+                "Request",
+                "payload_hash, owner, state, maximum_cost, actual/unknown_cost, attempts, usage_intent",
+                "tenant_id, client_request_id",
+                "Conditional claim at this exact primary key; mismatch rejected; claimed request is never re-dispatched by another owner."
+              ],
+              [
+                "DeploymentState",
+                "quota classes, health, remaining leases, in-flight limit",
+                "deployment_id, quota_window",
+                "Reserve global quota across nodes; no full-limit bucket independently on every node."
+              ],
+              [
+                "RequestLog / Spend",
+                "token classes, status, route, timings; optional redacted text; event_version",
+                "tenant_id, request_id; team/day/deployment",
+                "Dedupe marker and rollup delta commit together; no raw text by default."
+              ],
+              [
+                "ResponseCache",
+                "request_hash, response, model_version, policy_version, expiry",
+                "tenant_id, authorisation_scope, full request hash",
+                "Include sampling parameters, tools and model revision; no cross-tenant reuse."
+              ]
+            ]
           },
           {
-            "heading": "API",
-            "body": "POST /v1/chat/completions {model: alias, messages[], stream, cache_prefix_marker?, idempotency_key?} returns a token stream then a usage block; POST /v1/embeddings {model, input[]}; GET /v1/usage?team=&from=&to=; admin endpoints for keys, aliases and budgets. Errors carry the provider's class (rate limited, overloaded, invalid) and the deployment tried, so clients can distinguish a quota problem from an outage."
+            "type": "table",
+            "caption": "API; retries cannot reconstruct a lost live stream.",
+            "columns": [
+              "method",
+              "path",
+              "request",
+              "response",
+              "notes"
+            ],
+            "rows": [
+              [
+                "POST",
+                "/v1/chat/completions",
+                "model alias, messages, stream, required client_request_id, bounded output",
+                "stream and usage or explicit interrupted/unknown state",
+                "Same id/payload returns stored status or retained completed result, never a second provider call; mismatch rejected."
+              ],
+              [
+                "POST",
+                "/v1/embeddings",
+                "alias, input[], required client_request_id",
+                "vectors and usage",
+                "Same admission protocol; no output-token generation."
+              ],
+              [
+                "GET",
+                "/v1/usage",
+                "team, from, to",
+                "rollups with as_of watermark",
+                "Authorise tenant; eventual view, not budget authority."
+              ],
+              [
+                "POST",
+                "/admin/keys or aliases or budgets",
+                "authorised policy change",
+                "policy version",
+                "Audit changes; nodes enforce bounded cache leases."
+              ]
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Reserve the upper cost of all allowed attempts before first dispatch, using the maximum accepted input, output cap and most expensive permitted route. Each attempt is charged or remains reserved when usage is unknown. A final atomic settlement moves known cost to spent, retains unknown exposure and releases only provably unused budget. Never release a crashed request’s reservation merely because its owner lease expired; reconciliation or conservative maximum charging resolves it.",
+            "cites": [
+              "s21"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "The request record is both the idempotency claim and usage outbox. A transaction creates that record and increases the team’s reserved balance; a separate settlement transaction updates both records. Unknown requests cannot be resubmitted under the same id. This avoids pretending a provider call and a database transaction can commit atomically. A fresh id is a new billable request with its own reservation."
           }
         ]
       },
       {
         "id": "core-flow",
         "title": "The core flow, step by step",
-        "body": [
+        "blocks": [
           {
-            "body": "One streamed chat completion with a cacheable prefix."
+            "type": "p",
+            "text": "The neutral admission path rejects mismatched duplicate ids and budgets that cannot cover the planned attempt ceiling."
+          },
+          {
+            "type": "diagram",
+            "mermaid": "sequenceDiagram\n  autonumber 1\n  participant A as App\n  participant G as Gateway\n  participant L as Ledger\n  A->>G: id and request\n  G->>L: claim and reserve maximum\n  alt admitted\n   L-->>G: exclusive claim\n  else not admitted\n   L-->>G: duplicate or exhausted\n   G-->>A: status or reject\n  end",
+            "legend": "Solid calls and dashed replies are synchronous; open arrows hand work off asynchronously. Failure branches are mutually exclusive. This is the proposed application protocol, not a service guarantee."
+          },
+          {
+            "type": "p",
+            "text": "The neutral proxy forwards tokens once; failure handling depends on what is known, not only on whether the user saw output."
+          },
+          {
+            "type": "diagram",
+            "mermaid": "sequenceDiagram\n  autonumber 6\n  participant G as Gateway\n  participant P as Provider\n  participant A as App\n  G->>P: bounded inference\n  alt successful stream\n   P-->>G: tokens and usage\n   G-->>A: stream\n  else ambiguous timeout\n   Note over G,P: reserve unknown attempt cost\n   G-->>A: unknown outcome\n  else interrupted output\n   P-->>G: error\n   G-->>A: explicit interruption\n  end",
+            "legend": "Solid calls and dashed replies are synchronous; open arrows hand work off asynchronously. Failure branches are mutually exclusive. This is the proposed application protocol, not a service guarantee."
+          },
+          {
+            "type": "steps",
+            "title": "Admission, routing and settlement",
+            "items": [
+              "Authenticate key and scope, enforce policy lease and count input locally. Lease global rate shares to nodes; expire old leases conservatively so a partition cannot multiply capacity.",
+              "Atomically claim the tenant/request key with payload hash and reserve the maximum of all permitted attempts. Insufficient budget fails closed; a duplicate reads existing status rather than dispatching again.",
+              "Choose a route allowed for this alias and data classification. Check per-provider request, input-token, output-token and concurrency dimensions; cache hits may affect these differently by provider.",
+              "A confirmed rejection before inference may permit bounded failover. An ambiguous timeout can have incurred usage even with no first byte; failover is allowed only under an explicit duplicate-inference policy with both attempt costs reserved. Never retry a tool side effect; tools are out of scope.",
+              "After any client-visible output, do not splice another completion into the same stream. Return an interrupted marker, not a fabricated resume cursor. The client may choose a new request with a new id and budget.",
+              "Settle known usage atomically against the reservation; retain unknown attempt exposure. Store the usage intent in the request record so a dispatcher can recover after a gateway crash.",
+              "Project usage asynchronously with event deduplication; the rollup’s delay never authorises additional spending. Show spent, reserved and unknown usage separately."
+            ],
+            "cites": [
+              "s21",
+              "s2"
+            ]
           }
-        ],
-        "steps": [
-          "Authenticate the key (hash lookup in the node's cache of the key store), load the team's policy and check the alias is allowed.",
-          "Admission: take tokens from the team's local request bucket and an estimate of input tokens from the input-token bucket (the gateway counts the prompt locally before sending); check the budget projection (spend so far plus this request's estimated cost) against the monthly budget. Reject with 429 and the team's own retry-after if over the limit, 402-style with a budget error if over budget.",
-          "Route: the router picks the first healthy deployment for the alias whose observed remaining limit can take the request; it orders the messages so the shared prefix is first and marks the cache breakpoint at the end of the prefix, as the provider's prompt caching documentation describes.",
-          "Proxy with streaming: open the provider stream, forward tokens as they arrive, and record the time to first token. If the provider answers 429 or a server error before any token was sent, back off per its retry-after and fail over to the next deployment (a retry is safe because nothing reached the client). If the stream breaks after tokens were sent, close the client stream with an error marker and do not retry.",
-          "Settle: read the usage block (input, cached, output tokens), correct the token buckets with the real counts, write the redacted log record, and increment the team's spend counter.",
-          "Asynchronously, the spend aggregator rolls the log into daily spend per team and deployment; the budget check reads the rolled total plus the live counter, so a team can overshoot by at most the traffic of the aggregation interval (one minute, assumption), which is the stated target."
         ]
       },
       {
         "id": "scaling-and-the-bottleneck",
         "title": "Scaling and the bottleneck",
-        "body": [
+        "blocks": [
           {
-            "heading": "Fairness under a shared ceiling",
-            "body": "The provider's limits are the bottleneck, and they are shared by all teams: the gateway is the place where fairness is enforced so one team's burst does not get every other team a 429 from the provider. Per-team token buckets are the request rate limiter of Stripe's write-up applied to tokens; a concurrency limiter per deployment protects the self-hosted fleet, whose capacity is in-flight sequences rather than requests per minute; and a load shedder drops low-priority traffic (batch jobs, evaluations) first when a deployment's remaining limit runs low. The router tracks each deployment's remaining limit from response headers and 429s, and a breaker per deployment opens on error rate so failover is immediate rather than discovered request by request."
+            "type": "p",
+            "text": "Provider quotas and in-flight model capacity are different limits. A global request rate alone cannot protect a model whose token lengths or stream durations grow. Lease bounded shares of each applicable quota class to gateway nodes and shed low-priority evaluations before customer-facing work. Bedrock embedding models are throttled by requests per minute, not tokens per minute, even though the selected Titan model is billed by input tokens. Stripe’s token-bucket implementation is a reference for the mechanism, not a universal model-provider quota contract.",
+            "cites": [
+              "s5",
+              "s2",
+              "s28"
+            ]
           },
           {
-            "heading": "Cost levers and the log",
-            "body": "Cost scales with tokens, not requests, so the levers are token levers: the shared prefix kept identical and first so the provider cache hits; an exact-match response cache for deterministic workloads (embeddings of the same text, classification at temperature zero) keyed by a hash of the full request; routing cheap aliases (small models, self-hosted) by policy for workloads that allow it; and output caps per alias. The log is what makes any of this visible: spend per team per deployment per day, cache hit ratio per alias, and the routing decisions a reviewer can question. Logging text is the privacy risk: redaction runs before the write, text is opt-in per team with retention, and the log store is access-controlled separately from metadata."
+            "type": "table",
+            "caption": "Pressure and control.",
+            "columns": [
+              "pressure",
+              "response",
+              "proof needed"
+            ],
+            "rows": [
+              [
+                "Provider throttling",
+                "Respect retry headers when present; bounded backoff and route health state.",
+                "Some spend-limit errors have no useful retry-after; classify error, do not retry forever."
+              ],
+              [
+                "Long streams",
+                "Per-deployment in-flight limit and cancellation on client disconnect.",
+                "Cancellation is best effort; it does not guarantee no provider charge."
+              ],
+              [
+                "Hot team budget",
+                "Measure contention; if necessary allocate durable prepaid sub-budgets without exceeding total.",
+                "A sharding plan must preserve the sum of outstanding grants, not duplicate the budget."
+              ],
+              [
+                "Policy/key outage",
+                "Existing short-lived leases only; fail closed after expiry.",
+                "Revocation window is explicit and acceptable to security."
+              ],
+              [
+                "Prompt-prefix drift",
+                "Per-alias cache-hit ratio; preserve provider-required prefix identity.",
+                "A cacheable prefix is not a guaranteed cache hit."
+              ],
+              [
+                "Response reuse",
+                "Tenant/scope/model-version key and explicit opt-in.",
+                "Temperature zero does not establish determinism or freshness."
+              ]
+            ],
+            "cites": [
+              "s2",
+              "s3"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Metadata logs make routing and cost review possible; text retention is a separate permission. Redact before writing, separate access to opted-in text from aggregate usage, and retain enough request/attempt identifiers to reconcile unknown billing without storing prompts. The provider usage event and the client’s visible success are not the same fact."
           }
         ]
       },
       {
         "id": "failure-modes",
         "title": "Failure modes and what degrades",
-        "body": [
+        "blocks": [
           {
-            "body": "Each row names the failure, what callers see, and the mitigation."
-          }
-        ],
-        "table": {
-          "columns": [
-            "Failure",
-            "Effect",
-            "Mitigation"
-          ],
-          "rows": [
-            [
-              "Provider A returns 429 or is overloaded",
-              "latency rises until failover",
-              "honour retry-after, breaker per deployment, fail over to B or self-hosted for aliases that allow it; alert on failover ratio"
+            "type": "table",
+            "caption": "Failure modes.",
+            "columns": [
+              "failure",
+              "caller sees",
+              "mitigation"
             ],
-            [
-              "Stream breaks mid-completion",
-              "a truncated answer",
-              "no transparent retry; error marker to the client; client decides to resend with its idempotency key"
+            "rows": [
+              [
+                "Provider rejects or overloads",
+                "Delay or bounded route fallback",
+                "Classify rejection versus ambiguous processing; reserve every allowed attempt."
+              ],
+              [
+                "Stream breaks after output",
+                "Truncated answer and explicit error",
+                "No transparent restart or invented resumability; new request is a new charge."
+              ],
+              [
+                "Budget ledger unavailable",
+                "New requests refused",
+                "Fail closed; local rate buckets do not authorise spend."
+              ],
+              [
+                "Key/policy store unreachable",
+                "Only unexpired policy leases work",
+                "Fail closed when lease expires; revocation lag is bounded, not indefinite."
+              ],
+              [
+                "Gateway dies after dispatch",
+                "Unknown request status",
+                "Keep maximum reservation; do not transfer dispatch ownership and repeat the provider call."
+              ],
+              [
+                "Usage queue delivery duplicated",
+                "No additional rollup charge",
+                "Processed event and rollup delta in one transaction."
+              ],
+              [
+                "Self-hosted fleet saturated",
+                "Early rejection or permitted hosted fallback",
+                "Per-model concurrency limiter and priority shedding."
+              ],
+              [
+                "Provider usage never arrives",
+                "Conservative budget charge",
+                "Reconcile billing evidence; if unknowable, retain/charge the reserved maximum."
+              ]
             ],
-            [
-              "Counter store down",
-              "limits drift",
-              "local buckets keep enforcing per node share; fail open for limits, fail closed for budgets at the day's rolled total (assumption, a policy choice)"
-            ],
-            [
-              "Key store unreachable",
-              "cannot authenticate new keys",
-              "nodes cache keys and policies with a long TTL; revocations propagate when the store returns; alert"
-            ],
-            [
-              "Prompt cache misses silently (prefix drifted)",
-              "cost and limit pressure rise",
-              "cache hit ratio per alias on the dashboard; a lint on prefix stability in the client SDK"
-            ],
-            [
-              "Self-hosted fleet saturated",
-              "queueing, slow first token",
-              "concurrency limit per deployment with early rejection; shed batch traffic; route overflow to a hosted deployment if policy allows"
+            "cites": [
+              "s21",
+              "s14"
             ]
-          ]
-        }
+          }
+        ]
       },
       {
         "id": "trade-offs",
         "title": "Trade-offs and the alternative not taken",
-        "body": [
+        "blocks": [
           {
-            "body": "The decisions a reviewer reads first."
-          }
-        ],
-        "table": {
-          "columns": [
-            "Decision",
-            "Options",
-            "Chosen",
-            "Why"
-          ],
-          "rows": [
-            [
-              "Shape",
-              "an SDK in every app versus a gateway service",
-              "gateway service with a thin SDK",
-              "limits, budgets, failover and logging need shared state and one place to change providers"
+            "type": "table",
+            "caption": "Central choices.",
+            "columns": [
+              "decision",
+              "options",
+              "chosen",
+              "why"
             ],
-            [
-              "Limit unit",
-              "requests per minute versus tokens per minute",
-              "tokens, with requests as a secondary bucket",
-              "provider limits and cost are in tokens; a request is not a unit of work"
-            ],
-            [
-              "Retries",
-              "retry any failure versus retry only before first byte",
-              "only before first byte",
-              "a duplicated completion is a visible bug; the client owns resends with an idempotency key"
-            ],
-            [
-              "Budget enforcement",
-              "exact synchronous spend check versus rolled total plus live counter",
-              "rolled plus live, one-minute overshoot bound",
-              "exact spend needs the provider's usage block, which arrives after the response"
-            ],
-            [
-              "Logging text",
-              "always, never, opt-in with redaction",
-              "opt-in with redaction and retention",
-              "debuggability for teams that need it; privacy by default"
+            "rows": [
+              [
+                "Gateway shape",
+                "SDK only / central gateway",
+                "Gateway with thin client SDK",
+                "Shared budgets, policies and spend need a common authority."
+              ],
+              [
+                "Admission unit",
+                "Requests / tokens / concurrency",
+                "All relevant provider dimensions",
+                "No single request metric describes model work."
+              ],
+              [
+                "Retry rule",
+                "Blind pre-first-byte retry / outcome-aware retry",
+                "Outcome-aware and attempt-bounded",
+                "No output does not mean no inference, charge or side effect."
+              ],
+              [
+                "Budgets",
+                "Delayed rollup / worst-case reservation",
+                "Durable reservation",
+                "In-flight and unknown usage invalidate the old minute-only bound."
+              ],
+              [
+                "Response cache",
+                "Global / scoped opt-in / none",
+                "Scoped opt-in local cache",
+                "Privacy and model-version semantics outweigh shared hit rate."
+              ],
+              [
+                "Text logging",
+                "Always / never / opt-in",
+                "Opt-in with redaction and retention",
+                "Debugging does not justify default prompt retention."
+              ]
             ]
-          ]
-        }
+          }
+        ]
       },
       {
         "id": "at-10x",
         "title": "What changes at 10x",
-        "body": [
+        "blocks": [
           {
-            "body": "At 50 million requests per day and every team on it, the gateway is company infrastructure: tenancy becomes explicit (tiers of teams with isolation of counters and queues so a runaway agent cannot starve a customer-facing product), policy and guardrails run inside the gateway (input and output checks, allowed tools, data classification rules per alias), routing decisions are evaluated offline against quality and cost (a routing change is reviewed like a dependency upgrade, with the log as the evidence), cost allocation becomes showback and then chargeback, and capacity planning for the self-hosted fleet is driven by the gateway's observed token demand per alias. The well-architected guidance for generative AI workloads is the checklist for that review: model selection, retrieval, guardrails and cost as explicit design decisions."
+            "type": "table",
+            "caption": "Workload at scale, with the same averages.",
+            "columns": [
+              "quantity",
+              "base",
+              "10x",
+              "consequence"
+            ],
+            "rows": [
+              [
+                "Requests/day",
+                "5 million",
+                "50 million",
+                "Explicit tenant tiers and isolated admission capacity."
+              ],
+              [
+                "Peak requests/second",
+                "173.61",
+                "1,736.11",
+                "Size streams by observed duration, not just requests."
+              ],
+              [
+                "Input tokens/day",
+                "15 billion",
+                "150 billion",
+                "Provider quota purchases and route placement matter."
+              ],
+              [
+                "Chat output tokens/day",
+                "1.6 billion",
+                "16 billion",
+                "Output caps and model quality gates remain central."
+              ],
+              [
+                "Potential chat cache reads/day",
+                "8 billion",
+                "80 billion",
+                "Upper bound; actual provider cache billing varies."
+              ]
+            ]
+          },
+          {
+            "type": "table",
+            "caption": "Neutral model-cost sensitivity, assumed prices not provider quotes; no cache savings.",
+            "columns": [
+              "line",
+              "assumed price",
+              "base monthly",
+              "10x monthly"
+            ],
+            "rows": [
+              [
+                "Chat input",
+                "$1 per million tokens",
+                "$360,000",
+                "$3,600,000"
+              ],
+              [
+                "Chat output",
+                "$5 per million tokens",
+                "$240,000",
+                "$2,400,000"
+              ],
+              [
+                "Embedding input",
+                "$0.10 per million tokens",
+                "$9,000",
+                "$90,000"
+              ],
+              [
+                "Subtotal",
+                "30 days; inference only",
+                "$609,000",
+                "$6,090,000"
+              ]
+            ]
+          },
+          {
+            "type": "p",
+            "text": "At company scale, review model alias changes as dependency upgrades: allowed data classes, quality, latency and billing all change together. Token showback can become chargeback only after unknown usage and attempt attribution are reconciled. Self-hosted capacity planning uses observed token lengths and concurrency per model; request counts alone cannot select a GPU fleet.",
+            "cites": [
+              "s16",
+              "s4"
+            ]
           }
         ]
       }
@@ -308,9 +1776,9 @@
       ],
       "L2": [
         "Routing and fallback across hosted and self-hosted deployments with per-deployment breakers and observed limit state.",
-        "Token-based rate limits per team summing below the provider ceiling, with the local-first counter design.",
+        "Token-based rate limits per team summing below the provider ceiling, with conservatively leased rate shares and durable spend reservations.",
         "Prompt caching used deliberately (stable prefix first, breakpoint) with the pricing and limit consequences stated.",
-        "Budgets with a bounded overshoot, and personal data kept out of logs by default."
+        "Budgets with worst-case attempt reservations, and personal data kept out of logs by default."
       ],
       "L3": [
         "A company-wide gateway: tenancy tiers, policy and guardrails in the path, evaluation of routing decisions from the log.",
@@ -318,54 +1786,29 @@
         "What the gateway refuses: unbounded output, unredacted text by default, production traffic pinned to one deployment."
       ]
     },
-    "interview_frame": [
-      {
-        "time": "0:00 to 0:05",
-        "text": "Requirements: whose limits matter, what a safe retry is, what the cache caches, who chooses the provider, what is logged, hard or soft budgets. Say the numbers aloud: 174 requests per second at peak, 15 billion input tokens and 1.6 billion output tokens per day, 31 million input tokens per minute at peak against per-minute provider limits, about half of input tokens cacheable."
-      },
-      {
-        "time": "0:05 to 0:10",
-        "text": "Entities and API: Team with limits and budget, Key, ModelAlias with ordered deployments, DeploymentState, RequestLog with cached tokens, Spend; the completions, embeddings and usage endpoints and the error classes."
-      },
-      {
-        "time": "0:10 to 0:20",
-        "text": "High-level design with the diagram: gateway nodes, key and policy store, token counters, router to providers and the self-hosted fleet, response cache, redacted log, spend aggregator. Say which state is local and which is shared."
-      },
-      {
-        "time": "0:20 to 0:40",
-        "text": "Two deep dives: limits and fairness under a shared provider ceiling (token buckets per team, concurrency per self-hosted deployment, shedding by priority, breakers and failover), then cost and privacy (prompt caching mechanics and prices, response cache, routing by policy, redaction and retention of logs, the budget overshoot bound)."
-      },
-      {
-        "time": "0:40 to 0:45",
-        "text": "Failure modes from the table, the 10x platform (tenancy tiers, guardrails, routing evaluation, chargeback, capacity planning), and the L3 sentence: the gateway is a rate limiter, a cost allocator and a privacy boundary that happens to proxy requests."
-      }
-    ],
-    "design_doc_frame": [
-      {
-        "section": "Context and scope",
-        "text": "The applications calling models today, the providers and contracts, the self-hosted fleet's capacity, the spend surprise or the 429 incident that motivates the gateway."
-      },
-      {
-        "section": "Goals and non-goals",
-        "text": "One API, team limits and budgets, safe failover, streaming, spend visibility, privacy by default; no evaluation product, no prompt tooling, no fine-tuning, no agent orchestration."
-      },
-      {
-        "section": "Design",
-        "text": "This answer fills it: admission, routing, streaming proxy, settlement, the counter and log design, caching."
-      },
-      {
-        "section": "Alternatives considered",
-        "text": "An SDK per app, request-based limits, retry-anything, synchronous exact budgets, always-on text logging, with the trade-off table."
-      },
-      {
-        "section": "Cross-cutting concerns",
-        "text": "Security (key hashing, scopes, revocation propagation, admin audit), privacy (redaction, opt-in text, retention, access control on the log store), observability (first-token latency per deployment, failover ratio, cache hit ratio, spend per team per day, rejected requests by reason), cost (tokens by class per team), rollout by moving one team's alias at a time with the direct provider path as fallback."
-      },
-      {
-        "section": "Review questions the doc must answer",
-        "text": "What a client receives when a stream breaks after the first token, and by how much a team can exceed its budget before the gate closes."
-      }
-    ],
+    "interview_frame": {
+      "type": "steps",
+      "title": "A 45-minute interview",
+      "items": [
+        "0:00 to 0:05: Requirements: whose limits matter, what a outcome-aware retry permits, what the cache caches, who chooses the provider, what is logged, hard or soft budgets. Say the numbers aloud: 174 requests per second at peak, 15 billion input tokens and 1.6 billion output tokens per day, 31 million input tokens per minute at peak against per-minute provider limits, about half of input tokens cacheable.",
+        "0:05 to 0:10: Entities and API: Team with limits and budget, Key, ModelAlias with ordered deployments, DeploymentState, RequestLog with cached tokens, Spend; the completions, embeddings and usage endpoints and the error classes.",
+        "0:10 to 0:20: High-level design with the diagram: gateway nodes, key and policy store, token counters, router to providers and the self-hosted fleet, response cache, redacted log, spend aggregator. Say which state is local and which is shared.",
+        "0:20 to 0:40: Two deep dives: limits and fairness under a shared provider ceiling (token buckets per team, concurrency per self-hosted deployment, shedding by priority, breakers and failover), then cost and privacy (prompt caching mechanics and prices, response cache, routing by policy, redaction and retention of logs, the in-flight reservation invariant).",
+        "0:40 to 0:45: Failure modes from the table, the 10x platform (tenancy tiers, guardrails, routing evaluation, chargeback, capacity planning), and the L3 sentence: the gateway is a rate limiter, a cost allocator and a privacy boundary that happens to proxy requests."
+      ]
+    },
+    "design_doc_frame": {
+      "type": "list",
+      "ordered": true,
+      "items": [
+        "Context and scope: The applications calling models today, the providers and contracts, the self-hosted fleet's capacity, the spend surprise or the 429 incident that motivates the gateway.",
+        "Goals and non-goals: One API, team limits and budgets, safe failover, streaming, spend visibility, privacy by default; no evaluation product, no prompt tooling, no fine-tuning, no agent orchestration.",
+        "Design: This answer fills it: admission, routing, streaming proxy, settlement, the counter and log design, caching.",
+        "Alternatives considered: An SDK per app, request-based limits, retry-anything, synchronous exact budgets, always-on text logging, with the trade-off table.",
+        "Cross-cutting concerns: Security (key hashing, scopes, revocation propagation, admin audit), privacy (redaction, opt-in text, retention, access control on the log store), observability (first-token latency per deployment, failover ratio, cache hit ratio, spend per team per day, rejected requests by reason), cost (tokens by class per team), rollout by moving one team's alias at a time with the direct provider path as fallback.",
+        "Review questions the doc must answer: What a client receives when a stream breaks after the first token, and by how much a team can exceed its budget before the gate closes."
+      ]
+    },
     "depth_notes": {
       "L1": "One API in front of several providers with keys, per-team quotas, logging and retries.",
       "L2": "Routing and fallback across providers and self-hosted models, streaming, token-based rate limits, prompt caching, budgets, PII handling in logs.",
@@ -375,8 +1818,8 @@
   "provenance": {
     "generated_by": "Claude (Fable 5.1) by hand, Scout learning center M4a",
     "generated_on": "2026-10-12",
-    "reviewed_by": "a second reader (Claude Fable 5.1), Scout learning center M4b",
-    "reviewed_on": "2026-10-12"
+    "reviewed_by": null,
+    "reviewed_on": null
   },
   "changelog": [
     {
@@ -388,6 +1831,11 @@
       "version": 2,
       "date": "2026-10-12",
       "change": "writer follow-up on the second reader's items (M4c)"
+    },
+    {
+      "version": 3,
+      "date": "2026-10-16",
+      "change": "Codex gpt-6-astra by hand: format v2 tables, neutral and AWS flow/sequence diagrams, primary-source AWS decisions and dated costs; correctness assumptions and protocols clarified. Original attribution retained; reviewed_by cleared for independent second read."
     }
   ]
 }
