@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-metrics-pipeline",
-  "version": 6,
+  "version": 7,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: metrics and time series pipeline",
@@ -969,6 +969,13 @@
                 "kind": "sync",
                 "label": "Query frontend to long-term blocks: the older ranges from the right tier",
                 "short": "Blocks"
+              },
+              {
+                "from": "CP",
+                "to": "IX",
+                "kind": "sync",
+                "label": "Compactor to series index: deactivate a series absent from the closed chunks",
+                "short": "Deactivate"
               }
             ],
             "steps": [
@@ -1019,6 +1026,10 @@
               {
                 "edge": 11,
                 "caption": "Query frontend to long-term blocks: the older sub-ranges read from the right tier, sync"
+              },
+              {
+                "edge": 12,
+                "caption": "Compactor to series index: deactivate a series that is absent from the closed chunks, releasing its quota once, sync"
               }
             ],
             "legend": "Boxes separate ingestion, storage and queries. The log decouples writes, but restart safety requires full-window block hydration plus tail replay before serving. Retention and checkpoint-lag bounds apply; a bare checkpoint cannot restore lost memory."
@@ -1188,6 +1199,13 @@
                 "kind": "sync",
                 "label": "PutObject the block, its index and the tiers, over the gateway endpoint, sync",
                 "short": "PutObject"
+              },
+              {
+                "from": "CP",
+                "to": "IX",
+                "kind": "sync",
+                "label": "guarded deactivation of a series absent from three consecutive closed chunks, over gateway endpoint, sync",
+                "short": "Deactivate"
               }
             ],
             "steps": [
@@ -1230,9 +1248,13 @@
               {
                 "edge": 9,
                 "caption": "Compactor to S3: PutObject the block, its index and the downsampled tiers over the gateway endpoint, sync"
+              },
+              {
+                "edge": 10,
+                "caption": "Compactor to DynamoDB registry: guarded deactivation of a series absent from three consecutive closed chunks (about 6 hours), releasing its quota once, sync"
               }
             ],
-            "legend": "Neutral ingestion/storage mapped to AWS: Fargate scrapers, ingest, hot replicas and compactor, Kinesis physical-shard aggregates, DynamoDB tenant-qualified registry/postings/quota, and S3 blocks plus durable checkpoint manifests. Hot tasks hydrate from S3 before log catch-up, as the sequence shows. Private ECS tasks use awsvpc; the load balancer is public. These protocols are the author's design. Sources: s9, s14, s18, s20, s23, s24, s47, s48.",
+            "legend": "Neutral ingestion/storage mapped to AWS: Fargate scrapers, ingest, hot replicas and compactor, Kinesis physical-shard aggregates, DynamoDB tenant-qualified registry/postings/quota, and S3 blocks plus durable checkpoint manifests. Hot tasks hydrate from S3 before log catch-up, as the sequence shows. The compactor also deactivates a series that is absent from three consecutive closed chunks, which is where inactivity is read; no last-seen value is written per series. Private ECS tasks use awsvpc; the load balancer is public. These protocols are the author's design. Sources: s9, s14, s18, s20, s23, s24, s47, s48.",
             "cites": ["s9", "s14", "s18", "s20", "s23", "s24", "s47", "s48"]
           },
           {
@@ -1409,8 +1431,8 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber\n  participant T as Target\n  participant SC as Scraper\n  participant IN as Ingest\n  participant DDB as Registry\n  participant K as Kinesis\n  SC->>T: GET metrics\n  alt target responds\n    T-->>SC: samples\n  else live scrape fails\n    SC->>SC: create up=0 sample\n  end\n  SC->>IN: retryable sample batch\n  Note over IN,DDB: known series resolve from the local set,<br/>only first-seen series reach the registry\n  alt first-seen series, quota rejected\n    IN->>DDB: transact series and quota\n    DDB-->>IN: quota conflict\n    IN-->>SC: explicit rejection\n  else known, or first-seen and created\n    opt first-seen series\n      IN->>DDB: transact series and quota\n      DDB-->>IN: canonical series ids\n    end\n    IN->>K: PutRecords aggregates\n    K-->>IN: per-record results\n    loop failed records only\n      IN->>K: retry same sample identities\n      K-->>IN: per-record results\n    end\n    IN-->>SC: ack durable records only\n  end",
-            "legend": "Scraper sharding is this design's choice. The producer retains unacknowledged batches and checks every PutRecords result, including HTTP-success partial failures. Acknowledged samples are not intentionally dropped. Consumers deduplicate by tenant-qualified series and timestamp, reject conflicting values explicitly and accept late samples into correction blocks rather than assuming stream order. In steady state a batch's known series resolve from a fingerprint set that the ingest task holds in memory and never reach the registry; only a first-seen or reactivated series transacts, 14 seven-item creations to a TransactWriteItems of at most 100 actions s48, so a new 2,000-series target takes 143 transactions. The registry creation transaction atomically claims metadata, posting lists and quota, and the registry line prices these lifecycles, not samples. Sources: partitioning s8, aggregation s10, endpoint s11 and conditions s25; these are primitives, not an exactly-once claim.",
+            "mermaid": "sequenceDiagram\n  autonumber\n  participant T as Target\n  participant SC as Scraper\n  participant IN as Ingest\n  participant DDB as Registry\n  participant K as Kinesis\n  SC->>T: GET metrics\n  alt target responds\n    T-->>SC: samples\n  else live scrape fails\n    SC->>SC: create up=0 sample\n  end\n  SC->>IN: retryable sample batch\n  Note over IN,DDB: known series resolve from the local set,<br/>only first-seen series reach the registry\n  opt first-seen series in the batch\n    IN->>DDB: transact series and quota\n    alt quota rejected\n      DDB-->>IN: quota conflict\n      IN-->>SC: explicit rejection of the new series\n    else created or existing\n      DDB-->>IN: canonical series ids\n    end\n  end\n  IN->>K: PutRecords aggregates\n  K-->>IN: per-record results\n  loop failed records only\n    IN->>K: retry same sample identities\n    K-->>IN: per-record results\n  end\n  IN-->>SC: ack durable records only",
+            "legend": "Scraper sharding is this design's choice. The producer retains unacknowledged batches and checks every PutRecords result, including HTTP-success partial failures. Acknowledged samples are not intentionally dropped. Consumers deduplicate by tenant-qualified series and timestamp, reject conflicting values explicitly and accept late samples into correction blocks rather than assuming stream order. In steady state a batch's known series resolve from a fingerprint set that the ingest task holds in memory and never reach the registry; only a first-seen or reactivated series transacts. Up to 16 creations share a TransactWriteItems of at most 100 actions in which no two actions may target the same item s48, so each creation writes its six own items and the group one combined counter update (97 actions), and a new 2,000-series target takes 125 transactions; a quota rejection rejects that group's new series, and known series still proceed. The transaction atomically claims metadata, posting lists and quota, and the registry line prices these lifecycles, not samples. Sources: partitioning s8, aggregation s10, endpoint s11 and conditions s25; these are primitives, not an exactly-once claim.",
             "cites": [
               "s25",
               "s8",
@@ -1443,7 +1465,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 15\n  participant K as Kinesis\n  participant HOT as Hot store\n  participant CP as Compactor\n  participant S3\n  alt replacement task\n    HOT->>S3: GetObject window manifest\n    S3-->>HOT: blocks and durable checkpoint\n    HOT->>S3: GetObject full window blocks\n    S3-->>HOT: retained samples and index\n  else running task\n    Note over HOT: keep serving current replica\n  end\n  HOT->>K: GetRecords after checkpoint\n  K-->>HOT: records\n  HOT->>HOT: deduplicate and insert by time\n  HOT-)CP: closed chunks\n  CP->>S3: PutObject blocks then manifest\n  S3-->>CP: durable manifest checkpoint\n  CP-->>HOT: durable frontier\n  Note over HOT: serve only after catch-up",
+            "mermaid": "sequenceDiagram\n  autonumber 14\n  participant K as Kinesis\n  participant HOT as Hot store\n  participant CP as Compactor\n  participant S3\n  alt replacement task\n    HOT->>S3: GetObject window manifest\n    S3-->>HOT: blocks and durable checkpoint\n    HOT->>S3: GetObject full window blocks\n    S3-->>HOT: retained samples and index\n  else running task\n    Note over HOT: keep serving current replica\n  end\n  HOT->>K: GetRecords after checkpoint\n  K-->>HOT: records\n  HOT->>HOT: deduplicate and insert by time\n  HOT-)CP: closed chunks\n  CP->>S3: PutObject blocks then manifest\n  S3-->>CP: durable manifest checkpoint\n  CP-->>HOT: durable frontier\n  Note over HOT: serve only after catch-up",
             "legend": "The application checkpoint lives in an immutable S3 manifest published after every referenced block is durable. It advances only across contiguous stream records represented in those blocks, including late-sample correction blocks. A replacement hydrates the entire hot window, not just the tail, then replays newer records. The chosen default stream retention is sufficient only while checkpoint lag plus catch-up stays below its retention horizon; alarm and backpressure well before that boundary. If exceeded, declare an unrecoverable gap rather than fabricating samples. No extended retention is priced. Sources: retention s9, replacement s17, compression s2 and S3 access s23.",
             "cites": [
               "s9",
@@ -1483,7 +1505,7 @@
               ],
               [
                 "Ingest (task role)",
-                "TransactWriteItems for retained metadata/postings and active quota; guarded deactivation/reactivation and historical garbage collection; GetItem for identities; PutRecords on stream",
+                "TransactWriteItems for retained metadata/postings and active quota; guarded reactivation and historical garbage collection; GetItem for identities; PutRecords on stream",
                 "DynamoDB gateway endpoint; Kinesis interface endpoint",
                 "no; admits the scrapers' and the push gateway's security groups only"
               ],
@@ -1495,8 +1517,8 @@
               ],
               [
                 "Compactor (task role)",
-                "GetObject, PutObject and ListBucket on block and manifest prefixes; publish a manifest only after its blocks are durable",
-                "S3 gateway endpoint",
+                "GetObject, PutObject and ListBucket on block and manifest prefixes; publish a manifest only after its blocks are durable; guarded deactivation (conditional UpdateItem and counter decrement through TransactWriteItems) of series absent from the closed chunks",
+                "S3 and DynamoDB gateway endpoints",
                 "no; admits the hot store's security group only"
               ],
               [
@@ -1851,8 +1873,8 @@
               [
                 "Series registry",
                 "DynamoDB on-demand",
-                "$3,515",
-                "$35,150"
+                "$3,374",
+                "$33,744"
               ],
               [
                 "Alerts",
@@ -1862,9 +1884,9 @@
               ],
               [
                 "Priced subtotal",
-                "Excludes transfer, ALB/endpoints, monitoring, S3 requests/index overhead/versioning, discovery-query reads, active-lease/last-seen refresh operations and retries. Default stream retention only.",
-                "about $13,607; $340 per million active series",
-                "about $133,712; $334 per million active series"
+                "Excludes transfer, ALB/endpoints, monitoring, S3 requests/index overhead/versioning, discovery-query reads and retries. Default stream retention only.",
+                "about $13,466; $337 per million active series",
+                "about $132,306; $331 per million active series"
               ]
             ],
             "cites": [
@@ -1901,7 +1923,7 @@
             "rows": [
               [
                 "Series",
-                "series_id, tenant, canonical name/labels, active flag, generation, last_seen, inactive_at; identity hash includes tenant",
+                "series_id, tenant, canonical name/labels, active flag, generation, inactive_at; identity hash includes tenant",
                 "tenant-qualified series identity; verify canonical labels on hash collisions",
                 "Prometheus defines a series by name and labels; tenant qualification and collision checks are this platform's isolation choices."
               ],
@@ -1927,7 +1949,7 @@
                 "Tenant",
                 "tenant_id, active_series, max_series, max_samples_per_second, retention overrides",
                 "tenant_id counter and tenant-qualified series keys",
-                "Creation atomically writes metadata, five label items and active-counter increment. Deactivation changes metadata and decrements the counter once, without deleting discovery. Reactivation increments quota conditionally and advances generation. Historical collection deletes metadata/labels only after the inactive retention deadline and a generation/state check."
+                "Creation atomically writes metadata and five label items, and a group of creations in one transaction shares one combined active-counter increment. Deactivation changes metadata and decrements the counter once, without deleting discovery. Reactivation increments quota conditionally and advances generation. Historical collection deletes metadata/labels only after the inactive retention deadline and a generation/state check."
               ],
               [
                 "Rule",
@@ -2013,7 +2035,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber\n  participant T as Target\n  participant SC as Scraper\n  participant IN as Ingest\n  participant IX as Series index\n  participant LOG as Samples log\n  SC->>T: scrape\n  alt target responds\n    T-->>SC: samples\n  else live scrape fails\n    SC->>SC: up=0 observation\n  end\n  SC->>IN: retryable tenant batch\n  Note over IN,IX: known series resolve in memory,<br/>only first-seen series are claimed\n  IN->>IX: atomic series and quota claim\n  alt quota rejected\n    IX-->>IN: rejected\n    IN-->>SC: explicit error\n  else identity available\n    IX-->>IN: canonical identity\n    IN->>LOG: append physical aggregates\n    LOG-->>IN: per-record durable results\n    IN-->>SC: acknowledge durable samples\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber\n  participant T as Target\n  participant SC as Scraper\n  participant IN as Ingest\n  participant IX as Series index\n  participant LOG as Samples log\n  SC->>T: scrape\n  alt target responds\n    T-->>SC: samples\n  else live scrape fails\n    SC->>SC: up=0 observation\n  end\n  SC->>IN: retryable tenant batch\n  Note over IN,IX: known series resolve in memory,<br/>only first-seen series are claimed\n  opt first-seen series in the batch\n    IN->>IX: atomic series and quota claim\n    alt quota rejected\n      IX-->>IN: rejected\n      IN-->>SC: explicit error for the new series\n    else created or existing\n      IX-->>IN: canonical identity\n    end\n  end\n  IN->>LOG: append physical aggregates\n  LOG-->>IN: per-record durable results\n  IN-->>SC: acknowledge durable samples",
             "legend": "Consistent-hash scraper assignment is this design's choice, not a claim from the Prometheus overview s1. Unacknowledged records are retried with stable sample identities; consumers deduplicate and handle late timestamps explicitly. A dead scraper emits no samples. Cardinality guidance comes from s5/s6.",
             "cites": [
               "s1",
@@ -2062,7 +2084,7 @@
           },
           {
             "type": "p",
-            "text": "Cardinality guidance limits unbounded labels; active quota bounds the hot window, not the lifetime history index. Deactivation is serialized against renewal/reactivation, releases active quota once and leaves canonical labels discoverable. After admission closes and outstanding accepted records are drained, record inactive_at; retain discovery for the longest sample horizon after that instant. Any reactivation invalidates collection through its generation condition. Active-lease/last-seen refresh operations are not included in the churn-only cost subtotal.",
+            "text": "Cardinality guidance limits unbounded labels; active quota bounds the hot window, not the lifetime history index. Deactivation is serialized against renewal/reactivation, releases active quota once and leaves canonical labels discoverable. After admission closes and outstanding accepted records are drained, record inactive_at; retain discovery for the longest sample horizon after that instant. Any reactivation invalidates collection through its generation condition. No last-seen value is written per series: the compactor, which already sees every series of each closed 2-hour chunk, deactivates a series that is absent from three consecutive chunks (about 6 hours, assumption), far longer than the 10 minutes a series stays in an ingest task's local set, so no ingest task can still hold a deactivated series and skip its quota check. A reactivation finds the series first-seen again and takes the guarded reactivation path.",
             "cites": [
               "s5",
               "s6"
@@ -2268,14 +2290,16 @@
               ["PUT metering", "Each full record uses three 25-KiB PUT units. Full packing produces about 1,333 records/s and 4,000 PUT units/s."],
               ["Log readers", "Both hot replicas read every record. On-demand comparison includes ingress plus two reads and one stream-hour charge."],
               ["Restoration and retention", "Default stream retention only. Full-window hydration uses retained raw blocks; tail catch-up must finish before uncheckpointed records expire. Alarm and backpressure before that boundary."],
-              ["Lifecycle writes", "Seven items on first creation, two on deactivation, six on eventual historical collection; transactional doubling gives 30 write units per distinct churn lifecycle. Assume 4M distinct replacements daily."],
+              ["Lifecycle writes", "Six items a creation plus one counter update shared by a group of 16, two on deactivation, six on collection; doubled for transactions, 28.125 write units per churn lifecycle. Assume 4M distinct replacements daily."],
               ["Write-size bound", "Each serialized metadata, label-index or counter item fits one KiB including attribute names/keys; the six discovery items together fit two KiB in this priced model. Larger labels require rejection or rounded-up capacity, not the same price."],
               ["Historical identity count", "40M active plus 4M daily distinct inactive identities retained for 460 days: 1.88B identities at steady state."],
               ["Registry storage", "Budget 5,000 billed GB for retained discovery and counters at base; tenfold storage at larger load. This covers the two-KiB identity bound plus the per-item storage overhead that DynamoDB billing adds, with headroom."],
               ["Ingest fast path", "Ingest resolves a known series from a fingerprint set held in memory, dropped after ten minutes unseen (assumption), and skips the registry; only a first-seen or reactivated series transacts."],
-              ["Fast path and cost", "The registry line prices lifecycles, not samples, so it is unchanged by the fast path; without it every sample would need a read, 6.9 trillion a month, about $864,000. The last-seen refresh it needs stays excluded."],
-              ["Transaction size", "A TransactWriteItems carries at most 100 actions, so 14 seven-item creations fit: a new 2,000-series target takes about 143 transactions."],
-              ["Registry reads", "One strong metadata read per newly encountered identity, below four KiB. Historical selector reads, active refreshes, reactivations and retry/collection-lag overhead are excluded."],
+              ["Fast path and cost", "The registry line prices lifecycles, not samples; without the fast path every sample would need a read, 6.9 trillion a month, about $864,000. No per-series last-seen refresh exists, so nothing else is owed."],
+              ["Transaction size", "A TransactWriteItems carries at most 100 actions, no two on the same item, so the tenant counter is one combined update: 16 creations of 6 items plus it are 97 actions."],
+              ["New target", "A new target of 2,000 series therefore takes 125 transactions."],
+              ["Deactivation signal", "Inactivity is read from the closed chunks the compactor already processes: a series absent from three in a row (about 6 hours, assumption) is deactivated by its two guarded writes, already counted among the lifecycle writes; nothing refreshes a last-seen value."],
+              ["Registry reads", "One strong metadata read per newly encountered identity, below four KiB. Historical selector reads, reactivations and retry/collection-lag overhead are excluded."],
               ["Storage units", "Teaching volumes are decimal. Budget the numeric total as 36,000 AWS billed GB conservatively rather than claim equality with binary units. Larger tier uses the actual 51,200-GB breakpoint."],
               ["Month and fleet", "30 request-days, 730 running hours. Tenfold task and shard counts are unbenchmarked sizing assumptions."]
             ],
@@ -2345,8 +2369,8 @@
                 "Series registry: DynamoDB on-demand",
                 "Creation, active deactivation and historical collection are separate transactions; discovery retained independently of quota. Steady-state churn and item-size/storage assumptions above.",
                 "$0.625 per million writes; $0.125 per million reads; $0.25 per billed GB-month",
-                "$3,515",
-                "$35,150"
+                "$3,374",
+                "$33,744"
               ],
               [
                 "Alerts: SNS",
@@ -2366,8 +2390,8 @@
                 "Total on AWS (the design, not the buy option)",
                 "Same exclusions as the final AWS summary table",
                 "",
-                "about $13,607; $340 per million active series",
-                "about $133,712; $334 per million active series"
+                "about $13,466; $337 per million active series",
+                "about $132,306; $331 per million active series"
               ]
             ],
             "cites": [
@@ -2476,6 +2500,11 @@
       "version": 6,
       "date": "2026-10-16",
       "change": "Third-read follow-ups: the SNS interface endpoint is cited (AWS documentation); the steady-state ingest fast path is stated (known series skip the registry transaction, only first-seen series transact, 14 creations to a 100-action transaction) in the ingest sequence, flow edge and step, neutral note and the billing table, with its cost effect (the registry line prices lifecycles; 6.9 trillion reads a month avoided). reviewed_by cleared for a re-read."
+    },
+    {
+      "version": 7,
+      "date": "2026-10-16",
+      "change": "Fix round on the follow-up read: the creation transaction no longer targets the tenant counter more than once (6 items per creation, one combined counter update per group of 16, 97 actions, 125 transactions for a new 2,000-series target; lifecycle write units 28.125, registry $3,374 and $33,744, subtotal about $13,466 and $132,306, $337 and $331 per million active series); the hourly last-seen refresh is designed away (the compactor deactivates a series absent from three consecutive closed chunks, about 6 hours, far beyond the 10-minute local set; new flow edge, identity row, billing rows; no last-seen exclusion left); the neutral and AWS ingest sequences now both draw the registry call once, inside an opt for first-seen series. reviewed_by cleared for a re-read."
     }
   ]
 }
