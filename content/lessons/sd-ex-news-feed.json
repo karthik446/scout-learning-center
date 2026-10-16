@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-news-feed",
-  "version": 12,
+  "version": 13,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: news feed",
@@ -553,6 +553,72 @@
         "http": 200,
         "section_found": "control access to the cluster by using Amazon VPC security groups"
       }
+    },
+    {
+      "id": "s47",
+      "title": "Amazon DynamoDB Developer Guide: Using time to live (TTL)",
+      "url": "https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/TTL.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "deletes expired items within a few days of their expiration time, without consuming write throughput"
+      }
+    },
+    {
+      "id": "s48",
+      "title": "Amazon DynamoDB Developer Guide: Working with items (atomic counters with UpdateItem)",
+      "url": "https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/WorkingWithItems.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "atomic counter"
+      }
+    },
+    {
+      "id": "s49",
+      "title": "Valkey cluster specification (multi-key operations need all keys in one hash slot; hash tags)",
+      "url": "https://valkey.io/topics/cluster-spec/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "hash to the same slot"
+      }
+    },
+    {
+      "id": "s50",
+      "title": "Redis documentation: LPUSH (inserts at the head of the list, with no check for a value already in it)",
+      "url": "https://redis.io/docs/latest/commands/lpush/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "specified values at the head of the list"
+      }
+    },
+    {
+      "id": "s51",
+      "title": "Amazon S3 User Guide: Sharing objects with presigned URLs",
+      "url": "https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Download and upload objects with presigned URLs"
+      }
+    },
+    {
+      "id": "s52",
+      "title": "AWS Lambda Developer Guide: Using Lambda with Amazon S3 (an object-created event invokes a function)",
+      "url": "https://docs.aws.amazon.com/lambda/latest/dg/with-s3.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Amazon S3 can send an event to a Lambda"
+      }
     }
   ],
   "practice": null,
@@ -816,47 +882,211 @@
           {
             "type": "flow",
             "nodes": [
-              {"id": "A", "label": "Authors", "kind": "actor"},
-              {"id": "PS", "label": "Post service", "kind": "service"},
-              {"id": "PDB", "label": "Posts, sharded by post id", "kind": "store"},
-              {"id": "Q", "label": "post events", "kind": "queue"},
-              {"id": "FO", "label": "Fan-out workers", "kind": "service"},
-              {"id": "G", "label": "Social graph: follows", "kind": "store"},
-              {"id": "TL", "label": "Timeline cache: post ids per user", "kind": "store"},
-              {"id": "R", "label": "Readers", "kind": "actor"},
-              {"id": "FS", "label": "Feed service", "kind": "service"},
-              {"id": "RK", "label": "Ranking service", "kind": "service"},
-              {"id": "PC", "label": "Post content cache", "kind": "store"}
+              {
+                "id": "A",
+                "label": "Authors",
+                "kind": "actor"
+              },
+              {
+                "id": "PS",
+                "label": "Post service",
+                "kind": "service"
+              },
+              {
+                "id": "PDB",
+                "label": "Posts, sharded by post id",
+                "kind": "store"
+              },
+              {
+                "id": "Q",
+                "label": "post events",
+                "kind": "queue"
+              },
+              {
+                "id": "FO",
+                "label": "Fan-out workers",
+                "kind": "service"
+              },
+              {
+                "id": "G",
+                "label": "Social graph: follows",
+                "kind": "store"
+              },
+              {
+                "id": "TL",
+                "label": "Timeline cache: post ids per user",
+                "kind": "store"
+              },
+              {
+                "id": "R",
+                "label": "Readers",
+                "kind": "actor"
+              },
+              {
+                "id": "FS",
+                "label": "Feed service",
+                "kind": "service"
+              },
+              {
+                "id": "RK",
+                "label": "Ranking service",
+                "kind": "service"
+              },
+              {
+                "id": "PC",
+                "label": "Post content cache",
+                "kind": "store"
+              }
             ],
             "frames": [
-              {"id": "write", "title": "Write path", "nodes": ["A", "PS", "PDB", "Q", "FO", "G", "TL"]},
-              {"id": "read", "title": "Read path", "nodes": ["R", "FS", "RK", "PC"]}
+              {
+                "id": "write",
+                "title": "Write path",
+                "nodes": [
+                  "A",
+                  "PS",
+                  "PDB",
+                  "Q",
+                  "FO",
+                  "G",
+                  "TL"
+                ]
+              },
+              {
+                "id": "read",
+                "title": "Read path",
+                "nodes": [
+                  "R",
+                  "FS",
+                  "RK",
+                  "PC"
+                ]
+              }
             ],
             "edges": [
-              {"from": "A", "to": "PS", "kind": "sync", "label": "Authors to Post service", "short": "Post"},
-              {"from": "PS", "to": "PDB", "kind": "sync", "label": "Post service to Posts, sharded by post id", "short": "Store post"},
-              {"from": "PS", "to": "Q", "kind": "async", "label": "Post service to post events", "short": "Post event"},
-              {"from": "Q", "to": "FO", "kind": "async", "label": "post events to Fan-out workers", "short": "Fan-out"},
-              {"from": "FO", "to": "G", "kind": "sync", "label": "Fan-out workers to Social graph: follows", "short": "Followers"},
-              {"from": "FO", "to": "TL", "kind": "sync", "label": "Fan-out workers to Timeline cache: post ids per user", "short": "Timeline"},
-              {"from": "R", "to": "FS", "kind": "sync", "label": "Readers to Feed service", "short": "Feed"},
-              {"from": "FS", "to": "TL", "kind": "sync", "label": "Feed service to Timeline cache: post ids per user", "short": "Read timeline"},
-              {"from": "FS", "to": "PDB", "kind": "sync", "label": "celebrity posts", "short": "Celebrity"},
-              {"from": "FS", "to": "RK", "kind": "sync", "label": "Feed service to Ranking service", "short": "Rank"},
-              {"from": "FS", "to": "PC", "kind": "sync", "label": "Feed service to Post content cache", "short": "Read content"}
+              {
+                "from": "A",
+                "to": "PS",
+                "kind": "sync",
+                "label": "Authors to Post service",
+                "short": "Post"
+              },
+              {
+                "from": "PS",
+                "to": "PDB",
+                "kind": "sync",
+                "label": "Post service to Posts, sharded by post id",
+                "short": "Store post"
+              },
+              {
+                "from": "PS",
+                "to": "Q",
+                "kind": "async",
+                "label": "Post service to post events",
+                "short": "Post event"
+              },
+              {
+                "from": "Q",
+                "to": "FO",
+                "kind": "async",
+                "label": "post events to Fan-out workers",
+                "short": "Fan-out"
+              },
+              {
+                "from": "FO",
+                "to": "G",
+                "kind": "sync",
+                "label": "Fan-out workers to Social graph: follows",
+                "short": "Followers"
+              },
+              {
+                "from": "FO",
+                "to": "TL",
+                "kind": "sync",
+                "label": "Fan-out workers to Timeline cache: post ids per user",
+                "short": "Timeline"
+              },
+              {
+                "from": "R",
+                "to": "FS",
+                "kind": "sync",
+                "label": "Readers to Feed service",
+                "short": "Feed"
+              },
+              {
+                "from": "FS",
+                "to": "TL",
+                "kind": "sync",
+                "label": "Feed service to Timeline cache: post ids per user",
+                "short": "Read timeline"
+              },
+              {
+                "from": "FS",
+                "to": "PDB",
+                "kind": "sync",
+                "label": "celebrity posts",
+                "short": "Celebrity"
+              },
+              {
+                "from": "FS",
+                "to": "RK",
+                "kind": "sync",
+                "label": "Feed service to Ranking service",
+                "short": "Rank"
+              },
+              {
+                "from": "FS",
+                "to": "PC",
+                "kind": "sync",
+                "label": "Feed service to Post content cache",
+                "short": "Read content"
+              }
             ],
             "steps": [
-              {"edge": 0, "caption": "Authors to Post service"},
-              {"edge": 1, "caption": "Post service to Posts, sharded by post id"},
-              {"edge": 2, "caption": "Post service to post events"},
-              {"edge": 3, "caption": "post events to Fan-out workers"},
-              {"edge": 4, "caption": "Fan-out workers to Social graph: follows"},
-              {"edge": 5, "caption": "Fan-out workers to Timeline cache: post ids per user"},
-              {"edge": 6, "caption": "Readers to Feed service"},
-              {"edge": 7, "caption": "Feed service to Timeline cache: post ids per user"},
-              {"edge": 8, "caption": "Feed service to celebrity posts"},
-              {"edge": 9, "caption": "Feed service to Ranking service"},
-              {"edge": 10, "caption": "Feed service to Post content cache"}
+              {
+                "edge": 0,
+                "caption": "Authors to Post service"
+              },
+              {
+                "edge": 1,
+                "caption": "Post service to Posts, sharded by post id"
+              },
+              {
+                "edge": 2,
+                "caption": "Post service to post events"
+              },
+              {
+                "edge": 3,
+                "caption": "post events to Fan-out workers"
+              },
+              {
+                "edge": 4,
+                "caption": "Fan-out workers to Social graph: follows"
+              },
+              {
+                "edge": 5,
+                "caption": "Fan-out workers to Timeline cache: post ids per user"
+              },
+              {
+                "edge": 6,
+                "caption": "Readers to Feed service"
+              },
+              {
+                "edge": 7,
+                "caption": "Feed service to Timeline cache: post ids per user"
+              },
+              {
+                "edge": 8,
+                "caption": "Feed service to celebrity posts"
+              },
+              {
+                "edge": 9,
+                "caption": "Feed service to Ranking service"
+              },
+              {
+                "edge": 10,
+                "caption": "Feed service to Post content cache"
+              }
             ],
             "legend": "Boxes are containers; the two frames are the write and read paths; cylinders are stores; double brackets are logs."
           },
@@ -884,82 +1114,337 @@
           {
             "type": "flow",
             "nodes": [
-              {"id": "A", "label": "Authors", "kind": "actor"},
-              {"id": "CF", "label": "Amazon CloudFront", "kind": "service"},
-              {"id": "ALB", "label": "Application Load Balancer", "kind": "service"},
-              {"id": "PS", "label": "ECS on Fargate: post service", "kind": "service"},
-              {"id": "FO", "label": "ECS on Fargate: fan-out workers", "kind": "service"},
-              {"id": "TL", "label": "ElastiCache for Valkey: timeline cache, post ids per user", "kind": "store"},
-              {"id": "PDB", "label": "Amazon DynamoDB: posts table, author_id index", "kind": "store"},
-              {"id": "G", "label": "Amazon DynamoDB: follows table", "kind": "store"},
-              {"id": "Q", "label": "Amazon SQS standard queue: post events", "kind": "queue"}
+              {
+                "id": "A",
+                "label": "Authors",
+                "kind": "actor"
+              },
+              {
+                "id": "CF",
+                "label": "Amazon CloudFront",
+                "kind": "service"
+              },
+              {
+                "id": "ALB",
+                "label": "Application Load Balancer",
+                "kind": "service"
+              },
+              {
+                "id": "PS",
+                "label": "ECS on Fargate: post service",
+                "kind": "service"
+              },
+              {
+                "id": "FO",
+                "label": "ECS on Fargate: fan-out workers",
+                "kind": "service"
+              },
+              {
+                "id": "TL",
+                "label": "ElastiCache for Valkey: timeline cache, post ids per user",
+                "kind": "store"
+              },
+              {
+                "id": "PDB",
+                "label": "Amazon DynamoDB: posts table, author_id index",
+                "kind": "store"
+              },
+              {
+                "id": "G",
+                "label": "Amazon DynamoDB: follows table",
+                "kind": "store"
+              },
+              {
+                "id": "Q",
+                "label": "Amazon SQS standard queue: post events",
+                "kind": "queue"
+              }
             ],
             "frames": [
-              {"id": "PUB", "title": "VPC public subnets", "nodes": ["ALB"]},
-              {"id": "WP", "title": "VPC private: write path", "nodes": ["PS", "FO"]},
-              {"id": "CACHES", "title": "VPC private: caches", "nodes": ["TL"]}
+              {
+                "id": "PUB",
+                "title": "VPC public subnets",
+                "nodes": [
+                  "ALB"
+                ]
+              },
+              {
+                "id": "WP",
+                "title": "VPC private: write path",
+                "nodes": [
+                  "PS",
+                  "FO"
+                ]
+              },
+              {
+                "id": "CACHES",
+                "title": "VPC private: caches",
+                "nodes": [
+                  "TL"
+                ]
+              }
             ],
             "edges": [
-              {"from": "A", "to": "CF", "kind": "sync", "label": "HTTPS, sync", "short": "HTTPS"},
-              {"from": "CF", "to": "ALB", "kind": "sync", "label": "HTTPS to the origin, sync", "short": "HTTPS origin"},
-              {"from": "ALB", "to": "PS", "kind": "sync", "label": "HTTP, sync", "short": "HTTP"},
-              {"from": "PS", "to": "PDB", "kind": "sync", "label": "PutItem over the gateway endpoint, sync", "short": "PutItem"},
-              {"from": "PS", "to": "Q", "kind": "async", "label": "SendMessage over the interface endpoint, async hand-off", "short": "SendMessage"},
-              {"from": "Q", "to": "FO", "kind": "async", "label": "ReceiveMessage long-poll over the interface endpoint", "short": "ReceiveMessage"},
-              {"from": "FO", "to": "G", "kind": "sync", "label": "Query followers over the gateway endpoint, sync", "short": "Query"},
-              {"from": "FO", "to": "TL", "kind": "sync", "label": "LPUSH and LTRIM pipelined per node, cache write", "short": "LPUSH + LTRIM"}
+              {
+                "from": "A",
+                "to": "CF",
+                "kind": "sync",
+                "label": "HTTPS, sync",
+                "short": "HTTPS"
+              },
+              {
+                "from": "CF",
+                "to": "ALB",
+                "kind": "sync",
+                "label": "HTTPS to the origin, sync",
+                "short": "HTTPS origin"
+              },
+              {
+                "from": "ALB",
+                "to": "PS",
+                "kind": "sync",
+                "label": "HTTP, sync",
+                "short": "HTTP"
+              },
+              {
+                "from": "PS",
+                "to": "PDB",
+                "kind": "sync",
+                "label": "PutItem over the gateway endpoint, sync",
+                "short": "PutItem"
+              },
+              {
+                "from": "PS",
+                "to": "Q",
+                "kind": "async",
+                "label": "SendMessage over the interface endpoint, async hand-off",
+                "short": "SendMessage"
+              },
+              {
+                "from": "Q",
+                "to": "FO",
+                "kind": "async",
+                "label": "ReceiveMessage long-poll over the interface endpoint",
+                "short": "ReceiveMessage"
+              },
+              {
+                "from": "FO",
+                "to": "G",
+                "kind": "sync",
+                "label": "Query followers over the gateway endpoint, sync",
+                "short": "Query"
+              },
+              {
+                "from": "FO",
+                "to": "TL",
+                "kind": "sync",
+                "label": "LPUSH and LTRIM pipelined per node, cache write",
+                "short": "LPUSH + LTRIM"
+              }
             ],
             "steps": [
-              {"edge": 0, "caption": "Authors to Amazon CloudFront: HTTPS, sync"},
-              {"edge": 1, "caption": "CloudFront to Application Load Balancer: HTTPS to the origin, sync"},
-              {"edge": 2, "caption": "Load balancer to post service: HTTP, sync"},
-              {"edge": 3, "caption": "Post service to DynamoDB posts: PutItem over the gateway endpoint, sync"},
-              {"edge": 4, "caption": "Post service to SQS: SendMessage over the interface endpoint, async hand-off"},
-              {"edge": 5, "caption": "SQS to fan-out workers: ReceiveMessage long-poll over the interface endpoint"},
-              {"edge": 6, "caption": "Fan-out workers to DynamoDB follows: Query followers over the gateway endpoint, sync"},
-              {"edge": 7, "caption": "Fan-out workers to timeline cache: LPUSH and LTRIM pipelined per node, cache write"}
+              {
+                "edge": 0,
+                "caption": "Authors to Amazon CloudFront: HTTPS, sync"
+              },
+              {
+                "edge": 1,
+                "caption": "CloudFront to Application Load Balancer: HTTPS to the origin, sync"
+              },
+              {
+                "edge": 2,
+                "caption": "Load balancer to post service: HTTP, sync"
+              },
+              {
+                "edge": 3,
+                "caption": "Post service to DynamoDB posts: PutItem over the gateway endpoint, sync"
+              },
+              {
+                "edge": 4,
+                "caption": "Post service to SQS: SendMessage over the interface endpoint, async hand-off"
+              },
+              {
+                "edge": 5,
+                "caption": "SQS to fan-out workers: ReceiveMessage long-poll over the interface endpoint"
+              },
+              {
+                "edge": 6,
+                "caption": "Fan-out workers to DynamoDB follows: Query followers over the gateway endpoint, sync"
+              },
+              {
+                "edge": 7,
+                "caption": "Fan-out workers to timeline cache: LPUSH and LTRIM pipelined per node, cache write"
+              }
             ],
-            "legend": "The write half of the architecture, the same boxes as the neutral diagram's write path, one AWS service each: the post service and the fan-out workers are ECS on Fargate tasks, the posts store and the social graph are DynamoDB tables, the post events log is an SQS standard queue, and the timeline cache is an ElastiCache for Valkey cluster. CloudFront and the load balancer are the edge the neutral diagram leaves implicit. Each arrow says how the call is made: HTTPS from clients, HTTP inside the VPC, named AWS SDK calls over VPC endpoints, SQS long-poll, cache writes. Sync means the caller waits for the answer; async means the work goes on after the caller has been answered. The VPC frames are one VPC in one Region across three Availability Zones, drawn apart so each frame's title stays readable. DynamoDB and SQS are Regional services outside the VPC, reached through endpoints, while the cache lives inside it."
+            "legend": "The write half of the architecture, the same boxes as the neutral diagram's write path, one AWS service each: the post service and the fan-out workers are ECS on Fargate tasks, the posts store and the social graph are DynamoDB tables, the post events log is an SQS standard queue, and the timeline cache is an ElastiCache for Valkey cluster. CloudFront and the load balancer are the edge the neutral diagram leaves implicit. Each arrow says how the call is made: HTTPS from clients, HTTP inside the VPC, named AWS SDK calls over VPC endpoints, SQS long-poll, cache writes. Sync means the caller waits for the answer; async means the work goes on after the caller has been answered. The VPC frames are one VPC in one Region across three Availability Zones, drawn apart so each frame's title stays readable. DynamoDB and SQS are Regional services outside the VPC, reached through endpoints, while the cache lives inside it. The posts box also stands for the small table of idempotency keys, and the follows box also holds the follower-count items. The flow draws the main path of a post and of its fan-out; the sequence diagrams below also show the media upload to S3, the key item, the follower-count read at post time, the follow calls and the dedupe, which the flow leaves out. The SendMessage is a synchronous call, since the 201 waits for it, even though the arrow is drawn as the hand-off to the queue's asynchronous consumers."
           },
           {
             "type": "flow",
             "nodes": [
-              {"id": "R", "label": "Readers", "kind": "actor"},
-              {"id": "CF", "label": "Amazon CloudFront", "kind": "service"},
-              {"id": "ALB", "label": "Application Load Balancer", "kind": "service"},
-              {"id": "S3", "label": "Amazon S3: media objects", "kind": "store"},
-              {"id": "FS", "label": "ECS on Fargate: feed service", "kind": "service"},
-              {"id": "RK", "label": "ECS on Fargate: ranking service", "kind": "service"},
-              {"id": "TL", "label": "ElastiCache for Valkey: timeline cache, post ids per user", "kind": "store"},
-              {"id": "PC", "label": "ElastiCache for Valkey: post content cache", "kind": "store"},
-              {"id": "PDB", "label": "Amazon DynamoDB: posts table, author_id index", "kind": "store"}
+              {
+                "id": "R",
+                "label": "Readers",
+                "kind": "actor"
+              },
+              {
+                "id": "CF",
+                "label": "Amazon CloudFront",
+                "kind": "service"
+              },
+              {
+                "id": "ALB",
+                "label": "Application Load Balancer",
+                "kind": "service"
+              },
+              {
+                "id": "S3",
+                "label": "Amazon S3: media objects",
+                "kind": "store"
+              },
+              {
+                "id": "FS",
+                "label": "ECS on Fargate: feed service",
+                "kind": "service"
+              },
+              {
+                "id": "RK",
+                "label": "ECS on Fargate: ranking service",
+                "kind": "service"
+              },
+              {
+                "id": "TL",
+                "label": "ElastiCache for Valkey: timeline cache, post ids per user",
+                "kind": "store"
+              },
+              {
+                "id": "PC",
+                "label": "ElastiCache for Valkey: post content cache",
+                "kind": "store"
+              },
+              {
+                "id": "PDB",
+                "label": "Amazon DynamoDB: posts table, author_id index",
+                "kind": "store"
+              }
             ],
             "frames": [
-              {"id": "PUB", "title": "VPC public subnets", "nodes": ["ALB"]},
-              {"id": "RP", "title": "VPC private: read path", "nodes": ["FS", "RK"]},
-              {"id": "CACHES", "title": "VPC private: caches", "nodes": ["TL", "PC"]}
+              {
+                "id": "PUB",
+                "title": "VPC public subnets",
+                "nodes": [
+                  "ALB"
+                ]
+              },
+              {
+                "id": "RP",
+                "title": "VPC private: read path",
+                "nodes": [
+                  "FS",
+                  "RK"
+                ]
+              },
+              {
+                "id": "CACHES",
+                "title": "VPC private: caches",
+                "nodes": [
+                  "TL",
+                  "PC"
+                ]
+              }
             ],
             "edges": [
-              {"from": "R", "to": "CF", "kind": "sync", "label": "HTTPS, sync", "short": "HTTPS"},
-              {"from": "CF", "to": "ALB", "kind": "sync", "label": "HTTPS to the origin, sync", "short": "HTTPS origin"},
-              {"from": "ALB", "to": "FS", "kind": "sync", "label": "HTTP, sync", "short": "HTTP"},
-              {"from": "FS", "to": "TL", "kind": "sync", "label": "LRANGE, cache read, sync", "short": "LRANGE"},
-              {"from": "FS", "to": "PDB", "kind": "sync", "label": "Query the author_id index for celebrity posts, sync", "short": "Query index"},
-              {"from": "FS", "to": "RK", "kind": "sync", "label": "HTTP by Service Connect name, sync, 50 ms deadline", "short": "HTTP / 50 ms"},
-              {"from": "FS", "to": "PC", "kind": "sync", "label": "MGET, cache read, sync", "short": "MGET"},
-              {"from": "CF", "to": "S3", "kind": "sync", "label": "media on an edge miss, HTTPS", "short": "Media HTTPS"}
+              {
+                "from": "R",
+                "to": "CF",
+                "kind": "sync",
+                "label": "HTTPS, sync",
+                "short": "HTTPS"
+              },
+              {
+                "from": "CF",
+                "to": "ALB",
+                "kind": "sync",
+                "label": "HTTPS to the origin, sync",
+                "short": "HTTPS origin"
+              },
+              {
+                "from": "ALB",
+                "to": "FS",
+                "kind": "sync",
+                "label": "HTTP, sync",
+                "short": "HTTP"
+              },
+              {
+                "from": "FS",
+                "to": "TL",
+                "kind": "sync",
+                "label": "LRANGE, cache read, sync",
+                "short": "LRANGE"
+              },
+              {
+                "from": "FS",
+                "to": "PDB",
+                "kind": "sync",
+                "label": "Query the author_id index for celebrity posts, sync",
+                "short": "Query index"
+              },
+              {
+                "from": "FS",
+                "to": "RK",
+                "kind": "sync",
+                "label": "HTTP by Service Connect name, sync, 50 ms deadline",
+                "short": "HTTP / 50 ms"
+              },
+              {
+                "from": "FS",
+                "to": "PC",
+                "kind": "sync",
+                "label": "MGET, cache read, sync",
+                "short": "MGET"
+              },
+              {
+                "from": "CF",
+                "to": "S3",
+                "kind": "sync",
+                "label": "media on an edge miss, HTTPS",
+                "short": "Media HTTPS"
+              }
             ],
             "steps": [
-              {"edge": 0, "caption": "Readers to Amazon CloudFront: HTTPS, sync"},
-              {"edge": 1, "caption": "CloudFront to Application Load Balancer: HTTPS to the origin, sync"},
-              {"edge": 2, "caption": "Load balancer to feed service: HTTP, sync"},
-              {"edge": 3, "caption": "Feed service to timeline cache: LRANGE, cache read, sync"},
-              {"edge": 4, "caption": "Feed service to DynamoDB posts: Query the author_id index for celebrity posts, sync"},
-              {"edge": 5, "caption": "Feed service to ranking service: HTTP by Service Connect name, sync, 50 ms deadline"},
-              {"edge": 6, "caption": "Feed service to post content cache: MGET, cache read, sync"},
-              {"edge": 7, "caption": "CloudFront to S3: media on an edge miss, HTTPS"}
+              {
+                "edge": 0,
+                "caption": "Readers to Amazon CloudFront: HTTPS, sync"
+              },
+              {
+                "edge": 1,
+                "caption": "CloudFront to Application Load Balancer: HTTPS to the origin, sync"
+              },
+              {
+                "edge": 2,
+                "caption": "Load balancer to feed service: HTTP, sync"
+              },
+              {
+                "edge": 3,
+                "caption": "Feed service to timeline cache: LRANGE, cache read, sync"
+              },
+              {
+                "edge": 4,
+                "caption": "Feed service to DynamoDB posts: Query the author_id index for celebrity posts, sync"
+              },
+              {
+                "edge": 5,
+                "caption": "Feed service to ranking service: HTTP by Service Connect name, sync, 50 ms deadline"
+              },
+              {
+                "edge": 6,
+                "caption": "Feed service to post content cache: MGET, cache read, sync"
+              },
+              {
+                "edge": 7,
+                "caption": "CloudFront to S3: media on an edge miss, HTTPS"
+              }
             ],
-            "legend": "The read half, the neutral diagram's read path: the feed service and the ranking service are ECS on Fargate tasks, the two caches are ElastiCache for Valkey clusters, the posts table is the same DynamoDB table as in the write half, and S3 is the media store behind CloudFront. CloudFront, the load balancer and the timeline cache appear in both halves. Every arrow here is synchronous: HTTPS from clients, HTTP inside the VPC, a named SDK call over the gateway endpoint, cache reads; the cache clusters keep one replica per shard in another zone."
+            "legend": "The read half, the neutral diagram's read path: the feed service and the ranking service are ECS on Fargate tasks, the two caches are ElastiCache for Valkey clusters, the posts table is the same DynamoDB table as in the write half, and S3 is the media store behind CloudFront. CloudFront, the load balancer and the timeline cache appear in both halves. Every arrow here is synchronous: HTTPS from clients, HTTP inside the VPC, a named SDK call over the gateway endpoint, cache reads; the cache clusters keep one replica per shard in another zone. The flow draws the main path of a read; the sequence diagrams below also show the follows-table reads for a rebuild, the celebrity set, the pending followees, the content fill and the cache fills. Where the flow says MGET, keys that sit in different hash slots cannot share one MGET, so the feed service sends one MGET per node or GETs pipelined per node."
           },
           {
             "type": "p",
@@ -967,49 +1452,63 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber\n  participant S3\n  participant App as Author's app\n  participant Edge\n  participant PS as Post svc\n  participant DDB as DynamoDB posts\n  App->>S3: upload the media\n  S3-->>App: object key\n  App->>Edge: POST /posts, post id\n  Note over App,Edge: the id is the idempotency key\n  Edge->>PS: HTTP, a healthy task\n  PS->>DDB: PutItem\n  Note over PS,DDB: attribute_not_exists(<br/>post_id)\n  DDB-->>PS: ok, the index follows\n  Note over PS: hand-off, part b\n  PS-->>Edge: 201 Created\n  Edge-->>App: 201\n  opt network failure before the 201\n    App->>Edge: retry, same post id\n    Edge->>PS: HTTP\n    PS->>DDB: PutItem again\n    DDB-->>PS: ConditionalCheckFailed\n    Note over PS,DDB: the duplicate is a no-op\n  end\n  opt DynamoDB throttle or 5xx\n    PS->>DDB: SDK retry\n    Note over PS,DDB: backoff and jitter\n  end",
-            "legend": "Solid arrows are synchronous calls with their replies dashed. Edge is CloudFront in front of the load balancer, drawn as one lane here and in every sequence diagram below: CloudFront adds a secret header and the load balancer refuses callers without it s33. The post id is generated by the client. Sources: media on S3 behind CloudFront s24, s25; health checks and task replacement s31, s32; the conditional PutItem s44 and the SDK retry with backoff and jitter s43; the PutItem goes over the gateway endpoint s37; the index lag s30.",
+            "mermaid": "sequenceDiagram\n  autonumber\n  participant S3\n  participant App as Author's app\n  participant Edge\n  participant PS as Post svc\n  participant DDB as DynamoDB\n  App->>S3: upload the media\n  S3-->>App: object key\n  App->>Edge: POST /posts, idempotency key\n  Note over App,Edge: key from the app,<br/>id from the server\n  Edge->>PS: HTTP, a healthy task\n  Note over PS: mints the post id,<br/>Snowflake layout\n  PS->>DDB: PutItem the key item,<br/>key to post id\n  Note over PS,DDB: attribute_not_exists\n  DDB-->>PS: ok, a new key\n  PS->>DDB: PutItem the post\n  Note over PS,DDB: attribute_not_exists(<br/>post_id)\n  DDB-->>PS: ok, the index follows\n  Note over PS: hand-off, part b\n  opt DynamoDB throttle or 5xx\n    PS->>DDB: SDK retry\n    Note over PS,DDB: backoff, jitter, then 503\n  end",
+            "legend": "Solid arrows are synchronous calls with their replies dashed. Edge is CloudFront in front of the load balancer, drawn as one lane here and in every sequence diagram below: CloudFront adds a secret header and the load balancer refuses callers without it s33. The app makes the idempotency key for each post and the post service mints the post id, which carries a worker id and so cannot come from a phone; the key item expires by TTL s47. Sources: media on S3 behind CloudFront s24, s25; health checks and task replacement s31, s32; the conditional PutItem s44 and the SDK retry with backoff and jitter s43; the PutItem goes over the gateway endpoint s37; the index lag s30.",
             "cites": [
               "s24",
               "s25",
+              "s26",
               "s30",
               "s31",
               "s32",
               "s33",
               "s37",
               "s43",
+              "s44",
+              "s47"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "The media upload is sync for the author but outside the post service, which never carries media bytes: the app asks the post service for a presigned URL (POST /media, a local signature) and uploads with it s51, and a failed upload fails before the post is created. The author_id index follows the write within a fraction of a second. Every call from a task to DynamoDB, SQS or S3 goes over a VPC endpoint and never touches the internet. The posts table is on-demand, so the recurring daily peak needs no capacity change; a spike well beyond any earlier peak can still throttle, and the SDK retry in the last branch rides it out.",
+            "cites": [
+              "s51"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "The app makes an idempotency key for each post. The post service mints the Snowflake post id, writes the key item (author and key, with the post id, expiring after 24 hours) and then the post, each with a condition, so a retry with the same key finds the key and answers with the same post id, even when the first attempt stopped between the two writes.",
+            "cites": [
+              "s44",
+              "s47"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Part b: the hand-off to the queue, after the PutItem of part a and before the 201, with the author's follower count read for the celebrity flag, and the 503 this design returns when the queue is unreachable."
+          },
+          {
+            "type": "diagram",
+            "mermaid": "sequenceDiagram\n  autonumber 10\n  participant App as Author's app\n  participant Edge\n  participant PS as Post svc\n  participant DDB as DynamoDB\n  participant SQS as SQS queue\n  Note over PS: holds the durable post\n  PS->>DDB: GetItem the author's<br/>follower count\n  DDB-->>PS: the count\n  PS->>SQS: SendMessage\n  Note over PS,SQS: post id, author id,<br/>created_at, celebrity flag\n  SQS-->>PS: message id\n  alt the queue accepted it\n    PS-->>Edge: 201 Created\n    Edge-->>App: 201\n  else SQS unreachable after retries\n    PS-->>Edge: 503 instead<br/>of the 201\n    Edge-->>App: 503\n    App->>Edge: retry, same key\n    Note over App,PS: same post id from the key item,<br/>the send repeats\n  end\n  opt the 201 was lost\n    App->>Edge: retry, same key\n    Edge->>PS: HTTP\n    PS->>DDB: PutItem the key<br/>item again\n    DDB-->>PS: ConditionalCheckFailed\n    PS->>DDB: GetItem the key item\n    DDB-->>PS: the post id\n    Note over PS,DDB: no new post, the send repeats\n  end",
+            "legend": "The send at step 12 is a synchronous call and the 201 waits for it; the queue's consumers are the asynchronous part. The follower count read at step 10 gives the celebrity flag. Sources: the interface endpoint s39; the SDK retry s43; the conditional PutItem s44.",
+            "cites": [
+              "s39",
+              "s43",
               "s44"
             ]
           },
           {
             "type": "p",
-            "text": "The media upload is sync for the author but outside the post service, which never carries media bytes; a failed upload fails before the post is created. The author_id index follows the write within a fraction of a second. Every call from a task to DynamoDB, SQS or S3 goes over a VPC endpoint and never touches the internet. The posts table is on-demand, so the recurring daily peak needs no capacity change; a spike well beyond any earlier peak can still throttle, and the SDK retry in the last branch rides it out."
+            "text": "The 503 is this design's choice, not an AWS behaviour: the retry it provokes finds the key item, repeats the post PutItem as a no-op and sends again, and a duplicate event is harmless because the feed service drops repeated ids. The follower count is an approximate counter moved by the follow calls (part d); the post service compares it with the threshold and the event carries the flag, so the workers never count followers. A post stored while its event never goes out (the 503 and an app that is not reopened) is found by nothing: the app keeps the key and retries when it reopens, and an alarm watches the 503 rate; no sweep is drawn."
           },
           {
             "type": "p",
-            "text": "Part b: the hand-off to the queue, between the PutItem and the 201 of part a, and the 503 this design returns when the queue is unreachable."
+            "text": "Part c: the fan-out, asynchronous from the author's point of view, starting when a worker receives the event sent at step 12."
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 14\n  participant App as Author's app\n  participant Edge\n  participant PS as Post svc\n  participant SQS as SQS queue\n  Note over PS: holds the durable post\n  PS-)SQS: SendMessage,<br/>interface endpoint\n  Note over PS,SQS: event: post id, author id, created_at\n  opt SQS unreachable after the write\n    PS->>SQS: SendMessage retried\n    PS-->>Edge: 503 instead of the 201\n    Edge-->>App: 503\n    App->>Edge: retry, same post id\n    Note over App,PS: the PutItem repeats as a no-op, then the send\n  end",
-            "legend": "The open arrow at step 14 is the asynchronous hand-off: the author's 201 does not wait for the queue's consumers. Sources: the interface endpoint s39; the SDK retry s43.",
-            "cites": [
-              "s39",
-              "s43"
-            ]
-          },
-          {
-            "type": "p",
-            "text": "The 503 is this design's choice, not an AWS behaviour; the retry it provokes repeats the conditional PutItem as a no-op and the send."
-          },
-          {
-            "type": "p",
-            "text": "Part c: the fan-out, asynchronous from the author's point of view, starting when a worker receives the event sent at step 14."
-          },
-          {
-            "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 19\n  participant SQS as SQS queue\n  participant W as Fan-out worker\n  participant G as DynamoDB follows\n  participant TL as Timeline cache\n  SQS-)W: ReceiveMessage,<br/>long-poll\n  Note over SQS,W: hidden for the visibility timeout\n  W->>G: Query followers\n  G-->>W: a page of follower ids\n  Note over W,G: celebrity: skipped, merged at read\n  loop per cache node, pipelined\n    W->>TL: LPUSH post id, LTRIM to the cap\n    TL-->>W: ok\n  end\n  W->>SQS: DeleteMessage\n  opt Query throttled or 5xx\n    W->>G: SDK retry with backoff\n  end\n  alt a cache primary fails\n    TL-->>W: writes fail until failover\n    Note over TL: replica promoted, DNS moved\n    Note over SQS,W: no DeleteMessage, it stays queued\n  else the worker crashes first, the visibility timeout passes\n    SQS-)W: redelivered\n    Note over SQS,W: an append is idempotent on post id\n  else received more than maxReceiveCount times\n    SQS-xW: moved to the dead-letter queue\n    Note over SQS,W: alarm, then redrive once fixed\n  end",
-            "legend": "The open arrows are the queue's deliveries; the solid arrows are the worker's own synchronous calls; the crossed arrow at step 28 is the message the queue stops redelivering, moved to the dead-letter queue. Sources: long polling, up to 20 s, s40; the visibility timeout s41; maxReceiveCount, the dead-letter queue and redrive s42; the Query goes over the gateway endpoint s37; the SDK retry s43; LPUSH and LTRIM on a capped list s8; failover and replica promotion s45.",
+            "mermaid": "sequenceDiagram\n  autonumber 25\n  participant SQS as SQS queue\n  participant W as Fan-out worker\n  participant G as DynamoDB follows\n  participant TL as Timeline cache\n  SQS-)W: ReceiveMessage,<br/>long-poll\n  Note over SQS,W: hidden for the visibility timeout,<br/>extended by a heartbeat\n  alt the event is flagged celebrity\n    Note over W: fan-out skipped, merged at read\n  else\n    loop each page of followers\n      W->>G: Query followers\n      opt Query throttled or 5xx\n        W->>G: SDK retry with backoff\n      end\n      G-->>W: a page of follower ids\n      loop per cache node, pipelined\n        W->>TL: LPUSH post id, LTRIM to the cap\n        TL-->>W: ok\n      end\n    end\n  end\n  alt every append answered\n    W->>SQS: DeleteMessage\n  else a cache primary fails\n    TL-->>W: writes fail until failover\n    Note over TL: replica promoted, DNS moved\n    Note over SQS,W: no DeleteMessage, it stays queued\n  else the worker crashes first, the visibility timeout passes\n    SQS-)W: redelivered\n    Note over SQS,W: the append repeats, the reader drops the repeat\n  else received more than maxReceiveCount times\n    SQS-xW: moved to the dead-letter queue\n    Note over SQS,W: alarm, then redrive once fixed\n  end",
+            "legend": "The open arrows are the queue's deliveries; the solid arrows are the worker's own synchronous calls; the crossed arrow at step 34 is the message the queue stops redelivering, moved to the dead-letter queue. Sources: long polling, up to 20 s, s40; the visibility timeout s41; maxReceiveCount, the dead-letter queue and redrive s42; the Query goes over the gateway endpoint s37; the SDK retry s43; LPUSH and LTRIM on a capped list s8; the heartbeat that extends the visibility timeout s41; failover and replica promotion s45.",
             "cites": [
               "s8",
               "s37",
@@ -1022,7 +1521,45 @@
           },
           {
             "type": "p",
-            "text": "The worker never answers anyone: its only signal is the DeleteMessage, so every failure above ends in a redelivery and an idempotent redo. The alarm on the dead-letter queue is the one human-facing step."
+            "text": "The worker never answers anyone: its only signal is the DeleteMessage, so every failure above ends in a redelivery and a redo. The alarm on the dead-letter queue is the one human-facing step."
+          },
+          {
+            "type": "p",
+            "text": "LPUSH puts the id at the head of the list without looking for it first s50, so a redelivered event appends the same id again. The feed service drops repeated ids when it merges the timeline with the celebrity and backfill ids (read part b), and a repeat holds one of the 800 slots until the trim removes it. The post itself is stored once, by the idempotency key.",
+            "cites": [
+              "s50"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "The default visibility timeout is 30 seconds s41 and the largest fan-out, a million followers at 5,000 appends a second per task, takes 200 seconds. The worker therefore extends the timeout with ChangeMessageVisibility as a heartbeat while it works through the pages s41, or the queue's timeout is set above the longest fan-out.",
+            "cites": [
+              "s41"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Two failure rows are an alarm and a rule, not a branch of a diagram: fan-out lag grows (the workers scale on lag, an alarm watches it) and a viral post by an author under the threshold (batched appends, and the threshold is read at post time)."
+          },
+          {
+            "type": "p",
+            "text": "Part d: following and unfollowing, calls the post service also serves."
+          },
+          {
+            "type": "diagram",
+            "mermaid": "sequenceDiagram\n  autonumber 35\n  participant App as Follower's app\n  participant Edge\n  participant PS as Post svc\n  participant DDB as DynamoDB follows\n  participant TL as Timeline cache\n  App->>Edge: POST /follows\n  Edge->>PS: HTTP, a healthy task\n  PS->>DDB: PutItem the follow,<br/>if not there\n  Note over PS,DDB: a repeat fails the condition,<br/>204, count unchanged\n  DDB-->>PS: ok\n  PS->>DDB: UpdateItem the count,<br/>ADD 1, return it\n  DDB-->>PS: the new count\n  PS->>TL: SADD, pending set\n  opt the count is at or above the threshold\n    PS->>TL: SADD, celebrity set\n  end\n  PS-->>Edge: 204\n  Edge-->>App: 204\n  App->>Edge: DELETE /follows\n  Edge->>PS: HTTP\n  PS->>DDB: DeleteItem the follow\n  PS->>DDB: UpdateItem the count,<br/>ADD -1\n  PS->>TL: SREM, both sets\n  PS-->>Edge: 204\n  Edge-->>App: 204",
+            "legend": "Solid arrows are synchronous calls with their replies dashed. Edge is CloudFront in front of the load balancer, as in part a. The count is an atomic counter s48 moved by a second call, so it is approximate; the three cache keys of one user carry the same hash tag and sit in one slot s49.",
+            "cites": [
+              "s48",
+              "s49"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "A follow writes the follow item, indexed by followee for the fan-out and, through an index, by follower for the rebuild, and moves the author's follower count with an atomic counter s48. The count is approximate because the two writes are not one transaction, and a follow wave on one celebrity is limited by what one counter item takes, so the call may be throttled and retried. The pending set and the celebrity set of the follower sit in the timeline cache beside the timeline. The follow does not touch the timeline: the next read does (read part a2).",
+            "cites": [
+              "s48"
+            ]
           },
           {
             "type": "table",
@@ -1048,27 +1585,33 @@
               ],
               [
                 "Post service (task role)",
-                "PutItem on the posts table; SendMessage on the queue; nothing else",
-                "DynamoDB gateway endpoint; SQS interface endpoint (HTTPS only inside a VPC)",
+                "PutItem and GetItem on the idempotency-key items; PutItem on the posts table; GetItem on the author's follower count; SendMessage on the queue; for the follow calls PutItem and DeleteItem on the follows table, UpdateItem on the follower counts and writes to the pending and celebrity sets in the timeline cache; signs the upload URLs for the media bucket (s3:PutObject)",
+                "DynamoDB gateway endpoint; SQS interface endpoint (HTTPS only inside a VPC); the Valkey port inside the VPC",
                 "no; private subnet, admits the load balancer's security group only"
               ],
               [
                 "Fan-out workers (task role)",
-                "ReceiveMessage and DeleteMessage on the queue; Query on the follows table; writes to the timeline cache",
+                "ReceiveMessage, DeleteMessage and ChangeMessageVisibility on the queue; Query on the follows table; writes to the timeline cache",
                 "SQS interface endpoint; DynamoDB gateway endpoint; the Valkey port inside the VPC",
                 "no; private subnet, no inbound rule at all"
               ],
               [
                 "Feed service (task role)",
-                "Query on the posts table and its author_id index and on the follows table; BatchGetItem on the posts table; reads on both caches; the ranking service by its Service Connect name",
+                "Query on the posts table and its author_id index and on the follows table, with its index by follower; BatchGetItem on the posts table and on the follower counts; reads and writes on both caches (the timeline rebuild and merge, the celebrity and pending sets, the content fills); the ranking service by its Service Connect name",
                 "DynamoDB gateway endpoint; the Valkey port and the Service Connect proxy inside the VPC",
                 "no; private subnet, admits the load balancer's security group only"
               ],
               [
                 "Ranking service",
-                "nothing outside the VPC",
+                "nothing outside the VPC; its own feature store, which this exercise does not design",
                 "called by the feed service through Service Connect",
                 "no; admits the feed service's security group only"
+              ],
+              [
+                "Thumbnail function (Lambda execution role)",
+                "GetObject on the uploads and PutObject for the thumbnails in the media bucket; started by the bucket's object-created event; not priced here",
+                "not attached to the VPC; the S3 notification invokes it s52",
+                "no; nothing can call it except the bucket"
               ],
               [
                 "The two cache clusters",
@@ -1091,7 +1634,11 @@
               "s37",
               "s38",
               "s39",
-              "s46"
+              "s46",
+              "s48",
+              "s49",
+              "s51",
+              "s52"
             ]
           },
           {
@@ -1100,7 +1647,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber\n  participant App as Reader's app\n  participant Edge\n  participant FS as Feed svc\n  participant TL as Timeline cache\n  participant DDB as DynamoDB\n  App->>Edge: GET /feed, per user\n  Note over App,Edge: never cached at the edge\n  Edge->>FS: HTTP, a healthy task\n  FS->>TL: LRANGE, capped list\n  TL-->>FS: post ids\n  opt cache miss\n    FS->>DDB: Query followees, follows table\n    DDB-->>FS: followee ids\n    FS->>DDB: Query the author_id index\n    DDB-->>FS: recent post ids\n    FS->>TL: write the list back\n  end\n  Note over FS: ids in hand, on to part b",
+            "mermaid": "sequenceDiagram\n  autonumber\n  participant App as Reader's app\n  participant Edge\n  participant FS as Feed svc\n  participant TL as Timeline cache\n  participant DDB as DynamoDB\n  App->>Edge: GET /feed, per user\n  Note over App,Edge: never cached at the edge\n  Edge->>FS: HTTP, a healthy task\n  FS->>TL: LRANGE, capped list\n  TL-->>FS: post ids\n  opt cache miss\n    FS->>DDB: Query followees, follows table\n    DDB-->>FS: followee ids\n    FS->>DDB: Query the author_id index\n    DDB-->>FS: recent post ids\n    FS->>TL: write the list back\n  end\n  Note over FS: ids in hand, on to the next part",
             "legend": "Every arrow is synchronous: the reader waits for the whole path, parts a to c. The DynamoDB lane is both tables, the follows table and the posts table with its index. Sources: CloudFront in front of the load balancer s25, s33; health checks and task replacement s31, s32; the capped list and the rebuild s4, s8; the author_id index s30; the gateway endpoint s37.",
             "cites": [
               "s4",
@@ -1115,7 +1662,23 @@
           },
           {
             "type": "p",
-            "text": "A cache miss at step 3 is a new user, one back after 30 days, or a shard whose data was lost; the rebuilt first page is served slower. On a feed-service task failure the health check takes it out of service and the client's retry lands on another task."
+            "text": "A cache miss at step 3 is a new user, one back after 30 days, or a shard whose data was lost; the rebuilt first page is served slower. On a feed-service task failure the health check takes it out of service and the client's retry lands on another task. The page starts at the first id smaller than the cursor, which works because the ids are time-ordered; the feed service reads the whole capped list (800 ids) with one LRANGE."
+          },
+          {
+            "type": "p",
+            "text": "Part a2: the celebrity set and the lazy backfill, which the next reads do for the follow calls of part d."
+          },
+          {
+            "type": "diagram",
+            "mermaid": "sequenceDiagram\n  autonumber 10\n  participant FS as Feed svc\n  participant TL as Timeline cache\n  participant DDB as DynamoDB\n  FS->>TL: SMEMBERS the celebrity set<br/>and the pending set\n  TL-->>FS: both sets\n  opt the celebrity set is missing\n    FS->>DDB: Query the followees,<br/>BatchGetItem their counts\n    DDB-->>FS: the counts\n    FS->>TL: SADD the ones at or above<br/>the threshold, with a TTL\n  end\n  opt followees are pending\n    FS->>DDB: Query the author_id index,<br/>last 48 hours, per followee\n    DDB-->>FS: their recent post ids\n    FS->>TL: write the list back merged,<br/>SREM the pending ones\n  end\n  Note over FS: celebrity ids and list ready,<br/>on to part b",
+            "legend": "Every arrow is synchronous. The three keys of one user carry the same hash tag, so the two SMEMBERS calls travel with the LRANGE of part a in one pipeline s49. The DynamoDB lane is the follows table with its follower index and the follower counts, and the posts table with its author_id index.",
+            "cites": [
+              "s49"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "The celebrity set, the neutral list of the celebrities a user follows, is cached per user beside the timeline and rebuilt from the followees' follower counts when it is missing; a follow of a celebrity adds to it at once. The pending set holds the followees followed since the last read: the read that finds one merges that followee's last 48 hours of posts into the timeline and clears the mark, so a wave of follows costs one read each and no write at follow time. A lost cache node loses both sets with the timeline, and the rebuild reads the current follows, so nothing stays pending."
           },
           {
             "type": "p",
@@ -1123,13 +1686,18 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 10\n  participant FS as Feed svc\n  participant DDB as DynamoDB posts\n  participant RK as Ranking\n  Note over FS: timeline ids from part a\n  FS->>DDB: Query the<br/>author_id index\n  Note over FS,DDB: the celebrities the user follows\n  DDB-->>FS: celebrity post ids,<br/>merged by time\n  opt the celebrity Query is throttled\n    FS->>DDB: SDK retry with backoff\n    Note over FS,DDB: still failing: served without them, counted\n  end\n  FS->>RK: candidates with features\n  Note over FS,RK: by Service Connect name, 50 ms client deadline\n  RK-->>FS: ranked ids\n  opt ranking timeout or error\n    Note over FS,RK: chronological order, fallback counted\n  end\n  Note over FS: ranked ids, on to part c",
-            "legend": "Sources: the author_id index s30; the SDK retry s43; Service Connect round-robin with outlier detection s36.",
+            "mermaid": "sequenceDiagram\n  autonumber 18\n  participant FS as Feed svc\n  participant DDB as DynamoDB posts\n  participant RK as Ranking\n  Note over FS: timeline ids from part a\n  FS->>DDB: Query the<br/>author_id index\n  Note over FS,DDB: the celebrity set of part a2\n  DDB-->>FS: celebrity post ids,<br/>merged by time\n  FS->>FS: drop repeated post ids\n  opt the celebrity Query is throttled\n    FS->>DDB: SDK retry with backoff\n    Note over FS,DDB: still failing: served without them, counted\n  end\n  FS->>RK: candidates with features\n  Note over FS,RK: by Service Connect name, 50 ms client deadline\n  RK-->>FS: ranked ids\n  opt ranking timeout or error\n    Note over FS,RK: chronological order, fallback counted\n  end\n  Note over FS: ranked ids, on to part c",
+            "legend": "Sources: the author_id index s30; the SDK retry s43; Service Connect round-robin with outlier detection s36. The repeated ids come from a redelivered event, and the same step covers the ids merged in from part a2 s50.",
             "cites": [
               "s30",
               "s36",
-              "s43"
+              "s43",
+              "s50"
             ]
+          },
+          {
+            "type": "p",
+            "text": "The candidates go to the ranking service with the user id. The ranking service looks the features up itself, in a feature store this exercise does not design and does not price."
           },
           {
             "type": "p",
@@ -1137,17 +1705,18 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 15\n  participant App as Reader's app\n  participant Edge\n  participant FS as Feed svc\n  participant PC as Content cache\n  participant DDB as DynamoDB posts\n  Note over FS: ranked ids from part b\n  FS->>PC: MGET the top entries\n  PC-->>FS: content, with misses\n  opt content misses\n    FS->>DDB: BatchGetItem, gateway endpoint\n    DDB-->>FS: items, written back to the cache\n  end\n  FS-->>Edge: page with a cursor\n  Edge-->>App: page\n  Note over App,Edge: media URLs on CloudFront",
-            "legend": "Sources: the content cache and DAX as its alternative s26; the gateway endpoint s37; media on CloudFront s25.",
+            "mermaid": "sequenceDiagram\n  autonumber 24\n  participant App as Reader's app\n  participant Edge\n  participant FS as Feed svc\n  participant PC as Content cache\n  participant DDB as DynamoDB posts\n  Note over FS: ranked ids from part b\n  FS->>PC: GET the entries,<br/>pipelined per node\n  PC-->>FS: content, with misses\n  opt content misses\n    FS->>DDB: BatchGetItem, gateway endpoint\n    DDB-->>FS: items, written back to the cache\n  end\n  FS->>FS: drop deleted entries\n  FS-->>Edge: page with a cursor\n  Edge-->>App: page\n  Note over App,Edge: media URLs on CloudFront",
+            "legend": "Sources: the content cache and DAX as its alternative s26; the gateway endpoint s37; media on CloudFront s25. Keys of different slots cannot share one MGET, so the content reads go out as GETs pipelined per node, or one MGET per node s49.",
             "cites": [
               "s25",
               "s26",
-              "s37"
+              "s37",
+              "s49"
             ]
           },
           {
             "type": "p",
-            "text": "Deleted and visibility flags are read at render time from the content, never from the timeline list. Nothing in the read path writes to DynamoDB; the only writes are the two cache fills."
+            "text": "Deleted and visibility flags are read at render time from the content, never from the timeline list, and the feed service drops those entries from the page. Nothing in the read path writes to DynamoDB; the writes are to the caches: the rebuild and the merge of a pending followee, the celebrity set, and the content fill."
           },
           {
             "type": "decision",
@@ -1157,7 +1726,7 @@
                 "option": "Amazon DynamoDB, on-demand capacity",
                 "pick_when": "every hot-path access is a key lookup or a single-partition query, the write rate is small or spiky, and nobody wants to plan capacity",
                 "avoid_when": "the hot path needs joins, ad hoc queries or transactions that span several entities",
-                "example": "For this design: chosen for both tables. A post is read by post id, the celebrity merge is one query on the author_id index, and follows are adjacency lists keyed by followee with a reverse index; on-demand absorbs the tenfold peak without a capacity change."
+                "example": "For this design: chosen for both tables. A post is read by post id, the celebrity merge is one query on the author_id index, and follows are adjacency lists keyed by followee with a reverse index; on-demand takes the recurring peak without a capacity change."
               },
               {
                 "option": "Amazon Aurora PostgreSQL or Amazon RDS",
@@ -1193,7 +1762,7 @@
                 "option": "Amazon SQS standard queue",
                 "pick_when": "one consumer group, at-least-once delivery is fine because the work is idempotent, no ordering across producers is needed, and consumers pull and scale on queue depth",
                 "avoid_when": "several independent consumers need every event, or consumers must replay history",
-                "example": "For this design: chosen. The fan-out workers are the only consumer, an append is idempotent on post id so a redelivery is harmless, and a lost timeline is rebuilt from the posts table rather than by replaying events; ordering per author is not needed because the feed is ranked at read time."
+                "example": "For this design: chosen. The fan-out workers are the only consumer, a redelivery appends the id again and the feed service drops the repeat, and a lost timeline is rebuilt from the posts table rather than by replaying events; ordering per author is not needed because the feed is ranked at read time."
               },
               {
                 "option": "Amazon SNS topic in front of one SQS queue per consumer",
@@ -1216,7 +1785,8 @@
             ],
             "cites": [
               "s10",
-              "s11"
+              "s11",
+              "s50"
             ]
           },
           {
@@ -1316,8 +1886,8 @@
               [
                 "Reliability",
                 "automatically recover from failure; scale horizontally; stop guessing capacity",
-                "three Availability Zones with the fleet over-provisioned so a zone loss launches nothing; a replica per cache shard in another zone; rebuilds bounded to 48 hours; DynamoDB on-demand absorbs the tenfold peak",
-                "a lost cache node costs a rebuild, not data; the spare third of the fleet is paid for",
+                "three Availability Zones with the feed service and the fan-out workers sized at one and a half times the peak, so the other two zones carry the peak when one is lost (18 and 15 tasks, priced below); a replica per cache shard in another zone; rebuilds bounded to 48 hours; DynamoDB on-demand takes the recurring peak without a capacity change",
+                "a lost cache node costs a rebuild, not data; the spare third of the fleet is paid for at all hours",
                 "s14, s16"
               ],
               [
@@ -1344,19 +1914,20 @@
               [
                 "Serverless Applications Lens",
                 "think concurrent requests, not totals; share nothing; design for failures and duplicates; orchestrate with state machines",
-                "appends are idempotent on post id so an SQS redelivery is harmless; Lambda handlers (thumbnails) keep no state between invocations; DynamoDB on-demand so no capacity is guessed",
-                "at-least-once delivery means a duplicate event does reach the worker; the dedupe check is the control",
+                "an SQS redelivery appends an id twice and the feed service drops the repeat, while the post itself is stored once by its idempotency key; Lambda handlers (thumbnails) keep no state between invocations; DynamoDB on-demand so no capacity is guessed",
+                "at-least-once delivery means a duplicate event does reach the worker; the read-side drop is the control, and a repeat holds a slot until the trim",
                 "s15, s16"
               ]
             ],
             "cites": [
+              "s12",
               "s14",
               "s15",
               "s16",
-              "s12",
               "s17",
               "s18",
-              "s28"
+              "s28",
+              "s50"
             ]
           },
           {
@@ -1377,21 +1948,21 @@
               ],
               [
                 "Feed service",
-                "ECS on Fargate, Arm tasks of 2 vCPU and 4 GB",
-                "about $690 (12 tasks)",
-                "about $6,900 (120 tasks)"
+                "ECS on Fargate, Arm tasks of 2 vCPU and 4 GB, sized so that a zone lost at peak is carried",
+                "about $1,040 (18 tasks)",
+                "about $10,400 (180 tasks)"
               ],
               [
                 "Fan-out workers",
-                "ECS on Fargate, Arm tasks of 1 vCPU and 2 GB, sized for the peak",
-                "about $290 (10 tasks)",
-                "about $2,900 (100 tasks)"
+                "ECS on Fargate, Arm tasks of 1 vCPU and 2 GB, sized for the peak with a spare third",
+                "about $430 (15 tasks)",
+                "about $4,300 (150 tasks)"
               ],
               [
                 "Posts and the author_id index",
-                "DynamoDB on-demand, a year of posts stored",
-                "about $295",
-                "about $2,950"
+                "DynamoDB on-demand, a year of posts stored, with the idempotency-key items",
+                "about $336",
+                "about $3,360"
               ],
               [
                 "Post events",
@@ -1401,9 +1972,9 @@
               ],
               [
                 "Total",
-                "the five lines above; CloudFront, S3, ranking and data transfer not priced",
-                "about $4,900, about $0.0005 per active user",
-                "about $46,700, about $0.0005 per active user"
+                "the five lines above; CloudFront, S3, ranking, the follows table and data transfer not priced",
+                "about $5,500, about $0.0005 per active user",
+                "about $52,000, about $0.0005 per active user"
               ]
             ],
             "cites": [
@@ -1418,7 +1989,7 @@
           },
           {
             "type": "p",
-            "text": "Two lines dominate: the timeline cache, because memory for every active user's list is held all month, and the feed compute, because the tasks are sized for the peak. Everything else together is about 13 percent of the bill, so the levers are the cache's usable memory per node and the celebrity threshold, which moves work between fan-out and read time.",
+            "text": "Two lines dominate: the timeline cache, because memory for every active user's list is held all month, and the feed compute, because the tasks are sized for the peak plus a spare third. Everything else together is about 15 percent of the bill, so the levers are the cache's usable memory per node and the celebrity threshold, which moves work between fan-out and read time.",
             "cites": [
               "s17",
               "s18",
@@ -1445,13 +2016,31 @@
                 "Post",
                 "post_id, author_id, created_at, text, media_ref, visibility, deleted",
                 "post_id, a time-ordered 64-bit id in the Snowflake layout (41 bits of milliseconds, 10 bits of worker id, 12 bits of sequence); sharded by post_id",
-                "visibility and deleted are read at render time, never baked into a cache"
+                "visibility and deleted are read at render time, never baked into a cache; the server mints the id, and the client's idempotency key maps to it for retries"
               ],
               [
                 "Follow",
                 "follower_id, followee_id, created_at",
                 "indexed both ways: by followee_id (followers of X, for fan-out) and by follower_id (followees of Y, for the celebrity merge)",
                 "the read-hottest table in the system; TAO is a cached, read-optimised graph store built for exactly this workload"
+              ],
+              [
+                "IdempotencyKey",
+                "author_id, idempotency_key, post_id, expires_at",
+                "author_id and idempotency_key",
+                "written before the post, read on a retry, and expired after 24 hours"
+              ],
+              [
+                "FollowerCount",
+                "author_id, follower_count",
+                "author_id",
+                "an approximate counter moved by the follow calls; read at post time against the celebrity threshold, and the flag it gives travels in the post event"
+              ],
+              [
+                "BackfillPending",
+                "user_id, then the followee ids not yet merged",
+                "by user_id",
+                "set by a follow, cleared by the follower's next read; kept with the timeline and lost with it, since the rebuild covers it"
               ],
               [
                 "Timeline",
@@ -1463,7 +2052,7 @@
                 "CelebrityFollows",
                 "user_id, then the list of celebrity ids the user follows",
                 "by user_id",
-                "small, cached per user, read on every feed open for the merge"
+                "small, cached per user, read on every feed open for the merge; rebuilt from the followees' follower counts with the timeline, and a follow of a celebrity adds to it"
               ]
             ],
             "cites": [
@@ -1485,24 +2074,31 @@
             "rows": [
               [
                 "POST",
+                "/media",
+                "",
+                "{upload_url, media_ref}",
+                "a presigned URL for one upload: the bytes go to the object store, never through the post service"
+              ],
+              [
+                "POST",
                 "/posts",
-                "{text, media_ref?}",
+                "{text, media_ref?, idempotency_key}",
                 "{post_id}",
-                "returns once the post is durable; fan-out is asynchronous"
+                "returns once the post is durable; the client makes the key, the server mints the post_id, and a retry with the same key returns the same post_id; fan-out is asynchronous"
               ],
               [
                 "POST",
                 "/follows/{followee}",
                 "",
                 "204",
-                "backfill of the followee's recent posts is lazy, on the follower's next read"
+                "backfill of the followee's recent posts is lazy: the follow marks the followee pending, and the follower's next read merges the last 48 hours; the follow also moves the followee's follower count"
               ],
               [
                 "DELETE",
                 "/follows/{followee}",
                 "",
                 "204",
-                "stops future posts; past ones age out of the timeline"
+                "stops future posts and moves the count down; past ones age out of the timeline"
               ],
               [
                 "GET",
@@ -1538,7 +2134,7 @@
           },
           {
             "type": "p",
-            "text": "Part b: the hand-off to the queue and the fan-out of the post id into the followers' timelines."
+            "text": "Part b: the hand-off to the queue and the fan-out of the post id into the followers' timelines. The celebrity branch is decided at post time: the post service compares the author's follower count with the threshold and the event carries the flag, which is what the diagram's mark is. A redelivered event appends the same id again, and the feed service drops repeated ids when it merges."
           },
           {
             "type": "diagram",
@@ -1578,7 +2174,7 @@
           },
           {
             "type": "p",
-            "text": "A miss on the post cache reads the posts store and writes back. The timeline list carries ids only, so deletion and visibility are decided at render time from the content, never from the list."
+            "text": "A miss on the post cache reads the posts store and writes back. The timeline list carries ids only, so deletion and visibility are decided at render time by the feed service from the content, never from the list."
           }
         ]
       },
@@ -1601,7 +2197,7 @@
               "An account with 10 million followers posts.",
               "Without the exception, that is 10 million appends from a single post.",
               "At the whole fleet's peak capacity of 46,000 appends per second, that one post takes about 217 seconds, or 3.6 minutes, of everything.",
-              "The exception skips fan-out above 1 million followers (assumption), marks the post as celebrity-only, and merges it at read time for the followers who open their feed."
+              "The exception skips fan-out above 1 million followers (assumption): the post service compares the author's follower count with the threshold at post time, the post event carries the flag, the workers skip a flagged event, and the post is merged at read time, found by the author id in the list of celebrities the follower follows."
             ]
           },
           {
@@ -1610,7 +2206,7 @@
           },
           {
             "type": "p",
-            "text": "Backfill for new followers is lazy: on follow, the followee's last 48 hours of post ids are merged into the follower's timeline on the next read, not pushed at follow time, so a wave of follows after a viral moment does not become a write storm."
+            "text": "Backfill for new followers is lazy: the follow call marks the followee pending, and the follower's next read merges the followee's last 48 hours of post ids into the timeline and clears the mark, not pushed at follow time, so a wave of follows after a viral moment does not become a write storm."
           }
         ]
       },
@@ -1660,6 +2256,16 @@
                 "Deleted post still in cached lists",
                 "would render stale content",
                 "filter against the post record at render time; tombstone in the content cache"
+              ],
+              [
+                "Post stored, event not sent",
+                "the post exists but followers do not see it until a rebuild or a retry",
+                "the app keeps the idempotency key and retries when it reopens; an alarm on the 503 rate; no sweep (accepted)"
+              ],
+              [
+                "Event redelivered (at-least-once)",
+                "the post id is appended to a timeline twice",
+                "the feed service drops repeated ids when it merges; the repeat holds a slot until the trim"
               ]
             ]
           }
@@ -1819,24 +2425,24 @@
               ],
               [
                 "Fan-out workers: ECS on Fargate, Arm",
-                "1 vCPU and 2 GB per task; 5,000 batched appends per second per task, sized for the peak, all month (assumption)",
+                "1 vCPU and 2 GB per task; 5,000 batched appends per second per task, sized for the peak plus a spare third so a zone lost at peak is carried, all month (assumption)",
                 "$0.03238 per vCPU-hour, $0.00356 per GB-hour",
-                "about $290 (10 tasks)",
-                "about $2,900 (100 tasks)"
+                "about $430 (15 tasks)",
+                "about $4,300 (150 tasks)"
               ],
               [
                 "Feed service: ECS on Fargate, Arm",
-                "2 vCPU and 4 GB per task; 1,000 feed opens per second per task (assumption)",
+                "2 vCPU and 4 GB per task; 1,000 feed opens per second per task, plus a spare third for a zone lost at peak (assumption)",
                 "$0.03238 per vCPU-hour, $0.00356 per GB-hour",
-                "about $690 (12 tasks)",
-                "about $6,900 (120 tasks)"
+                "about $1,040 (18 tasks)",
+                "about $10,400 (180 tasks)"
               ],
               [
                 "Posts: DynamoDB on-demand",
-                "one write unit per post plus one for the author_id index; a tenth of feed opens read the store; a year of posts stored",
+                "one write unit per post, one for the author_id index and one for the idempotency-key item; half a read unit per post for the follower count; a tenth of feed opens read the store; a year of posts stored",
                 "$0.625 per million writes, $0.125 per million reads, $0.25 per GB-month",
-                "about $295",
-                "about $2,950"
+                "about $336",
+                "about $3,360"
               ],
               [
                 "Post events: SQS standard",
@@ -1847,10 +2453,10 @@
               ],
               [
                 "Total on AWS",
-                "the five lines above; CDN, media, ranking and data transfer not priced; a third of the neutral total because the neutral unit prices were deliberately round and conservative",
+                "the five lines above; CDN, media, ranking, the follows table and data transfer not priced; a little over a third of the neutral total because the neutral unit prices were deliberately round and conservative",
                 "",
-                "about $4,900 / month, about $0.0005 per active user",
-                "about $46,700 / month, about $0.0005 per active user"
+                "about $5,500 / month, about $0.0005 per active user",
+                "about $52,000 / month, about $0.0005 per active user"
               ]
             ],
             "cites": [
@@ -1983,6 +2589,11 @@
       "version": 12,
       "date": "2026-10-16",
       "change": "second read of the diagrams (F2-NF-READ): one wrong share fixed in the AWS cost paragraph (everything but the cache and the feed compute is about 13 percent of the bill, not under a tenth); no diagram, flow block or price touched; changes needed on the diagrams and the protocol they tell (reviews/learning-center-F2-NF-read.md); reviewed_by stays null"
+    },
+    {
+      "version": 13,
+      "date": "2026-10-16",
+      "change": "fix round after the third read (F2-NF-FIX), flow blocks and the look of the existing diagrams untouched: the client sends an idempotency key and the server mints the post id; the 201 follows the hand-off; the duplicate append is dropped on the read side (a drawn step); the follow calls, the follower count, the celebrity set and the lazy backfill have a path, a store and a permission (new diagrams, identity rows); pipelined per-node GETs instead of one MGET; the spare third of the fleet priced (about $5,500 and $52,000 a month); upload, thumbnails, features and the failure rows told; reviewed_by stays null"
     }
   ]
 }
