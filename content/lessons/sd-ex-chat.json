@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-chat",
-  "version": 10,
+  "version": 11,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: chat and presence",
@@ -1599,7 +1599,7 @@
                 "option": "Amazon DynamoDB, on-demand, the Standard-IA table class",
                 "pick_when": "access is by one partition key and a sort key range, writes are many and small, history is kept and rarely read, and nobody wants to run a ring",
                 "avoid_when": "the hot path needs joins or secondary queries across conversations, or reads dominate the bill",
-                "example": "For this design: chosen. The key is the conversation and the bucket, the sort key the message id, so a page of history or a resync is one bounded Query. One key is limited to 1,000 write units and 3,000 read units a second by its partition, far above one conversation's rate, and the owner's in-memory tail takes the hot reads. Storage is the larger charge, which is what Standard-IA is for: about $18,000 a month for storage against $23,400 for writes."
+                "example": "For this design: chosen. The key is the conversation and the bucket, the sort key the message id, so a page of history or a resync is one bounded Query. One key is limited to 1,000 write units and 3,000 read units a second by its partition, far above one conversation's rate, and the owner's in-memory tail takes the hot reads. Storage is the larger charge in the Standard class, which is what Standard-IA is for: it cuts that line from about $45,000 to $18,000 a month."
               },
               {
                 "option": "Amazon DynamoDB, the Standard table class",
@@ -1647,7 +1647,7 @@
                 "option": "Amazon DynamoDB with a TTL attribute",
                 "pick_when": "writes are modest, the items live for days, and one more store to run is the cost to avoid",
                 "avoid_when": "entries must expire within a minute, or the write rate is in the hundreds of thousands a second",
-                "example": "For this design: not chosen. A TTL delete may come days after the expiry, so every reader would filter on the timestamp itself, and 170,000 writes a second at $0.625 per million writes would be about $270,000 a month."
+                "example": "For this design: not chosen. A TTL delete may come days after the expiry, so every reader would filter on the timestamp itself, and 170,000 writes a second at $0.625 per million writes would be about $275,000 a month."
               }
             ],
             "cites": [
@@ -1720,7 +1720,7 @@
                 "option": "Amazon EKS",
                 "pick_when": "the organisation already runs Kubernetes and needs its ecosystem or portability across clouds",
                 "avoid_when": "a handful of services and no Kubernetes estate; the cluster fee and the upgrade cadence buy nothing",
-                "example": "For this design: not chosen. Nothing here needs the Kubernetes API, and a cluster brings three major releases a year to track for five services."
+                "example": "For this design: not chosen. Nothing here needs the Kubernetes API, and a cluster brings three major releases a year to track for four services."
               },
               {
                 "option": "AWS Lambda",
@@ -1828,7 +1828,7 @@
               ],
               [
                 "Message store",
-                "DynamoDB on-demand, Standard-IA: writes at $0.78 per million, storage at $0.10 per GB-month for a year of history, 5 percent of reads from the table, 50 messages a page",
+                "DynamoDB on-demand, Standard-IA: writes at $0.78 per million, storage at $0.10 per GB-month for a year of history, 5 percent of reads from the table, eventually consistent, 50 messages a page",
                 "about $41,700 (180 TB)",
                 "about $417,000 (1.8 PB)"
               ],
@@ -2379,6 +2379,11 @@
       "version": 10,
       "date": "2026-10-16",
       "change": "fix round 2 after the re-read (batch E1A): every operation of the data-model tables has a path, a store and a permission: history reads and the rebuild of a tail are served by the owning conversation server (edge and role carry Query), POST /conversations, the membership read and the receipt cursors have their tables (conversations and receipts inside one DynamoDB box, declared in the legends, 12 boxes kept) with edges, steps and two new sequence diagrams (history; conversation and cursors), the membership read in the send diagram, the presence read in the connect diagram, and the image-pull clause; reviewed_by stays null"
+    },
+    {
+      "version": 11,
+      "date": "2026-10-16",
+      "change": "Re-read of the AWS pass after fix round 2 (batch E1A), Claude (Sonnet 5.5), a different instance from the writer and the earlier readers; mechanical fixes only: the Kubernetes line says four services (the design runs four ECS services, not five); the DynamoDB presence alternative is $275,000 a month (170,000 writes a second for 30 days at $0.625 per million is $275,400, not $270,000); the message-store line no longer says storage is the larger charge in Standard-IA (its own numbers show writes larger there): storage is the larger charge in the Standard class and Standard-IA cuts that line from about $45,000 to $18,000; the read line of the cost table says the reads are eventually consistent; findings for the writer in reviews/learning-center-F2-E1A-reread2.md; reviewed_by stays null"
     }
   ]
 }
