@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-rate-limiter",
-  "version": 10,
+  "version": 11,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: API rate limiter",
@@ -1187,7 +1187,7 @@
           {
             "type": "diagram",
             "mermaid": "sequenceDiagram\n  autonumber 14\n  participant Op as Operator\n  participant Edge as Load balancer\n  participant PS as Policy service\n  participant DDB as DynamoDB\n  participant GW as Gateway task\n  Op->>Edge: HTTPS, edit or delete a policy\n  Note over Op,Edge: the admin rule authenticates<br/>the operator first\n  Edge->>PS: HTTP, the admin path\n  PS->>DDB: GetItem, the version N\n  DDB-->>PS: N, strongly consistent\n  PS->>DDB: transaction: N to N+1,<br/>policy or removal, log entry\n  alt the transaction commits\n    DDB-->>PS: ok\n    PS-->>Edge: saved\n    Edge-->>Op: saved\n  else the version condition fails\n    DDB-->>PS: canceled, version condition\n    Note over PS: another edit got N first:<br/>read N again and retry\n  end\n  loop every second, each policy task\n    PS->>DDB: Query the log above W,<br/>strongly consistent\n    DDB-->>PS: the newer entries\n  end\n  loop every 5 s, each gateway task\n    GW->>PS: GET the changes above N\n    alt nothing above N\n      PS-->>GW: 304, same version\n    else changes above N\n      PS-->>GW: changes and removals, W\n    end\n  end\n  Note over GW: applies them, N becomes W,<br/>cached until the next poll\n  opt the policy service is down\n    Note over GW: cached policies still apply\n  end",
-            "legend": "A new task starts with no set and is not ready, so the load balancer sends it no request, until its first poll, \"above version 0\", has returned the whole set; this is the policies() call of the neutral API, now the same call every 5 seconds, and while the policy service is down no new task can become ready, so the fleet cannot grow, although the running tasks keep deciding. The version is read first and the transaction conditions on it, so two edits never take the same number and the log has no gaps. The log is kept in the table, not in an index, because an index is updated asynchronously and could show the version before the entry s46; it sits under one partition key with the version as sort key, which is safe because edits are rare, and entries expire after a week. A policy service task starts by reading the version, loading every policy item, and then reading the log from that version, so an entry that commits during the load is replayed, and applying one twice changes nothing; its watermark W is the newest entry applied. The guarantee: a committed change reaches every task that keeps polling, because the version a task holds only moves to the W of a service that has applied everything up to W, and a task that is ahead of a lagging service just hears \"nothing above N\"; a task whose N is older than the service's oldest log entry gets the whole set instead. The bound from an edit to every task is about 6 seconds, and a policy-service outage delays changes but never a decision. The policy service is found by its service discovery DNS name s13, and DynamoDB is reached over a gateway endpoint s18.",
+            "legend": "A new task starts with no set and is not ready, so the load balancer sends it no request, until its first poll, \"above version 0\", has returned the whole set; this is the policies() call of the neutral API, now the same call every 5 seconds, and while the policy service is down no new task can become ready, so the fleet cannot grow, although the running tasks keep deciding. The version is read first and the transaction conditions on it, so two edits never take the same number and the log has no gaps. The log is kept in the table, not in an index, because an index is updated asynchronously and could show the version before the entry s46; it sits under one partition key with the version as sort key, which is safe because edits are rare, and entries expire after a week. A policy service task starts by reading the version, loading every policy item with a strongly consistent Scan, and then reading the log from that version, so an entry that commits during the load is replayed, and applying one twice changes nothing; its watermark W is the newest entry applied. The guarantee: a committed change reaches every task that keeps polling, because the version a task holds only moves to the W of a service that has applied everything up to W, and a task that is ahead of a lagging service just hears \"nothing above N\"; a task whose N is older than the service's oldest log entry gets the whole set instead. The bound from an edit to every task is about 6 seconds, and a policy-service outage delays changes but never a decision. The policy service is found by its service discovery DNS name s13, and DynamoDB is reached over a gateway endpoint s18.",
             "cites": [
               "s13",
               "s18",
@@ -1218,7 +1218,7 @@
               ],
               [
                 "Policy service (task role)",
-                "GetItem on the version item and Query on the log partition of the policies table; PutItem, UpdateItem and DeleteItem on the policy, version and log items, inside the edit transaction; nothing else; it makes no call to the gateway tasks",
+                "GetItem on the version item, a strongly consistent Scan of the policy items at start, and Query on the log partition of the policies table; PutItem, UpdateItem and DeleteItem on the policy, version and log items, inside the edit transaction; nothing else; it makes no call to the gateway tasks",
                 "DynamoDB gateway endpoint; called by Cloud Map DNS name; the ECR interface endpoints and the S3 gateway endpoint to pull the image",
                 "no; private subnet, admits the load balancer's security group (the admin path) and the gateway tasks' security group"
               ],
@@ -1949,8 +1949,8 @@
   "provenance": {
     "generated_by": "Claude (Fable 5.1) by hand, Scout learning center M4a; format v2 restructure by hand, Claude (Fable 5.1), Scout learning center F2-E1; AWS pass (building-it-on-aws, flow block, sequence diagrams) by hand, Claude (Sonnet 5.5), Scout learning center, format v2 batch E1B",
     "generated_on": "2026-10-12",
-    "reviewed_by": null,
-    "reviewed_on": null
+    "reviewed_by": "a re-reader (Claude Sonnet 5.5, a different instance from the writer and the first reader), Scout learning center, format v2 E1B AWS pass, re-read",
+    "reviewed_on": "2026-10-16"
   },
   "changelog": [
     {
@@ -2002,6 +2002,11 @@
       "version": 10,
       "date": "2026-10-16",
       "change": "fix round 4 on the fifth read (E1B): the policy poll can no longer skip a committed change (every edit is one transaction that moves the version from N to N+1 under a condition on N and writes a change-log entry; the policy service reads the log with a strongly consistent Query instead of an eventually consistent index and stamps each answer with its watermark; the guarantee is stated); a new task that cannot become ready while the policy service is down is said to stop the fleet growing; the correction pipeline reads both windows with one MGET; transactions are described by the item actions the role needs, and the task execution role is named; source s47 added; reviewed_by stays null"
+    },
+    {
+      "version": 11,
+      "date": "2026-10-16",
+      "change": "fifth read of the AWS pass (E1B, after fix round 4): accepted, reviewed_by set; every blocking finding of reviews/learning-center-F2-E1B-reread3.md confirmed fixed; two mechanical completions so that the identity row and the legend say what the start of the policy service does (a strongly consistent Scan of the policy items after reading the version, and the Scan permission in its row); addendum in the review"
     }
   ],
   "sim": {
