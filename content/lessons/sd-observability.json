@@ -1,7 +1,7 @@
 {
   "schema_version": "learning-center-lesson:2",
   "id": "sd-observability",
-  "version": 2,
+  "version": 3,
   "status": "published",
   "superseded_by": null,
   "title": "Observability for designers",
@@ -94,7 +94,7 @@
             "three replicas per region, written by quorum"
           ],
           [
-            "Default retention",
+            "Illustrative default retention rules",
             "raw for two days; downsampled to one minute for 30 days"
           ]
         ],
@@ -104,7 +104,7 @@
       },
       {
         "type": "p",
-        "text": "OpenTelemetry's own gateway documentation records the pattern teams converge on when tail sampling is needed: a first collector tier whose load-balancing exporter routes by trace id to a second tier running the tail sampling processor, so that every span of a trace reaches the one collector that decides its fate.",
+        "text": "OpenTelemetry's gateway documentation describes a topology for tail sampling: a first collector tier whose load-balancing exporter routes by trace id to a second tier running the tail sampling processor, so that spans of a trace reach the collector that makes the decision. This is project deployment guidance, not evidence of adoption.",
         "cites": [
           "s7"
         ]
@@ -204,7 +204,7 @@
         {
           "type": "callout",
           "kind": "rule",
-          "text": "Instrument so that the four golden signals exist for every user-facing service, and page on them. Cause-level signals belong on dashboards for diagnosis, not on the pager.",
+          "text": "Measure the four golden signals for every user-facing service. Page on urgent, actionable user impact or imminent failure; cause-level signals usually belong on diagnostic dashboards, but may justify paging when they establish such a threat.",
           "cites": [
             "s1"
           ]
@@ -562,9 +562,9 @@
               "after the trace completes, from its spans"
             ],
             [
-              "Guarantees",
-              "whole traces at a consistent rate",
-              "every trace with an error or over a latency bound is kept"
+              "Selection",
+              "consistent trace-id selection with complete propagation",
+              "configured error or latency policies can retain matching traces if upstream delivery, buffering and capacity are sufficient"
             ],
             [
               "Cost",
@@ -621,7 +621,7 @@
         {
           "type": "callout",
           "kind": "rule",
-          "text": "Propagate context through every boundary, queues and thread pools included. Set the sampling rate from the trace volume, keep every error with tail sampling if you can afford the tier, and record the probability with the trace.",
+          "text": "Propagate context through every boundary. Choose sampling from trace volume; tail policies can prioritize errors only when their spans reach the deciding collector. Monitor drops and buffering, and record sampling probability.",
           "cites": [
             "s4",
             "s5",
@@ -765,13 +765,13 @@
             [
               "Database",
               "latency as clients see it and as it sees itself",
-              "the constrained resource saturates",
+              "saturation threatens imminent user-visible failure and requires action",
               "slow statements with their trace ids"
             ],
             [
               "Collector pipeline",
               "received, dropped and exported counts; memory",
-              "drops rise or the memory limiter engages",
+              "sustained drops threaten required visibility and require urgent action",
               "exporter errors by backend"
             ]
           ],
@@ -783,7 +783,7 @@
         {
           "type": "callout",
           "kind": "rule",
-          "text": "Page on symptoms the user feels. Put causes on dashboards. Keep the rules that page simplest of all, and remove signals and rules that nothing uses.",
+          "text": "Page on urgent user-visible symptoms or actionable imminent failure. Use causes primarily for diagnosis. Keep paging rules simple and remove unused signals.",
           "cites": [
             "s1"
           ]
@@ -796,7 +796,7 @@
     "blocks": [
       {
         "type": "p",
-        "text": "An order service wants its metrics, logs and traces designed before launch. Every input below is an assumption chosen to make the arithmetic concrete; the rules applied to them are the ones from the teaching, and the script at the end recomputes the sizes when an assumption changes."
+        "text": "An order service wants its metrics, logs and traces designed before launch. Inputs below are assumptions, with peak load sustained throughout each day and decimal byte units. The Python sample illustrates instrumentation, not recomputation or an exact implementation of the series estimate; the tables give the sizing arithmetic."
       },
       {
         "type": "steps",
@@ -805,16 +805,16 @@
           "Peak load: 2,000 requests per second across the service (assumption), served by 30 instances (assumption).",
           "Routes: the API has 20 route templates (assumption); status is labelled by class, 5 values, never by raw path or customer id.",
           "Request counter: 20 routes times 5 status classes is 100 series per instance.",
-          "Latency histogram: a classic histogram with 12 buckets plus its sum and count is 14 series per route, so 280 series per instance.",
+          "Latency histogram: assume 12 buckets including infinity, plus sum and count, giving 14 series per route and 280 per instance; omit client-created and runtime series from this estimate.",
           "Per instance that is 380 series; across 30 instances, 11,400 series for the service, well inside what the Prometheus guidance calls fine.",
           "The tempting mistake: a customer label with 50,000 customers (assumption) would multiply the 11,400 by 50,000, into the hundreds of millions of series, which the guidance refuses.",
           "Logs: one structured entry per request at 1 kB (assumption) is 2 MB per second, or about 173 GB per day.",
           "Log retention of 30 days (assumption) is about 5.2 TB before compression, so the entry size and the retention are the two numbers to negotiate.",
           "Traces: 6 spans per request at 400 bytes each (assumption) is 2.4 kB per trace; tracing everything would be 4.8 MB per second, about 415 GB per day.",
           "At 2,000 traces per second the volume is above OpenTelemetry's threshold of about 1,000 per second, so sampling applies.",
-          "Head-sample 5 percent by trace id: about 21 GB of traces per day, whole traces, no missing spans.",
-          "Tail sampling in a second collector tier keeps every error: at a 0.5 percent error rate (assumption) that is 10 error traces per second, about 2 GB per day, on top of the sampled healthy traffic.",
-          "The decider: logs at 173 GB per day dominate traces at about 23 GB and metrics at a few thousand series. The structured log entry's size and retention are the cost decisions; the metric label set is the correctness decision."
+          "Disable upstream head sampling: all spans reach a trace-affine tail collector. Select errors OR a 5 percent probabilistic sample there.",
+          "Assume 0.5 percent of traces carry ERROR status and complete delivery: errors contribute 2.0736 GB/day; sampling only the remaining healthy volume contributes 20.63232 GB/day.",
+          "The union is 22.70592 GB/day, not the sum of a sample of all traces plus errors. Logs at 172.8 GB/day dominate stored traces; the tail tier still receives 414.72 GB/day before sampling."
         ],
         "cites": [
           "s8",
@@ -857,14 +857,19 @@
             "2,000 per second times 2.4 kB times 86,400"
           ],
           [
-            "Head-sampled traces per day",
-            "about 21 GB",
-            "415 GB times 5 percent"
+            "Healthy traces selected per day",
+            "20.63232 GB",
+            "414.72 GB times 0.995 times 0.05"
           ],
           [
-            "Error traces kept by tail sampling",
-            "about 2 GB per day",
-            "10 per second times 2.4 kB times 86,400"
+            "Error traces selected per day",
+            "2.0736 GB",
+            "414.72 GB times 0.005"
+          ],
+          [
+            "Combined stored traces per day",
+            "22.70592 GB",
+            "healthy sample plus errors; no overlap"
           ]
         ]
       },
@@ -872,13 +877,13 @@
         "type": "code",
         "lang": "python",
         "code": "import logging, time\nfrom prometheus_client import Counter, Histogram, start_http_server\nfrom opentelemetry import trace\n\n# bounded labels only: a route template and a status class, never a user id or a raw path\nREQS = Counter(\"http_requests_total\", \"Requests\", [\"route\", \"code_class\"])\nLAT = Histogram(\"http_request_duration_seconds\", \"Latency of successful requests\", [\"route\"])\nlog = logging.getLogger(\"request\")\n\ndef handle(route, work):\n    span = trace.get_current_span().get_span_context()   # set by the server instrumentation\n    start = time.perf_counter()\n    code_class, error_reason = \"2xx\", None\n    try:\n        return work()\n    except Exception as e:\n        code_class, error_reason = \"5xx\", type(e).__name__\n        raise\n    finally:\n        elapsed = time.perf_counter() - start\n        REQS.labels(route, code_class).inc()\n        if code_class == \"2xx\":\n            LAT.labels(route).observe(elapsed)            # a separate timer for successes\n        log.info(\"request\", extra={                     # one structured entry per unit of work\n            \"route\": route, \"code_class\": code_class, \"error_reason\": error_reason,\n            \"duration_ms\": round(elapsed * 1000, 1),\n            \"trace_id\": format(span.trace_id, \"032x\"), \"span_id\": format(span.span_id, \"016x\"),\n        })\n\nstart_http_server(8000)   # exposes /metrics for scraping",
-        "caption": "The instrumentation the estimate assumes: bounded labels, a histogram for successful latency only, and one structured log entry per request carrying the trace id."
+        "caption": "Illustrative instrumentation only. Default client buckets and extra created/runtime series differ from the estimate. Configure an INFO-level structured logging handler to serialize the extra fields; this fragment does not configure that handler or the server's tracing SDK."
       },
       {
         "type": "code",
         "lang": "yaml",
-        "code": "receivers:\n  otlp:\n    protocols:\n      grpc:\n        endpoint: 0.0.0.0:4317\nprocessors:\n  memory_limiter:\n    check_interval: 5s\n    limit_mib: 4000\n    spike_limit_mib: 500\n  attributes:\n    actions:\n      - key: db.statement\n        action: delete\n      - key: email\n        action: hash\n  probabilistic_sampler:\n    sampling_percentage: 5\n  batch: {}\nexporters:\n  otlp:\n    endpoint: trace-store.example.com:4317\nservice:\n  pipelines:\n    traces:\n      receivers: [otlp]\n      processors: [memory_limiter, attributes, probabilistic_sampler, batch]\n      exporters: [otlp]",
-        "caption": "A gateway collector pipeline for the traces in the estimate: memory limit first, redaction, the 5 percent head sample, then batching to the store."
+        "code": "receivers:\n  otlp:\n    protocols:\n      grpc:\n        endpoint: 0.0.0.0:4317\nprocessors:\n  memory_limiter:\n    check_interval: 5s\n    limit_mib: 4000\n    spike_limit_mib: 500\n  attributes:\n    actions:\n      - key: db.statement\n        action: delete\n      - key: email\n        action: hash\n  tail_sampling:\n    decision_wait: 30s\n    num_traces: 100000\n    expected_new_traces_per_sec: 2000\n    policies:\n      - name: errors\n        type: status_code\n        status_code:\n          status_codes: [ERROR]\n      - name: baseline\n        type: probabilistic\n        probabilistic:\n          sampling_percentage: 5\n  batch: {}\nexporters:\n  otlp:\n    endpoint: trace-store.example.com:4317\nservice:\n  pipelines:\n    traces:\n      receivers: [otlp]\n      processors: [memory_limiter, attributes, tail_sampling, batch]\n      exporters: [otlp]",
+        "caption": "Illustrative Collector Contrib tail tier: error OR probability selection, with no upstream head sampler. SDKs export all spans and the upstream gateway routes by trace id. Buffer settings are assumptions to load-test, not a retention guarantee; late spans, memory refusal or transport loss invalidate the complete-delivery estimate. Configure the backend endpoint and credentials for deployment."
       }
     ]
   },
@@ -1053,6 +1058,11 @@
       "version": 2,
       "date": "2026-10-15",
       "change": "rewritten by hand at format v2 (version 2): symptoms, causes and the golden signals as tables, the three signals and how a trace id joins them, what each kind of component must emit (the Prometheus three types, RED and USE, Amazon's list), metric types with the cardinality arithmetic as steps, one structured log entry per unit of work as a practice table, tracing with the head-against-tail table and Dapper's overhead table, the collector pipeline with the :1 diagram in its subtopic, alerts from the SRE questions with a telemetry sheet, a worked telemetry sizing with the instrumentation and collector config after the teaching, cited in-practice blocks (Google SRE, Amazon, Dapper, Uber M3, OpenTelemetry), 12 verified sources"
+    }
+    ,{
+      "version": 3,
+      "date": "2026-10-15",
+      "change": "Corrected tail sampling topology and union arithmetic, conditional retention and paging guidance, M3 attribution and illustrative instrumentation scope."
     }
   ]
 }
