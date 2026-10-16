@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-autocomplete",
-  "version": 8,
+  "version": 9,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: search autocomplete",
@@ -629,6 +629,17 @@
         "checked": "2026-10-16",
         "http": 200,
         "section_found": "es:ESHttpGet"
+      }
+    },
+    {
+      "id": "s54",
+      "title": "Amazon CloudFront Developer Guide: Control origin requests with a policy (origin request policies are separate from cache policies)",
+      "url": "https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/controlling-origin-requests.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Origin request policies are separate from cache policies"
       }
     }
   ],
@@ -1314,7 +1325,7 @@
                 "caption": "Autocomplete service to CloudFront API: CreateInvalidation for the prefixes of the blocked term, sync"
               }
             ],
-            "legend": "The serving half of the architecture, the same boxes as the neutral diagram's serving frame, one AWS service each: the edge cache is CloudFront, which keeps a response for the max-age its origin sends s7; the load balancer admits only CloudFront s8; the autocomplete service and the prefix shards are ECS on Fargate tasks that call each other by Service Connect names, which balance round robin and remember failures s11; the recent queries and the block list are DynamoDB tables; the fallback suggester is an OpenSearch Service domain with term and phrase suggesters s15, s13. The neutral re-rank box is a code path inside the service task, so it has no box of its own. Two routes keep the neutral rule that a user's list is never shown to anyone else: /suggest has a cache key of the path, the prefix and the locale alone, so the edge shares its answer; a known user's client calls /me/suggest, whose behaviour has caching disabled s50 and whose answer is private, so it always reaches the service, which merges the user's recents with the shared list; the neutral API note says the edge and browser caches share the response, and this section does that for the shared list only. The shard answer is ids, so each service task also loads the query table (id to text, the same file as the score file of the build) when the version pointer moves. The block list is changed by operators: the POST goes through a CloudFront behaviour that allows POST s49 and a load balancer rule that authenticates them with Amazon Cognito or an OIDC provider s48; the service writes the table and then calls the CloudFront API to invalidate the term's prefixes s45, a call to its own box because it goes to CloudFront's API and not to the edge. Sync means the caller waits for the answer; async means the work goes on after the caller has moved on. The VPC frames are one VPC in one Region across three Availability Zones.",
+            "legend": "The serving half of the architecture, the same boxes as the neutral diagram's serving frame, one AWS service each: the edge cache is CloudFront, which keeps a response for the max-age its origin sends s7; the load balancer admits only CloudFront s8; the autocomplete service and the prefix shards are ECS on Fargate tasks that call each other by Service Connect names, which balance round robin and remember failures s11; the recent queries and the block list are DynamoDB tables; the fallback suggester is an OpenSearch Service domain with term and phrase suggesters s15, s13. The neutral re-rank box is a code path inside the service task, so it has no box of its own. Two routes keep the neutral rule that a user's list is never shown to anyone else: /suggest has a cache key of the path, the prefix and the locale alone, so the edge shares its answer; a known user's client calls /me/suggest, whose behaviour has caching disabled s50 and whose answer is private, so it always reaches the service; the behaviours for /me/suggest and /blocklist carry an origin request policy that forwards the query string (the prefix and the locale), the Authorization header and, for /blocklist, the cookies of the load balancer's authentication s54, because a cache policy alone decides only what is in the cache key; the service validates the token that the product's sign-in issued (outside this lesson) and learns the user from it, then merges the user's recents with the shared list; the neutral API note says the edge and browser caches share the response, and this section does that for the shared list only. The shard answer is ids, so each service task also loads the query table (id to text, the same file as the score file of the build) when the version pointer moves. Ids are stable across versions (a query keeps its id), so a shard on a newer version and a service still holding the older table agree, and an id the table does not have is dropped from the answer. The block list is changed by operators: the POST goes through a CloudFront behaviour that allows POST s49 and a load balancer rule that authenticates them with Amazon Cognito or an OIDC provider s48; the service writes the table and then calls the CloudFront API to invalidate the term's prefixes s45, a call to its own box because it goes to CloudFront's API and not to the edge. Sync means the caller waits for the answer; async means the work goes on after the caller has moved on. The VPC frames are one VPC in one Region across three Availability Zones.",
             "cites": [
               "s7",
               "s8",
@@ -1324,7 +1335,8 @@
               "s50",
               "s49",
               "s48",
-              "s45"
+              "s45",
+              "s54"
             ]
           },
           {
@@ -1506,7 +1518,7 @@
                 "caption": "S3 index versions to Shard tasks: each shard task polls the pointer, reads its file, then switches (pull), async"
               }
             ],
-            "legend": "The build half of the neutral diagram, one AWS service each: the search service writes each search to an Amazon Data Firehose stream, which delivers objects to S3 under a yyyy/MM/dd/HH prefix s17, s18, and appends it to the user's recents (one item per search, with a TTL of 30 days, mapping the neutral entity's capped list: a read takes the newest 50); EventBridge Scheduler starts one EMR Serverless job every hour; this is a design choice: a universal target may call any API operation that is not read-only s19, and StartJobRun is an EMR Serverless operation s44. The three stages are the neutral aggregator, filter and builder, run as one Spark application s20 that is configured with the VPC's private subnets, so that it can reach the OpenSearch domain s51. The builder writes the shard files and the query table to S3 and the shard tasks pull each new version, which S3's read-after-write consistency makes safe s21; it also bulk-updates the fallback suggester's index in the OpenSearch domain, upserting the queries whose score changed and deleting the blocked ones s52. The decayed scores (the neutral Query entity's score) are the query table, one file per version with the id, the text and the score: the job reads the previous file, decays the old scores (yesterday weighs half, assumption), adds the last hour, and writes the new file with the version; the service tasks read the same file to turn ids into text. The block list and recents tables are the boxes the neutral diagram leaves implicit. Sync means the caller waits for the answer; async means the work goes on after the caller has moved on.",
+            "legend": "The build half of the neutral diagram, one AWS service each: the search service writes each search to an Amazon Data Firehose stream, which delivers objects to S3 under a yyyy/MM/dd/HH prefix s17, s18, and appends it to the user's recents (one item per search, with a TTL of 30 days, mapping the neutral entity's capped list: a read takes the newest 50); EventBridge Scheduler starts one EMR Serverless job every hour; this is a design choice: a universal target may call any API operation that is not read-only s19, and StartJobRun is an EMR Serverless operation s44. The three stages are the neutral aggregator, filter and builder, run as one Spark application s20 that is configured with the VPC's private subnets, so that it can reach the OpenSearch domain s51. The builder writes the shard files and the query table to S3 and the shard tasks pull each new version, which S3's read-after-write consistency makes safe s21; it also bulk-updates the fallback suggester's index in the OpenSearch domain, upserting the queries whose score changed and deleting the blocked ones s52. The decayed scores (the neutral Query entity's score) are the query table, one file per version with the id, the text and the score: the job reads the previous file, decays the old scores (yesterday weighs half, assumption), adds the last hour, and writes the new file with the version; the service tasks read the same file to turn ids into text. At the end of every run the job publishes a metric (the age of the version it serves, and a refusal when it refuses one) and CloudWatch alarms watch it; CloudWatch is not drawn. The block list and recents tables are the boxes the neutral diagram leaves implicit. Sync means the caller waits for the answer; async means the work goes on after the caller has moved on.",
             "cites": [
               "s17",
               "s18",
@@ -1578,7 +1590,7 @@
           {
             "type": "diagram",
             "mermaid": "sequenceDiagram\n  autonumber 18\n  participant Job as EMR Serverless job\n  participant S3 as S3\n  participant DDB as DynamoDB\n  participant OS as OpenSearch\n  participant TK as Shard and service tasks\n  Note over Job: started every hour by the Scheduler,<br/>StartJobRun\n  Job->>S3: GET the last hour of the log\n  S3-->>Job: log objects\n  Job->>S3: GET the previous query table\n  S3-->>Job: ids, texts, decayed scores\n  Note over Job: decay the scores (yesterday weighs half,<br/>assumption), add the hour\n  Job->>DDB: Scan the block list\n  DDB-->>Job: blocked terms\n  Note over Job: drop blocked and rare terms,<br/>top 10 per prefix\n  alt no smaller than 80 percent of the last version\n    Job->>S3: PUT shard files, the new query table\n    Job->>OS: _bulk, upsert changed queries, delete blocked\n    OS-->>Job: ok\n    Job->>S3: PUT the version pointer, last\n  else shrank by more than 20 percent\n    Note over Job,S3: refuse the version and the scores,<br/>alarm\n  end\n  loop every task, on its poll\n    TK->>S3: GET the version pointer\n    S3-->>TK: a new version\n    TK->>S3: GET its shard file or the query table\n    Note over TK: load beside the old,<br/>then switch\n  end",
-            "legend": "Each task polls the pointer and reads its own file: a shard task its shard file, a service task the query table; because S3 reads after a write always return the new object s21, a task that sees the new pointer finds every file under it, and the pointer is written after the files and after the domain update. A failed or refused job leaves the pointer alone, so the shards keep serving the last good version while the age alarm (over 2 hours) fires. The schedule starts the job with a universal target, a design choice: the Scheduler page says universal targets may call API operations of many services and refuses only read-only ones s19, and StartJobRun is an EMR Serverless operation s44; the job releases its capacity when it finishes s20. The query table is read at step 20 and written, with the shard files, at step 24, so a refused version keeps the previous scores. The _bulk request upserts the queries whose score changed and deletes the blocked terms in the domain's index s52.",
+            "legend": "Each task polls the pointer and reads its own file: a shard task its shard file, a service task the query table; because S3 reads after a write always return the new object s21, a task that sees the new pointer finds every file under it, and the pointer is written after the files and after the domain update. A failed or refused job leaves the pointer alone, so the shards keep serving the last good version while the age alarm (over 2 hours) fires: the job publishes the age and each refusal as a CloudWatch metric at the end of every run. The schedule starts the job with a universal target, a design choice: the Scheduler page says universal targets may call API operations of many services and refuses only read-only ones s19, and StartJobRun is an EMR Serverless operation s44; the job releases its capacity when it finishes s20. The query table is read at step 20 and written, with the shard files, at step 24, so a refused version keeps the previous scores. Ids are stable across versions, so a task on a newer version and a task on an older one agree, and an id the query table lacks is dropped from the answer. The _bulk request upserts the queries whose score changed and deletes the blocked terms in the domain's index s52.",
             "cites": [
               "s21",
               "s19",
@@ -1619,7 +1631,7 @@
             "rows": [
               [
                 "Amazon CloudFront",
-                "the load balancer (HTTPS plus a secret header); /suggest is cached with a key of the path, the prefix and the locale; /me/suggest and /blocklist have caching disabled, and /blocklist allows POST",
+                "the load balancer (HTTPS plus a secret header); /suggest is cached with a key of the path, the prefix and the locale; /me/suggest and /blocklist have caching disabled, and /blocklist allows POST; the /me/suggest and /blocklist behaviours forward the query string, the Authorization header and, for /blocklist, cookies, by an origin request policy",
                 "the public internet to the edge; HTTPS to the origin",
                 "yes, an entry for clients and for operators"
               ],
@@ -1631,7 +1643,7 @@
               ],
               [
                 "Autocomplete service (task role)",
-                "Query on the recents table; Scan and PutItem on the block list table; CreateInvalidation on the distribution, for the block list endpoint; GetObject on the index bucket (the version pointer and the query table); es:ESHttpPost on the domain's suggest index; the shard tasks by Service Connect name",
+                "Query on the recents table; Scan and PutItem on the block list table; CreateInvalidation on the distribution, for the block list endpoint; GetObject on the index bucket (the version pointer and the query table); es:ESHttpPost on the domain's suggest index; the shard tasks by Service Connect name; it validates the user's token",
                 "DynamoDB and S3 gateway endpoints; the CloudFront interface endpoint (AWS PrivateLink lists com.amazonaws.cloudfront; the lesson assumes it carries CreateInvalidation, and a NAT gateway is the alternative for that one call); the Service Connect proxy and the domain inside the VPC; the ECR interface endpoints",
                 "no; private subnet, admits the load balancer's security group only"
               ],
@@ -1643,7 +1655,7 @@
               ],
               [
                 "EMR Serverless job (job runtime role)",
-                "GetObject on the log prefix; GetObject and PutObject on the index bucket (shard files, query table, pointer); Scan on the block list table; es:ESHttpPost on the domain (the _bulk request)",
+                "GetObject on the log prefix; GetObject and PutObject on the index bucket (shard files, query table, pointer); Scan on the block list table; es:ESHttpPost on the domain (the _bulk request); PutMetricData on CloudWatch (the version age and refusals)",
                 "the application is configured with the VPC's private subnets; S3 and DynamoDB over the gateway endpoints; the domain inside the VPC; started by the scheduler's role",
                 "no; the job is not reachable from outside"
               ],
@@ -1683,7 +1695,8 @@
               "s49",
               "s51",
               "s53",
-              "s50"
+              "s50",
+              "s54"
             ]
           },
           {
@@ -1914,9 +1927,9 @@
               ],
               [
                 "Autocomplete service",
-                "ECS on Fargate, Arm tasks of 1 vCPU and 2 GB; 37 percent of the requests reach it (assumption: 30 percent from known users, never cached, plus a tenth of the rest)",
+                "ECS on Fargate, Arm tasks sized in the paragraph after this table; 37 percent of the requests reach it (assumption: 30 percent from known users, never cached, plus a tenth of the rest)",
                 "about $635 (22 tasks)",
-                "about $6,340 (220 tasks)"
+                "about $9,770 (220 tasks)"
               ],
               [
                 "Prefix shards",
@@ -1950,15 +1963,15 @@
               ],
               [
                 "Fallback suggester",
-                "OpenSearch Service: three r7g.large.search data nodes and three m7g.large.search master nodes; the same size at ten times (assumption)",
+                "OpenSearch Service: three r7g.large.search data nodes and three m7g.large.search master nodes; the same six nodes at ten times (assumption: the tenfold vocabulary still fits their memory; ten times the nodes would be about $6,850)",
                 "about $685",
                 "about $685"
               ],
               [
                 "Total",
-                "the eight lines above; the load balancer, data transfer out, the interface endpoints (ECR, CloudFront), log retention, DynamoDB and OpenSearch storage and CloudFront invalidation paths beyond the free 1,000 a month are not priced",
+                "the eight lines above; the load balancer, data transfer out, the interface endpoints (ECR, CloudFront), log retention, CloudWatch metrics, DynamoDB and OpenSearch storage and CloudFront invalidation paths beyond the free 1,000 a month are not priced",
                 "about $19,900",
-                "about $191,700"
+                "about $195,100"
               ]
             ],
             "cites": [
@@ -1974,7 +1987,7 @@
           },
           {
             "type": "p",
-            "text": "The edge requests are about three quarters of the priced total at the design point and about four fifths at ten times; the neutral table shows more than ninety-five percent because this one also prices the origin tasks for known users, the shard tasks, the reads and writes of the recents, the fallback domain and the log ingestion. The levers are the hit ratio of the shared requests and the share of requests from known users, which the edge never keeps. The fallback suggester, a domain of six nodes for a path taken only when a prefix has no entry, costs more at the design point than the shard tasks it backs up.",
+            "text": "The edge requests are about three quarters of the priced total at both sizes; the neutral table shows more than ninety-five percent because this one also prices the origin tasks for known users, the shard tasks, the reads and writes of the recents, the fallback domain and the log ingestion. The levers are the hit ratio of the shared requests and the share of requests from known users, which the edge never keeps. The fallback suggester, a domain of six nodes for a path taken only when a prefix has no entry, costs more at the design point than the shard tasks it backs up.",
             "cites": [
               "s36",
               "s42",
@@ -1984,6 +1997,14 @@
           {
             "type": "p",
             "text": "Sizing assumptions behind the task counts: a service task answers about a thousand requests a second and a shard task about two thousand lookups a second, so the peak of 21,460 requests a second that reaches the service needs 22 service tasks and fits the 12 shard tasks that the index memory already requires."
+          },
+          {
+            "type": "p",
+            "text": "A service task holds the query table twice while a new version loads: about 0.6 GB at the design point, so tasks of 1 vCPU and 2 GB serve it."
+          },
+          {
+            "type": "p",
+            "text": "At ten times the table has a hundred million queries and needs about 6 GB, so the tasks are 1 vCPU and 8 GB; the cell shows what that costs, against $6,344 for tasks of the smaller size."
           }
         ]
       },
@@ -2468,6 +2489,11 @@
       "version": 8,
       "date": "2026-10-16",
       "change": "fix round 2 on the third read (E1B): personalised answers are never cached at the edge (/suggest has a cache key of the prefix and locale alone; /me/suggest has caching disabled and a private, no-store answer; origin share, service tasks, recents reads and the closing line recomputed); the fallback suggester's index is loaded by the hourly job (_bulk upsert and delete: flow edge, step, job role, VPC frame text); the recents have a writer (the search service, one item per search with a 30-day TTL: flow edge, write-path diagram, permission, cost); the query table (id, text, score) is the score file, loaded by the service tasks to turn ids into text; /blocklist is authenticated at the load balancer and allowed through a POST behaviour; the replica retry precedes the reply; the block list reload has a step; one running autonumber through the section; the identity caption names the ECR interface endpoints and the S3 gateway endpoint; the CloudFront endpoint is stated as an assumption with the NAT alternative; sources s47 to s53 added; reviewed_by stays null"
+    },
+    {
+      "version": 9,
+      "date": "2026-10-16",
+      "change": "fix round 3 on the fourth read (E1B): the service tasks are sized for the query table, which is held twice while a new version loads (2 GB tasks at the design point, 8 GB tasks at ten times: about $9,770 instead of $6,340, total about $195,100, edge share about three quarters at both sizes); the /me/suggest and /blocklist behaviours forward the query string, the token and the authentication cookies by an origin request policy and the service validates the token; ids are stable across versions and an unknown id is dropped; the fallback domain size at ten times is stated as an assumption; the job publishes the index age and each refusal as a metric; source s54 added; reviewed_by stays null"
     }
   ]
 }
