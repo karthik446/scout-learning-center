@@ -22,6 +22,7 @@
     function render() {
       const edge = path();
       paths.forEach(p => p.classList.toggle('active', p === edge));
+      host.querySelectorAll('.flow-bridge').forEach(p => p.classList.toggle('active', p.dataset.edge === edge.dataset.edge));
       steps.forEach((s, i) => s.classList.toggle('active', i === index));
       nodes.forEach(n => n.classList.toggle('active', [edge.dataset.from, edge.dataset.to].includes(n.dataset.node)));
       caption.textContent = `${index + 1} / ${steps.length} — ${steps[index].dataset.caption}`;

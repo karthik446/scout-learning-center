@@ -12,6 +12,7 @@ exactly one way (the mutators below, one per rule) and asserts that scan.validat
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import re
 import shutil
@@ -547,10 +548,14 @@ class Pages(Fixture):
         plain = build.render_block(pg, {"type": "diagram", "mermaid": "flowchart LR\n  A --> B", "legend": "No sources."})
         self.assertIn('<p class="muted diagram-legend">No sources.</p>', plain)
 
-    def test_news_feed_sequence_style_opt_in(self) -> None:
+    def test_all_v2_sequences_use_standard_style(self) -> None:
         marker = 'data-diagram-style="sequence"'
         for page in (self.site / "learn" / "lessons").glob("*/index.html"):
             html_ = page.read_text(encoding="utf-8")
+            doc = json.loads((self.content / "lessons" / f"{page.parent.name}.json").read_text())
+            expected = sum(b["type"] == "diagram" and bool(scan.SEQUENCE_START.match(b["mermaid"]))
+                           for b in blocks_of(doc)) if doc["schema_version"] == build.V2 else 0
+            self.assertEqual(html_.count(marker), expected, page.parent.name)
             if page.parent.name == "sd-ex-news-feed":
                 self.assertEqual(html_.count(marker), 11)
                 marked = re.findall(r'<div class="mermaid-wrap" data-diagram-style="sequence"><pre class="mermaid">(.*?)</pre>', html_, re.S)
@@ -560,23 +565,19 @@ class Pages(Fixture):
                 self.assertEqual(html_.count('<section class="flow"'), 3)
                 self.assertIn('/_assets/flow.js', html_)
                 self.assertIn('/_assets/flow.css', html_)
-            else:
-                self.assertNotIn(marker, html_, page.parent.name)
             self.assertEqual('/_assets/flow.js' in html_, '<section class="flow"' in html_, page.parent.name)
             self.assertEqual('/_assets/flow.css' in html_, '<section class="flow"' in html_, page.parent.name)
 
     def test_styled_diagram_source_stays_text(self) -> None:
         block = {"type": "diagram", "mermaid": "sequenceDiagram\n  A->>B: call<br/>reply", "legend": "Calls."}
         original = copy.deepcopy(block)
-        styled = build.render_block(build.Page([], styled_sequences=True), block)
-        plain = build.render_block(build.Page([]), block)
-        self.assertEqual(styled.replace(' data-diagram-style="sequence"', ""), plain)
+        styled = build.render_block(build.Page([]), block)
+        self.assertIn('data-diagram-style="sequence"', styled)
         self.assertIn('A-&gt;&gt;B: call&lt;br/&gt;reply', styled)
         self.assertNotIn("<svg", styled)
         self.assertEqual(block, original)
         flow = {"type": "diagram", "mermaid": "flowchart LR\n  A --> B"}
-        self.assertEqual(build.render_block(build.Page([], styled_sequences=True), flow),
-                         build.render_block(build.Page([]), flow))
+        self.assertNotIn('data-diagram-style', build.render_block(build.Page([]), flow))
 
     def test_table_cites_print_once_in_the_caption(self) -> None:
         for page in (self.lesson, self.exercise):
@@ -792,9 +793,34 @@ class Flows(unittest.TestCase):
             return max(0, min(max(a[0], z[0]), max(c[0], d[0]))-max(min(a[0], z[0]), min(c[0], d[0])))
         return 0
 
+    def test_actor_entry_precedes_auxiliary_roots(self):
+        for name in ("sd-ex-payments-ledger", "sd-ex-metrics-pipeline", "sd-ex-ride-matching"):
+            doc = json.loads((ROOT / f"content/lessons/{name}.json").read_text())
+            for block in blocks_of(doc):
+                if block["type"] != "flow":
+                    continue
+                roots = [n for n in block["nodes"] if not any(e["to"] == n["id"] for e in block["edges"])]
+                actors = [n for n in roots if n["kind"] == "actor"]
+                if not actors:
+                    continue
+                nodes = build.flow_layout(block)["nodes"]
+                for node in roots:
+                    # Pin the reported recovery/sealing/reconciliation/relay/
+                    # evaluator roots, not the independent batch-push entry.
+                    if node["id"] in ("RW", "SL", "RC", "RL", "RE"):
+                        self.assertGreater(nodes[node["id"]]["y"], min(nodes[a["id"]]["y"] for a in actors),
+                                           (name, node["id"]))
+
+    def test_news_feed_accepted_geometry_fingerprint(self):
+        doc = json.loads((ROOT / "content/lessons/sd-ex-news-feed.json").read_text())
+        geometry = [build.flow_layout(b, accepted=True) for b in blocks_of(doc) if b["type"] == "flow"]
+        digest = hashlib.sha256(json.dumps(geometry, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        self.assertEqual(digest, "79f670763987fb12c6d465397d3722bf932956a3004b34eb13555cd473a2d2ee")
+
     def test_render_and_geometry(self):
         news = json.loads((ROOT / "content/lessons/sd-ex-news-feed.json").read_text())
-        blocks = [self.block] + [b for b in blocks_of(news) if b["type"] == "flow"]
+        news_blocks = [b for b in blocks_of(news) if b["type"] == "flow"]
+        blocks = [self.block] + news_blocks
         self.assertEqual(len(blocks), 4)
         for path in (ROOT / "content/lessons").glob("sd-ex-*.json"):
             if path.stem != "sd-ex-news-feed":
@@ -810,8 +836,9 @@ class Flows(unittest.TestCase):
         for block in blocks:
             with self.subTest(nodes=[n["id"] for n in block["nodes"]]):
                 original = copy.deepcopy(block)
-                geometry = build.flow_layout(block)
-                self.assertEqual(geometry, build.flow_layout(block), "layout must be deterministic")
+                accepted = any(block is b for b in news_blocks)
+                geometry = build.flow_layout(block, accepted=accepted)
+                self.assertEqual(geometry, build.flow_layout(block, accepted=accepted), "layout must be deterministic")
                 for frame in geometry["frames"]:
                     for member in frame["nodes"]:
                         n = geometry["nodes"][member]
@@ -839,6 +866,10 @@ class Flows(unittest.TestCase):
                         self.assertGreaterEqual(max(gap_x, gap_y), 10, "frames need a visible gap")
                 for i, route in enumerate(geometry["routes"]):
                     edge = block["edges"][i]
+                    if (not block.get("frames") and all(e.get("kind") == "link" for e in block["edges"])
+                            and geometry["nodes"][edge["from"]]["y"] > geometry["nodes"][edge["to"]]["y"]):
+                        self.assertTrue(min(p[0] for p in route) <= 50 or max(p[0] for p in route) >= geometry["width"]-50,
+                                        "feedback must traverse a margin, not visit it in a collapsed U-turn")
                     for point in route:
                         self.assertTrue(0 <= point[0] <= geometry["width"] and 0 <= point[1] <= geometry["height"])
                     for a, z in zip(route, route[1:]):
@@ -853,7 +884,22 @@ class Flows(unittest.TestCase):
                     for other in geometry["routes"][i+1:]:
                         for a, z in zip(route, route[1:]):
                             for c, d in zip(other, other[1:]):
-                                self.assertLessEqual(self.collinear_overlap(a, z, c, d), 3, "edges share a trunk")
+                                self.assertLessEqual(self.collinear_overlap(a, z, c, d), 3 if accepted else 0, "edges share a trunk")
+                if not accepted:
+                    covered = {tuple(crossing) for bridge in geometry["bridges"] for crossing in bridge["crossings"]}
+                    actual = set()
+                    for i, route in enumerate(geometry["routes"]):
+                        for j, other in enumerate(geometry["routes"][:i]):
+                            for a, z in zip(route, route[1:]):
+                                for c, d in zip(other, other[1:]):
+                                    if (a[0] == z[0]) == (c[0] == d[0]):
+                                        continue
+                                    horizontal, vertical = ((a, z), (c, d)) if a[1] == z[1] else ((c, d), (a, z))
+                                    x, y = vertical[0][0], horizontal[0][1]
+                                    if (min(p[0] for p in horizontal) <= x <= max(p[0] for p in horizontal)
+                                            and min(p[1] for p in vertical) <= y <= max(p[1] for p in vertical)):
+                                        actual.add((i, j, x, y))
+                    self.assertEqual(covered, actual, "every residual crossing needs an explicit overpass")
                 for node in geometry["nodes"].values():
                     if node["kind"] == "store":
                         baseline = node["y"]+(node["h"]-len(node["lines"])*18)/2+18
@@ -864,6 +910,16 @@ class Flows(unittest.TestCase):
                     self.assertLessEqual(frame["y"]+frame["h"], geometry["height"], "frame clipped by viewBox")
                 for item in geometry["labels"]:
                     left, top, right, bottom = item["box"]
+                    if not accepted:
+                        distances = [
+                            min(max(left-max(a[0], z[0]), min(a[0], z[0])-right, 0)
+                                + max(top-max(a[1], z[1]), min(a[1], z[1])-bottom, 0)
+                                for a, z in zip(route, route[1:]))
+                            for route in geometry["routes"]]
+                        for i, distance in enumerate(distances):
+                            if i != item["edge"]:
+                                self.assertLess(distances[item["edge"]], distance,
+                                                ("label nearer a foreign edge", item["text"], i))
                     for node in geometry["nodes"].values():
                         self.assertFalse(max(left, node["x"]) < min(right, node["x"]+node["w"])
                                          and max(top, node["y"]) < min(bottom, node["y"]+node["h"]),
@@ -889,11 +945,12 @@ class Flows(unittest.TestCase):
                             crossed = (left < a[0] < right and max(min(a[1], z[1]), top) < min(max(a[1], z[1]), bottom)) if a[0] == z[0] else (
                                 top < a[1] < bottom and max(min(a[0], z[0]), left) < min(max(a[0], z[0]), right))
                             self.assertFalse(crossed, "edge crosses a short label")
-                pg = build.Page([{"id": f"s{i}"} for i in range(1, 13)])
+                pg = build.Page([{"id": sid} for sid in block.get("cites", [])], accepted_flows=accepted)
                 html = build.render_block(pg, block)
                 self.assertTrue(pg.flow)
                 self.assertIn('<svg', html)
                 self.assertIn('<noscript>', html)
+                self.assertEqual(html.count('class="flow-bridge"'), len(geometry.get("bridges", [])))
                 self.assertEqual(html.count('<li data-edge='), len(block.get("steps", [])))
                 self.assertEqual(html.count('class="flow-edge-label"'), label_count)
                 if block.get("steps"):
@@ -912,13 +969,13 @@ class Flows(unittest.TestCase):
         news = json.loads((ROOT / "content/lessons/sd-ex-news-feed.json").read_text())
         halves = section(news, "building-it-on-aws")["blocks"][:2]
         for block in halves:
-            geometry = build.flow_layout(block)
+            geometry = build.flow_layout(block, accepted=True)
             for route in geometry["routes"][:3]:
                 self.assertEqual(len(route), 2, "entry chain must not wrap around a frame")
                 self.assertEqual(route[0][0], route[1][0])
-        self.assertLessEqual(build.flow_layout(halves[0])["height"], 750)
+        self.assertLessEqual(build.flow_layout(halves[0], accepted=True)["height"], 750)
         neutral = next(b for b in section(news, "high-level-design")["blocks"] if b["type"] == "flow")
-        geometry = build.flow_layout(neutral)
+        geometry = build.flow_layout(neutral, accepted=True)
         for edge, route in zip(neutral["edges"], geometry["routes"]):
             if edge["from"] == "FS" and edge["to"] in ("TL", "PDB"):
                 distance = sum(abs(a[0]-z[0])+abs(a[1]-z[1]) for a, z in zip(route, route[1:]))

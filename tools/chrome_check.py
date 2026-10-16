@@ -220,6 +220,15 @@ def check_page(ch: Chrome, base: str, name: str, path: str, width: int, shots: P
                            " wider_than_box: r.width > w.clientWidth + 1, box_scrolls: w.scrollWidth > w.clientWidth, text_px: t ? Math.round(parseFloat(getComputedStyle(t).fontSize) * scale * 10) / 10 : null}; })"),
             "diagrams_wider_than_column": ev("[...document.querySelectorAll('.mermaid svg')].filter((s) => s.getBoundingClientRect().width > s.closest('.mermaid-wrap').clientWidth + 1).length"),
             "diagram_boxes_scrolling": ev("[...document.querySelectorAll('.mermaid-wrap')].filter((w) => w.scrollWidth > w.clientWidth).length"),
+            "standard_sequences": ev("""[...document.querySelectorAll('[data-diagram-style="sequence"] svg')].map(s => {
+              const v = s.viewBox.baseVal, scale = s.getBoundingClientRect().width/v.width;
+              const texts = [...s.querySelectorAll('text')];
+              return {text_px: Math.min(...texts.map(t => parseFloat(getComputedStyle(t).fontSize)*scale)),
+                tail_px: (v.y+v.height-Math.max(...texts.map(t => { const b=t.getBBox(); return b.y+b.height; })))*scale,
+                clipped_text: texts.filter(t => { const b = t.getBBox();
+                  return b.x < v.x-1 || b.y < v.y-1 || b.x+b.width > v.x+v.width+1 || b.y+b.height > v.y+v.height+1;
+                }).length};
+            })"""),
         }
         facts["v2"]["flows"] = ev("""[...document.querySelectorAll('.flow')].map(h => {
           const svg = h.querySelector('svg'), r = svg.getBoundingClientRect();
@@ -239,9 +248,18 @@ def check_page(ch: Chrome, base: str, name: str, path: str, width: int, shots: P
         flows = [flow for flow in facts["v2"]["flows"] if flow["interactive"]]
         if flows:
             manual = ev("""[...document.querySelectorAll('.flow[data-interactive=true]')].map(h => {
+              let bridges_correct = true;
+              for (let i = 0; i < h.querySelectorAll('.flow-calls li').length; i++) {
+                const active = h.querySelector('.flow-edge.active');
+                bridges_correct = bridges_correct && [...h.querySelectorAll('.flow-bridge')].every(p =>
+                  p.classList.contains('active') === (p.dataset.edge === active.dataset.edge) &&
+                  (p.dataset.edge !== active.dataset.edge || getComputedStyle(p).stroke === getComputedStyle(active).stroke));
+                h.querySelector('[data-action="next"]').click();
+              }
+              h.querySelector('[data-action="reset"]').click();
               h.querySelector('[data-action="next"]').click(); const next = h.dataset.step;
               h.querySelector('[data-action="previous"]').click(); const back = h.dataset.step;
-              h.querySelector('[data-action="play"]').click(); return {next, back};
+              h.querySelector('[data-action="play"]').click(); return {next, back, bridges_correct};
             })""")
             sample = "[...document.querySelectorAll('.flow-packet')].map(p => getComputedStyle(p).transform)"
             ch.pump(.3)
@@ -360,13 +378,18 @@ def check_page(ch: Chrome, base: str, name: str, path: str, width: int, shots: P
         if width >= 1280 and (v["diagrams_wider_than_column"] or v["diagram_boxes_scrolling"]):
             errors.append(f"1280 rule: {v['diagrams_wider_than_column']} diagram(s) wider than the column, {v['diagram_boxes_scrolling']} diagram box(es) scrolling sideways: "
                           f"{json.dumps(v['diagrams'])}")
+        # The previously accepted news-feed pixels explicitly take precedence.
+        if path != "/learn/lessons/sd-ex-news-feed/":
+            for sequence in v["standard_sequences"]:
+                if sequence["text_px"] < 14 or sequence["clipped_text"] or sequence["tail_px"] > 120:
+                    errors.append(f"standard sequence text/viewport failed: {json.dumps(sequence)}")
         for flow in v["flows"]:
             layout_ok = flow["svg"] and flow["text_px"] >= 15 and flow["scroll_width"] <= flow["client_width"]
             if flow["interactive"]:
                 next_step = str(min(1, flow["step_count"]-1))
                 controls_ok = (flow["controls"] and flow["step_count"] > 0 and flow["required_edges_covered"]
                                and flow["next"] == next_step and flow["back"] == "0" and flow["play_moves"]
-                               and flow["keyboard_next"] and flow["reduced"] ==
+                               and flow["bridges_correct"] and flow["keyboard_next"] and flow["reduced"] ==
                                {"state": "true", "play_disabled": True, "step": next_step, "animations": 0})
             else:
                 controls_ok = (not flow["controls"] and flow["step_count"] == 0 and flow["animations"] == 0

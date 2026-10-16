@@ -22,8 +22,8 @@
     }
   }
 
-  // Mermaid configuration is global: finish the default group before configuring
-  // the opt-in sequences, and serialize theme changes through the same queue.
+  // Mermaid configuration is global: finish legacy diagrams before the standard
+  // v2 sequences, and serialize theme changes through the same queue.
   var mermaidRender = Promise.resolve();
   function renderMermaid(theme) {
     if (!window.mermaid) { return; }
@@ -48,6 +48,8 @@
       var line = dark ? "#b3b3b3" : "#4d4d4d";
       var border = dark ? "#7b8aa5" : "#8795b1";
       var chip = dark ? "#22273a" : "#eef2ff";
+      // The operator accepted news-feed's pixels before the standard rollout.
+      var accepted = window.location.pathname === "/learn/lessons/sd-ex-news-feed/";
       window.mermaid.initialize({
         startOnLoad: false,
         securityLevel: "strict",
@@ -64,12 +66,35 @@
           labelTextColor: fg, loopTextColor: fg,
         },
         sequence: {
-          useMaxWidth: true, actorMargin: 36, width: 130, height: 44,
+          useMaxWidth: true, actorMargin: accepted ? 36 : 4, width: accepted ? 130 : 120, height: 44,
           boxMargin: 12, boxTextMargin: 8, noteMargin: 16, messageMargin: 36,
-          mirrorActors: false, wrap: true, wrapPadding: 12,
+          labelBoxWidth: accepted ? 50 : 35,
+          mirrorActors: false, wrap: true, wrapPadding: accepted ? 12 : 4,
         },
       });
       await window.mermaid.run({ nodes: styled });
+      if (!accepted) {
+        styled.forEach(function (el) {
+          el.querySelectorAll(".sequenceNumber").forEach(function (number) {
+            number.style.fontSize = "16px";
+          });
+          var svg = el.querySelector("svg");
+          var view = svg.viewBox.baseVal;
+          var left = view.x, top = view.y, right = view.x + view.width, bottom = view.y + view.height;
+          // Fit overflowing notes/text, never Mermaid's deliberately clipped
+          // actor lifelines: their getBBox() extends far beyond the last call.
+          svg.querySelectorAll("text, rect.note").forEach(function (label) {
+            var box = label.getBBox();
+            left = Math.min(left, box.x - 4); top = Math.min(top, box.y - 4);
+            right = Math.max(right, box.x + box.width + 4);
+            bottom = Math.max(bottom, box.y + box.height + 4);
+          });
+          if (left !== view.x || top !== view.y || right !== view.x + view.width || bottom !== view.y + view.height) {
+            svg.setAttribute("viewBox", [left, top, right - left, bottom - top].join(" "));
+            svg.style.maxWidth = (right - left) + "px";
+          }
+        });
+      }
     }).catch(function () { /* fallback text stays visible */ });
   }
 

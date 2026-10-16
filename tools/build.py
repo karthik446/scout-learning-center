@@ -426,14 +426,14 @@ class Page:
     """What the blocks of one :2 page need from the page shell: whether it holds code or a diagram, the numbered sources,
     and whether it is a design exercise (the decision table's last column reads 'For this design' there)."""
 
-    def __init__(self, sources: list[dict], *, exercise: bool = False, styled_sequences: bool = False) -> None:
+    def __init__(self, sources: list[dict], *, exercise: bool = False, accepted_flows: bool = False) -> None:
         self.number = {s["id"]: n for n, s in enumerate(sources, 1)}   # scan.py keeps ids s1..sN in order
         self.code = False
         self.diagram = False
         self.flow = False
         self.flow_count = 0
         self.exercise = exercise
-        self.styled_sequences = styled_sequences
+        self.accepted_flows = accepted_flows
 
 
 def cite_marks(pg: Page, cites: list[str] | None) -> str:
@@ -468,7 +468,7 @@ def table_html(columns: list[str], rows: list[list[str]], caption: str | None, *
     return f'<div class="table-scroll" role="region" tabindex="0"{label}><table{cls}>{cap}<thead><tr>{head_}</tr></thead><tbody>{body_}</tbody></table></div>'
 
 
-def flow_request_positions(b: dict, gap: int = 32) -> tuple[dict, list, int, float]:
+def flow_request_positions(b: dict, gap: int = 32, *, accepted: bool = False) -> tuple[dict, list, int, float]:
     """Two-column request lanes, side branches and independent orthogonal edge tracks.
 
     Actor-rooted frames form stacked panels when there are independent request
@@ -508,14 +508,25 @@ def flow_request_positions(b: dict, gap: int = 32) -> tuple[dict, list, int, flo
     for e in b["edges"]:
         if e.get("kind", "sync") != "reply" and panel_of[e["from"]] == panel_of[e["to"]]:
             incoming[e["to"]].append(e["from"])
+    reachable = {key for key, n in nodes.items() if n["kind"] == "actor" and not incoming[key]}
+    if not reachable:
+        reachable = set(nodes)
+    if not accepted:
+        for _ in nodes:
+            reachable.update(e["to"] for e in b["edges"] if e["from"] in reachable)
+        incoming = {key: [p for p in parents if key not in reachable or p in reachable]
+                    for key, parents in incoming.items()}
     pending, placed = list(ordered), set()
     while pending:
         ready = [n for n in pending if all(p in placed for p in incoming[n])]
-        key = min(ready, key=lambda n: next((i for i, e in enumerate(b["edges"]) if e["to"] == n), -1)) if ready else pending[0]
+        key = min(ready, key=lambda n: (not accepted and n not in reachable,
+                  next((i for i, e in enumerate(b["edges"]) if e["to"] == n), -1))) if ready else pending[0]
         pending.remove(key)
         parents = [p for p in incoming[key] if p in placed]
         ranks[key] = max((ranks[p] + int(columns[p] == columns[key] or nodes[key]["kind"] == "queue"
                                               or nodes[p]["kind"] == "queue") for p in parents), default=0)
+        if not accepted and key not in reachable and not parents:
+            ranks[key] = max((ranks[n] for n in placed), default=-1)+1
         while any(panel_of[n] == panel_of[key] and columns[n] == columns[key] and ranks[n] == ranks[key] for n in placed):
             ranks[key] += 1
         placed.add(key)
@@ -645,14 +656,30 @@ def flow_concept_positions(b: dict, gap: int = 32) -> tuple[dict, list, int, flo
     ranks = dict.fromkeys(nodes, 0)
     for key in reversed(order):
         ranks[key] = max((ranks[p]+1 for p in parents[key]), default=0)
+    # Shared terminal consumers sit below the private branches they aggregate.
+    last_rank = max(ranks.values())
+    for key in nodes:
+        if (not children[key] and len(set(parents[key])) > 1
+                and any(len(set(parents[sibling])) < len(set(parents[key]))
+                        for parent in parents[key] for sibling in children[parent])):
+            ranks[key] = last_rank+1
+    # Terminal feedback sources are nested by their target's rank, so returns
+    # can occupy separate margin lanes rather than weaving across each other.
+    returns = [key for key in nodes if children[key] and all(ranks[c] < ranks[key] for c in children[key])]
+    last_rank = max(ranks.values())
+    for offset, key in enumerate(sorted(returns, key=lambda n: -min(ranks[c] for c in children[n]))):
+        ranks[key] = last_rank+offset
     rows = []
     for rank in sorted(set(ranks.values())):
         members = [n for n in nodes if ranks[n] == rank]
         members.sort(key=lambda n: sum(list(nodes).index(p) for p in parents[n])/max(1, len(parents[n])))
-        rows.extend(members[i:i+3] for i in range(0, len(members), 3))
+        rows.extend(members[i:i+4] for i in range(0, len(members), 4))
     width, y = 760, 28
     for row in rows:
-        box_width = min(280, (width-88-40*(len(row)-1))//len(row))
+        returning = [key for key in row if any(ranks[child] < ranks[key] for child in children[key])]
+        if returning:
+            row = returning[:1]+[key for key in row if key not in returning]+returning[1:]
+        box_width = min(280, (width-112-40*(len(row)-1))//len(row))
         for key in row:
             n = nodes[key]
             wrap = max(10, int((box_width-28)/(16 if n["kind"] == "decision" else 8.4)))
@@ -673,30 +700,44 @@ class FlowLayoutSpaceError(BuildError):
     """The graph needs more room, without changing authored content."""
 
 
-def flow_layout(b: dict) -> dict:
+def flow_layout(b: dict, *, accepted: bool = False) -> dict:
     for gap in (32, 48, 64, 96, 128, 192):
         try:
-            return flow_geometry(b, gap)
+            return flow_geometry(b, gap, accepted=accepted)
         except FlowLayoutSpaceError:
             if gap == 192:
                 raise
 
 
-def flow_geometry(b: dict, gap: int) -> dict:
+def flow_geometry(b: dict, gap: int, *, accepted: bool = False) -> dict:
     import heapq
     import textwrap
 
     concept = all(e.get("kind") == "link" for e in b["edges"]) and not b.get("frames")
-    nodes, frames, width, y = flow_concept_positions(b, gap) if concept else flow_request_positions(b, gap)
+    nodes, frames, width, y = flow_concept_positions(b, gap) if concept else flow_request_positions(b, gap, accepted=accepted)
     obstacles = [(n["x"]-5, n["y"]-5, n["x"]+n["w"]+5, n["y"]+n["h"]+5) for n in nodes.values()]
     obstacles += [f["title_box"] for f in frames]
     borders = [(f["x"], f["y"], f["x"]+f["w"], f["y"]+f["h"]) for f in frames]
     sides = []
     attachments = {}
+    feedback = {}
+    predecessors = {key: {e["from"] for e in b["edges"] if e["to"] == key} for key in nodes}
+    successors = {key: {e["to"] for e in b["edges"] if e["from"] == key} for key in nodes}
     for i, edge in enumerate(b["edges"]):
         a, z = nodes[edge["from"]], nodes[edge["to"]]
-        if concept and a["y"] != z["y"]:
-            pair = ("bottom", "top") if a["y"] < z["y"] else ("top", "bottom")
+        if concept and a["y"] > z["y"]:
+            side = "left" if a["x"]+a["w"]/2 <= width/2 else "right"
+            feedback[i] = (side, None)
+            pair = (side, side)
+        elif (concept and a["x"]+a["w"]/2 != z["x"]+z["w"]/2
+              and not successors[edge["to"]] and len(predecessors[edge["to"]]) > 1
+              and any(len(predecessors[child]) < len(predecessors[edge["to"]]) for child in successors[edge["from"]])
+              and sum(e["from"] == edge["from"] and e["to"] == edge["to"] for e in b["edges"]) == 1):
+            # A shared fan-in must not cut across a sibling's private path.
+            side = "left" if a["x"]+a["w"]/2 < z["x"]+z["w"]/2 else "right"
+            pair = (side, side)
+        elif concept and a["y"] != z["y"]:
+            pair = ("bottom", "top")
         elif a["x"] == z["x"]:
             pair = ("bottom", "top") if a["y"] < z["y"] else ("top", "bottom")
         elif abs(a["y"]+a["h"]/2-z["y"]-z["h"]/2) < 2:
@@ -708,6 +749,18 @@ def flow_geometry(b: dict, gap: int) -> dict:
         sides.append(pair)
         for key, side, role in ((edge["from"], pair[0], "start"), (edge["to"], pair[1], "end")):
             attachments.setdefault((key, side), []).append((i, role))
+    for side in ("left", "right"):
+        returning = sorted((i for i, (s, _) in feedback.items() if s == side),
+                           key=lambda i: -abs(nodes[b["edges"][i]["from"]]["y"]-nodes[b["edges"][i]["to"]]["y"]))
+        for lane_index, i in enumerate(returning):
+            feedback[i] = (side, 8+14*lane_index if side == "left" else width-8-14*lane_index)
+    if not accepted:
+        for (key, side), peers in attachments.items():
+            def opposite(ref):
+                edge, role = b["edges"][ref[0]], ref[1]
+                other = nodes[edge["to"] if role == "start" else edge["from"]]
+                return (other["x"]+other["w"]/2 if side in ("top", "bottom") else other["y"]+other["h"]/2, ref[0])
+            peers.sort(key=opposite)
 
     def vertical_port(n, side, x):
         offset = x-n["x"]-n["w"]/2
@@ -723,6 +776,13 @@ def flow_geometry(b: dict, gap: int) -> dict:
         inset = abs(offset)*n["w"]/n["h"] if n["kind"] == "decision" else 0
         return (n["x"]+(n["w"]-inset if side == "right" else inset), n["y"]+n["h"]/2+offset)
 
+    def crosses(a, z, c, d):
+        if a[0] == z[0] and c[1] == d[1]:
+            return min(c[0], d[0]) <= a[0] <= max(c[0], d[0]) and min(a[1], z[1]) <= c[1] <= max(a[1], z[1])
+        if a[1] == z[1] and c[0] == d[0]:
+            return min(c[1], d[1]) <= a[1] <= max(c[1], d[1]) and min(a[0], z[0]) <= c[0] <= max(a[0], z[0])
+        return False
+
     def overlap(a, z, c, d):
         if a[0] == z[0] == c[0] == d[0]:
             return max(0, min(max(a[1], z[1]), max(c[1], d[1]))-max(min(a[1], z[1]), min(c[1], d[1])))
@@ -730,7 +790,14 @@ def flow_geometry(b: dict, gap: int) -> dict:
             return max(0, min(max(a[0], z[0]), max(c[0], d[0]))-max(min(a[0], z[0]), min(c[0], d[0])))
         return 0
 
-    segments, routes = [], []
+    def outside(key, point, side, ref):
+        n = nodes[key]
+        distance = 10 if accepted or side in ("top", "bottom") else 10+6*attachments[(key, side)].index(ref)
+        if side in ("top", "bottom"):
+            return (point[0], n["y"]+(n["h"]+distance if side == "bottom" else -distance))
+        return (n["x"]+(n["w"]+distance if side == "right" else -distance), point[1])
+
+    endpoints = []
     for i, edge in enumerate(b["edges"]):
         start_side, end_side = sides[i]
         start_port = port(edge["from"], start_side, (i, "start"))
@@ -746,33 +813,111 @@ def flow_geometry(b: dict, gap: int) -> dict:
                 and abs(source["y"]+source["h"]/2-destination["y"]-destination["h"]/2) < 2
                 and len(attachments[(edge["to"], end_side)]) == 1):
             end_port = (end_port[0], start_port[1])
-        def outside(n, point, side):
-            if side in ("top", "bottom"):
-                return (point[0], n["y"]+(n["h"]+10 if side == "bottom" else -10))
-            return (n["x"]+(n["w"]+10 if side == "right" else -10), point[1])
+        start = outside(edge["from"], start_port, start_side, (i, "start"))
+        end = outside(edge["to"], end_port, end_side, (i, "end"))
+        endpoints.append((start_port, end_port, start, end))
+    # Reserve every future port, not only edges already drawn. This prevents a
+    # later endpoint from landing exactly on an earlier elbow (a false junction).
+    port_reservations = [] if accepted else [
+        (i, (min(p[0], o[0])-5, min(p[1], o[1])-5, max(p[0], o[0])+5, max(p[1], o[1])+5))
+        for i, (a, z, start, end) in enumerate(endpoints) for p, o in ((a, start), (z, end))]
 
-        start = outside(source, start_port, start_side)
-        end = outside(destination, end_port, end_side)
-        xs = sorted({12, width-12, start[0], end[0]} |
-                    {v for l, t, r, bot in obstacles for v in (l-10, r+10)} |
-                    {p[0]+d for route in routes for p in route for d in (-14, 14)})
+    labels = []
+    edge_ids = {edge["id"]: i for i, edge in enumerate(b["edges"]) if "id" in edge}
+    stepped = {edge_ids[step["edge"]] if isinstance(step["edge"], str) else step["edge"] for step in b.get("steps", [])}
+    label_obstacles = (list(obstacles) if accepted else [
+        (n["x"]-26, n["y"]-26, n["x"]+n["w"]+26, n["y"]+n["h"]+26) for n in nodes.values()])
+    label_obstacles += [(f["x"]-4, f["y"]-4, f["x"]+f["w"]+4, f["title_box"][3]+4) for f in frames]
+    label_obstacles += [rect for l, t, r, bot in borders for rect in
+                        ((l-4, t-4, l+4, bot+4), (r-4, t-4, r+4, bot+4), (l-4, bot-4, r+4, bot+4))]
+
+    def place_label(i, route):
+        edge = b["edges"][i]
+        short = edge.get("short") or (edge["label"] if concept else " ".join(edge["label"].split()[:3]))
+        if not short:
+            return
+        text = f"{i+1} · {short}" if i in stepped else short
+        candidates = []
+        avoid = label_obstacles+[item["box"] for item in labels]
+        if not accepted:
+            avoid += [(p[0]-16, p[1]-16, p[0]+16, p[1]+16)
+                      for j, endpoint in enumerate(endpoints) if j != i for p in endpoint[2:]]
+        alternatives = [[text], textwrap.wrap(text, 12)]
+        if not accepted:
+            alternatives.append(textwrap.wrap(text, 8, break_long_words=False, break_on_hyphens=False))
+        for lines in alternatives:
+            tw, th = max(map(len, lines))*8.2, len(lines)*18
+            for a, z in zip(route, route[1:]):
+                length = abs(a[0]-z[0])+abs(a[1]-z[1])
+                if length < 16:
+                    continue
+                for fraction in (j/40 for j in range(4, 37)):
+                    cx, cy = a[0]+(z[0]-a[0])*fraction, a[1]+(z[1]-a[1])*fraction
+                    positions = [(cx+10, cy-th/2), (cx-tw-10, cy-th/2)] if a[0] == z[0] else [(cx-tw/2, cy-th-6), (cx-tw/2, cy+7)]
+                    for lx, ly in positions:
+                        rect = (lx-3, ly-2, lx+tw+3, ly+th+2)
+                        if rect[0] < 4 or rect[2] > width-4 or rect[1] < 0:
+                            continue
+                        if any(max(rect[0], l) < min(rect[2], r) and max(rect[1], t) < min(rect[3], bot)
+                               for l, t, r, bot in avoid):
+                            continue
+                        if any(abs(i-item["edge"]) == 1 and max(rect[0], item["box"][0]) < min(rect[2], item["box"][2])
+                               and max(rect[1]-item["box"][3], item["box"][1]-rect[3]) < 10 for item in labels):
+                            continue
+                        if any((rect[0] < a[0] < rect[2] and max(min(a[1], z[1]), rect[1]) < min(max(a[1], z[1]), rect[3]))
+                               if a[0] == z[0] else (rect[1] < a[1] < rect[3] and max(min(a[0], z[0]), rect[0]) < min(max(a[0], z[0]), rect[2]))
+                               for a, z in segments):
+                            continue
+                        if not accepted:
+                            def distance_to(rect, path):
+                                return min(max(rect[0]-max(a[0], z[0]), min(a[0], z[0])-rect[2], 0) +
+                                           max(rect[1]-max(a[1], z[1]), min(a[1], z[1])-rect[3], 0)
+                                           for a, z in zip(path, path[1:]))
+                            own_distance = distance_to(rect, route)
+                            if any(distance_to(rect, other) <= own_distance+3 for j, other in indexed_routes.items() if j != i):
+                                continue
+                        anchor = ("end" if lx < cx else "start") if a[0] == z[0] else "middle"
+                        candidates.append((len(lines)*100+abs(fraction-.5)*30-length/100, lx, ly, rect, lines, anchor))
+        if not candidates:
+            raise FlowLayoutSpaceError(f"flow: no clear space for edge label {text!r}")
+        _, lx, ly, rect, lines, anchor = min(candidates)
+        item = dict(edge=i, text=text, lines=lines, x=lx, y=ly+15, box=rect)
+        if not accepted:
+            item["anchor"] = anchor
+            item["x"] = rect[2]-3 if anchor == "end" else (rect[0]+rect[2])/2 if anchor == "middle" else lx
+        labels.append(item)
+
+    segments, routes, indexed_routes = [], [], {}
+    route_order = sorted(range(len(b["edges"])), key=lambda i: (
+        i in feedback, nodes[b["edges"][i]["from"]]["y"],
+        -abs(nodes[b["edges"][i]["to"]]["y"]-nodes[b["edges"][i]["from"]]["y"]),
+        -abs(nodes[b["edges"][i]["to"]]["x"]-nodes[b["edges"][i]["from"]]["x"]), i)) if concept else range(len(b["edges"]))
+    for i in route_order:
+        edge = b["edges"][i]
+        source, destination = nodes[edge["from"]], nodes[edge["to"]]
+        start_port, end_port, start, end = endpoints[i]
+        route_obstacles = obstacles+[box for j, box in port_reservations if j != i]
+        lane = feedback[i][1] if i in feedback else None
+        xs = sorted({12, width-12, start[0], end[0]} | ({lane} if lane is not None else set()) |
+                    {v for l, t, r, bot in route_obstacles for v in (l-10, r+10)} |
+                    {p[0]+d for route in routes for p in route for d in ((-120, 120) if not accepted and not concept else (-14, 14))})
         ys = sorted({8, y-8, start[1], end[1]} |
-                    {v for l, t, r, bot in obstacles for v in (t-10, bot+10)} |
-                    {p[1]+d for route in routes for p in route for d in (-14, 14)})
+                    {v for l, t, r, bot in route_obstacles for v in (t-10, bot+10)} |
+                    {p[1]+d for route in routes for p in route for d in ((-36, 36) if not accepted and not concept else (-14, 14))})
         xs = [v for v in xs if 8 <= v <= width-8]
         ys = [v for v in ys if 4 <= v <= y]
 
         def clear(a, z):
             if a[0] == z[0]:
-                hit = any(l < a[0] < r and max(min(a[1], z[1]), t) < min(max(a[1], z[1]), bot) for l, t, r, bot in obstacles)
+                hit = any(l < a[0] < r and max(min(a[1], z[1]), t) < min(max(a[1], z[1]), bot) for l, t, r, bot in route_obstacles)
             else:
-                hit = any(t < a[1] < bot and max(min(a[0], z[0]), l) < min(max(a[0], z[0]), r) for l, t, r, bot in obstacles)
+                hit = any(t < a[1] < bot and max(min(a[0], z[0]), l) < min(max(a[0], z[0]), r) for l, t, r, bot in route_obstacles)
             if hit or any(overlap(a, z, c, d) > 0 for c, d in segments):
                 return False
             return not any(overlap(a, z, c, d) > 0 for l, t, r, bot in borders
                            for c, d in (((l,t),(r,t)), ((r,t),(r,bot)), ((r,bot),(l,bot)), ((l,bot),(l,t))))
 
-        origin = (xs.index(start[0]), ys.index(start[1]), 0)
+        origin = (xs.index(start[0]), ys.index(start[1]), 0, 2 if lane is None else 0)
         target = (xs.index(end[0]), ys.index(end[1]))
         todo, distances, previous = [(0, origin)], {origin: 0}, {}
         goal = None
@@ -780,8 +925,8 @@ def flow_geometry(b: dict, gap: int) -> dict:
             distance, here = heapq.heappop(todo)
             if distance != distances[here]:
                 continue
-            ix, iy, direction = here
-            if (ix, iy) == target:
+            ix, iy, direction, phase = here
+            if (ix, iy) == target and phase == 2:
                 goal = here
                 break
             for nx, ny, axis in ((ix-1, iy, 1), (ix+1, iy, 1), (ix, iy-1, 2), (ix, iy+1, 2)):
@@ -790,11 +935,34 @@ def flow_geometry(b: dict, gap: int) -> dict:
                 a, z = (xs[ix], ys[iy]), (xs[nx], ys[ny])
                 if not clear(a, z):
                     continue
+                next_phase = phase
+                if phase == 0 and axis == 2:
+                    continue
+                if phase == 0 and z[0] == lane:
+                    next_phase = 1
+                if phase == 1:
+                    if a[1] == end[1]:
+                        next_phase = 2
+                    elif axis == 1 or abs(z[1]-end[1]) >= abs(a[1]-end[1]):
+                        continue
                 cost = distance+abs(a[0]-z[0])+abs(a[1]-z[1])+(30 if direction and direction != axis else 0)
+                if not accepted:
+                    cost += 180*sum(crosses(a, z, c, d) for c, d in segments)
+                if not accepted and not concept:
+                    # Closely parallel calls leave no side on which a label can
+                    # belong to its own edge. Prefer a clear corridor up front.
+                    along, across = (1, 0) if axis == 2 else (0, 1)
+                    spacing = 110 if axis == 2 else 36
+                    for c, d in segments:
+                        separation = abs(a[across]-c[across])
+                        if c[across] == d[across] and separation < spacing:
+                            shared = max(0, min(max(a[along], z[along]), max(c[along], d[along]))
+                                         - max(min(a[along], z[along]), min(c[along], d[along])))
+                            cost += shared*(spacing-separation)/spacing*4
                 # Fan out near the source, leaving the middle link room for its label.
                 if concept and source["y"] < destination["y"] and start[0] != end[0] and axis == 2 and a[0] == start[0]:
                     cost += abs(a[1]-z[1])*.001
-                point = (nx, ny, axis)
+                point = (nx, ny, axis, next_phase)
                 if cost < distances.get(point, float("inf")):
                     distances[point], previous[point] = cost, here
                     heapq.heappush(todo, (cost, point))
@@ -817,71 +985,104 @@ def flow_geometry(b: dict, gap: int) -> dict:
             else:
                 compact.append(point)
         routes.append(compact)
+        indexed_routes[i] = compact
         segments.extend(zip(compact, compact[1:]))
-    labels = []
-    edge_ids = {edge["id"]: i for i, edge in enumerate(b["edges"]) if "id" in edge}
-    stepped = {edge_ids[step["edge"]] if isinstance(step["edge"], str) else step["edge"] for step in b.get("steps", [])}
-    label_obstacles = obstacles + [(f["x"]-4, f["y"]-4, f["x"]+f["w"]+4, f["title_box"][3]+4) for f in frames]
-    label_obstacles += [rect for l, t, r, bot in borders for rect in
-                        ((l-4, t-4, l+4, bot+4), (r-4, t-4, r+4, bot+4), (l-4, bot-4, r+4, bot+4))]
-    label_order = sorted(range(len(routes)), key=lambda i: sum(abs(a[0]-z[0])+abs(a[1]-z[1]) for a, z in zip(routes[i], routes[i][1:])))
-    for i in label_order:
-        edge, route = b["edges"][i], routes[i]
-        short = edge.get("short") or (edge["label"] if concept else " ".join(edge["label"].split()[:3]))
-        if not short:
-            continue
-        text = f"{i+1} · {short}" if i in stepped else short
-        candidates = []
-        for lines in ([text], textwrap.wrap(text, 12)):
-            tw, th = max(map(len, lines))*8.2, len(lines)*18
-            for a, z in zip(route, route[1:]):
-                length = abs(a[0]-z[0])+abs(a[1]-z[1])
-                if length < 16:
-                    continue
-                for fraction in (j/40 for j in range(4, 37)):
-                    cx, cy = a[0]+(z[0]-a[0])*fraction, a[1]+(z[1]-a[1])*fraction
-                    positions = [(cx+10, cy-th/2), (cx-tw-10, cy-th/2)] if a[0] == z[0] else [(cx-tw/2, cy-th-6), (cx-tw/2, cy+7)]
-                    for lx, ly in positions:
-                        rect = (lx-3, ly-2, lx+tw+3, ly+th+2)
-                        if rect[0] < 4 or rect[2] > width-4 or rect[1] < 0:
-                            continue
-                        if any(max(rect[0], l) < min(rect[2], r) and max(rect[1], t) < min(rect[3], bot)
-                               for l, t, r, bot in label_obstacles+[item["box"] for item in labels]):
-                            continue
-                        if any(abs(i-item["edge"]) == 1 and max(rect[0], item["box"][0]) < min(rect[2], item["box"][2])
-                               and max(rect[1]-item["box"][3], item["box"][1]-rect[3]) < 10 for item in labels):
-                            continue
-                        if any((rect[0] < a[0] < rect[2] and max(min(a[1], z[1]), rect[1]) < min(max(a[1], z[1]), rect[3]))
-                               if a[0] == z[0] else (rect[1] < a[1] < rect[3] and max(min(a[0], z[0]), rect[0]) < min(max(a[0], z[0]), rect[2]))
-                               for a, z in segments):
-                            continue
-                        candidates.append((len(lines)*100+abs(fraction-.5)*30-length/100, lx, ly, rect, lines))
-        if not candidates:
-            raise FlowLayoutSpaceError(f"flow: no clear space for edge label {text!r}")
-        _, lx, ly, rect, lines = min(candidates)
-        labels.append(dict(edge=i, text=text, lines=lines, x=lx, y=ly+15, box=rect))
-    return dict(nodes=nodes, frames=frames, routes=routes, labels=labels, width=width, height=y-18)
+        if not accepted:
+            before = len(labels)
+            place_label(i, compact)
+            if len(labels) > before:
+                l, t, r, bot = labels[-1]["box"]
+                obstacles.append((l-12, t-12, r+12, bot+12))
+    routes = [indexed_routes[i] for i in range(len(b["edges"]))]
+    if accepted:
+        label_order = sorted(range(len(routes)), key=lambda i: sum(abs(a[0]-z[0])+abs(a[1]-z[1]) for a, z in zip(routes[i], routes[i][1:])))
+        for i in label_order:
+            place_label(i, routes[i])
+    result = dict(nodes=nodes, frames=frames, routes=routes, labels=labels, width=width, height=y-18)
+    if not accepted:
+        result["bridges"] = flow_bridges(routes)
+    return result
+
+def flow_bridges(routes: list) -> list:
+    """Give every residual crossing a quiet overpass on its roomiest segment."""
+    crossings = {}
+    for i, route in enumerate(routes):
+        for j, other in enumerate(routes[:i]):
+            for si, (a, z) in enumerate(zip(route, route[1:])):
+                for sj, (c, d) in enumerate(zip(other, other[1:])):
+                    if (a[0] == z[0]) == (c[0] == d[0]):
+                        continue
+                    h, v = ((a, z), (c, d)) if a[1] == z[1] else ((c, d), (a, z))
+                    x, y = v[0][0], h[0][1]
+                    if not (min(h[0][0], h[1][0]) <= x <= max(h[0][0], h[1][0])
+                            and min(v[0][1], v[1][1]) <= y <= max(v[0][1], v[1][1])):
+                        continue
+                    choices = []
+                    for edge, segment, start, end in ((i, si, a, z), (j, sj, c, d)):
+                        distance = abs(x-start[0])+abs(y-start[1])
+                        clearance = min(distance, abs(x-end[0])+abs(y-end[1]))
+                        choices.append((clearance, edge, segment, distance))
+                    clearance, edge, segment, distance = max(choices)
+                    if clearance < 4:
+                        raise FlowLayoutSpaceError("flow: crossing needs room for an overpass")
+                    crossings.setdefault((edge, segment), []).append((distance, (i, j, x, y)))
+    bridges = []
+    for (edge, segment), points in sorted(crossings.items()):
+        a, z = routes[edge][segment:segment+2]
+        length = abs(z[0]-a[0])+abs(z[1]-a[1])
+        dx, dy = (z[0]-a[0])/length, (z[1]-a[1])/length
+        groups = []
+        for distance, crossing in sorted(points):
+            left, right = distance-4, distance+4
+            if groups and left <= groups[-1][1]+2:
+                groups[-1][1] = max(groups[-1][1], right)
+                groups[-1][2].append(crossing)
+            else:
+                groups.append([left, right, [crossing]])
+        for left, right, covered in groups:
+            middle = (left+right)/2
+            bridges.append(dict(edge=edge, segment=segment,
+                                start=(a[0]+left*dx, a[1]+left*dy),
+                                control=(a[0]+middle*dx+(8 if dy else 0),
+                                         a[1]+middle*dy-(8 if dx else 0)),
+                                end=(a[0]+right*dx, a[1]+right*dy), crossings=covered))
+    return bridges
 
 
-def render_flow(b: dict, ident: str) -> str:
-    g = flow_layout(b)
+
+def render_flow(b: dict, ident: str, *, accepted: bool = False) -> str:
+    g = flow_layout(b, accepted=accepted)
     interactive = bool(b.get("steps"))
     out = [f'<section class="flow" data-interactive="{str(interactive).lower()}" aria-label="Architecture walkthrough" id="{ident}">',
            f'<svg class="flow-svg" viewBox="0 0 {g["width"]} {g["height"]}" role="img" aria-labelledby="{ident}-title">',
            f'<title id="{ident}-title">Architecture; see {"Exact calls for the numbered arrows" if interactive else "Connections for the relationships"} below.</title>',
            f'<defs><marker id="{ident}-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z"/></marker></defs>']
 
-    def label(lines, x, y, css=""):
-        return f'<text class="{css}" x="{x}" y="{y}">' + "".join(
+    def label(lines, x, y, css="", anchor=None, edge=None):
+        attrs = f' text-anchor="{anchor}" data-edge="{edge}"' if anchor else ""
+        return f'<text class="{css}" x="{x}" y="{y}"{attrs}>' + "".join(
             f'<tspan x="{x}" dy="{0 if i == 0 else 18}">{esc(line)}</tspan>' for i, line in enumerate(lines)) + '</text>'
 
     for f in g["frames"]:
         out.append(f'<g class="flow-frame" data-frame="{esc(f["id"])}"><rect x="{f["x"]}" y="{f["y"]}" width="{f["w"]}" height="{f["h"]}" rx="8"/>'
                    + label(f["lines"], f["x"]+8, f["y"]+17) + '</g>')
     for i, (edge, route) in enumerate(zip(b["edges"], g["routes"])):
-        d = "M " + " L ".join(f"{x},{y}" for x, y in route)
+        d = f"M {route[0][0]},{route[0][1]}"
+        for segment, end in enumerate(route[1:]):
+            for bridge in g.get("bridges", []):
+                if (bridge["edge"], bridge["segment"]) == (i, segment):
+                    a, c, z = bridge["start"], bridge["control"], bridge["end"]
+                    d += f" L {a[0]},{a[1]} Q {c[0]},{c[1]} {z[0]},{z[1]}"
+            d += f" L {end[0]},{end[1]}"
         out.append(f'<path class="flow-edge" data-edge="{i}" data-from="{esc(edge["from"])}" data-to="{esc(edge["to"])}" '
                    f'data-kind="{esc(edge.get("kind", "sync"))}" data-dashed="{str(edge.get("dashed", False)).lower()}" d="{d}" marker-end="url(#{ident}-arrow)"><title>{esc(edge["label"])}</title></path>')
+    # Paint overpasses last so an earlier edge can pass above a later edge.
+    for bridge in g.get("bridges", []):
+        i = bridge["edge"]
+        a, c, z = bridge["start"], bridge["control"], bridge["end"]
+        d = f"M {a[0]},{a[1]} Q {c[0]},{c[1]} {z[0]},{z[1]}"
+        out.append(f'<path class="flow-bridge-clearance" d="{d}"/>'
+                   f'<path class="flow-bridge" data-edge="{i}" d="{d}"/>')
     for key, n in g["nodes"].items():
         x, y, w, h = n["x"], n["y"], n["w"], n["h"]
         out.append(f'<g class="flow-node" data-node="{esc(key)}" data-kind="{n["kind"]}">')
@@ -896,7 +1097,7 @@ def render_flow(b: dict, ident: str) -> str:
         baseline = y+(h-len(n["lines"])*18)/2+(18 if n["kind"] == "store" else 14)
         out.append(label(n["lines"], x+w/2, baseline, "flow-label") + '</g>')
     for item in g["labels"]:
-        out.append(label(item["lines"], item["x"], item["y"], "flow-edge-label"))
+        out.append(label(item["lines"], item["x"], item["y"], "flow-edge-label", item.get("anchor"), item["edge"]))
     if not interactive:
         out.append('</svg><details class="flow-connections"><summary>Connections</summary><ul>')
         for edge in b["edges"]:
@@ -947,11 +1148,11 @@ def render_block(pg: Page, b: dict) -> str:
     if t == "flow":
         pg.flow = True
         pg.flow_count += 1
-        return render_flow(b, f"flow-{pg.flow_count}") + legend_html(pg, b)
+        return render_flow(b, f"flow-{pg.flow_count}", accepted=pg.accepted_flows and pg.flow_count <= 3) + legend_html(pg, b)
     if t == "diagram":
         pg.diagram = True
         src = esc(b["mermaid"])
-        style = ' data-diagram-style="sequence"' if pg.styled_sequences and scan.SEQUENCE_START.match(b["mermaid"]) else ""
+        style = ' data-diagram-style="sequence"' if scan.SEQUENCE_START.match(b["mermaid"]) else ""
         return f'<div class="mermaid-wrap"{style}><pre class="mermaid">{src}</pre><pre class="mermaid-fallback">{src}</pre></div>{legend_html(pg, b)}'
     raise BuildError(f"unknown block type {t!r}")
 
@@ -1141,7 +1342,9 @@ def render_exercise_v2(lib: Library, l: dict) -> tuple[str, str]:
     here = f"/learn/lessons/{lid}/"
     mid, _, entry = lib.home_of[lid]
     mod_here = f"/learn/modules/{mid}/"
-    pg = Page(l["sources"], exercise=True, styled_sequences=lid == "sd-ex-news-feed")
+    # The operator accepted these three diagrams pixel-for-pixel before the
+    # routing revision. Only those blocks retain the pinned placement.
+    pg = Page(l["sources"], exercise=True, accepted_flows=lid == "sd-ex-news-feed")
     body = [f"<h1>{esc(l['title'])}</h1>", exercise_attribution(l["provenance"])]
     krow = ["Concept: " + a(f"/learn/keys/{l['primary_key']}/", esc(lib.keys[l["primary_key"]]["display"]))]
     if l["secondary_keys"]:
