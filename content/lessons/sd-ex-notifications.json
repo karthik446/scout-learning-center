@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-notifications",
-  "version": 8,
+  "version": 9,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: notifications",
@@ -808,6 +808,17 @@
         "http": 200,
         "section_found": "Amazon ECR interface VPC endpoints (AWS PrivateLink)"
       }
+    },
+    {
+      "id": "s70",
+      "title": "Amazon DynamoDB Developer Guide: DynamoDB item sizes and formats (100 bytes of storage overhead per item)",
+      "url": "https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/CapacityUnitCalculations.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "All items in DynamoDB require 100 bytes of storage overhead per item."
+      }
     }
   ],
   "practice": null,
@@ -1227,7 +1238,7 @@
                 "caption": "A message whose retries are exhausted on both providers goes to the dead letter"
               }
             ],
-            "legend": "Boxes are containers, the outer frame is the system boundary, double brackets are queues. The queue box stands for six queues (push, email and SMS, each with a transactional and an informational queue), the adapter box for one adapter per channel with its own circuit breaker and secondary provider, and the providers box for the push providers, the email provider and the SMS provider; the first version of the diagram drew them as three boxes each, which no longer fits one diagram of at most 12 boxes. The dotted edge carries messages whose retries are exhausted. The arrow from the API to the delivery status is the queued record the core flow writes, which the first version left out."
+            "legend": "Boxes are containers, the outer frame is the system boundary, double brackets are queues. The queue box stands for six queues (push, email and SMS, each with a transactional and an informational queue), the adapter box for one adapter per channel with its own circuit breaker and secondary provider, and the providers box for the push providers, the email provider and the SMS provider; each is drawn as one box. The dotted edge carries messages whose retries are exhausted. The arrow from the API to the delivery status is the queued record the core flow writes."
           },
           {
             "type": "p",
@@ -1433,7 +1444,7 @@
                 "caption": "Release poller to the notifications table: the record held to queued and the held item deleted, one transaction, sync"
               }
             ],
-            "legend": "The accept half of the architecture, the same boxes as the neutral diagram's left side, one AWS service each: the API is an ECS on Fargate service behind an internal load balancer, the preference lookup is a Valkey cache over a DynamoDB table, the delivery status is a DynamoDB table that also holds the idempotency key items (with a TTL), and the six channel queues are SQS standard queues. The load balancer is the entry the neutral diagram leaves implicit; the held table and the release poller (a function that EventBridge Scheduler invokes on a one-minute schedule s10) carry the quiet-hours hold of the neutral design. Each arrow says how the call is made: HTTPS and HTTP inside the VPC, named SDK calls over the gateway endpoint s11 and the SQS interface endpoint s12, cache reads and writes. Sync means the caller waits for the answer; async means the work goes on after the caller has been answered. The VPC frame is one VPC in one Region across three Availability Zones. Inside the quiet hours the record starts in state held, one of the states of the neutral data model, and a retry skips it. The held table is keyed by user and channel, sorted by release time, with a sparse index by release minute plus a shard number so that a morning's releases do not pile onto one key range; the index costs extra write units s30 and the shard number is write sharding s67. The preferences box also holds the templates (key team and template, one item per version with an active-version marker and a kill switch), the cache holds the templates too, and the API serves the three calls besides a send: GET a status (a GetItem, or a Query of the index by user), PUT preferences (a PutItem and a DEL of the cache entry) and POST a template (a conditional PutItem of the next version). The notifications table has two indexes, by user and by provider message id, each costing extra write units s30.",
+            "legend": "The accept half of the architecture, the same boxes as the neutral diagram's left side, one AWS service each: the API is an ECS on Fargate service behind an internal load balancer, the preference lookup is a Valkey cache over a DynamoDB table, the delivery status is a DynamoDB table that also holds the idempotency key items (with a TTL), and the six channel queues are SQS standard queues. The load balancer is the entry the neutral diagram leaves implicit; the held table and the release poller (a function that EventBridge Scheduler invokes on a one-minute schedule s10) carry the quiet-hours hold of the neutral design. Each arrow says how the call is made: HTTPS and HTTP inside the VPC, named SDK calls over the gateway endpoint s11 and the SQS interface endpoint s12, cache reads and writes. Sync means the caller waits for the answer; async means the work goes on after the caller has been answered. The VPC frame is one VPC in one Region across three Availability Zones. Inside the quiet hours the record starts in state held, one of the states of the neutral data model, and a retry skips it. The held table is keyed by user and channel, sorted by release time, with a sparse index by release minute plus a shard number so that a morning's releases do not pile onto one key range; the index costs extra write units s30 and the shard number is write sharding s67. The preferences box also holds the templates (key team and template, one item per version with an active-version marker and a kill switch), the cache holds the templates too, and the API serves the three calls besides a send: GET a status (a GetItem, or a Query of the index by user), PUT preferences (a PutItem and a DEL of the cache entry) and POST a template (a conditional PutItem of the next version). The notifications table has two indexes, by user and by provider message id, each projecting the keys only; every entry written to an index costs a further write unit s30.",
             "cites": [
               "s10",
               "s11",
@@ -1457,7 +1468,7 @@
               },
               {
                 "id": "ST",
-                "label": "Amazon DynamoDB: notifications table",
+                "label": "Amazon DynamoDB: notifications, tokens and addresses",
                 "kind": "store"
               },
               {
@@ -1517,7 +1528,7 @@
                 "from": "W",
                 "to": "ST",
                 "kind": "sync",
-                "label": "GetItem, then UpdateItem state and attempt, sync",
+                "label": "GetItem the record and the token or address, then UpdateItem state and attempt, DeleteItem a dead token, sync",
                 "short": "Record"
               },
               {
@@ -1580,7 +1591,7 @@
                 "from": "CB",
                 "to": "ST",
                 "kind": "sync",
-                "label": "Query the index by provider message id, then UpdateItem, sync",
+                "label": "Query the index by provider message id, then UpdateItem the record and a suppression flag, sync",
                 "short": "UpdateItem"
               }
             ],
@@ -1591,7 +1602,7 @@
               },
               {
                 "edge": 1,
-                "caption": "Adapter to the notifications table: GetItem the record, then UpdateItem the state and the attempt, sync"
+                "caption": "Adapter to DynamoDB: GetItem the record and the device token or address, UpdateItem the state and the attempt, DeleteItem a token after a hard failure, sync"
               },
               {
                 "edge": 2,
@@ -1627,10 +1638,10 @@
               },
               {
                 "edge": 10,
-                "caption": "Callback handler to the notifications table: find the record by provider message id, then UpdateItem, sync"
+                "caption": "Callback handler to DynamoDB: find the record by provider message id, UpdateItem it, and for a bounce or complaint set the suppression flag of the address, sync"
               }
             ],
-            "legend": "The delivery half, the neutral diagram's right side: the channel queues feed the adapters, which call the providers (APNs and FCM directly, Amazon SES for email, AWS End User Messaging SMS for SMS) and record each attempt; a message that is received 6 times without success (3 attempts on each of the two providers) is moved to a dead-letter queue by SQS's redrive policy s26, and an operator can redrive it back to its source queue or delete it s68. The provider callbacks of the neutral design arrive as events: Amazon SES publishes them through a configuration set s13 and AWS End User Messaging SMS through an event destination s14, both to an SNS topic that invokes a callback function; APNs and FCM answer each request synchronously. The adapters run in private subnets with an interface endpoint for SQS s12 and for SES s15; the push providers are reached through NAT gateways s16. Sync means the caller waits for the answer; async means the work goes on after the caller has been answered. The adapters also read the device-token and address tables, which sit beside the notifications table in DynamoDB; the callback handler's suppression list is a flag on the address table. The adapters read the device tokens (push) or the address (email and SMS) beside the record, and remove a token on a hard failure.",
+            "legend": "The delivery half, the neutral diagram's right side: the channel queues feed the adapters, which call the providers (APNs and FCM directly, Amazon SES for email, AWS End User Messaging SMS for SMS) and record each attempt; a message that is received 6 times without success (3 attempts on each of the two providers) is moved to a dead-letter queue by SQS's redrive policy s26, and an operator can redrive it back to its source queue or delete it s68. The provider callbacks of the neutral design arrive as events: Amazon SES publishes them through a configuration set s13 and AWS End User Messaging SMS through an event destination s14, both to an SNS topic that invokes a callback function; APNs and FCM answer each request synchronously. The adapters run in private subnets with an interface endpoint for SQS s12 and for SES s15; the push providers are reached through NAT gateways s16. Sync means the caller waits for the answer; async means the work goes on after the caller has been answered. The adapters read the device tokens (push) or the address (email and SMS) from the device-token and address tables, which the DynamoDB box stands for beside the notifications table, and remove a token on a hard failure; the callback handler's suppression list is a flag on the address table.",
             "cites": [
               "s12",
               "s13",
@@ -1692,7 +1703,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 24\n  participant S as EventBridge Scheduler\n  participant R as Release poller\n  participant D as DynamoDB\n  participant Q as SQS channel queue\n  S-)R: every minute, rate schedule\n  R->>D: Query the due index, the sharded minute keys\n  D-->>R: the held items of this minute\n  loop each item\n    alt past its expires_at\n      R->>D: record dropped, the status says so\n    else still due\n      R-)Q: SendMessage on the channel queue\n      R->>D: record held to queued, held item deleted,<br/>one transaction\n    end\n  end\n  Note over R,Q: send first, then change the state, so a crash<br/>in between sends again, which is harmless",
+            "mermaid": "sequenceDiagram\n  autonumber 24\n  participant S as EventBridge Scheduler\n  participant R as Release poller\n  participant D as DynamoDB\n  participant Q as SQS channel queue\n  S-)R: every minute, rate schedule\n  R->>D: Query the due index, the sharded minute keys\n  D-->>R: the held items of this minute\n  loop each item\n    alt past its expires_at\n      R->>D: record dropped, the status says so,<br/>held item deleted\n    else still due\n      R-)Q: SendMessage on the channel queue\n      R->>D: record held to queued only if still held,<br/>held item deleted, one transaction\n      opt cancelled, the record has moved on\n        R->>D: only the held item is deleted\n      end\n    end\n  end\n  Note over R,Q: send first, then change the state if still held:<br/>a crash in between sends again, which is harmless,<br/>and a record already sent is never set back",
             "legend": "Solid arrows are synchronous calls with their replies dashed; open arrows are asynchronous hand-offs. Edge is the internal Application Load Balancer, drawn as one lane here and in every sequence diagram below. A rate-based schedule invokes the poller every minute s10; a delay queue could not hold a message for hours, its maximum is 15 minutes s24. The held items and the records are changed together in one all-or-nothing transaction s19.",
             "cites": [
               "s10",
@@ -1702,7 +1713,10 @@
           },
           {
             "type": "p",
-            "text": "The poller catches up on its own: a minute that is missed is simply covered by the next query for the items due. It sends first and changes the state after, so a crash in between sends the message again, which the adapter's status check makes harmless. Items past their expiry are dropped and the status record says so, which is what the neutral design asks of a held notification."
+            "text": "The poller catches up on its own: a minute that is missed is simply covered by the next query for the items due. It sends first and changes the state after, so a crash in between sends the message again, which the adapter's status check makes harmless. Items past their expiry are dropped and the status record says so, which is what the neutral design asks of a held notification. The transaction carries the condition that the record is still held: an adapter can have sent the message and written sent before the poller's transaction, and an unconditional write would turn sent back into queued.",
+            "cites": [
+              "s20"
+            ]
           },
           {
             "type": "p",
@@ -1710,7 +1724,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 30\n  participant T as Product team\n  participant Edge\n  participant A as Notification API\n  participant D as DynamoDB\n  T->>Edge: GET /notifications/id\n  Edge->>A: HTTP, a healthy task\n  A->>D: GetItem the record\n  D-->>A: the state and the attempts\n  A-->>Edge: 200 with the status history\n  Edge-->>T: 200\n  Note over A,D: a question by user is a Query<br/>of the index by user",
+            "mermaid": "sequenceDiagram\n  autonumber 31\n  participant T as Product team\n  participant Edge\n  participant A as Notification API\n  participant D as DynamoDB\n  T->>Edge: GET /notifications/id\n  Edge->>A: HTTP, a healthy task\n  A->>D: GetItem the record\n  D-->>A: the state and the attempts\n  A-->>Edge: 200 with the status history\n  Edge-->>T: 200\n  Note over A,D: a question by user is a Query<br/>of the index by user",
             "legend": "Solid arrows are synchronous calls with their replies dashed; open arrows are asynchronous hand-offs. Edge is the internal Application Load Balancer, drawn as one lane here and in every sequence diagram below. The status is a read of the record the adapters and the callbacks write; the index by user is a global secondary index s30.",
             "cites": [
               "s30"
@@ -1718,7 +1732,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 36\n  participant T as Caller\n  participant Edge\n  participant A as Notification API\n  participant D as DynamoDB\n  participant C as Cache\n  T->>Edge: PUT /users/id/preferences\n  Edge->>A: HTTP, a healthy task\n  A->>D: PutItem the preference\n  D-->>A: ok\n  A->>C: DEL the cache entry\n  A-->>Edge: 204\n  Edge-->>T: 204\n  T->>Edge: POST /templates\n  Edge->>A: HTTP, a healthy task\n  A->>D: PutItem the next version,<br/>attribute_not_exists\n  D-->>A: ok\n  A-->>Edge: 201 with template_id, version\n  Edge-->>T: 201\n  Note over A,D: the old version stays active until the<br/>canary passes, then the active version moves",
+            "mermaid": "sequenceDiagram\n  autonumber 37\n  participant T as Caller\n  participant Edge\n  participant A as Notification API\n  participant D as DynamoDB\n  participant C as Cache\n  T->>Edge: PUT /users/id/preferences\n  Edge->>A: HTTP, a healthy task\n  A->>D: PutItem the preference\n  D-->>A: ok\n  A->>C: DEL the cache entry\n  A-->>Edge: 204\n  Edge-->>T: 204\n  T->>Edge: POST /templates\n  Edge->>A: HTTP, a healthy task\n  A->>D: PutItem the next version,<br/>attribute_not_exists\n  D-->>A: ok\n  A-->>Edge: 201 with template_id, version\n  Edge-->>T: 201\n  Note over A,D: the old version stays active until the canary passes,<br/>then the platform team moves the active version<br/>and sets a kill switch, outside this API",
             "legend": "Solid arrows are synchronous calls with their replies dashed; open arrows are asynchronous hand-offs. Edge is the internal Application Load Balancer, drawn as one lane here and in every sequence diagram below. The cache entry is deleted after the write, as in the url-shortener's disable, and expires by its short TTL if the delete is lost s22; a template version is a conditional put, so a new version never overwrites an old one s20.",
             "cites": [
               "s20",
@@ -1727,7 +1741,7 @@
           },
           {
             "type": "p",
-            "text": "A preference change is visible to the next send once the cache entry is gone; a send that read the old entry just before the delete can still use it until the entry's short TTL, which is the bound. The held-set cap, the template read and the status read are drawn in the accept and status diagrams above.",
+            "text": "A preference change is visible to the next send once the cache entry is gone; a send that read the old entry just before the delete can still use it until the entry's short TTL, which is the bound. The held-set cap, the template read and the status read are drawn in the accept and status diagrams above. The neutral API has no call for either of these, so they are set by the services that own the facts, outside this design: the platform team moves a template's active version and sets its kill switch with a conditional UpdateItem on the templates table, and the apps' own services write the device tokens and the addresses. The adapters only read those two tables and remove a token.",
             "cites": [
               "s20",
               "s22"
@@ -1739,7 +1753,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 49\n  participant Q as SQS push queue\n  participant W as Push adapter\n  participant D as DynamoDB\n  participant X as APNs or FCM\n  Q-)W: ReceiveMessage, long-poll\n  Note over Q,W: hidden for the visibility<br/>timeout of 30 s\n  W->>D: GetItem the record, the device tokens<br/>or the address\n  alt the record already says sent\n    W->>Q: DeleteMessage, nothing to do\n  else not sent yet\n    W->>X: HTTP/2, collapse id = event id,<br/>expiry = expires_at\n    alt accepted\n      X-->>W: accepted\n      W->>D: UpdateItem state sent, the attempt\n      W->>Q: DeleteMessage\n    else a hard failure, an invalid token\n      X--xW: invalid token\n      W->>D: state failed, DeleteItem the token\n      W->>Q: DeleteMessage\n    end\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber 50\n  participant Q as SQS push queue\n  participant W as Push adapter\n  participant D as DynamoDB\n  participant X as APNs or FCM\n  Q-)W: ReceiveMessage, long-poll\n  Note over Q,W: hidden for the visibility<br/>timeout of 30 s\n  W->>D: GetItem the record, the device tokens<br/>or the address\n  alt the record already says sent\n    W->>Q: DeleteMessage, nothing to do\n  else not sent yet\n    W->>X: HTTP/2, collapse id = event id,<br/>expiry = expires_at\n    alt accepted\n      X-->>W: accepted\n      W->>D: UpdateItem state sent, the attempt\n      W->>Q: DeleteMessage\n    else a hard failure, an invalid token\n      X--xW: invalid token\n      W->>D: state failed, DeleteItem the token\n      W->>Q: DeleteMessage\n    end\n  end",
             "legend": "Solid arrows are synchronous calls with their replies dashed; open arrows are asynchronous hand-offs. Edge is the internal Application Load Balancer, drawn as one lane here and in every sequence diagram below. Long polling waits up to 20 seconds s25; the visibility timeout defaults to 30 seconds s23; APNs takes the collapse identifier and the expiry on its provider API s2; the adapter's reads and writes go over the gateway endpoint s11.",
             "cites": [
               "s11",
@@ -1761,7 +1775,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 59\n  participant W as Adapter\n  participant Q as SQS queue\n  participant P1 as Primary provider\n  participant P2 as Secondary provider\n  participant DLQ as Dead-letter queue\n  W->>P1: send\n  P1--xW: a timeout or a 5xx\n  W->>Q: ChangeMessageVisibility,<br/>backoff with jitter\n  Note over W,P1: up to 3 attempts, a hard<br/>failure is not retried\n  opt the breaker is open\n    W->>P2: send through the secondary\n  end\n  opt the last receive fails\n    Note over W,Q: the record is marked dead with the last error,<br/>the message is not deleted\n    Q-)DLQ: the redrive policy moves it after<br/>6 receives, 3 on each provider\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber 60\n  participant W as Adapter\n  participant Q as SQS queue\n  participant P1 as Primary provider\n  participant P2 as Secondary provider\n  participant DLQ as Dead-letter queue\n  W->>P1: send\n  P1--xW: a timeout or a 5xx\n  W->>Q: ChangeMessageVisibility,<br/>backoff with jitter\n  Note over W,P1: up to 3 attempts, a hard<br/>failure is not retried\n  opt the breaker is open\n    W->>P2: send through the secondary\n  end\n  opt the last receive fails\n    Note over W,Q: the record is marked dead with the last error,<br/>the message is not deleted\n    Q-)DLQ: the redrive policy moves it after<br/>6 receives, 3 on each provider\n  end",
             "legend": "Solid arrows are synchronous calls with their replies dashed; open arrows are asynchronous hand-offs. Edge is the internal Application Load Balancer, drawn as one lane here and in every sequence diagram below. Each retry extends the visibility timeout with backoff and jitter s23; after maxReceiveCount receives the redrive policy moves the message to the dead-letter queue, and the adapter never sends to it itself s26; the oldest-message age is the alarm and the scaling signal for messages received fewer than 3 times, because a message received 3 or more times drops out of that metric s27.",
             "cites": [
               "s23",
@@ -1783,7 +1797,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 64\n  participant O as Operator\n  participant DLQ as Dead-letter queue\n  participant Q as Source queue\n  O->>DLQ: look at the messages and their last errors\n  alt replay\n    O->>DLQ: start a redrive to the source queue\n    DLQ-)Q: the messages move back\n    Note over DLQ,Q: the adapter's status check lets them<br/>through, the record says dead, not sent\n  else discard\n    O->>DLQ: delete the messages\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber 65\n  participant O as Operator\n  participant DLQ as Dead-letter queue\n  participant Q as Source queue\n  O->>DLQ: look at the messages and their last errors\n  alt replay\n    O->>DLQ: start a redrive to the source queue\n    DLQ-)Q: the messages move back\n    Note over DLQ,Q: the adapter's status check lets them<br/>through, the record says dead, not sent\n  else discard\n    O->>DLQ: delete the messages\n  end",
             "legend": "Solid arrows are synchronous calls with their replies dashed; open arrows are asynchronous hand-offs. Edge is the internal Application Load Balancer, drawn as one lane here and in every sequence diagram below. Dead-letter queue redrive moves unconsumed messages from the dead-letter queue to a source queue s68.",
             "cites": [
               "s68"
@@ -1795,7 +1809,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 68\n  participant X as SES or SMS\n  participant N as SNS topic\n  participant F as Callback fn\n  participant D as DynamoDB\n  X-)N: delivery, bounce or complaint event\n  N-)F: invokes the function\n  F->>D: Query the index by provider message id\n  D-->>F: the notification\n  F->>D: UpdateItem the state\n  Note over F,D: a bounce also marks the<br/>address suppressed",
+            "mermaid": "sequenceDiagram\n  autonumber 69\n  participant X as SES or SMS\n  participant N as SNS topic\n  participant F as Callback fn\n  participant D as DynamoDB\n  X-)N: delivery, bounce or complaint event\n  N-)F: invokes the function\n  F->>D: Query the index by provider message id\n  D-->>F: the notification\n  F->>D: UpdateItem the state\n  Note over F,D: a bounce also marks the<br/>address suppressed",
             "legend": "Solid arrows are synchronous calls with their replies dashed; open arrows are asynchronous hand-offs. Edge is the internal Application Load Balancer, drawn as one lane here and in every sequence diagram below. SES publishes events through a configuration set to an SNS topic among other destinations s13; End User Messaging SMS routes its events to an event destination such as an SNS topic s14; SNS delivers to a Lambda function at no charge s29; the record is found by a global secondary index, which costs extra write units s30.",
             "cites": [
               "s13",
@@ -1848,8 +1862,8 @@
               ],
               [
                 "Operators (an administrator role)",
-                "read the dead-letter queues; start a redrive to the source queue or delete the messages",
-                "SQS interface endpoint",
+                "read the dead-letter queues; start a redrive to the source queue or delete the messages; move a template's active version and set its kill switch (a conditional UpdateItem on the templates table)",
+                "SQS interface endpoint; DynamoDB gateway endpoint",
                 "no; reachable from the teams' networks only"
               ],
               [
@@ -1936,7 +1950,7 @@
                 "option": "Amazon DynamoDB on-demand: status, idempotency keys, preferences, held items, tokens and addresses",
                 "pick_when": "every access is by one key or one index, retention can be enforced by a TTL, writes are bursty, and nobody wants to plan capacity",
                 "avoid_when": "teams need ad hoc queries and joins across notifications, templates and users",
-                "example": "For this design: chosen for the tables. The status is read by notification id and by user, the preferences by user and the keys by event, user and channel; the 90-day retention and the 24-hour key are TTL attributes, so the stores hold the data for at least that long and delete it later, not on the second. The notifications table alone comes to about $7,030 a month."
+                "example": "For this design: chosen for the tables. The status is read by notification id and by user, the preferences by user and the keys by event, user and channel; the 90-day retention and the 24-hour key are TTL attributes, so the stores hold the data for at least that long and delete it later, not on the second. The notifications table alone comes to about $9,020 a month."
               },
               {
                 "option": "Amazon Aurora PostgreSQL or Amazon RDS",
@@ -2176,7 +2190,7 @@
               [
                 "Email",
                 "Amazon SES Essentials: $0.16 per 1,000 emails up to 10 million a month, less above (the tiers on the pricing page); 375 million a month",
-                "about $44,400",
+                "about $44,500",
                 "about $416,000"
               ],
               [
@@ -2205,9 +2219,9 @@
               ],
               [
                 "Stores",
-                "DynamoDB on-demand: six write units per notification at $0.625 per million, 1.55 read units, 90 days stored at $0.25 per GB-month",
-                "about $7,030 (4.5 TB)",
-                "about $70,400 (45 TB)"
+                "DynamoDB on-demand: eight write units per notification at $0.625 per million, 1.55 read units, storage at $0.25 per GB-month",
+                "about $9,020 (4.95 TB billable)",
+                "about $90,300 (49.5 TB billable)"
               ],
               [
                 "Preference cache",
@@ -2223,12 +2237,14 @@
               ],
               [
                 "Total",
-                "the lines above; push providers' own terms, SNS events, the poller, template and preference writes, ECR and S3 endpoints, interface endpoints, data transfer out and CloudWatch not priced",
-                "about $950,000, about 94 percent of it SMS",
-                "about $9,467,000, about 95 percent of it SMS"
+                "the lines above; push providers' own terms, SNS events, the poller, the held-table writes, the index storage, template and preference writes, ECR and S3 endpoints, interface endpoints, data transfer out and CloudWatch not priced",
+                "about $952,000, about 94 percent of it SMS",
+                "about $9,487,000, about 94 percent of it SMS"
               ]
             ],
             "cites": [
+              "s19",
+              "s30",
               "s40",
               "s44",
               "s45",
@@ -2243,8 +2259,26 @@
               "s62",
               "s63",
               "s65",
-              "s66"
+              "s66",
+              "s70"
             ]
+          },
+          {
+            "type": "p",
+            "text": "The eight write units are four for the transaction that writes the key item and the record (a transaction does two underlying writes of every item), one for the record's entry in the user index, one for the adapter's attempt update, one for the entry that update creates in the provider-message-id index, and one for the callback's update. The 1.55 read units are the key item, the record with the token or address, and 5 percent cache misses. Each item is billed for its size plus 100 bytes of overhead.",
+            "cites": [
+              "s19",
+              "s30",
+              "s70"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "The neutral cost table's $788,000 is about $164,000 below this total."
+          },
+          {
+            "type": "p",
+            "text": "Most of the gap is SMS, $146,000: the carrier fee is added to the price per message. The SES tiers add $7,000 and the platform lines the neutral table has none for add $10,600, net of the push line the neutral table priced and this one does not."
           },
           {
             "type": "p",
@@ -2760,6 +2794,11 @@
       "version": 8,
       "date": "2026-10-16",
       "change": "fix round 2 after the re-read (batch E1A): every call of the neutral API table has a path, a store and a permission: GET status (edge, step, sequence, Query on the index by user), PUT preferences with the cache delete, POST templates (templates inside the preferences box, a template read through the cache and a render step in the accept diagram, a kill switch), the held-set cap (a Query of the user's held items before the transaction, the oldest dropped in it), the cancelled-transaction branch of two concurrent first requests, record states read on a known key, token removal and the address read in the delivery diagram; the SMS cell states one segment a message as an assumption; the image-pull clause; reviewed_by stays null"
+    },
+    {
+      "version": 9,
+      "date": "2026-10-16",
+      "change": "fix round 3 after the second re-read (batch E1A): stores priced at eight write units (the two indexes included) and 4.95 TB billable, about $9,020 and $90,300, totals about $952,000 and $9,487,000, the units and the 1.55 read units derived, held-table writes listed as not priced; the poller's transaction is conditional on state held; an expired held item is deleted; the writers of tokens, addresses and template activation named; the gap to the neutral table explained; legends say what the boxes are; reviewed_by stays null"
     }
   ]
 }
