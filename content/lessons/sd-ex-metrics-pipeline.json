@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-metrics-pipeline",
-  "version": 3,
+  "version": 4,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: metrics and time series pipeline",
@@ -1061,7 +1061,7 @@
               },
               {
                 "id": "IX",
-                "label": "Amazon DynamoDB: series registry and tenant counters",
+                "label": "DynamoDB: retained discovery index and active quota",
                 "kind": "store"
               },
               {
@@ -1253,7 +1253,7 @@
               },
               {
                 "id": "IX",
-                "label": "Amazon DynamoDB: series registry",
+                "label": "DynamoDB: live and historical series discovery",
                 "kind": "store"
               },
               {
@@ -1355,7 +1355,7 @@
                 "from": "RE",
                 "to": "SNS",
                 "kind": "async",
-                "label": "Publish the alert, deduplicated across evaluators, over the interface endpoint, async",
+                "label": "Publish at least once with stable alert identity; capable receivers deduplicate, over interface endpoint",
                 "short": "Publish"
               }
             ],
@@ -1390,7 +1390,7 @@
               },
               {
                 "edge": 7,
-                "caption": "Rule evaluator to SNS: Publish the alert, deduplicated across evaluators, over the interface endpoint, async"
+                "caption": "Evaluator publishes alert identity to SNS; duplicate evaluators and retries may publish duplicates, handled by capable receivers"
               }
             ],
             "legend": "Neutral query path mapped to Fargate frontend/evaluators, Valkey cache, DynamoDB posting lists, hot replicas and S3 blocks. The public load balancer serves authenticated tenant queries. All subranges finish before a merged response. SNS acceptance is not exactly-once delivery. Sources: Service Connect s18, task roles s19, S3 endpoint s23, DynamoDB endpoint s24, cache s29 and SNS s32.",
@@ -1448,7 +1448,7 @@
           },
           {
             "type": "table",
-            "caption": "Identity and network: who may call what, over which endpoint, and what is public. Each ECS service runs under its own IAM task role, so permissions are granted to the task, not to a host; everything in the VPC runs in private subnets across three Availability Zones in awsvpc mode, one elastic network interface per task.",
+            "caption": "Identity and network: separate IAM task roles for ECS services. Compute tasks use private subnets across three Availability Zones and awsvpc interfaces; the public-subnet load balancer is not a private task.",
             "columns": [
               "service",
               "may call",
@@ -1476,7 +1476,7 @@
               ],
               [
                 "Ingest (task role)",
-                "TransactWriteItems for metadata, posting items and tenant quota; GetItem for existing identities; PutRecords on the stream",
+                "TransactWriteItems for retained metadata/postings and active quota; guarded deactivation/reactivation and historical garbage collection; GetItem for identities; PutRecords on stream",
                 "DynamoDB gateway endpoint; Kinesis interface endpoint",
                 "no; admits the scrapers' and the push gateway's security groups only"
               ],
@@ -1534,8 +1534,8 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber\n  participant Q as Dashboard\n  participant QF as Query frontend\n  participant RC as Valkey cache\n  participant IX as Registry\n  participant HOT as Hot shards\n  Q->>QF: query via load balancer\n  QF->>RC: GET cached subranges\n  alt usable cache\n    RC-->>QF: hits and misses\n  else cache unavailable\n    Note over QF: recompute missing subranges\n  end\n  QF->>IX: Query tenant posting lists\n  IX-->>QF: intersected series ids\n  QF->>HOT: evaluate recent subrange\n  HOT-->>QF: recent partial result\n  Note over Q,QF: response waits for part b",
-            "legend": "The load balancer is folded into the caller-to-frontend message to keep the registry lookup visible. The registry uses tenant-qualified posting partitions, not an arbitrary attribute Query. Cache failure means recomputation, not an early response before older blocks. Sources: task health s21/s17, Service Connect s18, cache failover s29 and query pushdown s3.",
+            "mermaid": "sequenceDiagram\n  autonumber\n  participant Q as Dashboard\n  participant QF as Query frontend\n  participant RC as Valkey cache\n  participant IX as Retained discovery index\n  participant HOT as Hot shards\n  Q->>QF: query via load balancer\n  QF->>RC: GET cached subranges\n  alt usable cache\n    RC-->>QF: hits and misses\n  else cache unavailable\n    Note over QF: recompute missing subranges\n  end\n  QF->>IX: Query retained label lists\n  IX-->>QF: live and inactive series ids\n  QF->>HOT: evaluate recent subrange\n  HOT-->>QF: recent partial result\n  Note over Q,QF: response waits for part b",
+            "legend": "Tenant-qualified label lists retain discovery for inactive series while any samples remain retained. Query never filters solely by active-quota membership; older ranges use those same discovered identities to fetch S3 blocks in part b. Cache failure means recomputation, not early response. Sources: task health s21/s17, Service Connect s18, cache failover s29 and query pushdown s3; historical-index retention is this design's choice.",
             "cites": [
               "s21",
               "s17",
@@ -1744,14 +1744,14 @@
               [
                 "Reliability",
                 "automatically recover from failure; scale horizontally; stop guessing capacity",
-                "two replicas per shard across zones; the stream as the replay source; the ECS scheduler replacing lost tasks; hard per-tenant limits so one tenant cannot exhaust the fleet",
-                "a lost hot task costs a replay from the last block boundary, during which its replica serves alone",
+                "two replicas across zones; durable full-window blocks and manifest followed by log-tail catch-up; ECS replacement and hard active-series quotas",
+                "replacement hydrates the entire hot window before replaying after its durable checkpoint; the other replica serves alone during recovery",
                 "s33, s17, s9"
               ],
               [
                 "Performance efficiency",
                 "consider mechanical sympathy; go global in minutes where it fits",
-                "compressed samples in memory with evaluation pushed down to the shards; the index narrows before anything scans; the tiers make a 30-day query read a quarter of the points",
+                "compressed samples and shard-local evaluation; retained label index narrows history too. The literal mixed-resolution monthly query scans 62.5% of the all-raw points, not a quarter.",
                 "the largest Fargate task bounds the shard size; beyond it the hot store moves to instances",
                 "s33, s14"
               ],
@@ -1765,7 +1765,7 @@
               [
                 "Sustainability",
                 "maximize utilization; use managed services; align to demand",
-                "Graviton (Arm) tasks; series that stop receiving samples expire and free memory; downsampled tiers so a year of history is a fraction of the raw bytes",
+                "Arm tasks; inactive series leave hot memory and active quota, while labels remain discoverable through retained history; downsampled tiers reduce old sample bytes",
                 "the hot window is held in memory twice; a single copy would halve the memory and double the blast radius",
                 "s33"
               ],
@@ -1842,8 +1842,8 @@
               [
                 "Series registry",
                 "DynamoDB on-demand",
-                "$2,123",
-                "$21,230"
+                "$3,265",
+                "$32,650"
               ],
               [
                 "Alerts",
@@ -1853,9 +1853,9 @@
               ],
               [
                 "Priced subtotal",
-                "Excludes data transfer, ALB/endpoints, monitoring, S3 requests/index overhead/versioning, registry query reads and retry overhead. Default stream retention only.",
-                "about $12,215; $305 per million series",
-                "about $119,792; $299 per million series"
+                "Excludes transfer, ALB/endpoints, monitoring, S3 requests/index overhead/versioning, discovery-query reads, active-lease/last-seen refresh operations and retries. Default stream retention only.",
+                "about $13,357; $334 per million active series",
+                "about $131,212; $328 per million active series"
               ]
             ],
             "cites": [
@@ -1892,7 +1892,7 @@
             "rows": [
               [
                 "Series",
-                "series_id (hash of tenant, name and canonical sorted labels), tenant, name, labels{}, first_seen, last_seen",
+                "series_id, tenant, canonical name/labels, active flag, generation, last_seen, inactive_at; identity hash includes tenant",
                 "tenant-qualified series identity; verify canonical labels on hash collisions",
                 "Prometheus defines a series by name and labels; tenant qualification and collision checks are this platform's isolation choices."
               ],
@@ -1910,15 +1910,15 @@
               ],
               [
                 "Index",
-                "tenant-qualified label-pair posting lists and series metadata",
-                "DynamoDB PK tenant#label#value#bucket, SK series_id; bounded hash buckets, plus tenant#series metadata keys",
-                "Query equality posting partitions in every bucket, intersect series ids, and fetch metadata. Arbitrary regex selectors require an explicit bounded vocabulary scan or rejection, never a fictional Query over arbitrary attributes."
+                "retained tenant label lists and canonical metadata, independent of active quota",
+                "DynamoDB PK tenant#label#value#bucket, SK series_id; bounded buckets and tenant#series metadata keys",
+                "Query/intersect every relevant bucket including inactive identities, then fetch metadata and requested block ranges. Labels survive until all retained tiers have expired. Regex needs a bounded vocabulary scan or rejection."
               ],
               [
                 "Tenant",
                 "tenant_id, active_series, max_series, max_samples_per_second, retention overrides",
                 "tenant_id counter and tenant-qualified series keys",
-                "TransactWriteItems creates absent metadata, all posting items and a conditional counter increment together. Duplicate creation reads the existing canonical identity without incrementing. Expiry transaction deletes the same items and decrements once. Bound label count to fit one transaction."
+                "Creation atomically writes metadata, five label items and active-counter increment. Deactivation changes metadata and decrements the counter once, without deleting discovery. Reactivation increments quota conditionally and advances generation. Historical collection deletes metadata/labels only after the inactive retention deadline and a generation/state check."
               ],
               [
                 "Rule",
@@ -1935,7 +1935,7 @@
           },
           {
             "type": "table",
-            "caption": "The API.",
+            "caption": "This platform's chosen API, inspired by Prometheus; the overview is not a specification of these endpoint semantics.",
             "columns": [
               "method",
               "path",
@@ -1979,9 +1979,6 @@
                 "204, or a counted rejection",
                 "the push gateway's endpoint; the same limits as the scrape path"
               ]
-            ],
-            "cites": [
-              "s1"
             ]
           },
           {
@@ -2034,8 +2031,8 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 21\n  participant Q as Dashboard\n  participant QF as Query frontend\n  participant IX as Series index\n  participant HOT as Hot shards\n  participant LT as Long-term blocks\n  Q->>QF: range query\n  QF->>IX: tenant label posting lists\n  IX-->>QF: intersected series ids\n  QF->>HOT: recent subrange\n  HOT-->>QF: partial result\n  opt older range\n    QF->>LT: matching index and chunks\n    LT-->>QF: older result or error\n  end\n  QF-->>Q: merged result, partial flag\n  Note over QF: alerts use this same query path",
-            "legend": "Pushing evaluation down to the shards that hold the series is Monarch's main argument s3; the rule evaluator is replicated so that an evaluator failure does not silence alerts, and the four golden signals are what most of those rules watch s7.",
+            "mermaid": "sequenceDiagram\n  autonumber 21\n  participant Q as Dashboard\n  participant QF as Query frontend\n  participant IX as Retained discovery index\n  participant HOT as Hot shards\n  participant LT as Long-term blocks\n  Q->>QF: range query\n  QF->>IX: retained tenant label lists\n  IX-->>QF: live and inactive series ids\n  QF->>HOT: recent subrange\n  HOT-->>QF: partial result\n  opt older range\n    QF->>LT: matching index and chunks\n    LT-->>QF: older result or error\n  end\n  QF-->>Q: merged result, partial flag\n  Note over QF: alerts use this same query path",
+            "legend": "Historical discovery does not depend on active-series membership: labels and canonical identity outlive every retained sample tier. The frontend discovers inactive series too, then reads the selected blocks. This retention protocol is our design; shard-side evaluation is supported by Monarch s3 and alert practice by s7.",
             "cites": [
               "s3",
               "s7"
@@ -2056,11 +2053,15 @@
           },
           {
             "type": "p",
-            "text": "The Prometheus instrumentation guidance (keep a metric's label cardinality below 10; every label set is another series with its own cost) is the rule the limit enforces, and the naming guidance names the values that must never be labels: user ids, email addresses, any unbounded set. Series churn (short-lived pods creating new series on every deploy) is the second-order problem; it is bounded by the same limit and by expiring series that have not received a sample for a window.",
+            "text": "Cardinality guidance limits unbounded labels; active quota bounds the hot window, not the lifetime history index. Deactivation is serialized against renewal/reactivation, releases active quota once and leaves canonical labels discoverable. After admission closes and outstanding accepted records are drained, record inactive_at; retain discovery for the longest sample horizon after that instant. Any reactivation invalidates collection through its generation condition. Active-lease/last-seen refresh operations are not included in the churn-only cost subtotal.",
             "cites": [
               "s5",
               "s6"
             ]
+          },
+          {
+            "type": "p",
+            "text": "Historical discovery retention is 460 days after deactivation, conservatively covering the 15-month hourly tier; tenant overrides cannot exceed that modeled horizon without resizing. Active series retain metadata indefinitely. A collector removes the six discovery items only when metadata is still inactive at the expected generation and its deadline has passed. Delayed collection adds storage, never causes an early loss of discoverability."
           },
           {
             "type": "steps",
@@ -2258,8 +2259,11 @@
               ["PUT metering", "Each full record uses three 25-KiB PUT units. Full packing produces about 1,333 records/s and 4,000 PUT units/s."],
               ["Log readers", "Both hot replicas read every record. On-demand comparison includes ingress plus two reads and one stream-hour charge."],
               ["Restoration and retention", "Default stream retention only. Full-window hydration uses retained raw blocks; tail catch-up must finish before uncheckpointed records expire. Alarm and backpressure before that boundary."],
-              ["Quota/index churn", "Seven items per creation and expiry transaction. Both operations consume 28 write units per retired-and-replaced series; assume 4M replacements daily."],
-              ["Registry reads and storage", "One strong metadata read per newly encountered series; items below four KiB. Budget 32 billed GB for metadata and inverted-index entries. Query-time index reads are excluded."],
+              ["Lifecycle writes", "Seven items on first creation, two on deactivation, six on eventual historical collection; transactional doubling gives 30 write units per distinct churn lifecycle. Assume 4M distinct replacements daily."],
+              ["Write-size bound", "Each serialized metadata, label-index or counter item fits one KiB including attribute names/keys; the six discovery items together fit two KiB in this priced model. Larger labels require rejection or rounded-up capacity, not the same price."],
+              ["Historical identity count", "40M active plus 4M daily distinct inactive identities retained for 460 days: 1.88B identities at steady state."],
+              ["Registry storage", "Budget 4,000 billed GB for retained discovery and counters at base; tenfold storage at larger load. This covers the two-KiB identity bound with rounding/headroom."],
+              ["Registry reads", "One strong metadata read per newly encountered identity, below four KiB. Historical selector reads, active refreshes, reactivations and retry/collection-lag overhead are excluded."],
               ["Storage units", "Teaching volumes are decimal. Budget the numeric total as 36,000 AWS billed GB conservatively rather than claim equality with binary units. Larger tier uses the actual 51,200-GB breakpoint."],
               ["Month and fleet", "30 request-days, 730 running hours. Tenfold task and shard counts are unbenchmarked sizing assumptions."]
             ]
@@ -2326,10 +2330,10 @@
               ],
               [
                 "Series registry: DynamoDB on-demand",
-                "Churn transactions include metadata, five inverted-index entries and quota counter; creation and expiry both billed. Read/storage assumptions are in the preceding table.",
+                "Creation, active deactivation and historical collection are separate transactions; discovery retained independently of quota. Steady-state churn and item-size/storage assumptions above.",
                 "$0.625 per million writes; $0.125 per million reads; $0.25 per billed GB-month",
-                "$2,123",
-                "$21,230"
+                "$3,265",
+                "$32,650"
               ],
               [
                 "Alerts: SNS",
@@ -2349,8 +2353,8 @@
                 "Total on AWS (the design, not the buy option)",
                 "Same exclusions as the final AWS summary table",
                 "",
-                "about $12,215; $305 per million series",
-                "about $119,792; $299 per million series"
+                "about $13,357; $334 per million active series",
+                "about $131,212; $328 per million active series"
               ]
             ],
             "cites": [
@@ -2368,7 +2372,7 @@
           },
           {
             "type": "p",
-            "text": "The cost per million series per month is the number the platform publishes, and the hot tier's memory is most of it, so the levers are the compression ratio (which the Gorilla scheme fixes) and the series limits, which decide how many series exist at all.",
+            "text": "Hot memory remains the largest line, not a majority. Retained historical discovery, transactional churn and the physical log are material costs. Gorilla reports observed average compression, not a fixed ratio. Publish cost per active series together with retention/churn assumptions; active quota alone does not bound historical index growth.",
             "cites": [
               "s2"
             ]
@@ -2444,6 +2448,11 @@
       "version": 3,
       "date": "2026-10-16",
       "change": "Repair M1-M8: full-window block hydration and durable manifest checkpoints, tenant-qualified posting index and atomic quota, durable per-record ingestion and late-sample policy, corrected retention and physical-log/registry billing, failure/query sequencing, fair alternatives and scoped source claims. Independent acceptance remains unset."
+    },
+    {
+      "version": 4,
+      "date": "2026-10-16",
+      "change": "Round-two MR1–MR3: retain historical discovery independently of active quota, separate deactivation from guarded collection, price retained identities and bounded write items, migrate recovery/delivery/compression/query summaries and scope the chosen API."
     }
   ]
 }

@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-payments-ledger",
-  "version": 4,
+  "version": 5,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: payments ledger",
@@ -667,7 +667,7 @@
         ],
         [
           "Targets (assumption)",
-          "Posting is atomic and durable before acknowledgement. Same-account reads include acknowledged entries. Unresolved provider calls escalate within 10 minutes, without falsely claiming compensation succeeded. Reconciliation finishes within 6 hours of the statement; journal lines balance separately in each currency.",
+          "Posting is atomic and durable before acknowledgement. Exact authorization reads include acknowledged entries; dashboard projections may lag seconds. Unresolved provider calls escalate within 10 minutes without claiming compensation succeeded. Reconciliation finishes within 6 hours of the statement; journal lines balance separately in each currency.",
           ""
         ],
         [
@@ -692,7 +692,7 @@
       },
       {
         "q": "What is a balance?",
-        "a": "The sum of lines on an account, held as a derived number with the sequence of the last posting it includes; two balances per account: posted and available (posted minus holds)."
+        "a": "Posted balance uses financial-book lines with the account sign convention. Available subtracts active local spend reservations once. Provider-authorisation memo lines describe external holds, not posted merchant funds, and are not subtracted again. Dashboard balances carry their applied sequence; authorization reads use the exact journal path."
       },
       {
         "q": "How fast must balances be?",
@@ -1226,7 +1226,7 @@
                 "from": "NAT",
                 "to": "PSP",
                 "kind": "sync",
-                "label": "HTTPS to the provider; the provider idempotency key is the payment id, sync",
+                "label": "Provider HTTPS with stable payment-plus-operation idempotency key; retries preserve that operation's key",
                 "short": "HTTPS"
               },
               {
@@ -1292,7 +1292,7 @@
               },
               {
                 "edge": 6,
-                "caption": "NAT gateway to the provider: HTTPS, the provider idempotency key is the payment id, sync"
+                "caption": "NAT to provider: HTTPS with payment-plus-operation identity; authorise, capture and void use distinct stable keys"
               },
               {
                 "edge": 7,
@@ -1675,8 +1675,8 @@
               ],
               [
                 "Balance projector (Lambda execution role)",
-                "read Kinesis through its event source mapping; GetItem and TransactWriteItems on balances/watermarks; SELECT journal gaps through RDS Proxy and GetObject on verified archive ranges",
-                "Kinesis and DynamoDB endpoints",
+                "Kinesis event-source reads; GetItem/TransactWriteItems on balances/watermarks; read-only journal SELECT through RDS Proxy; GetObject on verified archives; GetSecretValue on the projector database credential ARN only",
+                "Kinesis interface and DynamoDB gateway endpoints; private VPC RDS Proxy with TLS and a dedicated read-only database login/grant; Secrets Manager interface endpoint supplies that login; S3 gateway endpoint for archives",
                 "no"
               ],
               [
@@ -1821,19 +1821,19 @@
                 "option": "Amazon SQS standard queue",
                 "pick_when": "one consumer, idempotent work, no ordering needed, and the simplest possible hand-off",
                 "avoid_when": "consumers need order, replay, or several of them need every event",
-                "example": "For this design: not chosen. The projector depends on sequence order per ledger and on replay; a standard queue offers neither, and the FIFO variant orders but does not retain history for a rebuild."
+                "example": "For this design: a valid alternative for the single projector. Application sequence checks and journal/archive recovery tolerate unordered or duplicate delivery; FIFO is not required for correctness. Kinesis is selected for convenient short operational replay, not because SQS prevents authoritative rebuild."
               },
               {
                 "option": "Amazon EventBridge",
                 "pick_when": "events of many shapes are routed by rules to many targets, across accounts, and the routing matters more than throughput or order",
-                "avoid_when": "one high-volume stream of identical events feeds one or two consumers in order",
-                "example": "For this design: not chosen. Ledger events have one shape and ordered consumers; rule-based routing buys nothing here."
+                "avoid_when": "one event shape and one consumer do not need rule-based routing",
+                "example": "For this design: not selected because routing flexibility is unused. Correctness comes from journal recovery and contiguous projection, not an ordered transport guarantee."
               },
               {
                 "option": "Amazon MSK",
                 "pick_when": "the team already runs Kafka clients and tooling, needs its ecosystem, or the throughput and retention make broker-level control worth the operations",
-                "avoid_when": "about 20 GB of events a day with two consumers, where a managed stream needs no brokers to size or patch",
-                "example": "For this design: not chosen. The stream carries about 20 GB a day; Kinesis on-demand scales that without shards to manage, and the Kafka ecosystem is not needed."
+                "avoid_when": "a modest single-consumer workload does not justify broker-level operations",
+                "example": "For this design: one stream and one consumer, with 800 billed GB per month in each direction including metadata/rounding allowance. Kinesis on-demand avoids broker sizing; Kafka ecosystem features are not required."
               }
             ],
             "cites": [
@@ -1925,7 +1925,7 @@
               [
                 "Reliability",
                 "automatically recover from failure; test recovery procedures; manage change through automation",
-                "the Aurora volume in three zones with a reader in a second zone; every saga step idempotent, so any retry is safe; the stream's retention for projection rebuilds; the recovery worker as the tested path",
+                "multi-zone Aurora; stable operation keys and guarded saga transitions; journal/verified archive is authoritative for projection rebuild and gaps; stream replay is only a short operational convenience; recovery drills cover unknown outcomes",
                 "during a writer failover posting fails for under a minute, typically, and the sagas retry",
                 "s28, s11, s12"
               ],
@@ -2285,7 +2285,7 @@
           },
           {
             "type": "p",
-            "text": "Idempotency has three layers and each needs its own key: the caller to the payment API (intent), the orchestrator to the provider (payment id), and the orchestrator to the ledger (saga step id), so a crash between any two steps is recoverable by replaying the saga from its stored step. Uber's write-up on money movement at scale describes the same insistence: orders are immutable, unique identifiers make processing idempotent, and the platform reconciles itself.",
+            "text": "Idempotency has three layers: caller-scoped intent key, payment-plus-provider-operation key, and ledger saga-step key. Retries preserve the same operation key; authorise, capture and void never share one. Durable predecessor/version checks control replay. Uber's write-up supports immutable orders, unique identifiers and reconciliation; this operation-key scheme is the design selected here.",
             "cites": [
               "s4"
             ]
@@ -2659,6 +2659,11 @@
       "version": 4,
       "date": "2026-10-16",
       "change": "Repair independent review P1-P9: scoped intent identity, guarded saga recovery, contiguous transactional projection, atomic exact spending, currency/book-balanced card memo and settlement postings, fair managed RDS comparison, corrected branches and source scope, revised eight-line volume and explicit billing subtotal/exclusions. Independent acceptance remains unset."
+    },
+    {
+      "version": 5,
+      "date": "2026-10-16",
+      "change": "Round-two residuals PR1–PR4: migrate operation-specific provider keys, authoritative rebuild and fair queue alternatives, exact-versus-dashboard read requirements, memo/financial balance distinction and projector recovery credentials/endpoints."
     }
   ]
 }
