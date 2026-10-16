@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-payments-ledger",
-  "version": 6,
+  "version": 7,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: payments ledger",
@@ -641,6 +641,13 @@
       "url": "https://docs.aws.amazon.com/step-functions/latest/apireference/API_StartExecution.html",
       "kind": "doc",
       "verified": {"checked": "2026-10-16", "http": 200, "section_found": "StartExecution"}
+    },
+    {
+      "id": "s56",
+      "title": "AWS Secrets Manager User Guide: Using an AWS Secrets Manager VPC endpoint (the interface endpoint)",
+      "url": "https://docs.aws.amazon.com/secretsmanager/latest/userguide/vpc-endpoint-overview.html",
+      "kind": "doc",
+      "verified": {"checked": "2026-10-16", "http": 200, "section_found": "You can establish a private connection between your VPC and Secrets Manager by creating an interface VPC endpoint"}
     }
   ],
   "practice": null,
@@ -902,7 +909,6 @@
                   "PA",
                   "O",
                   "AD",
-                  "PSP",
                   "LS",
                   "LD"
                 ]
@@ -1004,11 +1010,11 @@
                 "short": "Exact check"
               },
               {
-                "from": "PSP",
-                "to": "RC",
-                "kind": "async",
-                "label": "Provider to reconciliation job: daily statements",
-                "short": "Statements"
+                "from": "RC",
+                "to": "PSP",
+                "kind": "sync",
+                "label": "Reconciliation job to the provider: fetch the daily statement",
+                "short": "Fetch statement"
               },
               {
                 "from": "RC",
@@ -1072,7 +1078,7 @@
               },
               {
                 "edge": 11,
-                "caption": "Provider to reconciliation job: the daily statement"
+                "caption": "Reconciliation job to the provider: fetch the daily statement"
               },
               {
                 "edge": 12,
@@ -1083,7 +1089,7 @@
                 "caption": "Sealing job to ledger DB: digest the day's range per ledger and verify the chain"
               }
             ],
-            "legend": "Boxes are containers; the three frames are the payment path, the derived views and the daily jobs; cylinders are stores; double brackets are logs; the provider is the external party. The ledger DB is the only source of truth: balances, statements and digests are derived from it and can be rebuilt."
+            "legend": "Boxes are containers; the three frames are the payment path, the derived views and the daily jobs; cylinders are stores; double brackets are logs; the provider is the external party and sits outside the frames. The ledger DB is the only source of truth: balances, statements and digests are derived from it and can be rebuilt."
           },
           {
             "type": "p",
@@ -1460,18 +1466,18 @@
                 "short": "Atomic projection"
               },
               {
-                "from": "PSP",
-                "to": "S3",
-                "kind": "async",
-                "label": "the daily statement file lands in the bucket",
-                "short": "Statement"
+                "from": "RC",
+                "to": "PSP",
+                "kind": "sync",
+                "label": "GET the day's statement over HTTPS through the NAT gateways when EventBridge Scheduler starts the task, sync",
+                "short": "GET statement"
               },
               {
                 "from": "RC",
                 "to": "S3",
                 "kind": "sync",
-                "label": "GetObject the statement over the gateway endpoint when EventBridge Scheduler starts the task, sync",
-                "short": "GetObject"
+                "label": "PutObject the statement as received, then GetObject it to match, over the gateway endpoint, sync",
+                "short": "Put, GetObject"
               },
               {
                 "from": "RC",
@@ -1530,11 +1536,11 @@
               },
               {
                 "edge": 8,
-                "caption": "Provider to S3: the daily statement file lands in the bucket"
+                "caption": "Reconciliation task to the provider: GET the day's statement over HTTPS through the NAT gateways when EventBridge Scheduler starts the task, sync"
               },
               {
                 "edge": 9,
-                "caption": "Reconciliation task to S3: GetObject the statement over the gateway endpoint when EventBridge Scheduler starts the task, sync"
+                "caption": "Reconciliation task to S3: PutObject the statement as received, then GetObject it to match, over the gateway endpoint, sync"
               },
               {
                 "edge": 10,
@@ -1549,7 +1555,7 @@
                 "caption": "Sealing task to S3: PutObject the sealed digest under Object Lock compliance mode, sync"
               }
             ],
-            "legend": "The neutral derived path mapped to AWS: a Fargate relay publishes per-record-accounted Kinesis batches, Lambda applies contiguous projections to DynamoDB, and scheduled Fargate jobs reconcile and seal into S3. Exact reads use Aurora, while dashboards use the projection. Projector gap recovery also reads Aurora or verified archived ranges. These recovery calls are detailed in the sequence rather than additional architecture boxes. Sources: s13, s14, s20, s25, s27, s36, s52.",
+            "legend": "The neutral derived path mapped to AWS: a Fargate relay publishes per-record-accounted Kinesis batches, Lambda applies contiguous projections to DynamoDB, and scheduled Fargate jobs reconcile and seal into S3. The reconciliation job fetches the provider's statement itself through the NAT gateways of the write path, keeps it in S3 and matches from that stored copy. Exact reads use Aurora, while dashboards use the projection. Projector gap recovery also reads Aurora or verified archived ranges. These recovery calls are detailed in the sequence rather than additional architecture boxes. Sources: s13, s14, s20, s25, s27, s36, s52.",
             "cites": ["s13", "s14", "s20", "s25", "s27", "s36", "s52"]
           },
           {
@@ -1582,8 +1588,8 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 11\n  participant SFN as Step Functions\n  participant AD as Adapter\n  participant PSP as Provider\n  participant DDB as Payments\n  SFN->>DDB: compare state and version\n  DDB-->>SFN: current operation\n  SFN->>AD: Invoke authorise\n  AD->>PSP: stable authorise key\n  alt confirmed authorisation\n    PSP-->>AD: authorised reference\n    AD-->>SFN: confirmed\n    SFN->>DDB: conditional authorised state\n  else unknown result\n    AD-->>SFN: timeout or ambiguous result\n    SFN->>DDB: conditional pending recovery\n  else confirmed rejection\n    AD-->>SFN: rejected\n    SFN->>DDB: conditional rejected state\n  end",
-            "legend": "The state check is not an exclusive external-call lock: duplicate executions may repeat the same stable provider operation key. They cannot advance a different operation until its predecessor and ledger step are recorded. Conditional predecessor/version updates prevent regression, and terminal outcomes are protected. Unknown outcomes are queried or retried with the same operation key, never treated as rejection. Sources: Retry/Catch s10, saga pattern s8, NAT s26, Express s9.",
+            "mermaid": "sequenceDiagram\n  autonumber 11\n  participant SFN as Step Functions\n  participant AD as Adapter\n  participant PSP as Provider\n  participant LS as Ledger svc\n  participant DDB as Payments\n  SFN->>DDB: compare state and version\n  DDB-->>SFN: current operation\n  SFN->>AD: Invoke authorise\n  AD->>PSP: stable authorise key\n  alt confirmed authorisation\n    PSP-->>AD: authorised reference\n    AD-->>SFN: confirmed\n    SFN->>LS: post memo hold with step key\n    LS-->>SFN: durable entry, part c\n    SFN->>DDB: conditional authorised state\n    Note over SFN,DDB: authorised follows the entry\n  else unknown result\n    AD-->>SFN: timeout or ambiguous result\n    SFN->>DDB: conditional pending recovery\n  else confirmed rejection\n    AD-->>SFN: rejected\n    SFN->>DDB: conditional rejected state\n  end",
+            "legend": "The state check is not an exclusive external-call lock: duplicate executions may repeat the same stable provider operation key. They cannot advance a different operation until its predecessor and ledger step are recorded. Conditional predecessor/version updates prevent regression, and terminal outcomes are protected. Unknown outcomes are queried or retried with the same operation key, never treated as rejection. The authorised state is written only after the memo hold is durable in the ledger (part c), as the capture does in part d, so no payment is recorded as authorised without its hold; an execution that dies in between leaves the payment pending, and recovery repeats the provider call with its stable key and the post with its step key. The state write also moves the recovery index key (see the billing table). Sources: Retry/Catch s10, saga pattern s8, NAT s26, Express s9.",
             "cites": [
               "s10",
               "s8",
@@ -1606,7 +1612,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 22\n  participant SFN as Step Functions\n  participant LS as Ledger svc\n  participant LD as Aurora writer\n  SFN->>LS: post entry with step key\n  LS->>LD: BEGIN and lock ledger head\n  alt new valid balanced entry\n    LS->>LD: lines, holds, sequence, outbox\n    LS->>LD: COMMIT\n    LD-->>LS: durable sequence\n  else duplicate step key\n    LD-->>LS: existing entry and sequence\n  else failure or invalid entry\n    LD-->>LS: rollback or unknown commit\n  end\n  LS-->>SFN: result or retry same key",
+            "mermaid": "sequenceDiagram\n  autonumber 24\n  participant SFN as Step Functions\n  participant LS as Ledger svc\n  participant LD as Aurora writer\n  SFN->>LS: post entry with step key\n  LS->>LD: BEGIN and lock ledger head\n  alt new valid balanced entry\n    LS->>LD: lines, holds, sequence, outbox\n    LS->>LD: COMMIT\n    LD-->>LS: durable sequence\n  else duplicate step key\n    LD-->>LS: existing entry and sequence\n  else failure or invalid entry\n    LD-->>LS: rollback or unknown commit\n  end\n  LS-->>SFN: result or retry same key",
             "legend": "One transaction holds the entry, its lines, the per-ledger sequence and the outbox row, so nothing is published that was not committed. RDS Proxy pools the function's connections in front of the writer s13; a writer failover promotes a replica and service is typically restored in under a minute s11; the cluster volume is copied across three Availability Zones s12.",
             "cites": [
               "s13",
@@ -1620,7 +1626,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 30\n  participant SFN as Step Functions\n  participant AD as Adapter\n  participant PSP as Provider\n  participant LS as Ledger svc\n  participant DDB as Payments\n  SFN->>AD: capture with stable key\n  AD->>PSP: capture\n  alt confirmed capture\n    PSP-->>AD: captured\n    AD-->>SFN: confirmed\n    SFN->>LS: post capture with step key\n    LS-->>SFN: durable entry\n    SFN->>DDB: conditional captured state\n  else confirmed rejection\n    AD-->>SFN: rejected\n    SFN->>AD: confirm void with stable key\n    AD-->>SFN: confirmed void or unknown\n    opt void confirmed\n      SFN->>LS: reverse reservation\n      SFN->>DDB: conditional compensated\n    end\n  else unknown result\n    AD-->>SFN: unknown\n    SFN->>DDB: conditional pending recovery\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber 32\n  participant SFN as Step Functions\n  participant AD as Adapter\n  participant PSP as Provider\n  participant LS as Ledger svc\n  participant DDB as Payments\n  SFN->>AD: capture with stable key\n  AD->>PSP: capture\n  alt confirmed capture\n    PSP-->>AD: captured\n    AD-->>SFN: confirmed\n    SFN->>LS: post capture with step key\n    LS-->>SFN: durable entry\n    SFN->>DDB: conditional captured state\n  else confirmed rejection\n    AD-->>SFN: rejected\n    SFN->>AD: confirm void with stable key\n    AD-->>SFN: confirmed void or unknown\n    opt void confirmed\n      SFN->>LS: reverse reservation\n      SFN->>DDB: conditional compensated\n    end\n  else unknown result\n    AD-->>SFN: unknown\n    SFN->>DDB: conditional pending recovery\n  end",
             "legend": "Capture and compensation are mutually exclusive paths. An unknown capture is resolved before any void or reversal. Only a confirmed void allows reservation release. Retries use immutable step keys and conditional predecessor/version transitions; terminal captured or compensated states cannot regress. A worker resolves overdue nonterminal intents even if the execution dies before recording recovery. Sources: s10 and s8.",
             "cites": [
               "s10",
@@ -1658,7 +1664,7 @@
               [
                 "Provider adapter (Lambda execution role)",
                 "provider HTTPS and secretsmanager:GetSecretValue on its provider credential ARN only",
-                "the NAT gateway in the public subnets, the one route to the internet; the secrets store over its interface endpoint",
+                "the NAT gateway in the public subnets, the one route to the internet; the Secrets Manager interface endpoint",
                 "no; a private subnet function with no inbound rule at all"
               ],
               [
@@ -1681,8 +1687,8 @@
               ],
               [
                 "Reconciliation and sealing tasks (task roles)",
-                "GetObject and PutObject on the statements and digests bucket; SELECT and INSERT on the ledger for cases and digests; the sealing role may PutObject but never delete, and Object Lock refuses deletion anyway",
-                "S3 gateway endpoint; RDS Proxy",
+                "fetch the provider's statement over HTTPS and secretsmanager:GetSecretValue on the statement credential ARN only; GetObject and PutObject on the statements and digests bucket; SELECT and INSERT on the ledger for cases and digests; the sealing role may PutObject but never delete, and Object Lock refuses deletion anyway",
+                "S3 gateway endpoint; RDS Proxy; the NAT gateways to the provider; Secrets Manager interface endpoint",
                 "no; started by EventBridge Scheduler, no inbound rule"
               ],
               [
@@ -1692,14 +1698,14 @@
                 "no"
               ],
               [
-                "DynamoDB, Kinesis, S3, Step Functions",
+                "DynamoDB, Kinesis, S3, Step Functions, Secrets Manager",
                 "Regional services, called over endpoints; no internet gateway on any service path except the provider's",
-                "gateway endpoints for DynamoDB and S3, interface endpoints for Kinesis and Step Functions",
+                "gateway endpoints for DynamoDB and S3, interface endpoints for Kinesis, Step Functions and Secrets Manager",
                 "no (AWS endpoints inside the VPC)"
               ],
               [
                 "NAT gateway",
-                "forwards the adapter's HTTPS to the provider; external parties cannot initiate a connection through it",
+                "forwards the adapter's and the reconciliation task's HTTPS to the provider; external parties cannot initiate a connection through it",
                 "public subnets, one per zone",
                 "it has a public address; nothing behind it is reachable from outside"
               ]
@@ -1715,7 +1721,8 @@
               "s37",
               "s25",
               "s53",
-              "s54"
+              "s54",
+              "s56"
             ]
           },
           {
@@ -1754,8 +1761,8 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 22\n  participant PSP as Provider\n  participant S3\n  participant RC as Reconciliation\n  participant LD as Aurora\n  participant SL as Sealing\n  alt statement received\n    PSP-)S3: daily statement\n    RC->>S3: GetObject\n    S3-->>RC: statement\n    RC->>LD: financial clearing lines\n    LD-->>RC: matches and mismatches\n    RC->>LD: cases with owners\n  else statement late\n    Note over RC: alarm, keep cases open\n  end\n  SL->>LD: committed range\n  LD-->>SL: entries\n  SL->>LD: record digest chain\n  SL->>S3: PutObject locked digest",
-            "legend": "Sources: cron schedules in EventBridge Scheduler s27; the S3 gateway endpoint s36; Object Lock's compliance mode, under which no user can overwrite or delete the digest before its retention date s25; sealing and cold storage in time-range batches at Uber s3.",
+            "mermaid": "sequenceDiagram\n  autonumber 22\n  participant PSP as Provider\n  participant S3\n  participant RC as Reconciliation\n  participant LD as Aurora\n  participant SL as Sealing\n  alt statement fetched\n    RC->>PSP: GET the day's statement\n    PSP-->>RC: statement file\n    RC->>S3: PutObject as received\n    RC->>S3: GetObject the stored copy\n    S3-->>RC: statement\n    RC->>LD: financial clearing lines\n    LD-->>RC: matches and mismatches\n    RC->>LD: cases with owners\n  else statement not available\n    Note over RC: alarm, keep cases open\n  end\n  SL->>LD: committed range\n  LD-->>SL: entries\n  SL->>LD: record digest chain\n  SL->>S3: PutObject locked digest",
+            "legend": "The reconciliation task, not the provider, writes the statement into the bucket: it fetches the file over the NAT egress with a credential from Secrets Manager, stores it unchanged and matches from the stored copy, so a re-run needs no second download and nothing outside the VPC writes to the bucket. Sources: cron schedules in EventBridge Scheduler s27; the S3 gateway endpoint s36; Object Lock's compliance mode, under which no user can overwrite or delete the digest before its retention date s25; sealing and cold storage in time-range batches at Uber s3.",
             "cites": [
               "s27",
               "s36",
@@ -2005,8 +2012,8 @@
               [
                 "Payments and balances",
                 "DynamoDB on-demand, two tables",
-                "about $3,430",
-                "about $34,300"
+                "about $3,620",
+                "about $36,200"
               ],
               [
                 "Ledger events",
@@ -2017,8 +2024,8 @@
               [
                 "Provider egress",
                 "NAT gateways in three zones",
-                "about $150",
-                "about $640"
+                "about $155",
+                "about $670"
               ],
               [
                 "API, relay, recovery and jobs",
@@ -2035,8 +2042,8 @@
               [
                 "Priced subtotal, not full TCO",
                 "Excludes projector Lambda, full-journal cold archive, ALB, interface endpoints, extra stream retention, retries/recovery I/O, data transfer, monitoring, backups, S3 requests and Secrets Manager.",
-                "about $9,900; $0.033 per thousand payments",
-                "about $96,900; $0.032 per thousand payments"
+                "about $10,100; $0.034 per thousand payments",
+                "about $98,900; $0.033 per thousand payments"
               ]
             ],
             "cites": [
@@ -2115,7 +2122,7 @@
                 "Payment",
                 "caller_id, idempotency_key, payment_id, payload_hash, state, provider_ref, saga_step, version, recovery_bucket, next_attempt_at",
                 "primary key (caller_id, idempotency_key); payment_id derived from this immutable identity",
-                "conditional creation claims the caller-scoped key itself; mismatched canonical payload returns conflict, matching retries read the stored outcome. Nonterminal records remain discoverable by a recovery index."
+                "conditional creation claims the caller-scoped key itself; mismatched canonical payload returns conflict, matching retries read the stored outcome. Nonterminal records remain discoverable by a recovery index: recovery_bucket is a hash of the payment id, and next_attempt_at is set to the creation time plus five minutes, the Express limit (assumption). The entry is put at creation, deleted and put again at authorise because next_attempt_at is set again for the capture step, and deleted at capture or at any terminal state."
               ],
               [
                 "SealedRange",
@@ -2208,7 +2215,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 6\n  participant O as Orchestrator\n  participant AD as Adapter\n  participant PSP as Provider\n  participant LS as Ledger svc\n  participant LD as Ledger DB\n  O->>AD: authorise with operation key\n  AD->>PSP: authorise\n  alt confirmed authorisation\n    PSP-->>AD: authorised\n    AD-->>O: confirmed\n    O->>LS: post memo hold with step key\n    LS->>LD: entry, memo lines, hold, outbox\n    LD-->>LS: sequence\n    LS-->>O: durable entry\n  else unknown or rejected\n    AD-->>O: unresolved or rejected\n    Note over O: recover unknown, stop rejected\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber 6\n  participant O as Orchestrator\n  participant AD as Adapter\n  participant PSP as Provider\n  participant LS as Ledger svc\n  participant LD as Ledger DB\n  O->>AD: authorise with operation key\n  AD->>PSP: authorise\n  alt confirmed authorisation\n    PSP-->>AD: authorised\n    AD-->>O: confirmed\n    O->>LS: post memo hold with step key\n    LS->>LD: entry, memo lines, hold, outbox\n    LD-->>LS: sequence\n    LS-->>O: durable entry\n    Note over O: authorised is recorded after the entry\n  else unknown or rejected\n    AD-->>O: unresolved or rejected\n    Note over O: recover unknown, stop rejected\n  end",
             "legend": "A provider memo hold is not a debit to a funded wallet. It records external authorisation in a separate memo book, excluded from financial posted and available balances. Unknown provider outcomes remain unresolved until queried or retried with the same operation key. Shopify supports timeout and circuit-breaker choices s6, not this specific accounting model.",
             "cites": [
               "s6"
@@ -2250,7 +2257,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 36\n  participant PSP as Provider\n  participant RC as Reconciliation\n  participant LD as Ledger DB\n  participant SL as Sealing job\n  PSP-)RC: daily statement\n  RC->>LD: clearing lines by reference\n  LD-->>RC: matches and mismatches\n  RC->>LD: adjustment cases\n  SL->>LD: committed range\n  LD-->>SL: entries\n  SL->>LD: record digest chain",
+            "mermaid": "sequenceDiagram\n  autonumber 36\n  participant PSP as Provider\n  participant RC as Reconciliation\n  participant LD as Ledger DB\n  participant SL as Sealing job\n  RC->>PSP: fetch the daily statement\n  PSP-->>RC: statement file\n  RC->>LD: clearing lines by reference\n  LD-->>RC: matches and mismatches\n  RC->>LD: adjustment cases\n  SL->>LD: committed range\n  LD-->>SL: entries\n  SL->>LD: record digest chain",
             "legend": "Every mismatch (in the ledger but not at the provider, the reverse, or an amount difference) becomes a case with an owner; corrections are adjustment entries, never edits. Reconciliation against the partner's records is Shopify's seventh rule s6; sealing and offloading sealed ranges in time-range batches is what Uber describes for LedgerStore s3.",
             "cites": [
               "s6",
@@ -2474,11 +2481,13 @@
             "caption": "Successful-path billing assumptions; retries, recovery scans and duplicate executions are excluded from this subtotal.",
             "columns": ["dimension", "assumption"],
             "rows": [
-              ["Payment state and index", "created, authorised, captured: each state change writes its item and sparse recovery index. Captured removes the index entry. No other indexes."],
-              ["Item size and retention", "Payment items including attribute names average 500 bytes and stay below one KiB; keep keys for 90 days. Allocate 500 billed GB including index/headroom."],
+              ["Payment state and index", "Created, authorised and captured each write the item: three writes. The recovery index entry is put at creation, deleted and put again at authorise because its key moves, and deleted at capture: four writes. No other indexes."],
+              ["Item size and retention", "Payment items including attribute names average 500 bytes and stay below one KiB; keep keys for 90 days."],
+              ["Payment storage", "With the 100 bytes of per-item overhead, 900 million items are 502.9 GiB; allocate 510 billed GB including the index and headroom."],
+              ["Statement file", "One clearing line of about 200 bytes per captured payment (assumption) makes a 2 GB statement a day, fetched through the NAT and kept in S3: 60 GB a month of NAT data and about 730 GB a year of storage."],
               ["Projection writes", "Authorise advances only the watermark. Capture updates three financial accounts and the watermark. Five transactional item writes consume ten write units per payment."],
               ["Read consistency", "Ten eventual dashboard reads and three strong reads per payment: two projector watermark reads plus one saga-state read. Every read item is below four KiB."],
-              ["Projection storage", "25 billed GB for balances plus one billed GB watermark allowance. No projection indexes."],
+              ["Projection storage", "The 50 million balance items with the same overhead are 27.9 GiB: 30 billed GB for balances plus one billed GB watermark allowance. No projection indexes."],
               ["Daily jobs", "Two jobs, each four vCPUs and eight GB, run one hour daily."],
               ["Fleet at larger volume", "Scale every Fargate task and daily job count tenfold. This is an explicit fleet assumption, not a benchmark."]
             ]
@@ -2524,10 +2533,10 @@
               ],
               [
                 "Payments and balances: DynamoDB on-demand",
-                "Three payment-state writes plus three recovery-index writes per successful payment. Projection uses ten transactional write units; read and storage assumptions follow below.",
+                "Three payment-state writes plus four recovery-index writes (put, delete and put, delete) per successful payment. Projection uses ten transactional write units; read and storage assumptions as above.",
                 "$0.625 per million writes; $0.125 per million reads; $0.25 per GB-month",
-                "$3,431.50",
-                "$34,315"
+                "$3,622.75",
+                "$36,227.50"
               ],
               [
                 "Ledger events: Kinesis Data Streams on-demand",
@@ -2538,10 +2547,10 @@
               ],
               [
                 "Provider egress: NAT gateways",
-                "one per zone all month; 1.2 TB a month of provider traffic",
+                "one per zone all month; 1.2 TB a month of provider traffic plus a 2 GB statement file a day (assumption)",
                 "$0.045 per hour, $0.045 per GB",
-                "about $150 (hours $99, data $54)",
-                "about $640"
+                "about $155 (hours $99, data $57)",
+                "about $670"
               ],
               [
                 "API, relay, recovery and jobs: ECS on Fargate, Arm",
@@ -2561,8 +2570,8 @@
                 "Priced subtotal",
                 "Same exclusions as the final AWS summary table; not production TCO",
                 "",
-                "about $9,900; $0.033 per thousand payments",
-                "about $96,900; $0.032 per thousand payments"
+                "about $10,100; $0.034 per thousand payments",
+                "about $98,900; $0.033 per thousand payments"
               ]
             ],
             "cites": [
@@ -2636,8 +2645,8 @@
   "provenance": {
     "generated_by": "Claude (Fable 5.1) by hand, Scout learning center M4a; format v2 and the AWS section by Claude (Fable 5.1) by hand, Scout learning center, format v2 batch E2A",
     "generated_on": "2026-10-12",
-    "reviewed_by": "a third reader (Claude Sonnet 5.5, a different instance from the earlier readers), Scout learning center, format v2 E2A",
-    "reviewed_on": "2026-10-16"
+    "reviewed_by": null,
+    "reviewed_on": null
   },
   "changelog": [
     {
@@ -2669,6 +2678,11 @@
       "version": 6,
       "date": "2026-10-16",
       "change": "Third read: the Express duration price is stated as three tiers (3.6 and 18 million GB-second boundaries), not two; no other change; reviewed by a third reader."
+    },
+    {
+      "version": 7,
+      "date": "2026-10-16",
+      "change": "Third-read follow-ups: the Secrets Manager interface endpoint is cited; the reconciliation task fetches the provider statement through the NAT gateways, stores it unchanged in S3 and matches from the stored copy (flow edges, sequences, identity rows, neutral part e; NAT cell, 60 GB a month added); the authorised state is written after the ledger memo hold is durable (part b sequence redrawn, parts c and d renumbered) and the recovery index key transitions are stated (put, delete and put, delete: four index writes, +$187.50 a month, +$1,875 at ten times); DynamoDB storage allowances derived with the 100-byte item overhead (510 and 30 GB). Priced subtotal about $10,100 and about $98,900 (was $9,900 and $96,900). reviewed_by cleared for a re-read."
     }
   ]
 }

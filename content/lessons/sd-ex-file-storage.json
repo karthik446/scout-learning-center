@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-file-storage",
-  "version": 10,
+  "version": 11,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: file storage and sync",
@@ -629,6 +629,20 @@
         "http": 200,
         "section_found": "global secondary index"
       }
+    },
+    {
+      "id": "s54",
+      "title": "AWS Lambda Developer Guide: Event filtering (up to five filters per event source mapping, logically ORed)",
+      "url": "https://docs.aws.amazon.com/lambda/latest/dg/invocation-eventfiltering.html",
+      "kind": "doc",
+      "verified": {"checked": "2026-10-16", "http": 200, "section_found": "Your filters are logically ORed together"}
+    },
+    {
+      "id": "s55",
+      "title": "Amazon DynamoDB API Reference: UpdateItem (ReturnValuesOnConditionCheckFailure returns the item that failed a condition check)",
+      "url": "https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateItem.html",
+      "kind": "doc",
+      "verified": {"checked": "2026-10-16", "http": 200, "section_found": "returns the item attributes for an UpdateItem operation that failed a condition check"}
     }
   ],
   "practice": null,
@@ -1165,7 +1179,7 @@
                 "from": "MS",
                 "to": "BT",
                 "kind": "sync",
-                "label": "BatchGetItem for the block hashes, and an UpdateItem that restarts zero_since of a zero-count block whose zero_since is over a day old, over the gateway endpoint, sync",
+                "label": "BatchGetItem for the block hashes, and an UpdateItem that restarts zero_since of a zero-count block whose zero_since is over a day old (a block found gone is a 409), over the gateway endpoint, sync",
                 "short": "BatchGetItem, touch"
               },
               {
@@ -1221,7 +1235,7 @@
                 "from": "GCF",
                 "to": "BT",
                 "kind": "sync",
-                "label": "TransactWriteItems of a marker and a reference count per block, Query of the sparse index on each of its 16 shard values, and the delete of a swept item conditional on count 0 and an old zero_since, sync",
+                "label": "TransactWriteItems of a marker and a reference count per block, Query of the sparse index on each of its 64 shard values, and the delete of a swept item conditional on count 0 and an old zero_since, sync",
                 "short": "Counts, sweep"
               },
               {
@@ -1250,7 +1264,7 @@
               },
               {
                 "edge": 2,
-                "caption": "Metadata service to Blocks table: BatchGetItem for the block hashes, and an UpdateItem that restarts zero_since of a zero-count block whose zero_since is over a day old, over the gateway endpoint, sync"
+                "caption": "Metadata service to Blocks table: BatchGetItem for the block hashes, and an UpdateItem that restarts zero_since of a zero-count block whose zero_since is over a day old (a block found gone is a 409), over the gateway endpoint, sync"
               },
               {
                 "edge": 3,
@@ -1282,7 +1296,7 @@
               },
               {
                 "edge": 10,
-                "caption": "Stream and sweep functions to Blocks table: TransactWriteItems of a marker and a reference count per block, Query of the sparse index on each of its 16 shard values, and the delete of a swept item conditional on count 0 and an old zero_since, sync"
+                "caption": "Stream and sweep functions to Blocks table: TransactWriteItems of a marker and a reference count per block, Query of the sparse index on each of its 64 shard values, and the delete of a swept item conditional on count 0 and an old zero_since, sync"
               },
               {
                 "edge": 11,
@@ -1430,7 +1444,7 @@
                 "from": "N",
                 "to": "NS",
                 "kind": "async",
-                "label": "the Lambda event source mapping polls the stream, async",
+                "label": "the Lambda event source mapping polls the stream with two filter patterns (inserts of feed items, inserts of shared-folder version items), async",
                 "short": "Poll"
               },
               {
@@ -1479,7 +1493,7 @@
               },
               {
                 "edge": 7,
-                "caption": "DynamoDB Streams to Notification service: the Lambda event source mapping polls the stream, async"
+                "caption": "DynamoDB Streams to Notification service: the Lambda event source mapping polls the stream with two filter patterns (inserts of feed items, inserts of shared-folder version items), async"
               },
               {
                 "edge": 8,
@@ -1490,7 +1504,7 @@
                 "caption": "Notification service to Devices on the WebSocket: PostToConnection over the device's WebSocket: a hint, async"
               }
             ],
-            "legend": "The read half: the neutral diagram's sync path, one AWS service each. A device fetches the changes after its cursor from the metadata service, which queries the feed items of its account with a strongly consistent read s14. To download, the device calls POST /downloads with the version and the hashes it lacks; the metadata service, which owns the permission check (the neutral sharing and permissions box), reads the version item and, when the folder is not the caller's, the share item, and only then signs a download URL with its task role s21, so a hash alone is never enough to read a block; the device then downloads straight from S3, and the block service is not in the read half. The notification service is an API Gateway WebSocket API whose backend is a Lambda function: a Lambda authorizer on the $connect route checks the device's token (the only route on which API Gateway allows an authorizer) s47, the function then stores the connection id with the device's account s43 and removes it on $disconnect; DynamoDB Streams records each commit's feed item for 24 hours s17, the function reads the stream through an event source mapping s18, looks up the account's connections and posts a hint to each over the WebSocket s29. The hint carries no data; the cursor fetch does. The devices appear twice, once calling the API and once holding the WebSocket; they are the same devices. Waking a sleeping phone is the extension that the notification decision names; it is not drawn. Sync means the caller waits for the answer; async means the work goes on after the caller has moved on. The connections table, the Streams box and the authorizer are the boxes the neutral diagram leaves implicit.",
+            "legend": "The read half: the neutral diagram's sync path, one AWS service each. A device fetches the changes after its cursor from the metadata service, which queries the feed items of its account with a strongly consistent read s14. To download, the device calls POST /downloads with the version and the hashes it lacks; the metadata service, which owns the permission check (the neutral sharing and permissions box), reads the version item and, when the folder is not the caller's, the share item, and only then signs a download URL with its task role s21, so a hash alone is never enough to read a block; the device then downloads straight from S3, and the block service is not in the read half. The notification service is an API Gateway WebSocket API whose backend is a Lambda function: a Lambda authorizer on the $connect route checks the device's token (the only route on which API Gateway allows an authorizer) s47, the function then stores the connection id with the device's account s43 and removes it on $disconnect; DynamoDB Streams records each commit's feed item for 24 hours s17, the function reads the stream through an event source mapping with two filter patterns, one for the inserts of feed items and one for the inserts of version items that carry a shared folder, which Lambda ORs s54 s18, looks up the account's connections and posts a hint to each over the WebSocket s29. The hint carries no data; the cursor fetch does. The devices appear twice, once calling the API and once holding the WebSocket; they are the same devices. Waking a sleeping phone is the extension that the notification decision names; it is not drawn. Sync means the caller waits for the answer; async means the work goes on after the caller has moved on. The connections table, the Streams box and the authorizer are the boxes the neutral diagram leaves implicit.",
             "cites": [
               "s14",
               "s21",
@@ -1498,7 +1512,8 @@
               "s43",
               "s17",
               "s18",
-              "s29"
+              "s29",
+              "s54"
             ]
           },
           {
@@ -1507,14 +1522,15 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber\n  participant C as Client\n  participant Edge as Load balancer\n  participant MS as Metadata svc\n  participant DDB as DynamoDB\n  C->>Edge: POST /commit, block list\n  Edge->>MS: HTTP, a healthy task\n  MS->>DDB: GetItem, the node\n  DDB-->>MS: current version\n  Note over MS,DDB: strongly consistent read\n  alt parent_version is behind\n    MS-->>Edge: 412, version conflict\n    Edge-->>C: 412\n  else the versions match\n    MS->>DDB: BatchGetItem, blocks table\n    DDB-->>MS: the blocks that exist\n    opt an old zero-count block\n      MS->>DDB: UpdateItem, zero_since now, if the count is 0\n    end\n    opt some blocks are missing\n      MS-->>Edge: 409, missing_blocks\n      Edge-->>C: 409, missing_blocks\n    end\n  end",
-            "legend": "Solid arrows are synchronous calls with their replies dashed. Edge is the Application Load Balancer, which routes only to healthy targets s6; ECS replaces a failed task s7. The node read is strongly consistent, so the version check sees the latest commit s14. A 412 sends the client to save a conflicted copy. The calls to DynamoDB go over a gateway endpoint s10. A block that exists with a zero count (an upload nobody committed yet, or a block whose versions all expired) is left alone if its zero_since is under a day old, because the count of the version being committed reaches the table through the stream within 24 hours, well inside the sweep's two days; if it is older, the call sets zero_since to now, under a condition that the count is still 0, so that the sweep waits two more days. The sweep's delete tests zero_since as well as the count, which is what makes a touch win over a sweep that has already selected the block.",
+            "mermaid": "sequenceDiagram\n  autonumber\n  participant C as Client\n  participant Edge as Load balancer\n  participant MS as Metadata svc\n  participant DDB as DynamoDB\n  C->>Edge: POST /commit, block list\n  Edge->>MS: HTTP, a healthy task\n  MS->>DDB: GetItem, the node\n  DDB-->>MS: current version\n  Note over MS,DDB: strongly consistent read\n  alt parent_version is behind\n    MS-->>Edge: 412, version conflict\n    Edge-->>C: 412\n  else the versions match\n    MS->>DDB: BatchGetItem, blocks table\n    DDB-->>MS: the blocks that exist\n    opt an old zero-count block\n      MS->>DDB: UpdateItem, zero_since now, if the count is 0\n      Note over MS,DDB: old item asked back,<br/>none: swept just now,<br/>so the block is missing\n    end\n    opt a block is missing or gone\n      MS-->>Edge: 409, missing_blocks\n      Edge-->>C: 409, missing_blocks\n    end\n  end",
+            "legend": "Solid arrows are synchronous calls with their replies dashed. Edge is the Application Load Balancer, which routes only to healthy targets s6; ECS replaces a failed task s7. The node read is strongly consistent, so the version check sees the latest commit s14. A 412 sends the client to save a conflicted copy. The calls to DynamoDB go over a gateway endpoint s10. A block that exists with a zero count (an upload nobody committed yet, or a block whose versions all expired) is left alone if its zero_since is under a day old, because the count of the version being committed reaches the table through the stream within 24 hours, well inside the sweep's two days; if it is older, the call sets zero_since to now, under a condition that the count is still 0, so that the sweep waits two more days. The update asks DynamoDB to return the old item if the condition fails s55: an item that comes back has a count above 0, so the block is referenced and the commit goes on, while no item means the sweep deleted the block between the read and the touch, so that block counts as missing and the call answers 409 with its hash in missing_blocks and the client uploads it again. The sweep's delete tests zero_since as well as the count, which is what makes a touch win over a sweep that has already selected the block.",
             "cites": [
               "s6",
               "s7",
               "s14",
               "s10",
-              "s44"
+              "s44",
+              "s55"
             ]
           },
           {
@@ -1546,8 +1562,8 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 26\n  participant C as Client\n  participant Edge as Load balancer\n  participant MS as Metadata svc\n  participant DDB as DynamoDB\n  C->>Edge: POST /commit, same list\n  Edge->>MS: HTTP\n  MS->>DDB: BatchGetItem, blocks table\n  DDB-->>MS: the blocks that exist\n  alt some blocks are missing\n    MS-->>Edge: 409, missing_blocks\n    Edge-->>C: 409, missing_blocks\n  else every block exists\n    Note over MS,DDB: a zero-count block with an old zero_since<br/>is touched again, as in the first call\n    MS->>DDB: GetItem, the account's sequence number\n    DDB-->>MS: N, strongly consistent\n    MS->>DDB: TransactWriteItems\n    Note over MS,DDB: conditions on the parent version<br/>and on the sequence number N, then<br/>put version (with its shared folder, if any),<br/>update node, put feed item with N+1,<br/>set the TTL of the superseded version\n    alt the transaction commits\n      DDB-->>MS: durable\n      MS-->>Edge: 200, the version\n      Edge-->>C: 200, the version\n    else the parent version moved\n      DDB-->>MS: canceled, the version condition\n      MS-->>Edge: 412\n      Edge-->>C: 412, save a conflicted copy\n    else the sequence moved\n      DDB-->>MS: canceled, the sequence condition\n      Note over MS: another commit of the account got N first:<br/>read the number again and retry\n    end\n  end",
-            "legend": "Every call of the commit checks the blocks, as the neutral commit does: a client that skipped the first call, or a block swept in between, gets the 409 again, and a version never references a block that is not there. One transaction then carries every item of the commit, five actions, one of them the update that gives the version this commit supersedes a TTL of 30 days, so only noncurrent versions ever expire and the current version of an untouched file never does (a delete does the same for the current version, 30 days after the soft delete); all actions succeed or none does s12, and DynamoDB writes each item twice underneath, one to prepare and one to commit s13. The service reads the sequence item first, because an update inside a transaction returns no value, and conditions the transaction on it; the condition is what makes the feed a log with a monotonic sequence: two commits racing on one account cannot take the same number. A cancelled transaction names the condition that failed, item by item s46: only a failed parent-version condition is a real conflict and becomes the 412, while a failed sequence condition means a commit of another file got the number first, so the service reads the number again and retries, and the client never sees it. All of an account's items share one partition key, so a very busy account is where the limit of 1,000 write units a second that a partition delivers would show first s15; the namespace split by folder subtree in the 10x section is the remedy. The version item carries the id of its shared folder when the node is in one (copied from the node item), which is how the stream function later knows to copy the commit to the members.",
+            "mermaid": "sequenceDiagram\n  autonumber 26\n  participant C as Client\n  participant Edge as Load balancer\n  participant MS as Metadata svc\n  participant DDB as DynamoDB\n  C->>Edge: POST /commit, same list\n  Edge->>MS: HTTP\n  MS->>DDB: BatchGetItem, blocks table\n  DDB-->>MS: the blocks that exist\n  alt some blocks are missing\n    MS-->>Edge: 409, missing_blocks\n    Edge-->>C: 409, missing_blocks\n  else every block exists\n    Note over MS,DDB: a zero-count block with an old zero_since<br/>is touched again, as in the first call\n    opt a touched block is gone\n      MS-->>Edge: 409, missing_blocks\n      Edge-->>C: 409, missing_blocks\n    end\n    MS->>DDB: GetItem, the account's sequence number\n    DDB-->>MS: N, strongly consistent\n    MS->>DDB: TransactWriteItems\n    Note over MS,DDB: conditions on the parent version<br/>and on the sequence number N, then<br/>put version (with its shared folder, if any),<br/>update node, put feed item with N+1,<br/>set the TTL of the superseded version\n    alt the transaction commits\n      DDB-->>MS: durable\n      MS-->>Edge: 200, the version\n      Edge-->>C: 200, the version\n    else the parent version moved\n      DDB-->>MS: canceled, the version condition\n      MS-->>Edge: 412\n      Edge-->>C: 412, save a conflicted copy\n    else the sequence moved\n      DDB-->>MS: canceled, the sequence condition\n      Note over MS: another commit of the account got N first:<br/>read the number again and retry\n    end\n  end",
+            "legend": "Every call of the commit checks the blocks, as the neutral commit does: a client that skipped the first call, or a block swept in between, gets the 409 again, and a version never references a block that is not there; a touch that finds its block gone, as in the first call, is that same 409. One transaction then carries every item of the commit, five actions, one of them the update that gives the version this commit supersedes a TTL of 30 days, so only noncurrent versions ever expire and the current version of an untouched file never does (a delete does the same for the current version, 30 days after the soft delete); all actions succeed or none does s12, and DynamoDB writes each item twice underneath, one to prepare and one to commit s13. The service reads the sequence item first, because an update inside a transaction returns no value, and conditions the transaction on it; the condition is what makes the feed a log with a monotonic sequence: two commits racing on one account cannot take the same number. A cancelled transaction names the condition that failed, item by item s46: only a failed parent-version condition is a real conflict and becomes the 412, while a failed sequence condition means a commit of another file got the number first, so the service reads the number again and retries, and the client never sees it. All of an account's items share one partition key, so a very busy account is where the limit of 1,000 write units a second that a partition delivers would show first s15; the namespace split by folder subtree in the 10x section is the remedy. The version item carries the id of its shared folder when the node is in one (copied from the node item), which is how the stream function later knows to copy the commit to the members.",
             "cites": [
               "s12",
               "s13",
@@ -1561,7 +1577,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 42\n  participant Own as Owner\n  participant Edge as Load balancer\n  participant MS as Metadata svc\n  participant DDB as DynamoDB\n  Own->>Edge: POST /shares, folder, member, role\n  Edge->>MS: HTTP, a healthy task\n  MS->>DDB: transaction in the owner's partition\n  Note over MS,DDB: the share item (folder, member),<br/>the sequence condition, a feed item\n  DDB-->>MS: durable\n  MS->>DDB: Query the share items of the folder\n  DDB-->>MS: every member, the new one included\n  loop each member\n    MS->>DDB: transaction in the member's partition\n    Note over MS,DDB: after a GetItem of that account's sequence:<br/>a marker keyed by the share and the member,<br/>the sequence condition, a feed item,<br/>retried if only the sequence moved\n    DDB-->>MS: durable\n  end\n  alt every member is done\n    MS-->>Edge: 200\n    Edge-->>Own: 200\n  else a member's transaction failed\n    MS-->>Edge: 503, the client repeats the call\n    Edge-->>Own: 503\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber 44\n  participant Own as Owner\n  participant Edge as Load balancer\n  participant MS as Metadata svc\n  participant DDB as DynamoDB\n  Own->>Edge: POST /shares, folder, member, role\n  Edge->>MS: HTTP, a healthy task\n  MS->>DDB: transaction in the owner's partition\n  Note over MS,DDB: the share item (folder, member),<br/>the sequence condition, a feed item\n  DDB-->>MS: durable\n  MS->>DDB: Query the share items of the folder\n  DDB-->>MS: every member, the new one included\n  loop each member\n    MS->>DDB: transaction in the member's partition\n    Note over MS,DDB: after a GetItem of that account's sequence:<br/>a marker keyed by the share and the member,<br/>the sequence condition, a feed item,<br/>retried if only the sequence moved\n    DDB-->>MS: durable\n  end\n  alt every member is done\n    MS-->>Edge: 200\n    Edge-->>Own: 200\n  else a member's transaction failed\n    MS-->>Edge: 503, the client repeats the call\n    Edge-->>Own: 503\n  end",
             "legend": "Sharing is the same commit pattern with a different payload: the membership is written in the owner's partition, the service then reads every share item of the folder with a strongly consistent Query, and each member, the new one and the existing ones, gets a feed item in their own partition through one transaction that increments that member's sequence under a condition s12, so a member's feed stays a log with a monotonic sequence whoever writes to it. No transaction crosses accounts, which keeps sharing eventual on purpose, as in the neutral design. The marker item, written once with a condition that it does not exist s44, makes a repeated call after a failure a no-op for the members already done. The call names one member and the share item is keyed by the folder and that member, so a repeated call writes it to the same place; the marker is keyed by the share (the folder and the added member) and the notified member. The existing members get a feed item too, which tells their devices that the membership changed.",
             "cites": [
               "s12",
@@ -1578,8 +1594,8 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 54\n  participant Dev as Device\n  participant WS as WebSocket API\n  participant Auth as Authorizer fn\n  participant Fn as Notification fn\n  participant DDB as DynamoDB\n  Dev->>WS: connect, with its token\n  WS->>Auth: the $connect authorizer\n  Auth-->>WS: allow, with the account id\n  WS->>Fn: the $connect route\n  Fn->>DDB: PutItem, connection id and account\n  WS-->>Dev: connected\n  Note over DDB: a commit wrote a version item<br/>and a feed item\n  DDB-)Fn: stream record\n  opt a version item that carries a shared folder\n    Fn->>DDB: Query the share items of the folder\n    DDB-->>Fn: the members\n    loop each member\n      Fn->>DDB: transaction in the member's partition\n      Note over Fn,DDB: after a GetItem of the member's sequence:<br/>a marker keyed by the commit and the member,<br/>the sequence condition, a feed item<br/>with origin copy, retried if only it moved\n    end\n  end\n  Note over Fn,DDB: the hint is sent from a feed item's own record,<br/>the owner's or a copy's, which carries the sequence\n  Fn->>DDB: Query the connections table\n  DDB-->>Fn: connection ids of the account\n  Fn->>WS: PostToConnection, account and sequence\n  WS-)Dev: a hint over the WebSocket\n  opt the connection is gone\n    WS-->>Fn: 410 Gone\n    Fn->>DDB: delete the connection id\n  end\n  opt the device disconnects\n    WS->>Fn: the $disconnect route\n    Fn->>DDB: delete the connection id\n  end",
-            "legend": "The device registers when it connects: the $connect route is the one place API Gateway allows an authorizer, and a Lambda authorizer there can check a token and pass on the account id s47; only after it allows the connection does the route's function store the connection id with the account s43. The token comes from the sign-in of the product, which is outside this lesson. The same function handles $disconnect and the stream. For a commit to a shared folder it also copies the change into each member's feed: the stream record of the version item names the folder, and the function reads the share items of that folder by their key to learn the members, then writes one transaction per member like the share call. The loop that this could start is closed three ways: the fan-out is triggered only by inserts of version items that carry a shared folder, which the event source mapping's filter selects s51 (an expiry also names the folder, and is not an insert); the copy is a feed item with origin copy, not a version item, so it triggers a notification and no further copy; and the copy's transaction carries a marker keyed by the commit and the member, written under a condition that it does not exist s44, so a redelivered record writes nothing twice. The members' devices are notified by the same path, from the copy's own stream record. The open arrows are hand-offs: the stream record reaches the function through the event source mapping, and the hint reaches the device whenever the connection is up. A WebSocket connection lasts at most 2 hours and is dropped after 10 idle minutes s28, so a device reconnects and fetches by cursor; the hint is an optimisation and the cursor fetch is the guarantee. The stream keeps records for 24 hours s17. The function posts through the connection commands of the API s29.",
+            "mermaid": "sequenceDiagram\n  autonumber 56\n  participant Dev as Device\n  participant WS as WebSocket API\n  participant Auth as Authorizer fn\n  participant Fn as Notification fn\n  participant DDB as DynamoDB\n  Dev->>WS: connect, with its token\n  WS->>Auth: the $connect authorizer\n  Auth-->>WS: allow, with the account id\n  WS->>Fn: the $connect route\n  Fn->>DDB: PutItem, connection id and account\n  WS-->>Dev: connected\n  Note over DDB: a commit wrote a version item<br/>and a feed item\n  DDB-)Fn: stream record\n  opt a version item that carries a shared folder\n    Fn->>DDB: Query the share items of the folder\n    DDB-->>Fn: the members\n    loop each member\n      Fn->>DDB: transaction in the member's partition\n      Note over Fn,DDB: after a GetItem of the member's sequence:<br/>a marker keyed by the commit and the member,<br/>the sequence condition, a feed item<br/>with origin copy, retried if only it moved\n    end\n  end\n  Note over Fn,DDB: the hint is sent from a feed item's own record,<br/>the owner's or a copy's, which carries the sequence\n  Fn->>DDB: Query the connections table\n  DDB-->>Fn: connection ids of the account\n  Fn->>WS: PostToConnection, account and sequence\n  WS-)Dev: a hint over the WebSocket\n  opt the connection is gone\n    WS-->>Fn: 410 Gone\n    Fn->>DDB: delete the connection id\n  end\n  opt the device disconnects\n    WS->>Fn: the $disconnect route\n    Fn->>DDB: delete the connection id\n  end",
+            "legend": "The device registers when it connects: the $connect route is the one place API Gateway allows an authorizer, and a Lambda authorizer there can check a token and pass on the account id s47; only after it allows the connection does the route's function store the connection id with the account s43. The token comes from the sign-in of the product, which is outside this lesson. The same function handles $disconnect and the stream. For a commit to a shared folder it also copies the change into each member's feed: the stream record of the version item names the folder, and the function reads the share items of that folder by their key to learn the members, then writes one transaction per member like the share call. The loop that this could start is closed three ways: the fan-out is triggered only by inserts of version items that carry a shared folder, which one of the two filter patterns of the notification function's event source mapping selects s51 (an expiry also names the folder, and is not an insert); the other pattern passes the inserts of feed items, which carry the hints, and Lambda ORs the patterns s54; the copy is a feed item with origin copy, not a version item, so it triggers a notification and no further copy; and the copy's transaction carries a marker keyed by the commit and the member, written under a condition that it does not exist s44, so a redelivered record writes nothing twice. The members' devices are notified by the same path, from the copy's own stream record. The open arrows are hand-offs: the stream record reaches the function through the event source mapping, and the hint reaches the device whenever the connection is up. A WebSocket connection lasts at most 2 hours and is dropped after 10 idle minutes s28, so a device reconnects and fetches by cursor; the hint is an optimisation and the cursor fetch is the guarantee. The stream keeps records for 24 hours s17. The function posts through the connection commands of the API s29.",
             "cites": [
               "s28",
               "s17",
@@ -1588,7 +1604,8 @@
               "s47",
               "s18",
               "s44",
-              "s51"
+              "s51",
+              "s54"
             ]
           },
           {
@@ -1601,7 +1618,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 72\n  participant Dev as Device\n  participant Edge as Load balancer\n  participant MS as Metadata svc\n  participant DDB as DynamoDB\n  participant S3 as S3\n  Dev->>Edge: GET /changes?cursor=\n  Edge->>MS: HTTP\n  MS->>DDB: Query the account's feed after the cursor\n  DDB-->>MS: the changes\n  MS-->>Edge: changes and next_cursor\n  Edge-->>Dev: changes and next_cursor\n  Dev->>Edge: POST /downloads, the version, the hashes it lacks\n  Edge->>MS: HTTP\n  MS->>DDB: GetItem, the version, and the share if not the caller's\n  DDB-->>MS: the block list, the membership\n  alt the hashes are in a version the caller may read\n    MS-->>Edge: presigned GET URLs\n    Edge-->>Dev: the URLs\n    Dev->>S3: GET the block\n    S3-->>Dev: the bytes\n    Note over Dev: hash verified on read\n  else not readable\n    MS-->>Edge: 403\n    Edge-->>Dev: 403\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber 74\n  participant Dev as Device\n  participant Edge as Load balancer\n  participant MS as Metadata svc\n  participant DDB as DynamoDB\n  participant S3 as S3\n  Dev->>Edge: GET /changes?cursor=\n  Edge->>MS: HTTP\n  MS->>DDB: Query the account's feed after the cursor\n  DDB-->>MS: the changes\n  MS-->>Edge: changes and next_cursor\n  Edge-->>Dev: changes and next_cursor\n  Dev->>Edge: POST /downloads, the version, the hashes it lacks\n  Edge->>MS: HTTP\n  MS->>DDB: GetItem, the version, and the share if not the caller's\n  DDB-->>MS: the block list, the membership\n  alt the hashes are in a version the caller may read\n    MS-->>Edge: presigned GET URLs\n    Edge-->>Dev: the URLs\n    Dev->>S3: GET the block\n    S3-->>Dev: the bytes\n    Note over Dev: hash verified on read\n  else not readable\n    MS-->>Edge: 403\n    Edge-->>Dev: 403\n  end",
             "legend": "The device downloads only the block it does not have: the new version's block list is compared with the blocks already on the device. The metadata service signs a download URL only for hashes that belong to the version it just read, in an account the caller owns or a folder shared with the caller; the signature is the task role's and is valid until it expires s21. A block in Glacier Instant Retrieval is read the same way, with millisecond access s23; the neutral reassembly cost of the cold tier is S3's, not the client's.",
             "cites": [
               "s21",
@@ -1618,8 +1635,8 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 88\n  participant DDB as DynamoDB\n  participant RC as Stream fn\n  participant Sch as Scheduler\n  participant GC as Sweep fn\n  participant S3 as S3\n  Note over DDB: a version item is put, or<br/>a superseded one expires by TTL\n  DDB-)RC: stream record\n  RC->>DDB: marker and refcount<br/>+1 or -1, per block\n  Note over RC,DDB: zero_since and the shard are set when a count is 0<br/>and removed when it rises above 0\n  Sch-)GC: invoke, every hour\n  loop each of the 16 shard values\n    GC->>DDB: Query the shard, zero_since older than two days\n    DDB-->>GC: block hashes\n    GC->>DDB: delete the item if refcount is 0<br/>and zero_since is still old\n    GC->>S3: DeleteObject\n  end\n  Note over GC,S3: the S3 delete follows the item delete\n",
-            "legend": "This is the neutral tiering and garbage-collection step, and none of it is on a request path. The tiering itself needs no worker: a lifecycle rule moves blocks to Glacier Instant Retrieval by age s25. For the references, a version item gets a TTL of 30 days only when a commit supersedes it (or when its file is deleted), never while it is current, and a TTL delete, which DynamoDB performs within a few days of the expiry time, reaches the stream as a service deletion s19; the stream function counts each block of a version in one transaction with a marker per version, block and event (insert or expiry), written under a condition that it does not exist (up to 50 blocks a transaction; a larger version counts in several, each with its own markers), so a retried record counts nothing twice. The stream carries new and old images s50, because a version that expires by TTL is seen only as its old image, which holds the block list. Only blocks with a zero count appear in the sparse index s16, and the sweep deletes only blocks whose zero_since is older than two days, longer than the 24 hours the stream keeps its records: it Queries the index for zero_since below a cutoff of two days ago, and its delete is conditional on the count still being 0 and zero_since still being below that cutoff s44, so a commit that touches the block between the Query and the delete (zero_since set to now) makes the delete fail, and a touch always wins. A commit leaves a block alone while its zero_since is under a day old, since its count then reaches the table through the stream well within two days, and otherwise sets zero_since to now, which gives the count another two days. The S3 delete follows the item delete, so an object whose delete failed is a leak, never an item that points at nothing. What the wait does not cover is a count lost from the stream before it was processed, which the alarm on the stream's iterator age is for. The schedule is EventBridge Scheduler s36, and its execution role may invoke the sweep function s52. The index is a global secondary index s53 whose partition key is sweep_shard, a number from 0 to 15 taken from the block hash, and whose sort key is zero_since; both attributes are on a block item only while its count is 0, so the index holds only those blocks, and the sweep Queries each of the 16 values in turn.",
+            "mermaid": "sequenceDiagram\n  autonumber 90\n  participant DDB as DynamoDB\n  participant RC as Stream fn\n  participant Sch as Scheduler\n  participant GC as Sweep fn\n  participant S3 as S3\n  Note over DDB: a version item is put, or<br/>a superseded one expires by TTL\n  DDB-)RC: stream record\n  RC->>DDB: marker and refcount<br/>+1 or -1, per block\n  Note over RC,DDB: zero_since and the shard are set when a count is 0<br/>and removed when it rises above 0\n  Sch-)GC: invoke, every hour\n  loop each of the 64 shard values\n    GC->>DDB: Query the shard, zero_since older than two days\n    DDB-->>GC: block hashes\n    GC->>DDB: delete the item if refcount is 0<br/>and zero_since is still old\n    GC->>S3: DeleteObject\n  end\n  Note over GC,S3: the S3 delete follows the item delete\n",
+            "legend": "This is the neutral tiering and garbage-collection step, and none of it is on a request path. The tiering itself needs no worker: a lifecycle rule moves blocks to Glacier Instant Retrieval by age s25. For the references, a version item gets a TTL of 30 days only when a commit supersedes it (or when its file is deleted), never while it is current, and a TTL delete, which DynamoDB performs within a few days of the expiry time, reaches the stream as a service deletion s19; the stream function counts each block of a version in one transaction with a marker per version, block and event (insert or expiry), written under a condition that it does not exist (up to 50 blocks a transaction; a larger version counts in several, each with its own markers), so a retried record counts nothing twice. The stream carries new and old images s50, because a version that expires by TTL is seen only as its old image, which holds the block list. Only blocks with a zero count appear in the sparse index s16, and the sweep deletes only blocks whose zero_since is older than two days, longer than the 24 hours the stream keeps its records: it Queries the index for zero_since below a cutoff of two days ago, and its delete is conditional on the count still being 0 and zero_since still being below that cutoff s44, so a commit that touches the block between the Query and the delete (zero_since set to now) makes the delete fail, and a touch always wins. A commit leaves a block alone while its zero_since is under a day old, since its count then reaches the table through the stream well within two days, and otherwise sets zero_since to now, which gives the count another two days. The S3 delete follows the item delete, so an object whose delete failed is a leak, never an item that points at nothing. What the wait does not cover is a count lost from the stream before it was processed, which the alarm on the stream's iterator age is for. The schedule is EventBridge Scheduler s36, and its execution role may invoke the sweep function s52. The index is a global secondary index s53 whose partition key is sweep_shard, a number from 0 to 63 taken from the block hash, and whose sort key is zero_since; both attributes are on a block item only while its count is 0, so the index holds only those blocks, and the sweep Queries each of the 64 values in turn, the count that the sizing under the cost table derives from the 1,000 write units a second a partition delivers s15.",
             "cites": [
               "s25",
               "s19",
@@ -1682,7 +1699,7 @@
               ],
               [
                 "Stream function (reference counting) and sweep function",
-                "the stream function reads the stream and (it needs the stream with old and new images) runs transactions of a marker put and an UpdateItem per block on the blocks table; the sweep Queries the sparse index on each of its 16 shard values, deletes items under a condition (DeleteItem) and calls DeleteObject on the bucket",
+                "the stream function reads the stream and (it needs the stream with old and new images) runs transactions of a marker put and an UpdateItem per block on the blocks table; the sweep Queries the sparse index on each of its 64 shard values, deletes items under a condition (DeleteItem) and calls DeleteObject on the bucket",
                 "Regional DynamoDB and S3 endpoints with IAM; the functions are not attached to the VPC",
                 "no"
               ],
@@ -1994,17 +2011,21 @@
           },
           {
             "type": "p",
-            "text": "The index is a global secondary index s53 with the partition key sweep_shard, a number from 0 to 15 taken from the block hash, and the sort key zero_since; both exist only while a block's count is 0, so it holds only those blocks.",
+            "text": "The index is a global secondary index s53 with the partition key sweep_shard, a number from 0 to 63 taken from the block hash, and the sort key zero_since; both exist only while a block's count is 0, so it holds only those blocks.",
             "cites": [
               "s53"
             ]
           },
           {
             "type": "p",
-            "text": "One partition takes at most 1,000 write units a second s15, and the index writes average about 1,600 a second, so a single value would be throttled: 16 values bring it to about 100 a second each.",
+            "text": "One partition takes at most 1,000 write units a second s15; the index writes average 1,620 a second and reach 16,200 at the peak of ten times the average, so a single value is throttled and 16 would sit at the limit.",
             "cites": [
               "s15"
             ]
+          },
+          {
+            "type": "p",
+            "text": "The sweep therefore uses 64 values: about 253 writes a second each at the peak, a quarter of the limit, and 256 values at ten times the scale, about 633 each. The writes are the same, so the cost is unchanged, and the sweep's hourly Queries stay a rounding error."
           },
           {
             "type": "p",
@@ -2012,10 +2033,17 @@
           },
           {
             "type": "p",
-            "text": "Storage is more than nine tenths of the priced total at both sizes. Within it the cold class is about 96 percent of the storage bill and the Standard tail of the last 30 days about 4 percent, so the age in the lifecycle rule moves little: the cold class's price per GB and its 90-day minimum on deleted blocks are the levers. The list price of the cold class sits far below the neutral table's assumed price per raw disk.",
+            "text": "Storage is more than nine tenths of the priced total at both sizes. Within it the cold class is about 96 percent of the storage bill and the Standard tail of the last 30 days about 4 percent, so the age in the lifecycle rule moves little: the cold class's price per GB and its 90-day minimum on deleted blocks are the levers.",
             "cites": [
               "s39",
               "s23"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "The list price of the cold class, $4 per TB-month, is a fifth of the $20 per TB-month that the neutral table assumes for raw disk.",
+            "cites": [
+              "s39"
             ]
           }
         ]
@@ -2500,8 +2528,8 @@
   "provenance": {
     "generated_by": "Claude (Fable 5.1) by hand, Scout learning center M4a; format v2 restructure by hand, Claude (Fable 5.1), Scout learning center F2-E1; AWS pass (building-it-on-aws, flow block, sequence diagrams) by hand, Claude (Sonnet 5.5), Scout learning center, format v2 batch E1B",
     "generated_on": "2026-10-12",
-    "reviewed_by": "a re-reader (Claude Sonnet 5.5, a different instance from the writer and the first reader), Scout learning center, format v2 E1B AWS pass, re-read",
-    "reviewed_on": "2026-10-16"
+    "reviewed_by": null,
+    "reviewed_on": null
   },
   "changelog": [
     {
@@ -2553,6 +2581,11 @@
       "version": 10,
       "date": "2026-10-16",
       "change": "fifth read of the AWS pass (E1B, after fix round 4): accepted, reviewed_by set; every blocking finding of reviews/learning-center-F2-E1B-reread3.md confirmed fixed, no body change; non-blocking points left in the addendum of the review"
+    },
+    {
+      "version": 11,
+      "date": "2026-10-16",
+      "change": "Follow-ups from the fifth read: a touch that finds its block gone (the sweep deleted it between the read and the update) is a 409 with that hash in missing_blocks, in the first and the second commit (UpdateItem asks for the old item back); the sweep index has 64 shard values, derived from the lesson's own peak of ten times the average (16,200 index writes a second, about 253 each; 256 at ten times the scale), the cost unchanged; the notification function's event source mapping has two filter patterns (feed-item inserts, shared-folder version inserts); the cold class price ($4 against the neutral $20 per TB-month) is stated as a ratio. Later AWS sequence numbers shift by two. reviewed_by cleared for a re-read."
     }
   ]
 }
