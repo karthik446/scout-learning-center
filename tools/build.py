@@ -276,8 +276,10 @@ def sidebar(lib: Library, mid: str | None, current: str) -> str:
 
 
 def lesson_shell(lib: Library, title: str, body: str, *, mid: str | None, current: str, crumbs: list[tuple[str, str]],
-                 description: str, mermaid: bool = False, code: bool = False, sim: bool = False, flow: bool = False) -> str:
+                 description: str, mermaid: bool = False, code: bool = False, sim: bool = False, flow: bool = False,
+                 concept_v2: bool = False) -> str:
     parts = [a(h, esc(t)) for h, t in crumbs[:-1]] + [esc(crumbs[-1][1])]
+    lesson_kind = ' data-lesson-format="concept:2"' if concept_v2 else ""
     return (
         head(title, description, code=code, sim=sim)
         .replace("</head>", '<link rel="stylesheet" href="/_assets/flow.css">\n</head>' if flow else "</head>")
@@ -285,7 +287,7 @@ def lesson_shell(lib: Library, title: str, body: str, *, mid: str | None, curren
         + sidebar(lib, mid, current)
         + '\n<div class="page">\n<div class="page-top">\n'
         + f'<nav class="breadcrumb" aria-label="Breadcrumb">{" &rsaquo; ".join(parts)}</nav>\n{theme_toggle()}\n</div>\n'
-        + f"<main data-pagefind-body>\n{body}\n</main>\n"
+        + f"<main data-pagefind-body{lesson_kind}>\n{body}\n</main>\n"
         + footer()
         + "</div>\n</div>\n"
         + tail_scripts(mermaid=mermaid, code=code, sim=sim, extra=("/_assets/flow.js",) if flow else ())
@@ -466,14 +468,13 @@ def table_html(columns: list[str], rows: list[list[str]], caption: str | None, *
     return f'<div class="table-scroll" role="region" tabindex="0"{label}><table{cls}>{cap}<thead><tr>{head_}</tr></thead><tbody>{body_}</tbody></table></div>'
 
 
-def flow_layout(b: dict) -> dict:
+def flow_request_positions(b: dict, gap: int = 32) -> tuple[dict, list, int, float]:
     """Two-column request lanes, side branches and independent orthogonal edge tracks.
 
     Actor-rooted frames form stacked panels when there are independent request
     paths. Otherwise services form the main column, with stores/queues beside it.
     Titles reserve a left-hand band, leaving a clear vertical entry corridor.
     """
-    import heapq
     import textwrap
 
     nodes = {n["id"]: dict(n) for n in b["nodes"]}
@@ -487,9 +488,11 @@ def flow_layout(b: dict) -> dict:
     panel_of = {n: i for i, panel in enumerate(panels) for n in panel}
     width, box_width = 760, 230
     for n in nodes.values():
-        n["lines"] = textwrap.wrap(n["label"], 24 if n["kind"] == "queue" else 26)
+        n["lines"] = textwrap.wrap(n["label"], 13 if n["kind"] == "decision" else 24 if n["kind"] == "queue" else 26)
         n["w"] = box_width
         n["h"] = max(38, len(n["lines"])*18 + (38 if n["kind"] == "store" else 14))
+        if n["kind"] == "decision":
+            n["h"] = 2*(len(n["lines"])*18+18)
     columns = {key: int(n["kind"] in ("store", "queue")) for key, n in nodes.items()}
     ranks = dict.fromkeys(nodes, 0)
     # Keep storage members of a frame together, so an unrelated regional store
@@ -561,25 +564,130 @@ def flow_layout(b: dict) -> dict:
                     framed_before = any(n in owner and columns[n] == columns[f["nodes"][0]] for n in previous_row)
                     vertical_entry = any(n in f["nodes"] and any(columns[p] == columns[n] for p in incoming[n]) for n in row)
                     extra_gap = max(extra_gap, title_heights[f["id"]]+(24 if framed_before else 12)
-                                    +(24 if vertical_entry else 0)-32)
+                                    +(24 if vertical_entry else 0)-gap)
                 y += extra_gap
             height = max(nodes[n]["h"] for n in row)
             for key in row:
                 nodes[key].update(x=60+columns[key]*390, y=y+(height-nodes[key]["h"])/2)
-            y += height+32
+            y += height+gap
             previous_row = row
         if len(panels) > 1:
             y += 42
-    frames = []
-    for frame in groups:
-        members = [nodes[n] for n in frame["nodes"]]
-        x = min(n["x"] for n in members)-18
-        right = max(n["x"]+n["w"] for n in members)+18
-        title_h = title_heights[frame["id"]]
-        top = min(n["y"] for n in members)-title_h
-        bottom = max(n["y"]+n["h"] for n in members)+12
-        frames.append(dict(frame, x=x, y=top, w=right-x, h=bottom-top, lines=title_lines[frame["id"]],
-                           title_box=(x+5, top+2, x+119, top+title_h-4)))
+    def make_frames():
+        result = []
+        for frame in groups:
+            members = [nodes[n] for n in frame["nodes"]]
+            x = min(n["x"] for n in members)-18
+            right = max(n["x"]+n["w"] for n in members)+18
+            title_h = title_heights[frame["id"]]
+            top = min(n["y"] for n in members)-title_h
+            bottom = max(n["y"]+n["h"] for n in members)+12
+            result.append(dict(frame, x=x, y=top, w=right-x, h=bottom-top, lines=title_lines[frame["id"]],
+                               title_box=(x+5, top+2, x+119, top+title_h-4)))
+        return result
+
+    def intersects(a, z, margin=0):
+        return (max(a["x"], z["x"]) < min(a["x"]+a["w"], z["x"]+z["w"])+margin
+                and max(a["y"], z["y"]) < min(a["y"]+a["h"], z["y"]+z["h"])+margin)
+
+    frames = make_frames()
+    # Disconnected members can otherwise wrap a frame around another frame or
+    # an unrelated node. Pack such groups as indivisible vertical bands.
+    if (any(intersects(f, other, 10) for i, f in enumerate(frames) for other in frames[i+1:])
+            or any(intersects(f, n) for f in frames for key, n in nodes.items() if key not in f["nodes"])):
+        bands = {}
+        for key in nodes:
+            bands.setdefault(owner.get(key, key), []).append(key)
+        y = 8
+        for band, members in sorted(bands.items(), key=lambda item: min(nodes[n]["y"] for n in item[1])):
+            if band in title_heights:
+                y += title_heights[band]+14
+            rows = {}
+            for key in members:
+                n = nodes[key]
+                rows.setdefault(n["y"]+n["h"]/2, []).append(key)
+            for _, row in sorted(rows.items()):
+                height = max(nodes[n]["h"] for n in row)
+                for key in row:
+                    nodes[key]["y"] = y+(height-nodes[key]["h"])/2
+                y += height+gap
+            y += 18
+        frames = make_frames()
+    return nodes, frames, width, y
+
+
+def flow_concept_positions(b: dict, gap: int = 32) -> tuple[dict, list, int, float]:
+    """Layer structural links, retaining feedback edges without rank inflation."""
+    import textwrap
+
+    nodes = {n["id"]: dict(n) for n in b["nodes"]}
+    children = {key: [] for key in nodes}
+    incoming = dict.fromkeys(nodes, 0)
+    for edge in b["edges"]:
+        children[edge["from"]].append(edge["to"])
+        incoming[edge["to"]] += 1
+    active, visited, order, parents = set(), set(), [], {key: [] for key in nodes}
+
+    def visit(key):
+        active.add(key)
+        for child in children[key]:
+            if child not in active:
+                parents[child].append(key)
+                if child not in visited:
+                    visit(child)
+        active.remove(key)
+        visited.add(key)
+        order.append(key)
+
+    for key in sorted(nodes, key=lambda n: incoming[n] != 0):
+        if key not in visited:
+            visit(key)
+    ranks = dict.fromkeys(nodes, 0)
+    for key in reversed(order):
+        ranks[key] = max((ranks[p]+1 for p in parents[key]), default=0)
+    rows = []
+    for rank in sorted(set(ranks.values())):
+        members = [n for n in nodes if ranks[n] == rank]
+        members.sort(key=lambda n: sum(list(nodes).index(p) for p in parents[n])/max(1, len(parents[n])))
+        rows.extend(members[i:i+3] for i in range(0, len(members), 3))
+    width, y = 760, 28
+    for row in rows:
+        box_width = min(280, (width-88-40*(len(row)-1))//len(row))
+        for key in row:
+            n = nodes[key]
+            wrap = max(10, int((box_width-28)/(16 if n["kind"] == "decision" else 8.4)))
+            n["lines"] = textwrap.wrap(n["label"], wrap)
+            n["w"] = box_width
+            n["h"] = max(48, len(n["lines"])*18+(38 if n["kind"] == "store" else 24))
+            if n["kind"] == "decision":
+                n["h"] = 2*(len(n["lines"])*18+18)
+        height = max(nodes[n]["h"] for n in row)
+        left = (width-(box_width+40)*len(row)+40)/2
+        for i, key in enumerate(row):
+            nodes[key].update(x=left+i*(box_width+40), y=y+(height-nodes[key]["h"])/2)
+        y += height+gap+46
+    return nodes, [], width, y-gap
+
+
+class FlowLayoutSpaceError(BuildError):
+    """The graph needs more room, without changing authored content."""
+
+
+def flow_layout(b: dict) -> dict:
+    for gap in (32, 48, 64, 96, 128, 192):
+        try:
+            return flow_geometry(b, gap)
+        except FlowLayoutSpaceError:
+            if gap == 192:
+                raise
+
+
+def flow_geometry(b: dict, gap: int) -> dict:
+    import heapq
+    import textwrap
+
+    concept = all(e.get("kind") == "link" for e in b["edges"]) and not b.get("frames")
+    nodes, frames, width, y = flow_concept_positions(b, gap) if concept else flow_request_positions(b, gap)
     obstacles = [(n["x"]-5, n["y"]-5, n["x"]+n["w"]+5, n["y"]+n["h"]+5) for n in nodes.values()]
     obstacles += [f["title_box"] for f in frames]
     borders = [(f["x"], f["y"], f["x"]+f["w"], f["y"]+f["h"]) for f in frames]
@@ -587,7 +695,9 @@ def flow_layout(b: dict) -> dict:
     attachments = {}
     for i, edge in enumerate(b["edges"]):
         a, z = nodes[edge["from"]], nodes[edge["to"]]
-        if a["x"] == z["x"]:
+        if concept and a["y"] != z["y"]:
+            pair = ("bottom", "top") if a["y"] < z["y"] else ("top", "bottom")
+        elif a["x"] == z["x"]:
             pair = ("bottom", "top") if a["y"] < z["y"] else ("top", "bottom")
         elif abs(a["y"]+a["h"]/2-z["y"]-z["h"]/2) < 2:
             pair = ("right", "left") if a["x"] < z["x"] else ("left", "right")
@@ -599,13 +709,19 @@ def flow_layout(b: dict) -> dict:
         for key, side, role in ((edge["from"], pair[0], "start"), (edge["to"], pair[1], "end")):
             attachments.setdefault((key, side), []).append((i, role))
 
+    def vertical_port(n, side, x):
+        offset = x-n["x"]-n["w"]/2
+        inset = abs(offset)*n["h"]/n["w"] if n["kind"] == "decision" else 0
+        return (x, n["y"]+(n["h"]-inset if side == "bottom" else inset))
+
     def port(key, side, ref):
         n = nodes[key]
         peers = attachments[(key, side)]
         offset = (peers.index(ref)-(len(peers)-1)/2)*14
         if side in ("top", "bottom"):
-            return (n["x"]+n["w"]/2+offset, n["y"]+(n["h"] if side == "bottom" else 0))
-        return (n["x"]+(n["w"] if side == "right" else 0), n["y"]+n["h"]/2+offset)
+            return vertical_port(n, side, n["x"]+n["w"]/2+offset)
+        inset = abs(offset)*n["w"]/n["h"] if n["kind"] == "decision" else 0
+        return (n["x"]+(n["w"]-inset if side == "right" else inset), n["y"]+n["h"]/2+offset)
 
     def overlap(a, z, c, d):
         if a[0] == z[0] == c[0] == d[0]:
@@ -620,13 +736,23 @@ def flow_layout(b: dict) -> dict:
         start_port = port(edge["from"], start_side, (i, "start"))
         end_port = port(edge["to"], end_side, (i, "end"))
         source, destination = nodes[edge["from"]], nodes[edge["to"]]
+        if (concept and start_side in ("top", "bottom") and end_side in ("top", "bottom")
+                and source["x"]+source["w"]/2 == destination["x"]+destination["w"]/2):
+            if len(attachments[(edge["to"], end_side)]) == 1:
+                end_port = vertical_port(destination, end_side, start_port[0])
+            elif len(attachments[(edge["from"], start_side)]) == 1:
+                start_port = vertical_port(source, start_side, end_port[0])
         if (start_side in ("left", "right") and end_side in ("left", "right")
                 and abs(source["y"]+source["h"]/2-destination["y"]-destination["h"]/2) < 2
                 and len(attachments[(edge["to"], end_side)]) == 1):
             end_port = (end_port[0], start_port[1])
-        vectors = {"left": (-10, 0), "right": (10, 0), "top": (0, -10), "bottom": (0, 10)}
-        start = tuple(a+d for a, d in zip(start_port, vectors[start_side]))
-        end = tuple(a+d for a, d in zip(end_port, vectors[end_side]))
+        def outside(n, point, side):
+            if side in ("top", "bottom"):
+                return (point[0], n["y"]+(n["h"]+10 if side == "bottom" else -10))
+            return (n["x"]+(n["w"]+10 if side == "right" else -10), point[1])
+
+        start = outside(source, start_port, start_side)
+        end = outside(destination, end_port, end_side)
         xs = sorted({12, width-12, start[0], end[0]} |
                     {v for l, t, r, bot in obstacles for v in (l-10, r+10)} |
                     {p[0]+d for route in routes for p in route for d in (-14, 14)})
@@ -665,12 +791,15 @@ def flow_layout(b: dict) -> dict:
                 if not clear(a, z):
                     continue
                 cost = distance+abs(a[0]-z[0])+abs(a[1]-z[1])+(30 if direction and direction != axis else 0)
+                # Fan out near the source, leaving the middle link room for its label.
+                if concept and source["y"] < destination["y"] and start[0] != end[0] and axis == 2 and a[0] == start[0]:
+                    cost += abs(a[1]-z[1])*.001
                 point = (nx, ny, axis)
                 if cost < distances.get(point, float("inf")):
                     distances[point], previous[point] = cost, here
                     heapq.heappush(todo, (cost, point))
         if goal is None:
-            raise BuildError(f"flow: cannot route edge {i} without sharing a track")
+            raise FlowLayoutSpaceError(f"flow: cannot route edge {i} without sharing a track")
         route, here = [], goal
         while True:
             route.append((xs[here[0]], ys[here[1]]))
@@ -690,14 +819,18 @@ def flow_layout(b: dict) -> dict:
         routes.append(compact)
         segments.extend(zip(compact, compact[1:]))
     labels = []
+    edge_ids = {edge["id"]: i for i, edge in enumerate(b["edges"]) if "id" in edge}
+    stepped = {edge_ids[step["edge"]] if isinstance(step["edge"], str) else step["edge"] for step in b.get("steps", [])}
     label_obstacles = obstacles + [(f["x"]-4, f["y"]-4, f["x"]+f["w"]+4, f["title_box"][3]+4) for f in frames]
     label_obstacles += [rect for l, t, r, bot in borders for rect in
                         ((l-4, t-4, l+4, bot+4), (r-4, t-4, r+4, bot+4), (l-4, bot-4, r+4, bot+4))]
     label_order = sorted(range(len(routes)), key=lambda i: sum(abs(a[0]-z[0])+abs(a[1]-z[1]) for a, z in zip(routes[i], routes[i][1:])))
     for i in label_order:
         edge, route = b["edges"][i], routes[i]
-        short = edge.get("short") or " ".join(edge["label"].split()[:3])
-        text = f"{i+1} · {short}"
+        short = edge.get("short") or (edge["label"] if concept else " ".join(edge["label"].split()[:3]))
+        if not short:
+            continue
+        text = f"{i+1} · {short}" if i in stepped else short
         candidates = []
         for lines in ([text], textwrap.wrap(text, 12)):
             tw, th = max(map(len, lines))*8.2, len(lines)*18
@@ -724,7 +857,7 @@ def flow_layout(b: dict) -> dict:
                             continue
                         candidates.append((len(lines)*100+abs(fraction-.5)*30-length/100, lx, ly, rect, lines))
         if not candidates:
-            raise BuildError(f"flow: no clear space for edge label {text!r}")
+            raise FlowLayoutSpaceError(f"flow: no clear space for edge label {text!r}")
         _, lx, ly, rect, lines = min(candidates)
         labels.append(dict(edge=i, text=text, lines=lines, x=lx, y=ly+15, box=rect))
     return dict(nodes=nodes, frames=frames, routes=routes, labels=labels, width=width, height=y-18)
@@ -732,9 +865,10 @@ def flow_layout(b: dict) -> dict:
 
 def render_flow(b: dict, ident: str) -> str:
     g = flow_layout(b)
-    out = [f'<section class="flow" aria-label="Architecture walkthrough" id="{ident}">',
+    interactive = bool(b.get("steps"))
+    out = [f'<section class="flow" data-interactive="{str(interactive).lower()}" aria-label="Architecture walkthrough" id="{ident}">',
            f'<svg class="flow-svg" viewBox="0 0 {g["width"]} {g["height"]}" role="img" aria-labelledby="{ident}-title">',
-           f'<title id="{ident}-title">Architecture; numbered arrows correspond to Exact calls below.</title>',
+           f'<title id="{ident}-title">Architecture; see {"Exact calls for the numbered arrows" if interactive else "Connections for the relationships"} below.</title>',
            f'<defs><marker id="{ident}-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z"/></marker></defs>']
 
     def label(lines, x, y, css=""):
@@ -747,12 +881,14 @@ def render_flow(b: dict, ident: str) -> str:
     for i, (edge, route) in enumerate(zip(b["edges"], g["routes"])):
         d = "M " + " L ".join(f"{x},{y}" for x, y in route)
         out.append(f'<path class="flow-edge" data-edge="{i}" data-from="{esc(edge["from"])}" data-to="{esc(edge["to"])}" '
-                   f'data-kind="{esc(edge.get("kind", "sync"))}" d="{d}" marker-end="url(#{ident}-arrow)"><title>{esc(edge["label"])}</title></path>')
+                   f'data-kind="{esc(edge.get("kind", "sync"))}" data-dashed="{str(edge.get("dashed", False)).lower()}" d="{d}" marker-end="url(#{ident}-arrow)"><title>{esc(edge["label"])}</title></path>')
     for key, n in g["nodes"].items():
         x, y, w, h = n["x"], n["y"], n["w"], n["h"]
         out.append(f'<g class="flow-node" data-node="{esc(key)}" data-kind="{n["kind"]}">')
         if n["kind"] == "store":
             out.append(f'<path d="M{x},{y+9} a{w/2},9 0 0 1 {w},0 v{h-18} a{w/2},9 0 0 1 {-w},0 Z M{x},{y+9} a{w/2},9 0 0 0 {w},0"/>')
+        elif n["kind"] == "decision":
+            out.append(f'<path d="M{x+w/2},{y} L{x+w},{y+h/2} L{x+w/2},{y+h} L{x},{y+h/2} Z"/>')
         else:
             out.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="4"/>')
             if n["kind"] == "queue":
@@ -761,6 +897,14 @@ def render_flow(b: dict, ident: str) -> str:
         out.append(label(n["lines"], x+w/2, baseline, "flow-label") + '</g>')
     for item in g["labels"]:
         out.append(label(item["lines"], item["x"], item["y"], "flow-edge-label"))
+    if not interactive:
+        out.append('</svg><details class="flow-connections"><summary>Connections</summary><ul>')
+        for edge in b["edges"]:
+            source, target = g["nodes"][edge["from"]]["label"], g["nodes"][edge["to"]]["label"]
+            text = f'{source} to {target}' + (f': {edge["label"]}' if edge["label"] else '')
+            out.append(f'<li>{esc(text)}</li>')
+        out.append('</ul></details><noscript>This is a static diagram. Connections lists every relationship.</noscript></section>')
+        return "".join(out)
     out += ['<circle class="flow-packet hidden" r="6"/>', '<circle class="flow-queued hidden" r="6"/>', '</svg>',
             '<div class="flow-controls">' + "".join(f'<button type="button" data-action="{action}">{text}</button>' for action, text in
             (("previous", "Back"), ("next", "Next"), ("play", "Play"), ("reset", "Reset"))) + '</div>',
@@ -770,7 +914,7 @@ def render_flow(b: dict, ident: str) -> str:
         edge = step["edge"]
         if isinstance(edge, str):
             edge = next(i for i, e in enumerate(b["edges"]) if e.get("id") == edge)
-        out.append(f'<li data-edge="{edge}" data-caption="{esc(step["caption"])}"><strong>{esc(b["edges"][edge]["label"])}</strong><br>{esc(step["caption"])}</li>')
+        out.append(f'<li data-edge="{edge}" data-caption="{esc(step["caption"])}" value="{edge+1}"><strong>{esc(b["edges"][edge]["label"])}</strong><br>{esc(step["caption"])}</li>')
     out += ['</ol></details><noscript>Motion is optional. Read the numbered arrows and expand Exact calls for the request order.</noscript></section>']
     return "".join(out)
 
@@ -902,7 +1046,7 @@ def render_lesson_v2(lib: Library, l: dict) -> tuple[str, str]:
     body.append(f'<div class="prevnext">{prev_}{next_}</div>')
     crumbs = [("/learn/", "Learning center"), (f"/learn/modules/{mid}/", lib.modules[mid]["title"]), (here, l["title"])]
     page = lesson_shell(lib, f"{l['title']} - Learning center", "\n".join(body), mid=mid, current=here, crumbs=crumbs,
-                        description=l["summary"][:200], mermaid=pg.diagram, code=pg.code, sim="sim" in l, flow=pg.flow)
+                        description=l["summary"][:200], mermaid=pg.diagram, code=pg.code, sim="sim" in l, flow=pg.flow, concept_v2=True)
     return here, page
 
 

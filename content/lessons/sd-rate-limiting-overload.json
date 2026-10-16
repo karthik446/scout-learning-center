@@ -257,9 +257,132 @@
           ]
         },
         {
-          "type": "diagram",
-          "mermaid": "flowchart TD\n    C[Clients] --> G[Edge gateway]\n    G -->|descriptors| R[Global rate limit service]\n    R --> K[(Shared counter store)]\n    G --> P[Sidecar proxy: local token bucket]\n    P --> B{Circuit breaker limits ok?}\n    B -->|no| F[Fail fast with overflow]\n    B -->|yes| S[Service]\n    S --> L{Utilization high?}\n    L -->|yes, low criticality| X[Shed request]\n    L -->|no or critical| W[Do the work]",
-          "legend": "The layered defence: a global per-tenant limit at the gateway backed by a shared counter store, a local token bucket and per-upstream circuit-breaker limits in the proxy, and utilisation-based shedding by criticality inside the service. The pieces follow Stripe's limiters, Envoy's circuit breaking and the SRE book's shedding (s1, s12, s6)."
+          "type": "flow",
+          "nodes": [
+            {
+              "id": "C",
+              "label": "Clients",
+              "kind": "service"
+            },
+            {
+              "id": "G",
+              "label": "Edge gateway",
+              "kind": "service"
+            },
+            {
+              "id": "R",
+              "label": "Global rate limit service",
+              "kind": "service"
+            },
+            {
+              "id": "K",
+              "label": "Shared counter store",
+              "kind": "store"
+            },
+            {
+              "id": "P",
+              "label": "Sidecar proxy: local token bucket",
+              "kind": "service"
+            },
+            {
+              "id": "B",
+              "label": "Circuit breaker limits ok?",
+              "kind": "decision"
+            },
+            {
+              "id": "F",
+              "label": "Fail fast with overflow",
+              "kind": "service"
+            },
+            {
+              "id": "S",
+              "label": "Service",
+              "kind": "service"
+            },
+            {
+              "id": "L",
+              "label": "Utilization high?",
+              "kind": "decision"
+            },
+            {
+              "id": "X",
+              "label": "Shed request",
+              "kind": "service"
+            },
+            {
+              "id": "W",
+              "label": "Do the work",
+              "kind": "service"
+            }
+          ],
+          "edges": [
+            {
+              "from": "C",
+              "to": "G",
+              "kind": "link",
+              "label": ""
+            },
+            {
+              "from": "G",
+              "to": "R",
+              "kind": "link",
+              "label": "descriptors"
+            },
+            {
+              "from": "R",
+              "to": "K",
+              "kind": "link",
+              "label": ""
+            },
+            {
+              "from": "G",
+              "to": "P",
+              "kind": "link",
+              "label": ""
+            },
+            {
+              "from": "P",
+              "to": "B",
+              "kind": "link",
+              "label": ""
+            },
+            {
+              "from": "B",
+              "to": "F",
+              "kind": "link",
+              "label": "no"
+            },
+            {
+              "from": "B",
+              "to": "S",
+              "kind": "link",
+              "label": "yes"
+            },
+            {
+              "from": "S",
+              "to": "L",
+              "kind": "link",
+              "label": ""
+            },
+            {
+              "from": "L",
+              "to": "X",
+              "kind": "link",
+              "label": "yes, low criticality"
+            },
+            {
+              "from": "L",
+              "to": "W",
+              "kind": "link",
+              "label": "no or critical"
+            }
+          ],
+          "legend": "The layered defence: a global per-tenant limit at the gateway backed by a shared counter store, a local token bucket and per-upstream circuit-breaker limits in the proxy, and utilisation-based shedding by criticality inside the service. The pieces follow Stripe's limiters, Envoy's circuit breaking and the SRE book's shedding (s1, s12, s6).",
+          "cites": [
+            "s1",
+            "s12",
+            "s6"
+          ]
         },
         {
           "type": "p",

@@ -1,9 +1,10 @@
 'use strict';
-// Prototype B: explicit playback, returning synchronous replies, queue residency.
+// Explicit playback for steps; structural links without steps remain static.
 (() => {
   const motion = matchMedia('(prefers-reduced-motion: reduce)');
   document.querySelectorAll('.flow').forEach(host => {
     const steps = [...host.querySelectorAll('.flow-calls li')];
+    if (!steps.length) return;
     const paths = [...host.querySelectorAll('.flow-edge')];
     const nodes = [...host.querySelectorAll('.flow-node')];
     const packet = host.querySelector('.flow-packet');

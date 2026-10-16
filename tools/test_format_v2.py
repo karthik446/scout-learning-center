@@ -142,6 +142,12 @@ class Negative(Fixture):
     def test_diagram_directives(self) -> None:
         self.refuses(LESSON, lambda d: first(d, "diagram").update(mermaid="%%{init: {}}%%\nflowchart LR\n A --> B"), "no C4 syntax and no Mermaid directives")
 
+    def test_concept_flowcharts_require_flow_blocks(self) -> None:
+        for start in ("flowchart LR", "graph TD"):
+            with self.subTest(start=start):
+                self.refuses(LESSON, lambda d: first(d, "diagram").update(mermaid=start+"\n A --> B"),
+                             "concept flowcharts must use a flow block")
+
     def test_reserved_subtopic_id(self) -> None:
         self.refuses(LESSON, lambda d: d["subtopics"][0].update(id="sources"), "reserved for a page section")
 
@@ -519,7 +525,7 @@ class Pages(Fixture):
         self.assertIn('<table class="decision"><caption>A synthetic choice<sup class="cite"><a href="#source-s6" aria-label="Source 6">[6]</a></sup></caption><thead><tr><th scope="col">Option</th><th scope="col">Pick when</th>'
                       '<th scope="col">Avoid when</th><th scope="col">Example</th></tr></thead><tbody><tr><th scope="row">Option A</th>', self.lesson)
         self.assertIn('<pre><code class="language-python" data-lang="python">', self.lesson)
-        self.assertIn('<pre class="mermaid">flowchart LR', self.lesson)
+        self.assertIn('<pre class="mermaid">sequenceDiagram', self.lesson)
         self.assertIn("/_assets/hljs/highlight.min.js", self.lesson)
         self.assertIn("/_assets/mermaid/mermaid.min.js", self.lesson)
 
@@ -556,8 +562,8 @@ class Pages(Fixture):
                 self.assertIn('/_assets/flow.css', html_)
             else:
                 self.assertNotIn(marker, html_, page.parent.name)
-                self.assertNotIn('/_assets/flow.js', html_, page.parent.name)
-                self.assertNotIn('/_assets/flow.css', html_, page.parent.name)
+            self.assertEqual('/_assets/flow.js' in html_, '<section class="flow"' in html_, page.parent.name)
+            self.assertEqual('/_assets/flow.css' in html_, '<section class="flow"' in html_, page.parent.name)
 
     def test_styled_diagram_source_stays_text(self) -> None:
         block = {"type": "diagram", "mermaid": "sequenceDiagram\n  A->>B: call<br/>reply", "legend": "Calls."}
@@ -595,7 +601,7 @@ class Pages(Fixture):
         self.assertIn("<p>The numbers are in the table, not in this paragraph.</p>", self.exercise)
 
     def test_pagefind_sees_the_main_and_the_page_is_in_the_sitemap(self) -> None:
-        self.assertIn("<main data-pagefind-body>", self.lesson)
+        self.assertIn('<main data-pagefind-body data-lesson-format="concept:2">', self.lesson)
         sitemap = (self.site / "sitemap.xml").read_text(encoding="utf-8")
         self.assertIn(f"/learn/lessons/{LESSON}/", sitemap)
 
@@ -609,6 +615,10 @@ class Pages(Fixture):
 
 
 class Flows(unittest.TestCase):
+    CONCEPTS = ("sd-caching", "sd-capacity", "sd-cost", "sd-data-modelling", "sd-load-balancing",
+                "sd-observability", "sd-outbox-cdc", "sd-queues-streams", "sd-rate-limiting-overload",
+                "sd-reliability-slos", "sd-replication-partitioning", "sd-storage-engines")
+
     def setUp(self):
         self.block = {
             "type": "flow",
@@ -695,6 +705,85 @@ class Flows(unittest.TestCase):
     def test_blank_short_label(self):
         self.rejects(lambda b: b["edges"][0].update(short=" "), "short labels must be non-empty")
 
+    def test_link_steps_are_optional_but_request_steps_are_required(self):
+        self.block.pop("steps")
+        self.assertTrue(any("every edge needs a step" in p for p in scan.block_problems(self.block, "$")))
+        for edge in self.block["edges"]:
+            edge["kind"] = "link"
+        self.assertEqual(scan.block_problems(self.block, "$"), [])
+        self.block["steps"] = [{"edge": 1, "caption": "Enqueue"}]
+        self.assertEqual(scan.block_problems(self.block, "$"), [])
+        html = build.render_flow(self.block, "partial")
+        self.assertIn('data-interactive="true"', html)
+        self.assertIn('value="2"', html)
+        labels = {item["edge"]: item["text"] for item in build.flow_layout(self.block)["labels"]}
+        self.assertEqual(labels, {0: "Call", 1: "2 · Enqueue", 2: "Consume"})
+
+    def test_unlabelled_link_is_static_and_dashed_is_visual_only(self):
+        self.block.pop("steps")
+        for edge in self.block["edges"]:
+            edge.update(kind="link", label="", dashed=True)
+        self.assertEqual(scan.block_problems(self.block, "$"), [])
+        html = build.render_flow(self.block, "static")
+        self.assertIn('data-interactive="false"', html)
+        self.assertEqual(html.count('data-dashed="true"'), 3)
+        self.assertNotIn('flow-controls', html)
+        self.assertNotIn('class="flow-edge-label"', html)
+        self.assertIn('<summary>Connections</summary>', html)
+        self.assertEqual(html.count('<li>'), 3)
+
+    def test_dashed_is_only_valid_on_links(self):
+        self.rejects(lambda b: b["edges"][0].update(dashed=True), "only for non-temporal links")
+
+    def test_decision_node_renders_as_diamond(self):
+        self.block["nodes"][0].update(kind="decision", label="Should this request proceed?")
+        self.assertEqual(scan.block_problems(self.block, "$"), [])
+        html = build.render_flow(self.block, "decision")
+        self.assertRegex(html, r'data-node="a" data-kind="decision"><path d="M[^"]+ Z"')
+
+    def test_concept_regions_accept_flow(self):
+        for region in ("subtopics", "worked_example", "in_practice"):
+            with self.subTest(region=region):
+                doc = json.loads((FIXTURES / f"{LESSON}.json").read_text())
+                target = doc["subtopics"][0] if region == "subtopics" else doc[region]
+                target["blocks"].append(copy.deepcopy(self.block))
+                self.assertEqual(scan.lesson2_checks(doc), [])
+                pg = build.Page(doc["sources"])
+                self.assertIn('<section class="flow"', build.render_blocks(pg, target["blocks"]))
+                self.assertTrue(pg.flow)
+
+    def test_feedback_links_keep_bounded_deterministic_ranks(self):
+        block = {"type": "flow", "nodes": [{"id": key, "label": key, "kind": "service"} for key in ("A", "B", "C")],
+                 "edges": [{"from": a, "to": b, "kind": "link", "label": "feedback" if b == "A" else ""}
+                           for a, b in (("A", "B"), ("B", "C"), ("C", "A"))]}
+        self.assertEqual(scan.block_problems(block, "$"), [])
+        layout = build.flow_layout(block)
+        self.assertEqual(layout, build.flow_layout(block))
+        self.assertLess(layout["height"], 500)
+        self.assertEqual(len(layout["routes"]), 3)
+        self.assertEqual(len(layout["labels"]), 1)
+
+    def test_label_space_expands_automatically(self):
+        block = {"type": "flow", "nodes": [{"id": key, "label": key, "kind": "service"} for key in ("A", "B")],
+                 "frames": [{"id": "group", "title": "Services", "nodes": ["A", "B"]}],
+                 "edges": [{"from": "A", "to": "B", "label": "A lengthy requested operation",
+                            "short": "A lengthy requested operation"}],
+                 "steps": [{"edge": 0, "caption": "A lengthy requested operation"}]}
+        with self.assertRaises(build.FlowLayoutSpaceError):
+            build.flow_geometry(block, 32)
+        geometry = build.flow_layout(block)
+        self.assertEqual(len(geometry["labels"]), 1)
+        self.assertGreater(geometry["nodes"]["B"]["y"]-geometry["nodes"]["A"]["y"]-geometry["nodes"]["A"]["h"], 32)
+
+    def test_concept_single_ports_keep_vertical_chains_straight(self):
+        for name, indices in (("sd-cost", (0, 1)), ("sd-storage-engines", (2, 3, 4))):
+            doc = json.loads((ROOT / f"content/lessons/{name}.json").read_text())
+            block = next(b for b in blocks_of(doc) if b["type"] == "flow")
+            geometry = build.flow_layout(block)
+            for i in indices:
+                self.assertEqual(len(geometry["routes"][i]), 2, (name, i))
+
+
     @staticmethod
     def collinear_overlap(a, z, c, d):
         if a[0] == z[0] == c[0] == d[0]:
@@ -707,6 +796,17 @@ class Flows(unittest.TestCase):
         news = json.loads((ROOT / "content/lessons/sd-ex-news-feed.json").read_text())
         blocks = [self.block] + [b for b in blocks_of(news) if b["type"] == "flow"]
         self.assertEqual(len(blocks), 4)
+        for path in (ROOT / "content/lessons").glob("sd-ex-*.json"):
+            if path.stem != "sd-ex-news-feed":
+                doc = json.loads(path.read_text())
+                if doc["schema_version"] == build.V2:
+                    blocks.extend(b for b in blocks_of(doc) if b["type"] == "flow")
+        for name in self.CONCEPTS:
+            doc = json.loads((ROOT / f"content/lessons/{name}.json").read_text())
+            converted = [b for b in blocks_of(doc) if b["type"] == "flow"]
+            self.assertTrue(converted, name)
+            self.assertEqual(scan.lesson2_checks(doc), [], name)
+            blocks.extend(converted)
         for block in blocks:
             with self.subTest(nodes=[n["id"] for n in block["nodes"]]):
                 original = copy.deepcopy(block)
@@ -738,6 +838,18 @@ class Flows(unittest.TestCase):
                         gap_y = max(other["y"]-frame["y"]-frame["h"], frame["y"]-other["y"]-other["h"])
                         self.assertGreaterEqual(max(gap_x, gap_y), 10, "frames need a visible gap")
                 for i, route in enumerate(geometry["routes"]):
+                    edge = block["edges"][i]
+                    for point in route:
+                        self.assertTrue(0 <= point[0] <= geometry["width"] and 0 <= point[1] <= geometry["height"])
+                    for a, z in zip(route, route[1:]):
+                        self.assertTrue(a[0] == z[0] or a[1] == z[1], "orthogonal edge")
+                        for key, node in geometry["nodes"].items():
+                            if key in (edge["from"], edge["to"]):
+                                continue
+                            l, t, r, bot = node["x"], node["y"], node["x"]+node["w"], node["y"]+node["h"]
+                            crossed = (l < a[0] < r and max(min(a[1], z[1]), t) < min(max(a[1], z[1]), bot)) if a[0] == z[0] else (
+                                t < a[1] < bot and max(min(a[0], z[0]), l) < min(max(a[0], z[0]), r))
+                            self.assertFalse(crossed, ("edge crosses node", i, key, a, z))
                     for other in geometry["routes"][i+1:]:
                         for a, z in zip(route, route[1:]):
                             for c, d in zip(other, other[1:]):
@@ -746,11 +858,21 @@ class Flows(unittest.TestCase):
                     if node["kind"] == "store":
                         baseline = node["y"]+(node["h"]-len(node["lines"])*18)/2+18
                         self.assertGreaterEqual(baseline-16, node["y"]+18, "label touches cylinder lid")
-                self.assertEqual(len(geometry["labels"]), len(block["edges"]))
+                label_count = sum(bool(e["label"]) for e in block["edges"])
+                self.assertEqual(len(geometry["labels"]), label_count)
                 for frame in geometry["frames"]:
                     self.assertLessEqual(frame["y"]+frame["h"], geometry["height"], "frame clipped by viewBox")
                 for item in geometry["labels"]:
                     left, top, right, bottom = item["box"]
+                    for node in geometry["nodes"].values():
+                        self.assertFalse(max(left, node["x"]) < min(right, node["x"]+node["w"])
+                                         and max(top, node["y"]) < min(bottom, node["y"]+node["h"]),
+                                         "edge label overlaps a node")
+                    for other in geometry["labels"]:
+                        if other is not item:
+                            self.assertFalse(max(left, other["box"][0]) < min(right, other["box"][2])
+                                             and max(top, other["box"][1]) < min(bottom, other["box"][3]),
+                                             "edge labels overlap")
                     for frame in geometry["frames"]:
                         l, t, r, bot = frame["x"], frame["y"], frame["x"]+frame["w"], frame["y"]+frame["h"]
                         forbidden = [(l-4, t-4, r+4, frame["title_box"][3]+4),
@@ -767,16 +889,21 @@ class Flows(unittest.TestCase):
                             crossed = (left < a[0] < right and max(min(a[1], z[1]), top) < min(max(a[1], z[1]), bottom)) if a[0] == z[0] else (
                                 top < a[1] < bottom and max(min(a[0], z[0]), left) < min(max(a[0], z[0]), right))
                             self.assertFalse(crossed, "edge crosses a short label")
-                pg = build.Page([{"id": "s1"}])
+                pg = build.Page([{"id": f"s{i}"} for i in range(1, 13)])
                 html = build.render_block(pg, block)
                 self.assertTrue(pg.flow)
                 self.assertIn('<svg', html)
                 self.assertIn('<noscript>', html)
-                self.assertIn('aria-live="polite"', html)
-                self.assertEqual(html.count('<li data-edge='), len(block["steps"]))
-                self.assertEqual(html.count('class="flow-edge-label"'), len(block["edges"]))
-                for action in ("previous", "next", "play", "reset"):
-                    self.assertIn(f'data-action="{action}"', html)
+                self.assertEqual(html.count('<li data-edge='), len(block.get("steps", [])))
+                self.assertEqual(html.count('class="flow-edge-label"'), label_count)
+                if block.get("steps"):
+                    self.assertIn('aria-live="polite"', html)
+                    for action in ("previous", "next", "play", "reset"):
+                        self.assertIn(f'data-action="{action}"', html)
+                else:
+                    self.assertIn('<summary>Connections</summary>', html)
+                    self.assertNotIn('flow-controls', html)
+                    self.assertLessEqual(geometry["height"], 1400, "concept diagram is needlessly tall")
                 for frame in block.get("frames", []):
                     self.assertIn(f'data-frame="{frame["id"]}"', html)
                 self.assertEqual(block, original)

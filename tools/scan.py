@@ -510,8 +510,8 @@ BLOCK_SPECS = {
     "diagram": {"type": str, "mermaid": str, "legend?": str, "cites?": [str]},   # the legend names the source ids its arrows rest on
     "flow": {"type": str, "nodes": [{"id": str, "label": str, "kind": str}],
              "frames?": [{"id": str, "title": str, "nodes": [str]}],
-             "edges": [{"id?": str, "from": str, "to": str, "kind?": str, "label": str, "short?": str}],
-             "steps": [{"edge": (int, str), "caption": str}], "legend?": str, "cites?": [str]},
+             "edges": [{"id?": str, "from": str, "to": str, "kind?": str, "label": str, "short?": str, "dashed?": bool}],
+             "steps?": [{"edge": (int, str), "caption": str}], "legend?": str, "cites?": [str]},
 }
 CALLOUT_KINDS = ("rule", "pitfall", "tip")
 CITING_BLOCKS = frozenset(t for t, spec in BLOCK_SPECS.items() if "cites?" in spec)
@@ -925,7 +925,7 @@ def flow_problems(b: dict, path: str) -> list[str]:
     for n in b["nodes"]:
         if not n["label"].strip():
             out.append(f"{path}: node labels must be non-empty")
-        if n["kind"] not in ("service", "store", "queue", "actor"):
+        if n["kind"] not in ("service", "store", "queue", "actor", "decision"):
             out.append(f"{path}: invalid node kind {n['kind']!r}")
         if set(n) - {"id", "label", "kind"}:
             out.append(f"{path}: nodes accept only id, label and kind (no coordinates)")
@@ -935,16 +935,18 @@ def flow_problems(b: dict, path: str) -> list[str]:
     for e in b["edges"]:
         if e["from"] not in known or e["to"] not in known:
             out.append(f"{path}: edges must reference existing nodes")
-        if not e["label"].strip():
-            out.append(f"{path}: edge labels must be non-empty")
-        if e.get("kind", "sync") not in ("sync", "async", "reply"):
+        if not e["label"].strip() and e.get("kind", "sync") != "link":
+            out.append(f"{path}: edge labels must be non-empty unless the edge is a non-temporal link")
+        if e.get("kind", "sync") not in ("sync", "async", "reply", "link"):
             out.append(f"{path}: invalid edge kind {e['kind']!r}")
         if "short" in e and (not e["short"].strip() or "\n" in e["short"] or "\r" in e["short"]):
             out.append(f"{path}: short labels must be non-empty single lines")
-        if set(e) - {"id", "from", "to", "kind", "label", "short"}:
-            out.append(f"{path}: edges accept only id, from, to, kind, label and short")
+        if "dashed" in e and e.get("kind", "sync") != "link":
+            out.append(f"{path}: dashed styling is only for non-temporal links")
+        if set(e) - {"id", "from", "to", "kind", "label", "short", "dashed"}:
+            out.append(f"{path}: edges accept only id, from, to, kind, label, short and dashed")
     used = set()
-    for step in b["steps"]:
+    for step in b.get("steps", []):
         ref = step["edge"]
         index = next((i for i, e in enumerate(b["edges"]) if e.get("id") == ref), -1) if isinstance(ref, str) else ref
         if isinstance(index, bool) or not 0 <= index < len(b["edges"]):
@@ -955,8 +957,9 @@ def flow_problems(b: dict, path: str) -> list[str]:
             out.append(f"{path}: step captions must be non-empty single lines")
         if set(step) - {"edge", "caption"}:
             out.append(f"{path}: steps accept only edge and caption")
-    if not b["edges"] or used != set(range(len(b["edges"]))):
-        out.append(f"{path}: every edge needs a step")
+    required_steps = {i for i, edge in enumerate(b["edges"]) if edge.get("kind", "sync") != "link"}
+    if not b["edges"] or not required_steps <= used:
+        out.append(f"{path}: every edge needs a step unless it is a non-temporal link")
     held, frame_ids = set(), set()
     for frame in b.get("frames", []):
         if not frame["id"].strip() or frame["id"] in frame_ids or frame["id"] in known:
@@ -1098,6 +1101,8 @@ def lesson2_checks(l: dict) -> list[str]:
                                    "split the row or move the arithmetic to a steps block")
         if t == "diagram" and exercise and not DIAGRAM_START.match(b["mermaid"]):
             out.append(f"{path}: the diagram must be a Mermaid flowchart or sequence diagram (starts with 'flowchart', 'graph' or 'sequenceDiagram')")
+        if t == "diagram" and not exercise and FLOWCHART_START.match(b["mermaid"]):
+            out.append(f"{path}: concept flowcharts must use a flow block; Mermaid remains for sequence diagrams")
         if t == "diagram" and SEQUENCE_START.match(b["mermaid"]):
             n = len(sequence_participants(b["mermaid"]))
             if n > MAX_SEQUENCE_PARTICIPANTS:

@@ -197,6 +197,8 @@ def check_page(ch: Chrome, base: str, name: str, path: str, width: int, shots: P
     }
     if name.startswith("format-v2"):
         facts["v2"] = {
+            "concept_v2": ev("!!document.querySelector('main[data-lesson-format=\"concept:2\"]')"),
+            "mermaid_flowcharts": ev("document.querySelectorAll('.mermaid svg[aria-roledescription=\"flowchart-v2\"], .mermaid svg[aria-roledescription=\"flowchart\"]').length"),
             "table_scroll_boxes": ev("document.querySelectorAll('.table-scroll').length"),
             "tables_overflowing_their_box": ev("[...document.querySelectorAll('.table-scroll')].filter((t) => t.scrollWidth > t.clientWidth).length"),
             "boxes_wider_than_column": ev("[...document.querySelectorAll('.table-scroll')].filter((t) => t.getBoundingClientRect().right > document.documentElement.clientWidth + 1).length"),
@@ -224,13 +226,19 @@ def check_page(ch: Chrome, base: str, name: str, path: str, width: int, shots: P
           const scale = r.width / svg.viewBox.baseVal.width;
           return {id: h.id, svg: !!svg, controls: ['previous','next','play','reset'].every(a => h.querySelector('[data-action="'+a+'"]')),
             step_count: h.querySelectorAll('.flow-calls li').length, edge_count: h.querySelectorAll('.flow-edge').length,
+            interactive: h.dataset.interactive === 'true',
+            connection_count: h.querySelectorAll('.flow-connections li').length,
+            link_count: h.querySelectorAll('.flow-edge[data-kind="link"]').length,
+            required_edges_covered: [...h.querySelectorAll('.flow-edge')].every(p => p.dataset.kind === 'link' ||
+              [...h.querySelectorAll('.flow-calls li')].some(s => s.dataset.edge === p.dataset.edge)),
+            animations: h.getAnimations({subtree:true}).filter(a => a.playState === 'running').length,
             text_px: Math.min(...[...svg.querySelectorAll('text')].map(t => parseFloat(getComputedStyle(t).fontSize)*scale)),
             height_px: h.getBoundingClientRect().height, svg_height_px: r.height,
             scroll_width: h.scrollWidth, client_width: h.clientWidth};
         })""")
-        flows = facts["v2"]["flows"]
+        flows = [flow for flow in facts["v2"]["flows"] if flow["interactive"]]
         if flows:
-            manual = ev("""[...document.querySelectorAll('.flow')].map(h => {
+            manual = ev("""[...document.querySelectorAll('.flow[data-interactive=true]')].map(h => {
               h.querySelector('[data-action="next"]').click(); const next = h.dataset.step;
               h.querySelector('[data-action="previous"]').click(); const back = h.dataset.step;
               h.querySelector('[data-action="play"]').click(); return {next, back};
@@ -243,7 +251,7 @@ def check_page(ch: Chrome, base: str, name: str, path: str, width: int, shots: P
             ev("document.querySelectorAll('.flow [data-action=\"reset\"]').forEach(b => b.click())")
             s("Emulation.setEmulatedMedia", {"features": [{"name": "prefers-reduced-motion", "value": "reduce"}]})
             ch.pump(.1)
-            reduced_facts = ev("""[...document.querySelectorAll('.flow')].map(h => {
+            reduced_facts = ev("""[...document.querySelectorAll('.flow[data-interactive=true]')].map(h => {
               h.querySelector('[data-action="play"]').click();
               h.querySelector('[data-action="next"]').click();
               return {state: h.dataset.reducedMotion, play_disabled: h.querySelector('[data-action="play"]').disabled,
@@ -252,11 +260,11 @@ def check_page(ch: Chrome, base: str, name: str, path: str, width: int, shots: P
             for i, flow in enumerate(flows):
                 flow.update(manual[i], packet_samples=[first[i], second[i]],
                             play_moves=first[i] != second[i], reduced=reduced_facts[i])
-                ev(f"document.querySelectorAll('.flow')[{i}].querySelector('[data-action=\"reset\"]').click()")
-                ev(f"document.querySelectorAll('.flow')[{i}].querySelector('[data-action=\"next\"]').focus()")
+                ev(f"document.querySelectorAll('.flow[data-interactive=true]')[{i}].querySelector('[data-action=\"reset\"]').click()")
+                ev(f"document.querySelectorAll('.flow[data-interactive=true]')[{i}].querySelector('[data-action=\"next\"]').focus()")
                 s("Input.dispatchKeyEvent", {"type": "keyDown", "key": "Enter", "code": "Enter", "text": "\r", "windowsVirtualKeyCode": 13})
                 s("Input.dispatchKeyEvent", {"type": "keyUp", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13})
-                flow["keyboard_next"] = ev(f"document.querySelectorAll('.flow')[{i}].dataset.step") == "1"
+                flow["keyboard_next"] = ev(f"document.querySelectorAll('.flow[data-interactive=true]')[{i}].dataset.step") == str(min(1, flow["step_count"]-1))
             s("Emulation.setEmulatedMedia", {"features": [{"name": "prefers-reduced-motion", "value": "no-preference"}]})
             ch.pump(.1)
             ev("document.querySelectorAll('.flow [data-action=\"reset\"]').forEach(b => b.click())")
@@ -334,6 +342,8 @@ def check_page(ch: Chrome, base: str, name: str, path: str, width: int, shots: P
         if facts["mermaid_svg"] < facts["mermaid_blocks"]:
             errors.append(f"{facts['mermaid_blocks']} diagram block(s), {facts['mermaid_svg']} rendered as svg")
         v = facts["v2"]
+        if v["concept_v2"] and v["mermaid_flowcharts"]:
+            errors.append(f"concept :2 page retains {v['mermaid_flowcharts']} Mermaid flowchart(s); use flow blocks")
         if width <= 820:  # the sidebar's list is a closed disclosure, so the lesson title is within the first screen (844 px, a phone)
             if v["sidebar_disclosure_open"] is not False or v["h1_top_px"] >= 844:
                 errors.append(f"390 rule: disclosure open={v['sidebar_disclosure_open']}, h1 top {v['h1_top_px']} px (must be < 844 with the disclosure closed)")
@@ -351,12 +361,18 @@ def check_page(ch: Chrome, base: str, name: str, path: str, width: int, shots: P
             errors.append(f"1280 rule: {v['diagrams_wider_than_column']} diagram(s) wider than the column, {v['diagram_boxes_scrolling']} diagram box(es) scrolling sideways: "
                           f"{json.dumps(v['diagrams'])}")
         for flow in v["flows"]:
-            if not (flow["svg"] and flow["controls"] and flow["step_count"] == flow["edge_count"] > 0
-                    and flow["next"] == "1" and flow["back"] == "0" and flow["play_moves"]
-                    and flow["keyboard_next"] and flow["text_px"] >= 15
-                    and flow["scroll_width"] <= flow["client_width"]
-                    and flow["reduced"] == {"state": "true", "play_disabled": True, "step": "1", "animations": 0}):
-                errors.append(f"flow controls/layout/reduced-motion failed: {json.dumps(flow)}")
+            layout_ok = flow["svg"] and flow["text_px"] >= 15 and flow["scroll_width"] <= flow["client_width"]
+            if flow["interactive"]:
+                next_step = str(min(1, flow["step_count"]-1))
+                controls_ok = (flow["controls"] and flow["step_count"] > 0 and flow["required_edges_covered"]
+                               and flow["next"] == next_step and flow["back"] == "0" and flow["play_moves"]
+                               and flow["keyboard_next"] and flow["reduced"] ==
+                               {"state": "true", "play_disabled": True, "step": next_step, "animations": 0})
+            else:
+                controls_ok = (not flow["controls"] and flow["step_count"] == 0 and flow["animations"] == 0
+                               and flow["connection_count"] == flow["link_count"] == flow["edge_count"] > 0)
+            if not (layout_ok and controls_ok):
+                errors.append(f"flow controls/connections/layout/reduced-motion failed: {json.dumps(flow)}")
     return {"name": name, "path": path, "width": width, "reduced_motion": reduced, "nav_frame": nav.get("frameId", ""), "facts": facts, "console_errors": errors,
             "console_warnings": warnings, "csp_violations": csp, "failed_requests": failed, "hosts": sorted(hosts)}
 
