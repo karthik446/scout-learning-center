@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-news-feed",
-  "version": 14,
+  "version": 15,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: news feed",
@@ -1453,7 +1453,7 @@
           {
             "type": "diagram",
             "mermaid": "sequenceDiagram\n  autonumber\n  participant S3\n  participant App as Author's app\n  participant Edge\n  participant PS as Post svc\n  participant DDB as DynamoDB\n  App->>S3: upload the media\n  S3-->>App: object key\n  App->>Edge: POST /posts, idempotency key\n  Note over App,Edge: key from the app,<br/>id from the server\n  Edge->>PS: HTTP, a healthy task\n  Note over PS: mints the post id,<br/>Snowflake layout\n  PS->>DDB: PutItem the key item,<br/>key to post id\n  Note over PS,DDB: attribute_not_exists\n  DDB-->>PS: ok, a new key\n  PS->>DDB: PutItem the post\n  Note over PS,DDB: attribute_not_exists(<br/>post_id)\n  DDB-->>PS: ok, the index follows\n  Note over PS: hand-off, part b\n  opt DynamoDB throttle or 5xx\n    PS->>DDB: SDK retry\n    Note over PS,DDB: backoff, jitter, then 503\n  end",
-            "legend": "Solid arrows are synchronous calls with their replies dashed. Edge is CloudFront in front of the load balancer, drawn as one lane here and in every sequence diagram below: CloudFront adds a secret header and the load balancer refuses callers without it s33. The app makes the idempotency key for each post and the post service mints the post id, which carries a worker id and so cannot come from a phone; the key item expires by TTL s47. Sources: media on S3 behind CloudFront s24, s25; health checks and task replacement s31, s32; the conditional PutItem s44 and the SDK retry with backoff and jitter s43; the PutItem goes over the gateway endpoint s37; the index lag s30.",
+            "legend": "Solid arrows are synchronous calls with their replies dashed. Edge is CloudFront in front of the load balancer, drawn as one lane here and in every sequence diagram below: CloudFront adds a secret header and the load balancer refuses callers without it s33. The app makes the idempotency key for each post and the post service mints the post id, which carries a worker id and so cannot come from a phone; the key item is deleted after its TTL, within a few days s47. Sources: media on S3 behind CloudFront s24, s25; health checks and task replacement s31, s32; the conditional PutItem s44 and the SDK retry with backoff and jitter s43; the PutItem goes over the gateway endpoint s37; the index lag s30.",
             "cites": [
               "s24",
               "s25",
@@ -1477,7 +1477,7 @@
           },
           {
             "type": "p",
-            "text": "The app makes an idempotency key for each post. The post service mints the Snowflake post id, writes the key item (author and key, with the post id, expiring after 24 hours) and then the post, each with a condition, so a retry with the same key finds the key and answers with the same post id, even when the first attempt stopped between the two writes.",
+            "text": "The app makes an idempotency key for each post. The post service mints the Snowflake post id, writes the key item (author and key, with the post id, eligible for deletion after 24 hours: DynamoDB removes it within a few days, and a read treats an expired item as absent) and then the post, each with a condition, so a retry with the same key finds the key and answers with the same post id, even when the first attempt stopped between the two writes.",
             "cites": [
               "s44",
               "s47"
@@ -1489,7 +1489,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 10\n  participant App as Author's app\n  participant Edge\n  participant PS as Post svc\n  participant DDB as DynamoDB\n  participant SQS as SQS queue\n  Note over PS: holds the durable post\n  PS->>DDB: GetItem the author's<br/>follower count\n  DDB-->>PS: the count\n  PS->>SQS: SendMessage\n  Note over PS,SQS: post id, author id,<br/>created_at, celebrity flag\n  SQS-->>PS: message id\n  alt the queue accepted it\n    PS-->>Edge: 201 Created\n    Edge-->>App: 201\n  else SQS unreachable after retries\n    PS-->>Edge: 503 instead<br/>of the 201\n    Edge-->>App: 503\n    App->>Edge: retry, same key\n    Note over App,PS: same post id from the key item,<br/>the send repeats\n  end\n  opt the 201 was lost\n    App->>Edge: retry, same key\n    Edge->>PS: HTTP\n    PS->>DDB: PutItem the key<br/>item again\n    DDB-->>PS: ConditionalCheckFailed\n    PS->>DDB: GetItem the key item\n    DDB-->>PS: the post id\n    Note over PS,DDB: no new post, the send repeats\n  end",
+            "mermaid": "sequenceDiagram\n  autonumber 10\n  participant App as Author's app\n  participant Edge\n  participant PS as Post svc\n  participant DDB as DynamoDB\n  participant SQS as SQS queue\n  Note over PS: holds the durable post\n  PS->>DDB: GetItem the author's<br/>follower count\n  DDB-->>PS: the count\n  PS->>SQS: SendMessage\n  Note over PS,SQS: post id, author id,<br/>created_at, celebrity flag\n  SQS-->>PS: message id\n  alt the queue accepted it\n    PS-->>Edge: 201 Created\n    Edge-->>App: 201\n  else SQS unreachable after retries\n    PS-->>Edge: 503 instead<br/>of the 201\n    Edge-->>App: 503\n    App->>Edge: retry, same key\n    Note over App,PS: same post id from the key item,<br/>the send repeats\n  end\n  opt the 201 was lost\n    App->>Edge: retry, same key\n    Edge->>PS: HTTP\n    PS->>DDB: PutItem the key<br/>item again\n    DDB-->>PS: ConditionalCheckFailed\n    PS->>DDB: GetItem the key item\n    DDB-->>PS: the post id\n    Note over PS,DDB: same id, the post PutItem<br/>and the send repeat\n  end",
             "legend": "The send at step 12 is a synchronous call and the 201 waits for it; the queue's consumers are the asynchronous part. The follower count read at step 10 gives the celebrity flag. Sources: the interface endpoint s39; the SDK retry s43; the conditional PutItem s44.",
             "cites": [
               "s39",
@@ -1547,8 +1547,8 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 35\n  participant App as Follower's app\n  participant Edge\n  participant PS as Post svc\n  participant DDB as DynamoDB follows\n  participant TL as Timeline cache\n  App->>Edge: POST /follows\n  Edge->>PS: HTTP, a healthy task\n  PS->>DDB: PutItem the follow,<br/>if not there\n  Note over PS,DDB: a repeat fails the condition,<br/>204, count unchanged\n  DDB-->>PS: ok\n  PS->>DDB: UpdateItem the count,<br/>ADD 1, return it\n  DDB-->>PS: the new count\n  PS->>TL: SADD, pending set\n  opt the count is at or above the threshold\n    PS->>TL: SADD, celebrity set\n  end\n  PS-->>Edge: 204\n  Edge-->>App: 204\n  App->>Edge: DELETE /follows\n  Edge->>PS: HTTP\n  PS->>DDB: DeleteItem the follow\n  PS->>DDB: UpdateItem the count,<br/>ADD -1\n  PS->>TL: SREM, both sets\n  PS-->>Edge: 204\n  Edge-->>App: 204",
-            "legend": "Solid arrows are synchronous calls with their replies dashed. Edge is CloudFront in front of the load balancer, as in part a. The count is an atomic counter s48 moved by a second call, so it is approximate; the three cache keys of one user carry the same hash tag and sit in one slot s49.",
+            "mermaid": "sequenceDiagram\n  autonumber 35\n  participant App as Follower's app\n  participant Edge\n  participant PS as Post svc\n  participant DDB as DynamoDB follows\n  participant TL as Timeline cache\n  App->>Edge: POST /follows\n  Edge->>PS: HTTP, a healthy task\n  PS->>DDB: PutItem the follow,<br/>if not there\n  Note over PS,DDB: a repeat fails the condition,<br/>204, count unchanged\n  DDB-->>PS: ok\n  PS->>DDB: UpdateItem the count,<br/>ADD 1, return it\n  DDB-->>PS: the new count\n  PS->>TL: SADD, pending set\n  opt the count is at 800,000 or more\n    PS->>TL: DEL the celebrity set\n  end\n  PS-->>Edge: 204\n  Edge-->>App: 204\n  App->>Edge: DELETE /follows\n  Edge->>PS: HTTP\n  PS->>DDB: DeleteItem the follow,<br/>return the old item\n  PS->>DDB: UpdateItem the count,<br/>ADD -1 if one came back\n  PS->>TL: SREM, both sets\n  PS-->>Edge: 204\n  Edge-->>App: 204",
+            "legend": "Solid arrows are synchronous calls with their replies dashed. Edge is CloudFront in front of the load balancer, as in part a. The count is an atomic counter s48 moved by a second call, so it is approximate; the three cache keys of one user carry the same hash tag and sit in one slot s49. A follow of a celebrity drops the follower's celebrity set instead of adding to it, so no set is ever partial: the next read builds it whole (read part a2). The unfollow moves the count only when the delete returned an item, since an atomic counter is not idempotent s48.",
             "cites": [
               "s48",
               "s49"
@@ -1585,7 +1585,7 @@
               ],
               [
                 "Post service (task role)",
-                "PutItem and GetItem on the idempotency-key items; PutItem on the posts table; GetItem on the author's follower count; SendMessage on the queue; for the follow calls PutItem and DeleteItem on the follows table, UpdateItem on the follower counts and writes to the pending and celebrity sets in the timeline cache; signs the upload URLs for the media bucket (s3:PutObject)",
+                "PutItem and GetItem on the idempotency-key items; PutItem on the posts table; GetItem on the author's follower count; SendMessage on the queue; for the follow calls PutItem and DeleteItem on the follows table, UpdateItem on the follower counts, SADD and SREM on the pending set and DEL and SREM on the celebrity set in the timeline cache; signs the upload URLs for the media bucket (s3:PutObject)",
                 "DynamoDB gateway endpoint; SQS interface endpoint (HTTPS only inside a VPC); the Valkey port inside the VPC",
                 "no; private subnet, admits the load balancer's security group only"
               ],
@@ -1597,7 +1597,7 @@
               ],
               [
                 "Feed service (task role)",
-                "Query on the posts table and its author_id index and on the follows table, with its index by follower; BatchGetItem on the posts table and on the follower counts; reads and writes on both caches (the timeline rebuild and merge, the celebrity and pending sets, the content fills); the ranking service by its Service Connect name",
+                "Query on the posts table and its author_id index and on the follows table, with its index by follower; BatchGetItem on the posts table and on the follower counts; reads and writes on both caches (the timeline rebuild and merge, the celebrity set (built whole, with a marker and a TTL) and the pending set, the content fills); the ranking service by its Service Connect name",
                 "DynamoDB gateway endpoint; the Valkey port and the Service Connect proxy inside the VPC",
                 "no; private subnet, admits the load balancer's security group only"
               ],
@@ -1609,7 +1609,7 @@
               ],
               [
                 "Thumbnail function (Lambda execution role)",
-                "GetObject on the uploads and PutObject for the thumbnails in the media bucket; started by the bucket's object-created event; not priced here",
+                "GetObject on the uploads prefix and PutObject under the thumbnails prefix of the media bucket; started by the object-created event of the uploads prefix only, so the function cannot start itself; not priced here",
                 "not attached to the VPC; the S3 notification invokes it s52",
                 "no; nothing can call it except the bucket"
               ],
@@ -1670,15 +1670,23 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 10\n  participant FS as Feed svc\n  participant TL as Timeline cache\n  participant DDB as DynamoDB\n  FS->>TL: SMEMBERS the celebrity set<br/>and the pending set\n  TL-->>FS: both sets\n  opt the celebrity set is missing\n    FS->>DDB: Query the followees,<br/>BatchGetItem their counts\n    DDB-->>FS: the counts\n    FS->>TL: SADD the ones at or above<br/>the threshold, with a TTL\n  end\n  opt followees are pending\n    FS->>DDB: Query the author_id index,<br/>last 48 hours, per followee\n    DDB-->>FS: their recent post ids\n    FS->>TL: write the list back merged,<br/>SREM the pending ones\n  end\n  Note over FS: celebrity ids and list ready,<br/>on to part b",
-            "legend": "Every arrow is synchronous. The three keys of one user carry the same hash tag, so the two SMEMBERS calls travel with the LRANGE of part a in one pipeline s49. The DynamoDB lane is the follows table with its follower index and the follower counts, and the posts table with its author_id index.",
+            "mermaid": "sequenceDiagram\n  autonumber 10\n  participant FS as Feed svc\n  participant TL as Timeline cache\n  participant DDB as DynamoDB\n  FS->>TL: SMEMBERS the celebrity set<br/>and the pending set\n  TL-->>FS: both sets\n  opt the celebrity set is missing\n    FS->>DDB: Query the followees,<br/>BatchGetItem their counts\n    DDB-->>FS: the counts\n    FS->>TL: SADD the marker and the ones at<br/>800,000 or more, EXPIRE 7 days\n  end\n  opt followees are pending\n    FS->>DDB: Query the author_id index,<br/>last 48 hours, per followee\n    DDB-->>FS: their recent post ids\n    FS->>TL: write the list back merged,<br/>SREM the pending ones\n  end\n  Note over FS: celebrity ids and list ready,<br/>on to part b",
+            "legend": "Every arrow is synchronous. The three keys of one user carry the same hash tag, so the two SMEMBERS calls could travel with the LRANGE of part a in one pipeline s49, and are drawn after the rebuild. The set is written whole in one MULTI with its EXPIRE and a marker member that is no author's id: a set with no member is no key s8, so without the marker an empty answer could not be told from a missing set. The DynamoDB lane is the follows table with its follower index and the follower counts, and the posts table with its author_id index.",
             "cites": [
+              "s8",
               "s49"
             ]
           },
           {
             "type": "p",
-            "text": "The celebrity set, the neutral list of the celebrities a user follows, is cached per user beside the timeline and rebuilt from the followees' follower counts when it is missing; a follow of a celebrity adds to it at once. The pending set holds the followees followed since the last read: the read that finds one merges that followee's last 48 hours of posts into the timeline and clears the mark, so a wave of follows costs one read each and no write at follow time. A lost cache node loses both sets with the timeline, and the rebuild reads the current follows, so nothing stays pending."
+            "text": "The celebrity set, the neutral list of the celebrities a user follows, is cached per user beside the timeline and built whole when it is missing: the followees' follower counts are read once, and the set holds the followees at 800,000 followers or more, below the 1 million at which fan-out stops, plus a marker member that is no author's id, written with its seven-day TTL in one transaction. A set with no member is no key s8, so the marker is what tells a built set that is empty of celebrities from a missing one; without it the rebuild would run on every open. A follow of a celebrity drops the set and the next read builds it again with the new followee, so no set is ever partial. A follower whose set predates an author's crossing still gets the posts, because the author was in the band and so was fanned out and merged, the repeat dropped; only an author who goes from under 800,000 to over 1 million followers within one TTL waits for the sets to expire, up to seven days.",
+            "cites": [
+              "s8"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "The pending set holds the followees followed since the last read: the read that finds one merges that followee's last 48 hours of posts into the timeline and clears the mark, so a wave of follows costs one read each and no write at follow time. A lost cache node loses both sets with the timeline, and the rebuild reads the current follows, so nothing stays pending."
           },
           {
             "type": "p",
@@ -1960,9 +1968,9 @@
               ],
               [
                 "Posts and the author_id index",
-                "DynamoDB on-demand, a year of posts stored, with the idempotency-key items",
-                "about $336",
-                "about $3,360"
+                "DynamoDB on-demand, a year of posts stored, with the idempotency-key items and the weekly rebuild of the celebrity sets",
+                "about $872",
+                "about $8,720"
               ],
               [
                 "Post events",
@@ -1973,8 +1981,8 @@
               [
                 "Total",
                 "the five lines above; CloudFront, S3, ranking, the follows table and data transfer not priced",
-                "about $5,500, about $0.0005 per active user",
-                "about $52,000, about $0.0005 per active user"
+                "about $6,000, about $0.0006 per active user",
+                "about $57,300, about $0.0006 per active user"
               ]
             ],
             "cites": [
@@ -1989,7 +1997,7 @@
           },
           {
             "type": "p",
-            "text": "Two lines dominate: the timeline cache, because memory for every active user's list is held all month, and the feed compute, because the tasks are sized for the peak plus a spare third. Everything else together is about 15 percent of the bill, so the levers are the cache's usable memory per node and the celebrity threshold, which moves work between fan-out and read time.",
+            "text": "Two lines dominate: the timeline cache, because memory for every active user's list is held all month, and the feed compute, because the tasks are sized for the peak plus a spare third. Everything else together is about 23 percent of the bill, so the levers are the cache's usable memory per node and the celebrity threshold, which moves work between fan-out and read time.",
             "cites": [
               "s17",
               "s18",
@@ -2028,7 +2036,7 @@
                 "IdempotencyKey",
                 "author_id, idempotency_key, post_id, expires_at",
                 "author_id and idempotency_key",
-                "written before the post, read on a retry, and expired after 24 hours"
+                "written before the post, read on a retry, and eligible for deletion after 24 hours (a read treats an expired item as absent)"
               ],
               [
                 "FollowerCount",
@@ -2052,7 +2060,7 @@
                 "CelebrityFollows",
                 "user_id, then the list of celebrity ids the user follows",
                 "by user_id",
-                "small, cached per user, read on every feed open for the merge; rebuilt from the followees' follower counts with the timeline, and a follow of a celebrity adds to it"
+                "small, cached per user, read on every feed open for the merge; built whole from the followees' follower counts (authors from 800,000 followers) with a marker member and a 7-day TTL, dropped by a follow of a celebrity so the next read builds it again, and cleaned by an unfollow"
               ]
             ],
             "cites": [
@@ -2266,6 +2274,11 @@
                 "Event redelivered (at-least-once)",
                 "the post id is appended to a timeline twice",
                 "the feed service drops repeated ids when it merges; the repeat holds a slot until the trim"
+              ],
+              [
+                "Author crosses the celebrity threshold",
+                "followers whose celebrity set predates the crossing could miss the author's posts",
+                "the set holds authors from 800,000 followers, below the 1 million of the fan-out flag, so the posts are fanned out and merged in the band, the repeat dropped; an author who jumps the band within one set TTL (7 days) is merged only after the sets expire"
               ]
             ]
           }
@@ -2439,10 +2452,10 @@
               ],
               [
                 "Posts: DynamoDB on-demand",
-                "one write unit per post, one for the author_id index and one for the idempotency-key item; half a read unit per post for the follower count; a tenth of feed opens read the store; a year of posts stored",
+                "one write unit per post, one for the author_id index and one for the idempotency-key item; half a read unit per post for the follower count; about 100 read units for each rebuild of a celebrity set, once a week for each active user; a tenth of feed opens read the store; a year of posts stored",
                 "$0.625 per million writes, $0.125 per million reads, $0.25 per GB-month",
-                "about $336",
-                "about $3,360"
+                "about $872",
+                "about $8,720"
               ],
               [
                 "Post events: SQS standard",
@@ -2453,10 +2466,10 @@
               ],
               [
                 "Total on AWS",
-                "the five lines above; CDN, media, ranking, the follows table and data transfer not priced; a little over a third of the neutral total because the neutral unit prices were deliberately round and conservative",
+                "the five lines above; CDN, media, ranking, the follows table and data transfer not priced; about 40 percent of the neutral total because the neutral unit prices were deliberately round and conservative",
                 "",
-                "about $5,500 / month, about $0.0005 per active user",
-                "about $52,000 / month, about $0.0005 per active user"
+                "about $6,000 / month, about $0.0006 per active user",
+                "about $57,300 / month, about $0.0006 per active user"
               ]
             ],
             "cites": [
@@ -2599,6 +2612,11 @@
       "version": 14,
       "date": "2026-10-16",
       "change": "second read of v13 (F2-NF-READ addendum): two legends corrected (keys of different hash slots cannot share an MGET, so one MGET per hash slot, not per node); the neutral part b lead-in cut to one sentence, its other two sentences moved into that diagram's legend; no diagram, flow block or price touched; changes needed on the celebrity set (an empty set is no key; a set created by SADD is partial; an author who crosses the threshold) (reviews/learning-center-F2-NF-read.md); reviewed_by stays null"
+    },
+    {
+      "version": 15,
+      "date": "2026-10-16",
+      "change": "fix round 2 after the second read (F2-NF-FIX): the celebrity set is built whole with a marker member and a 7-day TTL so an empty set is told from a missing one, a follow of a celebrity drops the set instead of adding to it, the set holds authors from 800,000 followers (a band below the 1 million of the fan-out flag) and the remaining jump case is stated; the rebuild is priced (DynamoDB about $872 and $8,720 a month, totals about $6,000 and $57,300); the unfollow moves the count only when an item came back, the key item's deletion lag, the thumbnail trigger on the uploads prefix only; flows and message counts unchanged; reviewed_by stays null"
     }
   ]
 }
