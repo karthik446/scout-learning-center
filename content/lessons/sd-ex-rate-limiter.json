@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-rate-limiter",
-  "version": 3,
+  "version": 4,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: API rate limiter",
@@ -1097,7 +1097,7 @@
               ],
               [
                 "Gateway tasks (task role)",
-                "the backend tasks; the Valkey cluster; PutMetricData on CloudWatch; nothing on DynamoDB",
+                "the backend tasks; the Valkey cluster; the policy service for the policy set, at start and after a missed push; PutMetricData on CloudWatch; nothing on DynamoDB",
                 "the Valkey port and Cloud Map DNS names inside the VPC; the CloudWatch interface endpoint",
                 "no; private subnet, admits the load balancer's and the policy service's security groups"
               ],
@@ -1105,7 +1105,7 @@
                 "Policy service (task role)",
                 "Query and PutItem on the policies table; HTTP push to the gateway tasks",
                 "DynamoDB gateway endpoint; Cloud Map DNS names",
-                "no; private subnet, reached by the operators' tooling and nothing else"
+                "no; private subnet, reached by the operators' tooling and the gateway tasks, nothing else"
               ],
               [
                 "Backend services",
@@ -1153,7 +1153,7 @@
               },
               {
                 "option": "An AWS WAF rate-based rule on the load balancer",
-                "pick_when": "the limit is per source IP, or per header or cookie value, over a window of a minute or more, and a blocked request should never reach the gateway tasks",
+                "pick_when": "the limit is per source IP or per header value, over a window of a minute or more, and a blocked request should never reach the gateway tasks",
                 "avoid_when": "the limit is per second with a burst, or per API key with tier policies: the shortest evaluation window is a minute and enforcement is near the limit, not exact",
                 "example": "For this design: not chosen for the key limit. It is the right tool for the per-IP abuse limiter that the clarifying questions set aside, and the Reliability pillar lists a missing per-IP limit as an anti-pattern."
               }
@@ -1218,7 +1218,7 @@
               {
                 "option": "Amazon EKS",
                 "pick_when": "the organisation already runs Kubernetes and needs its ecosystem (a service mesh, operators, portability across clouds)",
-                "avoid_when": "the workload is one fleet of identical gateway tasks and a small service; the cluster fee and the upgrade cadence buy nothing",
+                "avoid_when": "the workload is one fleet of identical gateway tasks and a small service; the upgrade cadence buys nothing",
                 "example": "For this design: not chosen. Nothing here needs the Kubernetes API, and a cluster brings three major releases a year to track for two kinds of container."
               }
             ],
@@ -1336,7 +1336,7 @@
           },
           {
             "type": "table",
-            "caption": "What the picks cost at AWS list prices for US East (N. Virginia) as of 2026-10-16, at 730 hours a month; the unit prices are read from the Price List Bulk API and prices change.",
+            "caption": "What the picks cost at AWS list prices for US East (N. Virginia) as of 2026-10-16, at 730 hours a month, with no free tier applied; the unit prices are read from the Price List Bulk API and prices change.",
             "columns": [
               "component",
               "AWS service",
@@ -1352,7 +1352,7 @@
               ],
               [
                 "Shared counters",
-                "ElastiCache for Valkey, cache.m7g.large nodes, a replica per shard",
+                "ElastiCache for Valkey, cache.m7g.large nodes, a replica per shard; at most 100,000 commands a second, one shard at the design point and three at ten times (assumption)",
                 "about $185 (2 nodes)",
                 "about $550 (6 nodes)"
               ],
@@ -1845,6 +1845,11 @@
       "version": 3,
       "date": "2026-10-16",
       "change": "AWS pass (building-it-on-aws, flow block, sequence diagrams): the neutral high-level design is a flow block; the neutral core flow is two sequence diagrams and a short steps block for the bucket sizing; a Building it on AWS section after the high-level design (one flow block for the architecture, three sequence diagrams, an identity-and-network table, four decision blocks, the Well-Architected table over six pillars and the throttling practice, one cost table with list prices read on 2026-10-16); sources s11 to s42 added, each fetched on 2026-10-16; technologies and related filled; reviewed_by cleared for a second read"
+    },
+    {
+      "version": 4,
+      "date": "2026-10-16",
+      "change": "second read of the AWS pass (E1B): mechanical corrections only; the identity table now says the gateway tasks call the policy service for the policy set at start and after a missed push (the policy path diagram shows the call); the WAF decision cell names source IP and header, not a cookie (the cited page names no cookie); the uncited cluster fee clause is cut from the EKS cell; the Valkey cost row states its basis (at most 100,000 commands a second, one shard and three, assumption); the cost caption says no free tier is applied; findings left for the writer in reviews/learning-center-F2-E1B-read.md; reviewed_by stays null"
     }
   ],
   "sim": {
