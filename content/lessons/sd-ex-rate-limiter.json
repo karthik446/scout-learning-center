@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-rate-limiter",
-  "version": 9,
+  "version": 10,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: API rate limiter",
@@ -549,6 +549,17 @@
         "http": 200,
         "section_found": "global secondary index"
       }
+    },
+    {
+      "id": "s47",
+      "title": "Amazon DynamoDB Developer Guide: Using IAM with DynamoDB transactions (the permissions of the underlying item actions)",
+      "url": "https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/transaction-apis-iam.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "are governed by the permissions used for the underlying"
+      }
     }
   ],
   "practice": null,
@@ -1040,7 +1051,7 @@
                 "from": "GW",
                 "to": "VK",
                 "kind": "async",
-                "label": "one pipeline every 100 ms: INCRBY, EXPIRE and GET per active key, cache write and read, off the request path",
+                "label": "one pipeline every 100 ms: INCRBY, EXPIRE and MGET per active key, cache write and read, off the request path",
                 "short": "Pipeline / 100 ms"
               },
               {
@@ -1068,8 +1079,8 @@
                 "from": "PS",
                 "to": "PT",
                 "kind": "sync",
-                "label": "TransactWriteItems to edit or delete (a delete writes a tombstone); Query of the change-version index and GetItem of the version, once a second, over the gateway endpoint, sync",
-                "short": "Edit, refresh"
+                "label": "GetItem of the version, then TransactWriteItems to edit or delete (the version moves from N to N+1 under a condition, with a change-log entry); a strongly consistent Query of the change log once a second, over the gateway endpoint, sync",
+                "short": "Edit, read log"
               },
               {
                 "from": "GW",
@@ -1094,7 +1105,7 @@
               },
               {
                 "edge": 3,
-                "caption": "Gateway tasks to Shared counter store: one pipeline every 100 ms: INCRBY, EXPIRE and GET per active key, cache write and read, off the request path"
+                "caption": "Gateway tasks to Shared counter store: one pipeline every 100 ms: INCRBY, EXPIRE and MGET per active key, cache write and read, off the request path"
               },
               {
                 "edge": 4,
@@ -1110,14 +1121,14 @@
               },
               {
                 "edge": 7,
-                "caption": "Policy service to Policies table: TransactWriteItems to edit or delete (a delete writes a tombstone); Query of the change-version index and GetItem of the version, once a second, over the gateway endpoint, sync"
+                "caption": "Policy service to Policies table: GetItem of the version, then TransactWriteItems to edit or delete (the version moves from N to N+1 under a condition, with a change-log entry); a strongly consistent Query of the change log once a second, over the gateway endpoint, sync"
               },
               {
                 "edge": 8,
                 "caption": "Gateway tasks to CloudWatch: PutMetricData with statistic sets every 10 s over the interface endpoint, async"
               }
             ],
-            "legend": "The architecture, the same boxes as the neutral diagram, one AWS service each: the load balancer is an Application Load Balancer, the 20 gateway nodes are ECS on Fargate tasks that keep the local buckets in memory, the shared counter store is an ElastiCache for Valkey cluster with a replica in another zone that takes over on failure s14, the backend services and the policy service are ECS on Fargate services, and the metrics go to CloudWatch. The policies table and the operators are the two boxes the neutral diagram leaves implicit; the clients and the operators reach only the load balancer. The neutral diagram's push becomes the poll, and the poll carries removals: every policy item has a change version, a delete is an update that sets a deleted marker (a tombstone) and a new change version in the same transaction as the version bump, and the policy service answers \"since version N\" from a global secondary index on the change version s46, tombstones included, so a task applies a removal as it applies a change; a task that starts with no set is not ready (its health check fails, so the load balancer sends it nothing) until its first poll has returned the whole set. The CloudWatch alarms that the operators watch are the reader of the metrics. Tasks find the backends and the policy service through AWS Cloud Map DNS names s13; a lookup returns up to eight healthy records, which is enough for the two policy tasks and enough to spread load over the backends, and it is why no box here depends on one lookup reaching every gateway task. Policies are not pushed: each gateway task asks the policy service for anything newer than its version every 5 seconds, so an edit reaches every task within about 6 seconds (the policy service refreshes from the table once a second, then the 5 s poll), and a task that cannot reach the policy service keeps the set it has. Operators edit through the load balancer: its admin listener rule authenticates them with Amazon Cognito or an OIDC provider before forwarding s43. Calls to DynamoDB go over a gateway endpoint s18 and the metrics over an interface endpoint s19; the counter correction is one pipelined call per report, with an EXPIRE that gives each window key a timeout so that old windows delete themselves s45 s15. Sync means the caller waits for the answer; async means the work goes on after the request has been answered. The VPC frames are one VPC in one Region across three Availability Zones.",
+            "legend": "The architecture, the same boxes as the neutral diagram, one AWS service each: the load balancer is an Application Load Balancer, the 20 gateway nodes are ECS on Fargate tasks that keep the local buckets in memory, the shared counter store is an ElastiCache for Valkey cluster with a replica in another zone that takes over on failure s14, the backend services and the policy service are ECS on Fargate services, and the metrics go to CloudWatch. The policies table, with its log, and the operators are the two boxes the neutral diagram leaves implicit; the clients and the operators reach only the load balancer. The neutral diagram's push becomes the poll, and the poll carries removals: every edit or delete is one transaction that moves the version item from N to N+1 under a condition on N, writes or deletes the policy item and writes a change-log entry under the key N+1, in one partition of the table named log; the policy service reads that log with a strongly consistent Query, not through a global secondary index, because an index is updated asynchronously s46; versions are consecutive, so a service that has applied the log up to its watermark W holds every change up to W, and it answers a task \"above N\" with the changes above N, deletions included, stamped W, so the version a task holds only ever moves to one whose changes it has. A task that starts with no set is not ready (its health check fails, so the load balancer sends it nothing) until its first poll has returned the whole set; while the policy service is down no new task can become ready, so the running tasks keep deciding but the fleet cannot grow. The CloudWatch alarms that the operators watch are the reader of the metrics. Tasks find the backends and the policy service through AWS Cloud Map DNS names s13; a lookup returns up to eight healthy records, which is enough for the two policy tasks and enough to spread load over the backends, and it is why no box here depends on one lookup reaching every gateway task. Policies are not pushed: each gateway task asks the policy service for anything newer than its version every 5 seconds, so an edit reaches every task within about 6 seconds (the policy service refreshes from the table once a second, then the 5 s poll), and a task that cannot reach the policy service keeps the set it has. Operators edit through the load balancer: its admin listener rule authenticates them with Amazon Cognito or an OIDC provider before forwarding s43. Calls to DynamoDB go over a gateway endpoint s18 and the metrics over an interface endpoint s19; the counter correction is one pipelined call per report, with an EXPIRE that gives each window key a timeout so that old windows delete themselves s45 s15. Sync means the caller waits for the answer; async means the work goes on after the request has been answered. The VPC frames are one VPC in one Region across three Availability Zones.",
             "cites": [
               "s11",
               "s12",
@@ -1155,8 +1166,8 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 9\n  participant GW as Gateway task\n  participant VK as Valkey\n  participant CW as CloudWatch\n  loop every 100 ms\n    GW->>VK: one pipeline per report\n    Note over GW,VK: INCRBY, EXPIRE and GET<br/>per active key\n    VK-->>GW: this and last window\n  end\n  Note over GW: over the limit globally:<br/>tighten the local bucket\n  GW-)CW: PutMetricData, every 10 s\n  Note over GW,CW: allowed, rejected, overshoot\n  opt Valkey slow or failing over\n    GW->>VK: call times out\n    Note over GW: fail open, local buckets only\n    GW-)CW: store-unreachable metric\n  end",
-            "legend": "The open arrow at step 11 is a hand-off the loop does not wait on. Each report is one pipelined round trip with an INCRBY, an EXPIRE and a GET per active key s15, s16; at most 250 keys per node per report, since a node decides 2,500 times a second. A failover to the replica s14 is a window in which the call times out and the node enforces its local buckets alone. The metrics are statistic sets, one call carrying many data points s17.",
+            "mermaid": "sequenceDiagram\n  autonumber 9\n  participant GW as Gateway task\n  participant VK as Valkey\n  participant CW as CloudWatch\n  loop every 100 ms\n    GW->>VK: one pipeline per report\n    Note over GW,VK: INCRBY, EXPIRE and MGET<br/>per active key\n    VK-->>GW: this and last window\n  end\n  Note over GW: over the limit globally:<br/>tighten the local bucket\n  GW-)CW: PutMetricData, every 10 s\n  Note over GW,CW: allowed, rejected, overshoot\n  opt Valkey slow or failing over\n    GW->>VK: call times out\n    Note over GW: fail open, local buckets only\n    GW-)CW: store-unreachable metric\n  end",
+            "legend": "The open arrow at step 11 is a hand-off the loop does not wait on. Each report is one pipelined round trip with an INCRBY, an EXPIRE and one MGET of the two window keys per active key s15, s16; at most 250 keys per node per report, since a node decides 2,500 times a second. A failover to the replica s14 is a window in which the call times out and the node enforces its local buckets alone. The metrics are statistic sets, one call carrying many data points s17.",
             "cites": [
               "s15",
               "s16",
@@ -1175,8 +1186,8 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 14\n  participant Op as Operator\n  participant Edge as Load balancer\n  participant PS as Policy service\n  participant DDB as DynamoDB\n  participant GW as Gateway task\n  Op->>Edge: HTTPS, edit or delete a policy\n  Note over Op,Edge: the admin rule authenticates<br/>the operator first\n  Edge->>PS: HTTP, the admin path\n  PS->>DDB: transaction: policy or tombstone,<br/>version +1\n  DDB-->>PS: ok\n  PS-->>Edge: saved\n  Edge-->>Op: saved\n  loop every second, each policy task\n    PS->>DDB: Query the change index,<br/>GetItem the version\n    DDB-->>PS: the changes and tombstones\n  end\n  loop every 5 s, each gateway task\n    GW->>PS: GET changes since N\n    alt nothing newer\n      PS-->>GW: 304, same version\n    else a newer version\n      PS-->>GW: changes and tombstones, N+1\n    end\n  end\n  Note over GW: applies changes and removals,<br/>cached until the next poll\n  opt the policy service is down\n    Note over GW: cached policies still apply\n  end",
-            "legend": "A new task starts with no set and is not ready, so the load balancer sends it no request, until its first poll, \"since version 0\", has returned the whole set without tombstones; this is the policies() call of the neutral API, now the same call every 5 seconds. A change is one transaction on the policy item, or its tombstone, and a version item, so a reader never sees a new version with old policies; the tombstone is what makes a lifted limit reach every task, because a task that only received changed items would keep a removed policy. The two policy tasks load the whole set at start, then each second ask a global secondary index on the change version for everything above the last version they hold s46, and answer the tasks from memory; the bound from an edit to every task is about 6 seconds, and a policy-service outage delays changes but never a decision. The policy service is found by its service discovery DNS name s13, and DynamoDB is reached over a gateway endpoint s18.",
+            "mermaid": "sequenceDiagram\n  autonumber 14\n  participant Op as Operator\n  participant Edge as Load balancer\n  participant PS as Policy service\n  participant DDB as DynamoDB\n  participant GW as Gateway task\n  Op->>Edge: HTTPS, edit or delete a policy\n  Note over Op,Edge: the admin rule authenticates<br/>the operator first\n  Edge->>PS: HTTP, the admin path\n  PS->>DDB: GetItem, the version N\n  DDB-->>PS: N, strongly consistent\n  PS->>DDB: transaction: N to N+1,<br/>policy or removal, log entry\n  alt the transaction commits\n    DDB-->>PS: ok\n    PS-->>Edge: saved\n    Edge-->>Op: saved\n  else the version condition fails\n    DDB-->>PS: canceled, version condition\n    Note over PS: another edit got N first:<br/>read N again and retry\n  end\n  loop every second, each policy task\n    PS->>DDB: Query the log above W,<br/>strongly consistent\n    DDB-->>PS: the newer entries\n  end\n  loop every 5 s, each gateway task\n    GW->>PS: GET the changes above N\n    alt nothing above N\n      PS-->>GW: 304, same version\n    else changes above N\n      PS-->>GW: changes and removals, W\n    end\n  end\n  Note over GW: applies them, N becomes W,<br/>cached until the next poll\n  opt the policy service is down\n    Note over GW: cached policies still apply\n  end",
+            "legend": "A new task starts with no set and is not ready, so the load balancer sends it no request, until its first poll, \"above version 0\", has returned the whole set; this is the policies() call of the neutral API, now the same call every 5 seconds, and while the policy service is down no new task can become ready, so the fleet cannot grow, although the running tasks keep deciding. The version is read first and the transaction conditions on it, so two edits never take the same number and the log has no gaps. The log is kept in the table, not in an index, because an index is updated asynchronously and could show the version before the entry s46; it sits under one partition key with the version as sort key, which is safe because edits are rare, and entries expire after a week. A policy service task starts by reading the version, loading every policy item, and then reading the log from that version, so an entry that commits during the load is replayed, and applying one twice changes nothing; its watermark W is the newest entry applied. The guarantee: a committed change reaches every task that keeps polling, because the version a task holds only moves to the W of a service that has applied everything up to W, and a task that is ahead of a lagging service just hears \"nothing above N\"; a task whose N is older than the service's oldest log entry gets the whole set instead. The bound from an edit to every task is about 6 seconds, and a policy-service outage delays changes but never a decision. The policy service is found by its service discovery DNS name s13, and DynamoDB is reached over a gateway endpoint s18.",
             "cites": [
               "s13",
               "s18",
@@ -1185,7 +1196,7 @@
           },
           {
             "type": "table",
-            "caption": "Identity and network: who may call what, over which endpoint, and what is public. Only the load balancer is public: it sits in the VPC's public subnets. Every ECS service and the cache run in private subnets across three Availability Zones in awsvpc mode, one network interface per task, each service under its own IAM task role, so permissions go to the task and not to a host. A task in a private subnet pulls its image through the Amazon ECR interface endpoints and an S3 gateway endpoint, and this design uses those, not a NAT gateway.",
+            "caption": "Identity and network: who may call what, over which endpoint, and what is public. Only the load balancer is public: it sits in the VPC's public subnets. Every ECS service and the cache run in private subnets across three Availability Zones in awsvpc mode, one network interface per task, each service under its own IAM task role, so permissions go to the task and not to a host. A task in a private subnet pulls its image through the Amazon ECR interface endpoints and an S3 gateway endpoint, and this design uses those, not a NAT gateway. For a transaction a role needs the item actions the transaction contains, PutItem, UpdateItem, DeleteItem and ConditionCheckItem s47, and each service also has a task execution role, separate from its task role, that pulls the image and writes its logs s20.",
             "columns": [
               "service",
               "may call",
@@ -1207,7 +1218,7 @@
               ],
               [
                 "Policy service (task role)",
-                "TransactWriteItems (an edit, or a delete as a tombstone), GetItem, and Query on the change-version index of the policies table, and nothing else; it makes no call to the gateway tasks",
+                "GetItem on the version item and Query on the log partition of the policies table; PutItem, UpdateItem and DeleteItem on the policy, version and log items, inside the edit transaction; nothing else; it makes no call to the gateway tasks",
                 "DynamoDB gateway endpoint; called by Cloud Map DNS name; the ECR interface endpoints and the S3 gateway endpoint to pull the image",
                 "no; private subnet, admits the load balancer's security group (the admin path) and the gateway tasks' security group"
               ],
@@ -1239,7 +1250,7 @@
               "s13",
               "s43",
               "s44",
-              "s46"
+              "s47"
             ]
           },
           {
@@ -1344,7 +1355,7 @@
                 "option": "Amazon DynamoDB, on-demand",
                 "pick_when": "policies are read by key or pattern, the set is read in full only at start, and writes are rare",
                 "avoid_when": "policy administration needs joins across tiers, customers and endpoints, or ad hoc reporting",
-                "example": "For this design: chosen. A policy is looked up by key or pattern, and the whole set (about 100 MB) is read by the policy service at start and by changes afterwards, through an index on the change version."
+                "example": "For this design: chosen. A policy is looked up by key or pattern, and the whole set (about 100 MB) is read by the policy service at start and by its change log afterwards."
               },
               {
                 "option": "Amazon Aurora PostgreSQL or Amazon RDS",
@@ -1398,7 +1409,7 @@
                 "Reliability",
                 "automatically recover from failure; scale horizontally; stop guessing capacity",
                 "20 gateway tasks over three zones; a Valkey replica in another zone with automatic failover; fail open per policy when the store is unreachable, so the limiter is never the outage",
-                "during a failover, limits loosen by at most the node count times a key's share, and the alarm says so",
+                "during a failover, limits loosen by at most the node count times a key's share, and the alarm says so; while the policy service is down the fleet cannot grow",
                 "s36, s14"
               ],
               [
@@ -1459,13 +1470,13 @@
               ],
               [
                 "Shared counters",
-                "ElastiCache for Valkey, cache.m7g.large nodes, a replica per shard; at most 150,000 commands a second at the design point (3 per key) and 1,500,000 at ten times, so one shard and three (assumption: about 500,000 a second per shard)",
+                "ElastiCache for Valkey, cache.m7g.large nodes, a replica per shard; at most 150,000 commands a second at the design point (3 per key: INCRBY, EXPIRE, MGET) and 1,500,000 at ten times, so one shard and three (assumption: about 500,000 a second per shard)",
                 "about $185 (2 nodes)",
                 "about $550 (6 nodes)"
               ],
               [
                 "Policies",
-                "ECS on Fargate, 2 policy service tasks of 0.5 vCPU and 1 GB, and DynamoDB on-demand for about 100 MB with its change-version index, read once a second by each task",
+                "ECS on Fargate, 2 policy service tasks of 0.5 vCPU and 1 GB, and DynamoDB on-demand for about 100 MB with its change log, read once a second by each task",
                 "about $29",
                 "about $29"
               ],
@@ -1986,6 +1997,11 @@
       "version": 9,
       "date": "2026-10-16",
       "change": "third re-read of the AWS pass (E1B, after fix round 3): one mechanical correction; the counter-store decision's DynamoDB row said 'chosen' with the policy store's sentence (a paste of fix round 3) and now says again that DynamoDB is not chosen for the counters, with the reason of version 7; findings left for the writer in reviews/learning-center-F2-E1B-reread3.md; reviewed_by stays null"
+    },
+    {
+      "version": 10,
+      "date": "2026-10-16",
+      "change": "fix round 4 on the fifth read (E1B): the policy poll can no longer skip a committed change (every edit is one transaction that moves the version from N to N+1 under a condition on N and writes a change-log entry; the policy service reads the log with a strongly consistent Query instead of an eventually consistent index and stamps each answer with its watermark; the guarantee is stated); a new task that cannot become ready while the policy service is down is said to stop the fleet growing; the correction pipeline reads both windows with one MGET; transactions are described by the item actions the role needs, and the task execution role is named; source s47 added; reviewed_by stays null"
     }
   ],
   "sim": {
