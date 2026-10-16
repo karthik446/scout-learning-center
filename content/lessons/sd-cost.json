@@ -1,7 +1,7 @@
 {
   "schema_version": "learning-center-lesson:2",
   "id": "sd-cost",
-  "version": 2,
+  "version": 3,
   "status": "published",
   "superseded_by": null,
   "title": "Cost as a design constraint",
@@ -55,7 +55,7 @@
       },
       {
         "type": "p",
-        "text": "The same post is candid about what the comparison leaves out: a company entirely in the cloud with no racks would pay for colocation too, the savings estimate excludes some of those costs, and the lead time for new servers is weeks rather than minutes. The team running the systems stayed the same size through the move, which is the claim the post rests on for the operating cost.",
+        "text": "The CTO's account notes existing racks and power, and says a company starting on premises would also rent rack space. It reports an unchanged operations team. These are primary company claims, not audited savings; the post does not establish a server-procurement lead time.",
         "cites": [
           "s12"
         ]
@@ -127,7 +127,7 @@
             [
               "Data transfer",
               "gigabytes out, by destination",
-              "inbound and same-zone free",
+              "some transfer paths exempt; processing and endpoint charges are separate",
               "zone layout, NAT, egress to the internet"
             ]
           ],
@@ -139,14 +139,14 @@
         },
         {
           "type": "p",
-          "text": "Data transfer is the term designers forget, and the AWS architecture blog on the subject sets out the rules. Inbound transfer from the internet is free across services and regions; transfer within one Availability Zone is free; transfer out to the internet is charged per service at the originating region's rates; reaching public service endpoints through an internet gateway in the same region carries no transfer charge, but the same path through a NAT gateway carries a data processing charge; and Transit Gateway adds an hourly charge per attachment plus processing per gigabyte.",
+          "text": "The AWS architecture article distinguishes transfer from processing charges. Its examples include free inbound and same-zone transfer, while internet egress depends on service and region. That is not a promise that every same-zone service path is free: NAT processing, service processing and endpoint hourly or data charges can remain. Price the actual source, destination and intermediary services separately, including Transit Gateway attachments and processing where used.",
           "cites": [
             "s10"
           ]
         },
         {
           "type": "p",
-          "text": "The consequence for a design is that the cheapest topology keeps chatty components in one zone where latency allows, places replicas across zones deliberately rather than by accident, and routes traffic to managed services through endpoints rather than NAT. The line that surprises most teams is cross-zone chatter between tiers that were spread across zones for availability without anyone pricing the replication and the calls between them."
+          "text": "Keep chatty paths local only where reliability requirements permit, and compare managed endpoints with NAT using both transfer and endpoint charges. Spreading tiers across zones buys availability but may add cross-zone traffic costs. There is no universal cheapest topology independent of service pricing, traffic and failure requirements."
         },
         {
           "type": "callout",
@@ -173,10 +173,9 @@
         },
         {
           "type": "p",
-          "text": "Azure's first cost principle is to develop a cost model before any tracking: a model that segments expenses, estimates total cost of ownership including support and implementation, identifies the cost drivers early and predicts how growth or shrinkage changes spending. Google's first principle is the same from the other side: cloud resources must deliver measurable business value, which requires aligning spending with business objectives, and a culture in which everyone considering a change has the cost information to weigh it.",
+          "text": "Azure's first cost principle is to develop a cost model before tracking: segment expenses, estimate ownership cost including support and implementation, identify drivers early and predict how growth changes spending. Use that model when proposing changes, so an apparent compute saving does not hide a new network or operating cost. Tie each input to an owner and distinguish measured usage from assumptions; the review needs both the estimate and its uncertainty.",
           "cites": [
-            "s3",
-            "s4"
+            "s3"
           ]
         },
         {
@@ -267,9 +266,9 @@
             ],
             [
               "Serverless per-request pricing",
-              "zero cost at zero load",
+              "usage charges may fall to zero; provisioned or minimum resources may not",
               "spiky or low volume",
-              "per-request cost overtakes a fleet at sustained throughput"
+              "compare full costs and measured equivalent capacity; crossover is workload-dependent"
             ],
             [
               "Queue, buffer, throttle",
@@ -285,7 +284,7 @@
             ],
             [
               "Caching and a CDN",
-              "fewer origin requests and less egress",
+              "fewer origin requests; viewer bytes still need delivery",
               "read-heavy public content",
               "staleness; the cache's own cost"
             ]
@@ -300,7 +299,7 @@
         },
         {
           "type": "p",
-          "text": "The levers interact with the other constraints. Commitments reduce the rate but not the usage, so right-size first and commit second. Spot and scale-to-zero cut cost by accepting interruption or startup delay, which the reliability and capacity lessons price in minutes of error budget and seconds of startup. Per-request pricing is the cheapest design at low volume and the most expensive at high volume, so the choice must be rechecked as load grows, with the crossover computed from the unit prices rather than assumed."
+          "text": "The levers interact with other constraints. Right-size before committing: discounts change rates, not wasted usage. Spot and scale-to-zero accept interruption or startup delay. Per-request pricing can help a low-volume service, but is not universally cheapest there or most expensive at high volume. Compare equivalent measured throughput, minimum resources, ancillary charges and operations. A compute-only crossover is a useful trigger to benchmark alternatives, not proof that an assumed fleet can carry the load."
         },
         {
           "type": "callout",
@@ -529,98 +528,51 @@
     "blocks": [
       {
         "type": "p",
-        "text": "A photo product generates thumbnails for every upload and serves them to the web. The team costs the pipeline on serverless functions and on a small instance fleet. Prices marked stated are taken from the AWS pricing pages as of 2026-10-15 and cited; prices marked assumed are stand-ins that must be checked against the price list before the number is used. The script after the steps recomputes everything."
+        "text": "This illustrative direct-S3 model uses US East N. Virginia and prices checked on 2026-10-15. No CDN is used. Workload, duration and fleet capacity are assumptions. It includes function compute, thumbnail storage, GET requests and internet delivery, but excludes upload PUTs, original images, logs, taxes and operations; it is not a complete account bill."
       },
       {
         "type": "steps",
         "title": "From uploads to a monthly bill and a unit cost",
         "items": [
-          "Uploads: 50 million a month (assumption), each producing one function invocation.",
-          "Function duration: 1 GB of memory for 0.5 seconds per image (assumption, from a test), so 25 million GB-seconds a month.",
-          "Function duration cost: 25 million times $0.0000167 per GB-second (stated) is about $418.",
-          "Function requests: 50 million at $0.20 per million (stated) is $10.",
-          "Thumbnail reads: 200 million GET requests a month (assumption) at $0.0004 per 1,000 (stated) is $80.",
-          "Storage growth: 50 million thumbnails of 200 kB is 10 TB a month, at an assumed $0.023 per GB-month, about $230 for the first month and growing by that each month.",
-          "Egress: 200 million reads of 200 kB is 40 TB a month to the internet, at an assumed $0.09 per GB, about $3,600.",
-          "Serverless total in month one: about $4,340, of which egress is 83 percent, so egress is the dominant term, not compute.",
-          "Fleet alternative: 3 m7g.xlarge instances (assumption) at $0.1632 per hour on demand (stated) for 730 hours is about $357 a month, idle at night.",
-          "Fleet with commitment: the 72 percent three-year Compute Savings Plan discount in the Lambda page's example gives about $100 a month, but commits for three years.",
-          "Crossover: compute is $428 serverless against $357 on demand at 50 million uploads, so the fleet wins only slightly here and loses at lower volume; the choice is not where the money is.",
-          "The lever: a CDN in front of the thumbnails at an assumed 90 percent hit rate cuts origin egress to 4 TB, about $360, if the CDN's own per-gigabyte price is lower, which must be checked on its page.",
-          "Unit cost: about $4,340 over 50 million uploads is $0.087 per 1,000 uploads before the CDN, and about $1,100 over 50 million, $0.022 per 1,000, after it.",
-          "The decider: egress. The compute choice moves tens of dollars; the delivery path moves thousands, and the design review should spend its time there."
+          "Assume 50 million uploads arrive evenly through an initially empty month; each creates one 200,000-byte thumbnail retained through month end. Reads are four times uploads.",
+          "Function duration is an assumed 0.5 GB-second per upload. At $0.0000167 per GB-second the duration charge is $417.50; request charges add $10.",
+          "Direct S3 GETs cost $80 for the assumed 200 million reads at $0.0004 per thousand.",
+          "Storage uses binary billing GB. End occupancy is 9,313.225746 GB; uniform arrivals give 4,656.612873 GB-month, costing $107.102096 at the first-tier $0.023 rate.",
+          "Internet delivery is 37,252.902985 billing GB. Assume the full global 100 GB monthly free allowance is available and no other account usage consumes or advances these aggregated tiers.",
+          "Bill the first 10,240 paid GB at $0.09 and the remaining 26,912.902985 at $0.085: internet delivery costs $3,209.196754.",
+          "The modeled direct-delivery subtotal is $3,823.798850, or $0.076476 per thousand uploads. This is not a quote for excluded charges.",
+          "An assumed fleet of three instances at the provider example's $0.1632 hourly rate for 730 hours costs $357.408 for compute only. No equivalent throughput is established.",
+          "The provider example's 72 percent commitment discount would yield $100.07424 on that compute amount; it is not a discount quote for this workload.",
+          "Compute-only crossover: $357.408 divided by $0.00000855 per upload is 41,802,105 uploads monthly. Benchmark the fleet before treating that as a migration threshold.",
+          "At tenfold independent first-month demand, preserve the workload shape and uniform arrival timing. Storage remains in its first tier; internet egress crosses further tiers, as the table and script show.",
+          "The decider: direct internet delivery dominates the modeled terms. A CDN could reduce origin requests but viewer delivery still costs money; no CDN saving is claimed here."
         ],
         "cites": [
           "s8",
           "s9",
-          "s10"
+          "s4"
         ]
       },
       {
         "type": "table",
-        "caption": "The cost section as the review should receive it: month one at 50 million uploads.",
-        "columns": [
-          "term",
-          "units",
-          "unit price",
-          "monthly",
-          "status of the price"
-        ],
+        "caption": "Independent first-month scenarios, not a forecast of retained storage in a later month. Rounded dollars; the script keeps precision.",
+        "columns": ["modeled term", "50 million uploads", "500 million uploads", "basis"],
         "rows": [
-          [
-            "Function duration",
-            "25 million GB-seconds",
-            "$0.0000167 per GB-second",
-            "$418",
-            "stated on the S3 page's example"
-          ],
-          [
-            "Function requests",
-            "50 million",
-            "$0.20 per million",
-            "$10",
-            "stated on the Lambda page"
-          ],
-          [
-            "GET requests",
-            "200 million",
-            "$0.0004 per 1,000",
-            "$80",
-            "stated on the S3 page"
-          ],
-          [
-            "Storage, first month",
-            "10 TB",
-            "$0.023 per GB-month",
-            "$230",
-            "assumed; check the S3 page"
-          ],
-          [
-            "Egress to the internet",
-            "40 TB",
-            "$0.09 per GB",
-            "$3,600",
-            "assumed; charged per service and region"
-          ],
-          [
-            "Fleet alternative, on demand",
-            "3 instances, 730 hours",
-            "$0.1632 per hour",
-            "$357",
-            "stated on the Lambda page's example"
-          ]
+          ["Function compute and requests", "$427.50", "$4,275.00", "constant unit-price assumption; no compute free allowance"],
+          ["S3 GET requests", "$80.00", "$800.00", "direct reads"],
+          ["S3 average storage", "$107.10", "$1,071.02", "uniform first-month arrivals; binary GB-month"],
+          ["Internet delivery", "$3,209.20", "$22,512.65", "account allowance then tiered rates"],
+          ["Modeled subtotal", "$3,823.80", "$28,658.67", "excludes PUTs and other stated terms"],
+          ["Per thousand uploads", "$0.076476", "$0.057317", "subtotal divided by uploads"],
+          ["Assumed fleet compute only", "$357.41", "not sized", "no throughput equivalence demonstrated"]
         ],
-        "cites": [
-          "s8",
-          "s9",
-          "s10"
-        ]
+        "cites": ["s8", "s9", "s4"]
       },
       {
         "type": "code",
         "lang": "python",
-        "code": "# unit prices as of 2026-10-15; 'stated' ones are on the cited pricing pages, 'assumed' ones must be checked\nuploads = 50_000_000\nreads = 200_000_000\nthumb_bytes = 200_000\ngb_seconds_per_image = 1.0 * 0.5\n\nprice_gb_second = 0.0000167     # stated\nprice_per_m_requests = 0.20     # stated\nprice_get_per_1000 = 0.0004     # stated\nprice_storage_gb_month = 0.023  # assumed\nprice_egress_gb = 0.09          # assumed\nprice_instance_hour = 0.1632    # stated, m7g.xlarge on demand\n\ncompute = uploads * gb_seconds_per_image * price_gb_second + uploads / 1e6 * price_per_m_requests\ngets = reads / 1000 * price_get_per_1000\nstorage = uploads * thumb_bytes / 1e9 * price_storage_gb_month\negress = reads * thumb_bytes / 1e9 * price_egress_gb\nfleet = 3 * 730 * price_instance_hour\n\ntotal = compute + gets + storage + egress\nprint(f\"serverless compute {compute:,.0f}  gets {gets:,.0f}  storage {storage:,.0f}  egress {egress:,.0f}  total {total:,.0f}\")\nprint(f\"fleet on demand {fleet:,.0f}; egress share {egress / total:.0%}; unit cost {total / uploads * 1000:.3f} per 1,000 uploads\")",
-        "caption": "The cost model as a script: change one price or one assumption and the dominant term and the unit cost follow."
+        "code": "# Illustrative direct S3 model; prices checked 2026-10-15.\n# us-east-1, all 100 GB global allowance available, no other tier usage.\n# Uniform arrivals, empty initial store; no compute free allowance.\ndef transfer_cost(gb):\n    remaining = max(gb - 100, 0)\n    cost = 0\n    for capacity, rate in [(10240, .09), (40960, .085), (102400, .07), (float('inf'), .05)]:\n        used = min(remaining, capacity)\n        cost += used * rate\n        remaining -= used\n    return cost\n\nfor uploads in (50_000_000, 500_000_000):\n    reads = 4 * uploads\n    compute = uploads * (.5 * .0000167 + .20 / 1_000_000)\n    gets = reads * .0004 / 1000\n    storage = uploads * 200_000 / 2**30 / 2 * .023\n    egress = transfer_cost(reads * 200_000 / 2**30)\n    total = compute + gets + storage + egress\n    print(uploads, compute, gets, storage, egress, total, total / uploads * 1000)\nfleet = 3 * 730 * .1632\nprint('compute-only crossover', fleet / (.5 * .0000167 + .20 / 1_000_000))",
+        "caption": "Recomputes only the explicitly modeled charges, with higher transfer tiers at growth scale. Flat compute prices remain a scenario assumption at growth scale; real account commitments, free allowances, duration tiers and excluded charges require a fresh quote."
       }
     ]
   },
@@ -682,13 +634,13 @@
     },
     {
       "id": "s4",
-      "title": "Google Cloud Well-Architected Framework, Cost optimization pillar (maintained): align spending with business value, a culture of cost awareness, optimise usage, optimise continuously",
-      "url": "https://docs.cloud.google.com/architecture/framework/cost-optimization",
+      "title": "AWS Bulk Price List, US East N. Virginia internet DataTransfer-Out-Bytes, published 2026-09-16, effective 2026-06-01: tiered outbound rates",
+      "url": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSDataTransfer/20260916132208/us-east-1/index.json",
       "kind": "doc",
       "verified": {
         "checked": "2026-10-15",
         "http": 200,
-        "section_found": "Foster a culture of cost awareness"
+        "section_found": "$0.090 per GB - first 10 TB / month data transfer out beyond the global free tier"
       }
     },
     {
@@ -797,6 +749,11 @@
       "version": 2,
       "date": "2026-10-15",
       "change": "rewritten by hand at format v2 (version 2): what the bill is made of with the units-of-pricing table and the data transfer rules, unit economics with a steps block, the levers table with the discounts stated on AWS pages, the FinOps phases and principles table, cost against reliability with the SRE revenue table, cost in the design document with the diagram in its subtopic and the review-questions table, a worked two-way costing of a thumbnail pipeline with stated and assumed prices and the cost model as a script after the teaching, cited in-practice blocks (37signals, Google Bigtable, AWS's own examples), 12 verified sources"
+    }
+    ,{
+      "version": 3,
+      "date": "2026-10-15",
+      "change": "Replaced unsupported CDN savings with direct-S3 binary/time-aware tiered costing, growth table and compute crossover; qualified cost levers, transfer charges and company attribution."
     }
   ]
 }
