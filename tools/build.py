@@ -276,10 +276,11 @@ def sidebar(lib: Library, mid: str | None, current: str) -> str:
 
 
 def lesson_shell(lib: Library, title: str, body: str, *, mid: str | None, current: str, crumbs: list[tuple[str, str]],
-                 description: str, mermaid: bool = False, code: bool = False, sim: bool = False) -> str:
+                 description: str, mermaid: bool = False, code: bool = False, sim: bool = False, flow: bool = False) -> str:
     parts = [a(h, esc(t)) for h, t in crumbs[:-1]] + [esc(crumbs[-1][1])]
     return (
         head(title, description, code=code, sim=sim)
+        .replace("</head>", '<link rel="stylesheet" href="/_assets/flow.css">\n</head>' if flow else "</head>")
         + '<body>\n<div class="shell">\n'
         + sidebar(lib, mid, current)
         + '\n<div class="page">\n<div class="page-top">\n'
@@ -287,7 +288,7 @@ def lesson_shell(lib: Library, title: str, body: str, *, mid: str | None, curren
         + f"<main data-pagefind-body>\n{body}\n</main>\n"
         + footer()
         + "</div>\n</div>\n"
-        + tail_scripts(mermaid=mermaid, code=code, sim=sim)
+        + tail_scripts(mermaid=mermaid, code=code, sim=sim, extra=("/_assets/flow.js",) if flow else ())
     )
 
 
@@ -427,6 +428,8 @@ class Page:
         self.number = {s["id"]: n for n, s in enumerate(sources, 1)}   # scan.py keeps ids s1..sN in order
         self.code = False
         self.diagram = False
+        self.flow = False
+        self.flow_count = 0
         self.exercise = exercise
         self.styled_sequences = styled_sequences
 
@@ -463,6 +466,327 @@ def table_html(columns: list[str], rows: list[list[str]], caption: str | None, *
     return f'<div class="table-scroll" role="region" tabindex="0"{label}><table{cls}>{cap}<thead><tr>{head_}</tr></thead><tbody>{body_}</tbody></table></div>'
 
 
+def flow_layout(b: dict) -> dict:
+    """Two-column request lanes, side branches and independent orthogonal edge tracks.
+
+    Actor-rooted frames form stacked panels when there are independent request
+    paths. Otherwise services form the main column, with stores/queues beside it.
+    Titles reserve a left-hand band, leaving a clear vertical entry corridor.
+    """
+    import heapq
+    import textwrap
+
+    nodes = {n["id"]: dict(n) for n in b["nodes"]}
+    groups = b.get("frames", [])
+    owner = {n: f["id"] for f in groups for n in f["nodes"]}
+    rooted = [f for f in groups if any(nodes[n]["kind"] == "actor" for n in f["nodes"])]
+    panels = [f["nodes"] for f in rooted] if len(rooted) > 1 else [list(nodes)]
+    remaining = [n for n in nodes if not any(n in p for p in panels)]
+    if remaining:
+        panels.append(remaining)
+    panel_of = {n: i for i, panel in enumerate(panels) for n in panel}
+    width, box_width = 760, 230
+    for n in nodes.values():
+        n["lines"] = textwrap.wrap(n["label"], 24 if n["kind"] == "queue" else 26)
+        n["w"] = box_width
+        n["h"] = max(40, len(n["lines"])*18 + (38 if n["kind"] == "store" else 16))
+    columns = {key: int(n["kind"] in ("store", "queue")) for key, n in nodes.items()}
+    ranks = dict.fromkeys(nodes, 0)
+    # Keep storage members of a frame together, so an unrelated regional store
+    # cannot end up inside the bounding rectangle of a cache frame.
+    ordered = []
+    for panel in panels:
+        for key in panel:
+            if key in ordered:
+                continue
+            peers = [n for n in panel if owner.get(n) == owner.get(key) and columns[n] == columns[key]] if key in owner else [key]
+            ordered.extend(n for n in peers if n not in ordered)
+    incoming = {key: [] for key in nodes}
+    for e in b["edges"]:
+        if e.get("kind", "sync") != "reply" and panel_of[e["from"]] == panel_of[e["to"]]:
+            incoming[e["to"]].append(e["from"])
+    pending, placed = list(ordered), set()
+    while pending:
+        ready = [n for n in pending if all(p in placed for p in incoming[n])]
+        key = min(ready, key=lambda n: next((i for i, e in enumerate(b["edges"]) if e["to"] == n), -1)) if ready else pending[0]
+        pending.remove(key)
+        parents = [p for p in incoming[key] if p in placed]
+        ranks[key] = max((ranks[p] + int(columns[p] == columns[key] or nodes[key]["kind"] == "queue"
+                                              or nodes[p]["kind"] == "queue") for p in parents), default=0)
+        while any(panel_of[n] == panel_of[key] and columns[n] == columns[key] and ranks[n] == ranks[key] for n in placed):
+            ranks[key] += 1
+        placed.add(key)
+    # Frame members in a branch lane are packed as a contiguous run. Moving a
+    # downstream node also moves its descendants, never a per-diagram override.
+    for _ in range(len(nodes)):
+        changed = False
+        for frame in groups:
+            members = [n for n in frame["nodes"] if columns[n] == 1]
+            if not members:
+                continue
+            lo, hi = min(ranks[n] for n in members), max(ranks[n] for n in members)
+            for key in nodes:
+                if key not in members and columns[key] == 1 and panel_of[key] == panel_of[members[0]] and lo <= ranks[key] <= hi:
+                    ranks[key] = hi+1
+                    changed = True
+            next_rank = lo
+            for key in sorted(members, key=lambda n: ranks[n]):
+                minimum = max((ranks[p]+int(columns[p] == columns[key] or nodes[key]["kind"] == "queue"
+                                           or nodes[p]["kind"] == "queue") for p in incoming[key]), default=0)
+                packed = max(next_rank, minimum)
+                if packed < ranks[key]:
+                    ranks[key] = packed
+                    changed = True
+                next_rank = ranks[key]+1
+        for key in ordered:
+            for parent in incoming[key]:
+                delta = int(columns[parent] == columns[key] or nodes[key]["kind"] == "queue" or nodes[parent]["kind"] == "queue")
+                if ranks[key] < ranks[parent]+delta and parent != key:
+                    ranks[key] = ranks[parent]+delta
+                    changed = True
+        if not changed:
+            break
+    title_lines = {f["id"]: textwrap.wrap(f["title"], 13) for f in groups}
+    title_heights = {key: len(lines)*18+8 for key, lines in title_lines.items()}
+    y = 36
+    for panel in panels:
+        previous_row = []
+        for rank in sorted({ranks[n] for n in panel}):
+            row = [n for n in panel if ranks[n] == rank]
+            starts = [f for f in groups if any(n in row for n in f["nodes"]) and
+                      rank == min(ranks[n] for n in f["nodes"])]
+            if previous_row:
+                extra_gap = 0
+                for f in starts:
+                    framed_before = any(n in owner and columns[n] == columns[f["nodes"][0]] for n in previous_row)
+                    extra_gap = max(extra_gap, title_heights[f["id"]]+(24 if framed_before else 12)-32)
+                y += extra_gap
+            height = max(nodes[n]["h"] for n in row)
+            for key in row:
+                nodes[key].update(x=60+columns[key]*390, y=y+(height-nodes[key]["h"])/2)
+            y += height+32
+            previous_row = row
+        if len(panels) > 1:
+            y += 42
+    frames = []
+    for frame in groups:
+        members = [nodes[n] for n in frame["nodes"]]
+        x = min(n["x"] for n in members)-18
+        right = max(n["x"]+n["w"] for n in members)+18
+        title_h = title_heights[frame["id"]]
+        top = min(n["y"] for n in members)-title_h
+        bottom = max(n["y"]+n["h"] for n in members)+12
+        frames.append(dict(frame, x=x, y=top, w=right-x, h=bottom-top, lines=title_lines[frame["id"]],
+                           title_box=(x+5, top+2, x+119, top+title_h-4)))
+    obstacles = [(n["x"]-5, n["y"]-5, n["x"]+n["w"]+5, n["y"]+n["h"]+5) for n in nodes.values()]
+    obstacles += [f["title_box"] for f in frames]
+    borders = [(f["x"], f["y"], f["x"]+f["w"], f["y"]+f["h"]) for f in frames]
+    sides = []
+    attachments = {}
+    for i, edge in enumerate(b["edges"]):
+        a, z = nodes[edge["from"]], nodes[edge["to"]]
+        if panel_of[edge["from"]] != panel_of[edge["to"]]:
+            pair = ("right", "right")
+        elif a["x"] == z["x"]:
+            pair = ("bottom", "top") if a["y"] < z["y"] else ("top", "bottom")
+        elif abs(a["y"]+a["h"]/2-z["y"]-z["h"]/2) < 2:
+            pair = ("right", "left") if a["x"] < z["x"] else ("left", "right")
+        elif a["x"] < z["x"]:
+            pair = ("right", "left")
+        else:
+            pair = ("bottom", "top") if a["y"] < z["y"] else ("left", "right")
+        sides.append(pair)
+        for key, side, role in ((edge["from"], pair[0], "start"), (edge["to"], pair[1], "end")):
+            attachments.setdefault((key, side), []).append((i, role))
+
+    def port(key, side, ref):
+        n = nodes[key]
+        peers = attachments[(key, side)]
+        offset = (peers.index(ref)-(len(peers)-1)/2)*14
+        if side in ("top", "bottom"):
+            return (n["x"]+n["w"]/2+offset, n["y"]+(n["h"] if side == "bottom" else 0))
+        return (n["x"]+(n["w"] if side == "right" else 0), n["y"]+n["h"]/2+offset)
+
+    def overlap(a, z, c, d):
+        if a[0] == z[0] == c[0] == d[0]:
+            return max(0, min(max(a[1], z[1]), max(c[1], d[1]))-max(min(a[1], z[1]), min(c[1], d[1])))
+        if a[1] == z[1] == c[1] == d[1]:
+            return max(0, min(max(a[0], z[0]), max(c[0], d[0]))-max(min(a[0], z[0]), min(c[0], d[0])))
+        return 0
+
+    segments, routes = [], []
+    cross_count = 0
+    for i, edge in enumerate(b["edges"]):
+        start_side, end_side = sides[i]
+        start_port = port(edge["from"], start_side, (i, "start"))
+        end_port = port(edge["to"], end_side, (i, "end"))
+        source, destination = nodes[edge["from"]], nodes[edge["to"]]
+        if (start_side in ("left", "right") and end_side in ("left", "right")
+                and abs(source["y"]+source["h"]/2-destination["y"]-destination["h"]/2) < 2
+                and len(attachments[(edge["to"], end_side)]) == 1):
+            end_port = (end_port[0], start_port[1])
+        vectors = {"left": (-10, 0), "right": (10, 0), "top": (0, -10), "bottom": (0, 10)}
+        start = tuple(a+d for a, d in zip(start_port, vectors[start_side]))
+        end = tuple(a+d for a, d in zip(end_port, vectors[end_side]))
+        xs = sorted({12, width-12, start[0], end[0]} |
+                    {v for l, t, r, bot in obstacles for v in (l-10, r+10)} |
+                    {p[0]+d for route in routes for p in route for d in (-14, 14)})
+        ys = sorted({8, y-8, start[1], end[1]} |
+                    {v for l, t, r, bot in obstacles for v in (t-10, bot+10)} |
+                    {p[1]+d for route in routes for p in route for d in (-14, 14)})
+        xs = [v for v in xs if 8 <= v <= width-8]
+        ys = [v for v in ys if 4 <= v <= y]
+
+        def clear(a, z):
+            if a[0] == z[0]:
+                hit = any(l < a[0] < r and max(min(a[1], z[1]), t) < min(max(a[1], z[1]), bot) for l, t, r, bot in obstacles)
+            else:
+                hit = any(t < a[1] < bot and max(min(a[0], z[0]), l) < min(max(a[0], z[0]), r) for l, t, r, bot in obstacles)
+            if hit or any(overlap(a, z, c, d) > 0 for c, d in segments):
+                return False
+            return not any(overlap(a, z, c, d) > 0 for l, t, r, bot in borders
+                           for c, d in (((l,t),(r,t)), ((r,t),(r,bot)), ((r,bot),(l,bot)), ((l,bot),(l,t))))
+
+        if panel_of[edge["from"]] != panel_of[edge["to"]]:
+            # Cross-panel reads take their own outside return tracks instead
+            # of threading a long vertical line through the write-path boxes.
+            panel = panels[panel_of[edge["from"]]]
+            panel_top = min((f["y"] for f in frames if any(n in panel for n in f["nodes"])),
+                            default=min(nodes[n]["y"] for n in panel))
+            guide_y = panel_top-24+cross_count*14
+            corridor_x = start[0]+24+cross_count*14
+            outer_x = width-24-cross_count*14
+            middle = [start, (corridor_x, start[1]), (corridor_x, guide_y),
+                      (outer_x, guide_y), (outer_x, end[1]), end]
+            if not all(clear(a, z) for a, z in zip(middle, middle[1:])):
+                raise BuildError(f"flow: no clear outside track for edge {i}")
+            route = [start_port]+middle+[end_port]
+            routes.append(route)
+            segments.extend(zip(route, route[1:]))
+            cross_count += 1
+            continue
+        origin = (xs.index(start[0]), ys.index(start[1]), 0)
+        target = (xs.index(end[0]), ys.index(end[1]))
+        todo, distances, previous = [(0, origin)], {origin: 0}, {}
+        goal = None
+        while todo:
+            distance, here = heapq.heappop(todo)
+            if distance != distances[here]:
+                continue
+            ix, iy, direction = here
+            if (ix, iy) == target:
+                goal = here
+                break
+            for nx, ny, axis in ((ix-1, iy, 1), (ix+1, iy, 1), (ix, iy-1, 2), (ix, iy+1, 2)):
+                if not (0 <= nx < len(xs) and 0 <= ny < len(ys)):
+                    continue
+                a, z = (xs[ix], ys[iy]), (xs[nx], ys[ny])
+                if not clear(a, z):
+                    continue
+                cost = distance+abs(a[0]-z[0])+abs(a[1]-z[1])+(30 if direction and direction != axis else 0)
+                point = (nx, ny, axis)
+                if cost < distances.get(point, float("inf")):
+                    distances[point], previous[point] = cost, here
+                    heapq.heappush(todo, (cost, point))
+        if goal is None:
+            raise BuildError(f"flow: cannot route edge {i} without sharing a track")
+        route, here = [], goal
+        while True:
+            route.append((xs[here[0]], ys[here[1]]))
+            if here == origin:
+                break
+            here = previous[here]
+        points = [start_port]+list(reversed(route))+[end_port]
+        compact = []
+        for point in points:
+            if compact and point == compact[-1]:
+                continue
+            if len(compact) > 1 and ((compact[-2][0] == compact[-1][0] == point[0]) or
+                                     (compact[-2][1] == compact[-1][1] == point[1])):
+                compact[-1] = point
+            else:
+                compact.append(point)
+        routes.append(compact)
+        segments.extend(zip(compact, compact[1:]))
+    labels = []
+    label_order = sorted(range(len(routes)), key=lambda i: sum(abs(a[0]-z[0])+abs(a[1]-z[1]) for a, z in zip(routes[i], routes[i][1:])))
+    for i in label_order:
+        edge, route = b["edges"][i], routes[i]
+        short = edge.get("short") or " ".join(edge["label"].split()[:3])
+        text = f"{i+1} · {short}"
+        tw = len(text)*8.2
+        candidates = []
+        for a, z in zip(route, route[1:]):
+            length = abs(a[0]-z[0])+abs(a[1]-z[1])
+            if length < 16:
+                continue
+            for fraction in (i/40 for i in range(4, 37)):
+                cx, cy = a[0]+(z[0]-a[0])*fraction, a[1]+(z[1]-a[1])*fraction
+                positions = [(cx+10, cy-9), (cx-tw-10, cy-9)] if a[0] == z[0] else [(cx-tw/2, cy-24), (cx-tw/2, cy+7)]
+                for lx, ly in positions:
+                    rect = (lx-3, ly-2, lx+tw+3, ly+20)
+                    if rect[0] < 4 or rect[2] > width-4 or rect[1] < 0:
+                        continue
+                    if any(max(rect[0], l) < min(rect[2], r) and max(rect[1], t) < min(rect[3], bot)
+                           for l, t, r, bot in obstacles+[item["box"] for item in labels]):
+                        continue
+                    if any((rect[0] < a[0] < rect[2] and max(min(a[1], z[1]), rect[1]) < min(max(a[1], z[1]), rect[3]))
+                           if a[0] == z[0] else (rect[1] < a[1] < rect[3] and max(min(a[0], z[0]), rect[0]) < min(max(a[0], z[0]), rect[2]))
+                           for a, z in segments):
+                        continue
+                    candidates.append((abs(fraction-.5)*30-length/100, lx, ly, rect))
+        if not candidates:
+            raise BuildError(f"flow: no clear space for edge label {text!r}")
+        _, lx, ly, rect = min(candidates)
+        labels.append(dict(text=text, x=lx, y=ly+15, box=rect))
+    return dict(nodes=nodes, frames=frames, routes=routes, labels=labels, width=width, height=y-18)
+
+
+def render_flow(b: dict, ident: str) -> str:
+    g = flow_layout(b)
+    out = [f'<section class="flow" aria-label="Architecture walkthrough" id="{ident}">',
+           f'<svg class="flow-svg" viewBox="0 0 {g["width"]} {g["height"]}" role="img" aria-labelledby="{ident}-title">',
+           f'<title id="{ident}-title">Architecture; numbered arrows correspond to Exact calls below.</title>',
+           f'<defs><marker id="{ident}-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z"/></marker></defs>']
+
+    def label(lines, x, y, css=""):
+        return f'<text class="{css}" x="{x}" y="{y}">' + "".join(
+            f'<tspan x="{x}" dy="{0 if i == 0 else 18}">{esc(line)}</tspan>' for i, line in enumerate(lines)) + '</text>'
+
+    for f in g["frames"]:
+        out.append(f'<g class="flow-frame" data-frame="{esc(f["id"])}"><rect x="{f["x"]}" y="{f["y"]}" width="{f["w"]}" height="{f["h"]}" rx="8"/>'
+                   + label(f["lines"], f["x"]+8, f["y"]+17) + '</g>')
+    for i, (edge, route) in enumerate(zip(b["edges"], g["routes"])):
+        d = "M " + " L ".join(f"{x},{y}" for x, y in route)
+        out.append(f'<path class="flow-edge" data-edge="{i}" data-from="{esc(edge["from"])}" data-to="{esc(edge["to"])}" '
+                   f'data-kind="{esc(edge.get("kind", "sync"))}" d="{d}" marker-end="url(#{ident}-arrow)"><title>{esc(edge["label"])}</title></path>')
+    for key, n in g["nodes"].items():
+        x, y, w, h = n["x"], n["y"], n["w"], n["h"]
+        out.append(f'<g class="flow-node" data-node="{esc(key)}" data-kind="{n["kind"]}">')
+        if n["kind"] == "store":
+            out.append(f'<path d="M{x},{y+9} a{w/2},9 0 0 1 {w},0 v{h-18} a{w/2},9 0 0 1 {-w},0 Z M{x},{y+9} a{w/2},9 0 0 0 {w},0"/>')
+        else:
+            out.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="4"/>')
+            if n["kind"] == "queue":
+                out.append(f'<path d="M{x+7},{y} v{h} M{x+w-7},{y} v{h}"/>')
+        baseline = y+(h-len(n["lines"])*18)/2+(18 if n["kind"] == "store" else 14)
+        out.append(label(n["lines"], x+w/2, baseline, "flow-label") + '</g>')
+    for item in g["labels"]:
+        out.append(label([item["text"]], item["x"], item["y"], "flow-edge-label"))
+    out += ['<circle class="flow-packet hidden" r="6"/>', '<circle class="flow-queued hidden" r="6"/>', '</svg>',
+            '<div class="flow-controls">' + "".join(f'<button type="button" data-action="{action}">{text}</button>' for action, text in
+            (("previous", "Back"), ("next", "Next"), ("play", "Play"), ("reset", "Reset"))) + '</div>',
+            '<p class="flow-caption" aria-live="polite" aria-atomic="true"></p><p class="flow-mode muted"></p>',
+            '<details class="flow-calls"><summary>Exact calls</summary><ol>']
+    for step in b["steps"]:
+        edge = step["edge"]
+        if isinstance(edge, str):
+            edge = next(i for i, e in enumerate(b["edges"]) if e.get("id") == edge)
+        out.append(f'<li data-edge="{edge}" data-caption="{esc(step["caption"])}"><strong>{esc(b["edges"][edge]["label"])}</strong><br>{esc(step["caption"])}</li>')
+    out += ['</ol></details><noscript>Motion is optional. Read the numbered arrows and expand Exact calls for the request order.</noscript></section>']
+    return "".join(out)
+
+
 def render_block(pg: Page, b: dict) -> str:
     t = b["type"]
     cites = cite_marks(pg, b.get("cites"))
@@ -488,6 +812,10 @@ def render_block(pg: Page, b: dict) -> str:
         rows = [[r["option"], r["pick_when"], r["avoid_when"], r.get("example", "")] for r in b["rows"]]
         columns = list(DECISION_COLUMNS[:3]) + [DECISION_LAST_EXERCISE if pg.exercise else DECISION_COLUMNS[3]]
         return table_html(columns, rows, b.get("caption"), first_col_head=True, cites=cites)
+    if t == "flow":
+        pg.flow = True
+        pg.flow_count += 1
+        return render_flow(b, f"flow-{pg.flow_count}") + legend_html(pg, b)
     if t == "diagram":
         pg.diagram = True
         src = esc(b["mermaid"])
@@ -586,7 +914,7 @@ def render_lesson_v2(lib: Library, l: dict) -> tuple[str, str]:
     body.append(f'<div class="prevnext">{prev_}{next_}</div>')
     crumbs = [("/learn/", "Learning center"), (f"/learn/modules/{mid}/", lib.modules[mid]["title"]), (here, l["title"])]
     page = lesson_shell(lib, f"{l['title']} - Learning center", "\n".join(body), mid=mid, current=here, crumbs=crumbs,
-                        description=l["summary"][:200], mermaid=pg.diagram, code=pg.code, sim="sim" in l)
+                        description=l["summary"][:200], mermaid=pg.diagram, code=pg.code, sim="sim" in l, flow=pg.flow)
     return here, page
 
 
@@ -731,7 +1059,7 @@ def render_exercise_v2(lib: Library, l: dict) -> tuple[str, str]:
         body.append(f'<h2 id="related">Related lessons</h2>\n<ul class="related-list">{"".join(items)}</ul>')
     crumbs = [("/learn/", "Learning center"), (mod_here, mod["title"]), (here, l["title"])]
     page = lesson_shell(lib, f"{l['title']} - Learning center", "\n".join(body), mid=mid, current=here, crumbs=crumbs,
-                        description=l["summary"][:200], mermaid=pg.diagram, code=pg.code, sim="sim" in l)
+                        description=l["summary"][:200], mermaid=pg.diagram, code=pg.code, sim="sim" in l, flow=pg.flow)
     return here, page
 
 
@@ -1069,9 +1397,9 @@ class Collector(HTMLParser):
             else:
                 self.refs.append((tag, am["src"], None))
         elif tag == "link" and am.get("href"):
-            # the site's own sheet is the one stylesheet; the shipped highlighter's theme sheets (code pages) and
-            # Pagefind's UI sheet (search page) and the simulator block's sheet are third-party files of the same origin and not counted
-            if am.get("rel") == "stylesheet" and not am["href"].startswith(("/_assets/hljs/", "/_assets/sim/", "/learn/pagefind/")):
+            # Count the common site sheet, not optional same-origin component/theme sheets.
+            if (am.get("rel") == "stylesheet" and am["href"] != "/_assets/flow.css"
+                    and not am["href"].startswith(("/_assets/hljs/", "/_assets/sim/", "/learn/pagefind/"))):
                 self.stylesheets += 1
             self.refs.append((tag, am["href"], None))
         elif tag == "form" and am.get("action"):
@@ -1211,7 +1539,7 @@ def build(content: Path, out: Path) -> dict:
     assets = out / "_assets"
     assets.mkdir()
     (assets / "site.css").write_text((ROOT / "assets/course.css").read_text(encoding="utf-8") + "\n" + (ROOT / "assets/site-extra.css").read_text(encoding="utf-8") + SIDEBAR_CSS, encoding="utf-8")
-    for name in ("course.js", "theme-init.js", "search.js", "favicon.svg"):
+    for name in ("course.js", "theme-init.js", "search.js", "favicon.svg", "flow.js", "flow.css"):
         shutil.copy2(ROOT / "assets" / name, assets / name)
     for d in ("mermaid", "hljs"):
         shutil.copytree(ROOT / "assets" / d, assets / d)

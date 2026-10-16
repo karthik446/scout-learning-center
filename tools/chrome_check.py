@@ -219,6 +219,48 @@ def check_page(ch: Chrome, base: str, name: str, path: str, width: int, shots: P
             "diagrams_wider_than_column": ev("[...document.querySelectorAll('.mermaid svg')].filter((s) => s.getBoundingClientRect().width > s.closest('.mermaid-wrap').clientWidth + 1).length"),
             "diagram_boxes_scrolling": ev("[...document.querySelectorAll('.mermaid-wrap')].filter((w) => w.scrollWidth > w.clientWidth).length"),
         }
+        facts["v2"]["flows"] = ev("""[...document.querySelectorAll('.flow')].map(h => {
+          const svg = h.querySelector('svg'), r = svg.getBoundingClientRect();
+          const scale = r.width / svg.viewBox.baseVal.width;
+          return {id: h.id, svg: !!svg, controls: ['previous','next','play','reset'].every(a => h.querySelector('[data-action="'+a+'"]')),
+            step_count: h.querySelectorAll('.flow-calls li').length, edge_count: h.querySelectorAll('.flow-edge').length,
+            text_px: Math.min(...[...svg.querySelectorAll('text')].map(t => parseFloat(getComputedStyle(t).fontSize)*scale)),
+            height_px: h.getBoundingClientRect().height, svg_height_px: r.height,
+            scroll_width: h.scrollWidth, client_width: h.clientWidth};
+        })""")
+        flows = facts["v2"]["flows"]
+        if flows:
+            manual = ev("""[...document.querySelectorAll('.flow')].map(h => {
+              h.querySelector('[data-action="next"]').click(); const next = h.dataset.step;
+              h.querySelector('[data-action="previous"]').click(); const back = h.dataset.step;
+              h.querySelector('[data-action="play"]').click(); return {next, back};
+            })""")
+            sample = "[...document.querySelectorAll('.flow-packet')].map(p => getComputedStyle(p).transform)"
+            ch.pump(.3)
+            first = ev(sample)
+            ch.pump(.4)
+            second = ev(sample)
+            ev("document.querySelectorAll('.flow [data-action=\"reset\"]').forEach(b => b.click())")
+            s("Emulation.setEmulatedMedia", {"features": [{"name": "prefers-reduced-motion", "value": "reduce"}]})
+            ch.pump(.1)
+            reduced_facts = ev("""[...document.querySelectorAll('.flow')].map(h => {
+              h.querySelector('[data-action="play"]').click();
+              h.querySelector('[data-action="next"]').click();
+              return {state: h.dataset.reducedMotion, play_disabled: h.querySelector('[data-action="play"]').disabled,
+                step: h.dataset.step, animations: h.getAnimations({subtree:true}).filter(a => a.playState === 'running').length};
+            })""")
+            for i, flow in enumerate(flows):
+                flow.update(manual[i], packet_samples=[first[i], second[i]],
+                            play_moves=first[i] != second[i], reduced=reduced_facts[i])
+                ev(f"document.querySelectorAll('.flow')[{i}].querySelector('[data-action=\"reset\"]').click()")
+                ev(f"document.querySelectorAll('.flow')[{i}].querySelector('[data-action=\"next\"]').focus()")
+                s("Input.dispatchKeyEvent", {"type": "keyDown", "key": "Enter", "code": "Enter", "text": "\r", "windowsVirtualKeyCode": 13})
+                s("Input.dispatchKeyEvent", {"type": "keyUp", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13})
+                flow["keyboard_next"] = ev(f"document.querySelectorAll('.flow')[{i}].dataset.step") == "1"
+            s("Emulation.setEmulatedMedia", {"features": [{"name": "prefers-reduced-motion", "value": "no-preference"}]})
+            ch.pump(.1)
+            ev("document.querySelectorAll('.flow [data-action=\"reset\"]').forEach(b => b.click())")
+            ev("document.activeElement.blur(); window.scrollTo(0,0)")
     if name == "search":
         facts["result_count"] = ev("document.getElementById('result-count').getAttribute('data-count')")
         facts["result_text"] = ev("document.getElementById('result-count').textContent")
@@ -308,6 +350,13 @@ def check_page(ch: Chrome, base: str, name: str, path: str, width: int, shots: P
         if width >= 1280 and (v["diagrams_wider_than_column"] or v["diagram_boxes_scrolling"]):
             errors.append(f"1280 rule: {v['diagrams_wider_than_column']} diagram(s) wider than the column, {v['diagram_boxes_scrolling']} diagram box(es) scrolling sideways: "
                           f"{json.dumps(v['diagrams'])}")
+        for flow in v["flows"]:
+            if not (flow["svg"] and flow["controls"] and flow["step_count"] == flow["edge_count"] > 0
+                    and flow["next"] == "1" and flow["back"] == "0" and flow["play_moves"]
+                    and flow["keyboard_next"] and flow["text_px"] >= 15
+                    and flow["scroll_width"] <= flow["client_width"]
+                    and flow["reduced"] == {"state": "true", "play_disabled": True, "step": "1", "animations": 0}):
+                errors.append(f"flow controls/layout/reduced-motion failed: {json.dumps(flow)}")
     return {"name": name, "path": path, "width": width, "reduced_motion": reduced, "nav_frame": nav.get("frameId", ""), "facts": facts, "console_errors": errors,
             "console_warnings": warnings, "csp_violations": csp, "failed_requests": failed, "hosts": sorted(hosts)}
 

@@ -344,7 +344,7 @@ class Negative(Fixture):
         self.refuses(EXERCISE, m, "section failure-modes: a diagram block belongs in high-level-design only")
 
     def test_high_level_design_diagram_is_the_flowchart(self) -> None:
-        self.refuses(EXERCISE, lambda d: section(d, "high-level-design")["blocks"][0].update(mermaid=self.SEQUENCE), "section high-level-design: the diagram must be a Mermaid flowchart (the architecture)")
+        self.refuses(EXERCISE, lambda d: section(d, "high-level-design")["blocks"][0].update(mermaid=self.SEQUENCE), "section high-level-design: the diagram must be a Mermaid flowchart or flow block (the architecture)")
 
     def test_diagram_kind_unknown(self) -> None:
         self.refuses(EXERCISE, lambda d: section(d, "high-level-design")["blocks"][0].update(mermaid="gantt\n  title x"), "must be a Mermaid flowchart or sequence diagram")
@@ -550,9 +550,14 @@ class Pages(Fixture):
                 marked = re.findall(r'<div class="mermaid-wrap" data-diagram-style="sequence"><pre class="mermaid">(.*?)</pre>', html_, re.S)
                 self.assertEqual(len(marked), 11)
                 self.assertTrue(all(s.startswith("sequenceDiagram") for s in marked))
-                self.assertEqual(html_.count('<div class="mermaid-wrap"><pre class="mermaid">flowchart'), 3)
+                self.assertNotIn('<div class="mermaid-wrap"><pre class="mermaid">flowchart', html_)
+                self.assertEqual(html_.count('<section class="flow"'), 3)
+                self.assertIn('/_assets/flow.js', html_)
+                self.assertIn('/_assets/flow.css', html_)
             else:
                 self.assertNotIn(marker, html_, page.parent.name)
+                self.assertNotIn('/_assets/flow.js', html_, page.parent.name)
+                self.assertNotIn('/_assets/flow.css', html_, page.parent.name)
 
     def test_styled_diagram_source_stays_text(self) -> None:
         block = {"type": "diagram", "mermaid": "sequenceDiagram\n  A->>B: call<br/>reply", "legend": "Calls."}
@@ -601,6 +606,190 @@ class Pages(Fixture):
         text = out.read_text(encoding="utf-8")
         self.assertIn(LESSON, text)
         self.assertIn("The numbers", text)
+
+
+class Flows(unittest.TestCase):
+    def setUp(self):
+        self.block = {
+            "type": "flow",
+            "nodes": [{"id": "a", "label": "Caller", "kind": "actor"},
+                      {"id": "b", "label": "Service", "kind": "service"},
+                      {"id": "q", "label": "Events", "kind": "queue"},
+                      {"id": "s", "label": "Store", "kind": "store"}],
+            "frames": [{"id": "private", "title": "Private services", "nodes": ["b", "s"]}],
+            "edges": [{"id": "call", "from": "a", "to": "b", "label": "Call"},
+                      {"from": "b", "to": "q", "kind": "async", "label": "Enqueue"},
+                      {"from": "q", "to": "s", "kind": "async", "label": "Consume"}],
+            "steps": [{"edge": "call", "caption": "Call the service"},
+                      {"edge": 1, "caption": "Enqueue an event"}, {"edge": 2, "caption": "Consume the event"}],
+            "legend": "Calls s1.", "cites": ["s1"],
+        }
+
+    def rejects(self, mutate, needle):
+        mutate(self.block)
+        problems = scan.block_problems(self.block, "$")
+        self.assertTrue(any(needle in p for p in problems), problems)
+
+    def test_valid(self):
+        self.assertEqual(scan.block_problems(self.block, "$"), [])
+
+    def test_duplicate_nodes(self):
+        self.rejects(lambda b: b["nodes"].append(copy.deepcopy(b["nodes"][0])), "node ids must be unique")
+
+    def test_missing_edge_node(self):
+        self.rejects(lambda b: b["edges"][0].update(to="missing"), "existing nodes")
+
+    def test_missing_step_edge(self):
+        self.rejects(lambda b: b["steps"][0].update(edge="missing"), "existing edges")
+
+    def test_negative_step_edge(self):
+        self.rejects(lambda b: b["steps"][0].update(edge=-1), "existing edges")
+
+    def test_edge_without_step(self):
+        self.rejects(lambda b: b["steps"].pop(), "every edge needs a step")
+
+    def test_frame_missing_node(self):
+        self.rejects(lambda b: b["frames"][0]["nodes"].append("missing"), "existing nodes")
+
+    def test_overlapping_frames(self):
+        self.rejects(lambda b: b["frames"].append({"id": "other", "title": "Other", "nodes": ["b"]}), "not overlap")
+
+    def test_nested_frames(self):
+        self.rejects(lambda b: b["frames"].append({"id": "outer", "title": "Outer", "nodes": ["private"]}), "never nested")
+
+    def test_frame_nesting_field(self):
+        self.rejects(lambda b: b["frames"][0].update(frames=[]), "no nesting")
+
+    def test_blank_labels(self):
+        for field, key in (("nodes", "label"), ("edges", "label"), ("frames", "title"), ("steps", "caption")):
+            with self.subTest(field=field):
+                b = copy.deepcopy(self.block)
+                b[field][0][key] = " "
+                self.assertTrue(any("non-empty" in p for p in scan.block_problems(b, "$")))
+
+    def test_multiline_caption(self):
+        self.rejects(lambda b: b["steps"][0].update(caption="One\nTwo"), "single lines")
+
+    def test_invalid_kinds(self):
+        for field in ("nodes", "edges"):
+            with self.subTest(field=field):
+                b = copy.deepcopy(self.block)
+                b[field][0]["kind"] = "invalid"
+                self.assertTrue(any("invalid" in p for p in scan.block_problems(b, "$")))
+
+    def test_node_limit(self):
+        self.rejects(lambda b: b["nodes"].extend({"id": f"x{i}", "label": "Extra", "kind": "service"} for i in range(9)), "1 to 12")
+
+    def test_no_coordinates(self):
+        self.rejects(lambda b: b["nodes"][0].update(x=1), "no coordinates")
+
+    def test_legend_cites(self):
+        self.rejects(lambda b: b.update(legend="Unknown s2."), "legend source s2")
+
+    def test_duplicate_edge_ids(self):
+        self.rejects(lambda b: b["edges"][1].update(id="call"), "edge ids must be unique")
+
+    def test_duplicate_frame_ids(self):
+        self.rejects(lambda b: b["frames"].append({"id": "private", "title": "Other", "nodes": ["a"]}), "frame ids must be unique")
+
+    def test_blank_short_label(self):
+        self.rejects(lambda b: b["edges"][0].update(short=" "), "short labels must be non-empty")
+
+    @staticmethod
+    def collinear_overlap(a, z, c, d):
+        if a[0] == z[0] == c[0] == d[0]:
+            return max(0, min(max(a[1], z[1]), max(c[1], d[1]))-max(min(a[1], z[1]), min(c[1], d[1])))
+        if a[1] == z[1] == c[1] == d[1]:
+            return max(0, min(max(a[0], z[0]), max(c[0], d[0]))-max(min(a[0], z[0]), min(c[0], d[0])))
+        return 0
+
+    def test_render_and_geometry(self):
+        news = json.loads((ROOT / "content/lessons/sd-ex-news-feed.json").read_text())
+        blocks = [self.block] + [b for b in blocks_of(news) if b["type"] == "flow"]
+        self.assertEqual(len(blocks), 4)
+        for block in blocks:
+            with self.subTest(nodes=[n["id"] for n in block["nodes"]]):
+                original = copy.deepcopy(block)
+                geometry = build.flow_layout(block)
+                self.assertEqual(geometry, build.flow_layout(block), "layout must be deterministic")
+                for frame in geometry["frames"]:
+                    for member in frame["nodes"]:
+                        n = geometry["nodes"][member]
+                        self.assertGreaterEqual(n["x"], frame["x"])
+                        self.assertGreaterEqual(n["y"], frame["title_box"][3])
+                        self.assertLessEqual(n["x"] + n["w"], frame["x"] + frame["w"])
+                        self.assertLessEqual(n["y"] + n["h"], frame["y"] + frame["h"])
+                    left, top, right, bottom = frame["title_box"]
+                    for route in geometry["routes"]:
+                        for a, z in zip(route, route[1:]):
+                            self.assertTrue(a[0] == z[0] or a[1] == z[1], "orthogonal edge")
+                            crossed = (left < a[0] < right and max(min(a[1], z[1]), top) < min(max(a[1], z[1]), bottom)) if a[0] == z[0] else (
+                                top < a[1] < bottom and max(min(a[0], z[0]), left) < min(max(a[0], z[0]), right))
+                            self.assertFalse(crossed, (frame["id"], a, z))
+                    border = [(frame["x"], frame["y"]), (frame["x"]+frame["w"], frame["y"]),
+                              (frame["x"]+frame["w"], frame["y"]+frame["h"]), (frame["x"], frame["y"]+frame["h"])]
+                    for route in geometry["routes"]:
+                        for a, z in zip(route, route[1:]):
+                            for c, d in zip(border, border[1:]+border[:1]):
+                                self.assertEqual(self.collinear_overlap(a, z, c, d), 0, "edge runs along frame border")
+                for i, frame in enumerate(geometry["frames"]):
+                    for other in geometry["frames"][i+1:]:
+                        gap_x = max(other["x"]-frame["x"]-frame["w"], frame["x"]-other["x"]-other["w"])
+                        gap_y = max(other["y"]-frame["y"]-frame["h"], frame["y"]-other["y"]-other["h"])
+                        self.assertGreaterEqual(max(gap_x, gap_y), 10, "frames need a visible gap")
+                for i, route in enumerate(geometry["routes"]):
+                    for other in geometry["routes"][i+1:]:
+                        for a, z in zip(route, route[1:]):
+                            for c, d in zip(other, other[1:]):
+                                self.assertLessEqual(self.collinear_overlap(a, z, c, d), 3, "edges share a trunk")
+                for node in geometry["nodes"].values():
+                    if node["kind"] == "store":
+                        baseline = node["y"]+(node["h"]-len(node["lines"])*18)/2+18
+                        self.assertGreaterEqual(baseline-16, node["y"]+18, "label touches cylinder lid")
+                self.assertEqual(len(geometry["labels"]), len(block["edges"]))
+                for frame in geometry["frames"]:
+                    self.assertLessEqual(frame["y"]+frame["h"], geometry["height"], "frame clipped by viewBox")
+                for item in geometry["labels"]:
+                    left, top, right, bottom = item["box"]
+                    for route in geometry["routes"]:
+                        for a, z in zip(route, route[1:]):
+                            crossed = (left < a[0] < right and max(min(a[1], z[1]), top) < min(max(a[1], z[1]), bottom)) if a[0] == z[0] else (
+                                top < a[1] < bottom and max(min(a[0], z[0]), left) < min(max(a[0], z[0]), right))
+                            self.assertFalse(crossed, "edge crosses a short label")
+                pg = build.Page([{"id": "s1"}])
+                html = build.render_block(pg, block)
+                self.assertTrue(pg.flow)
+                self.assertIn('<svg', html)
+                self.assertIn('<noscript>', html)
+                self.assertIn('aria-live="polite"', html)
+                self.assertEqual(html.count('<li data-edge='), len(block["steps"]))
+                self.assertEqual(html.count('class="flow-edge-label"'), len(block["edges"]))
+                for action in ("previous", "next", "play", "reset"):
+                    self.assertIn(f'data-action="{action}"', html)
+                for frame in block.get("frames", []):
+                    self.assertIn(f'data-frame="{frame["id"]}"', html)
+                self.assertEqual(block, original)
+
+    def test_news_feed_entry_chains_are_straight(self):
+        news = json.loads((ROOT / "content/lessons/sd-ex-news-feed.json").read_text())
+        halves = section(news, "building-it-on-aws")["blocks"][:2]
+        for block in halves:
+            geometry = build.flow_layout(block)
+            for route in geometry["routes"][:3]:
+                self.assertEqual(len(route), 2, "entry chain must not wrap around a frame")
+                self.assertEqual(route[0][0], route[1][0])
+        self.assertLessEqual(build.flow_layout(halves[0])["height"], 750)
+
+    def test_exercise_accepts_flow_architecture(self):
+        doc = json.loads((FIXTURES / f"{EXERCISE}.json").read_text())
+        section(doc, "high-level-design")["blocks"] = [self.block]
+        self.assertEqual(scan.exercise2_checks(doc), [])
+        aws = {"id": scan.AWS_SECTION, "title": "AWS", "blocks": [self.block, copy.deepcopy(self.block),
+               {"type": "decision", "rows": [{"option": "A", "pick_when": "B", "avoid_when": "C"}]}]}
+        doc["exercise"]["reference_answer"].insert(2, aws)
+        self.assertEqual(scan.exercise2_checks(doc), [])
+        aws["blocks"].insert(2, copy.deepcopy(self.block))
+        self.assertTrue(any("later diagram" in p for p in scan.exercise2_checks(doc)))
 
 
 if __name__ == "__main__":

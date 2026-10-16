@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-news-feed",
-  "version": 10,
+  "version": 11,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: news feed",
@@ -814,8 +814,50 @@
             "text": "A post is stored once and its id is pushed, asynchronously, into the timeline cache of every follower: fan-out on write. The feed service reads the user's cached ids, merges in recent posts from the few celebrity accounts the user follows (fan-out on read for those only), asks the ranking service to order the candidates, and renders content from a post cache."
           },
           {
-            "type": "diagram",
-            "mermaid": "flowchart TB\n  subgraph Write path\n    A[Authors] --> PS[Post service]\n    PS --> PDB[(Posts, sharded by post id)]\n    PS --> Q[[post events]]\n    Q --> FO[Fan-out workers]\n    FO --> G[(Social graph: follows)]\n    FO --> TL[(Timeline cache: post ids per user)]\n  end\n  subgraph Read path\n    R[Readers] --> FS[Feed service]\n    FS --> TL\n    FS -->|celebrity posts| PDB\n    FS --> RK[Ranking service]\n    FS --> PC[(Post content cache)]\n  end",
+            "type": "flow",
+            "nodes": [
+              {"id": "A", "label": "Authors", "kind": "actor"},
+              {"id": "PS", "label": "Post service", "kind": "service"},
+              {"id": "PDB", "label": "Posts, sharded by post id", "kind": "store"},
+              {"id": "Q", "label": "post events", "kind": "queue"},
+              {"id": "FO", "label": "Fan-out workers", "kind": "service"},
+              {"id": "G", "label": "Social graph: follows", "kind": "store"},
+              {"id": "TL", "label": "Timeline cache: post ids per user", "kind": "store"},
+              {"id": "R", "label": "Readers", "kind": "actor"},
+              {"id": "FS", "label": "Feed service", "kind": "service"},
+              {"id": "RK", "label": "Ranking service", "kind": "service"},
+              {"id": "PC", "label": "Post content cache", "kind": "store"}
+            ],
+            "frames": [
+              {"id": "write", "title": "Write path", "nodes": ["A", "PS", "PDB", "Q", "FO", "G", "TL"]},
+              {"id": "read", "title": "Read path", "nodes": ["R", "FS", "RK", "PC"]}
+            ],
+            "edges": [
+              {"from": "A", "to": "PS", "kind": "sync", "label": "Authors to Post service", "short": "Post"},
+              {"from": "PS", "to": "PDB", "kind": "sync", "label": "Post service to Posts, sharded by post id", "short": "Store post"},
+              {"from": "PS", "to": "Q", "kind": "async", "label": "Post service to post events", "short": "Post event"},
+              {"from": "Q", "to": "FO", "kind": "async", "label": "post events to Fan-out workers", "short": "Fan-out"},
+              {"from": "FO", "to": "G", "kind": "sync", "label": "Fan-out workers to Social graph: follows", "short": "Followers"},
+              {"from": "FO", "to": "TL", "kind": "sync", "label": "Fan-out workers to Timeline cache: post ids per user", "short": "Timeline"},
+              {"from": "R", "to": "FS", "kind": "sync", "label": "Readers to Feed service", "short": "Feed"},
+              {"from": "FS", "to": "TL", "kind": "sync", "label": "Feed service to Timeline cache: post ids per user", "short": "Read timeline"},
+              {"from": "FS", "to": "PDB", "kind": "sync", "label": "celebrity posts", "short": "Celebrity"},
+              {"from": "FS", "to": "RK", "kind": "sync", "label": "Feed service to Ranking service", "short": "Rank"},
+              {"from": "FS", "to": "PC", "kind": "sync", "label": "Feed service to Post content cache", "short": "Read content"}
+            ],
+            "steps": [
+              {"edge": 0, "caption": "Authors to Post service"},
+              {"edge": 1, "caption": "Post service to Posts, sharded by post id"},
+              {"edge": 2, "caption": "Post service to post events"},
+              {"edge": 3, "caption": "post events to Fan-out workers"},
+              {"edge": 4, "caption": "Fan-out workers to Social graph: follows"},
+              {"edge": 5, "caption": "Fan-out workers to Timeline cache: post ids per user"},
+              {"edge": 6, "caption": "Readers to Feed service"},
+              {"edge": 7, "caption": "Feed service to Timeline cache: post ids per user"},
+              {"edge": 8, "caption": "Feed service to celebrity posts"},
+              {"edge": 9, "caption": "Feed service to Ranking service"},
+              {"edge": 10, "caption": "Feed service to Post content cache"}
+            ],
             "legend": "Boxes are containers; the two frames are the write and read paths; cylinders are stores; double brackets are logs."
           },
           {
@@ -840,13 +882,83 @@
         "title": "Building it on AWS",
         "blocks": [
           {
-            "type": "diagram",
-            "mermaid": "flowchart TB\n  A[Authors] -->|HTTPS, sync| CF[Amazon CloudFront]\n  CF -->|HTTPS to the origin, sync| ALB\n  subgraph PUB[\"VPC public subnets\"]\n    ALB[\"Application Load Balancer\"]\n  end\n  subgraph WP[\"VPC private: write path\"]\n    PS[\"ECS on Fargate: post service\"]\n    FO[\"ECS on Fargate: fan-out workers\"]\n  end\n  subgraph CACHES[\"VPC private: caches\"]\n    TL[(\"ElastiCache for Valkey: timeline cache, post ids per user\")]\n  end\n  PDB[(\"Amazon DynamoDB: posts table, author_id index\")]\n  G[(\"Amazon DynamoDB: follows table\")]\n  Q[[\"Amazon SQS standard queue: post events\"]]\n  ALB -->|HTTP, sync| PS\n  PS -->|PutItem over the gateway endpoint, sync| PDB\n  PS -->|SendMessage over the interface endpoint, async hand-off| Q\n  Q -->|ReceiveMessage long-poll over the interface endpoint| FO\n  FO -->|Query followers over the gateway endpoint, sync| G\n  FO -->|LPUSH and LTRIM pipelined per node, cache write| TL\n  PDB ~~~ Q",
+            "type": "flow",
+            "nodes": [
+              {"id": "A", "label": "Authors", "kind": "actor"},
+              {"id": "CF", "label": "Amazon CloudFront", "kind": "service"},
+              {"id": "ALB", "label": "Application Load Balancer", "kind": "service"},
+              {"id": "PS", "label": "ECS on Fargate: post service", "kind": "service"},
+              {"id": "FO", "label": "ECS on Fargate: fan-out workers", "kind": "service"},
+              {"id": "TL", "label": "ElastiCache for Valkey: timeline cache, post ids per user", "kind": "store"},
+              {"id": "PDB", "label": "Amazon DynamoDB: posts table, author_id index", "kind": "store"},
+              {"id": "G", "label": "Amazon DynamoDB: follows table", "kind": "store"},
+              {"id": "Q", "label": "Amazon SQS standard queue: post events", "kind": "queue"}
+            ],
+            "frames": [
+              {"id": "PUB", "title": "VPC public subnets", "nodes": ["ALB"]},
+              {"id": "WP", "title": "VPC private: write path", "nodes": ["PS", "FO"]},
+              {"id": "CACHES", "title": "VPC private: caches", "nodes": ["TL"]}
+            ],
+            "edges": [
+              {"from": "A", "to": "CF", "kind": "sync", "label": "HTTPS, sync", "short": "HTTPS"},
+              {"from": "CF", "to": "ALB", "kind": "sync", "label": "HTTPS to the origin, sync", "short": "HTTPS origin"},
+              {"from": "ALB", "to": "PS", "kind": "sync", "label": "HTTP, sync", "short": "HTTP"},
+              {"from": "PS", "to": "PDB", "kind": "sync", "label": "PutItem over the gateway endpoint, sync", "short": "PutItem"},
+              {"from": "PS", "to": "Q", "kind": "async", "label": "SendMessage over the interface endpoint, async hand-off", "short": "SendMessage"},
+              {"from": "Q", "to": "FO", "kind": "async", "label": "ReceiveMessage long-poll over the interface endpoint", "short": "ReceiveMessage"},
+              {"from": "FO", "to": "G", "kind": "sync", "label": "Query followers over the gateway endpoint, sync", "short": "Query"},
+              {"from": "FO", "to": "TL", "kind": "sync", "label": "LPUSH and LTRIM pipelined per node, cache write", "short": "LPUSH + LTRIM"}
+            ],
+            "steps": [
+              {"edge": 0, "caption": "Authors to Amazon CloudFront: HTTPS, sync"},
+              {"edge": 1, "caption": "CloudFront to Application Load Balancer: HTTPS to the origin, sync"},
+              {"edge": 2, "caption": "Load balancer to post service: HTTP, sync"},
+              {"edge": 3, "caption": "Post service to DynamoDB posts: PutItem over the gateway endpoint, sync"},
+              {"edge": 4, "caption": "Post service to SQS: SendMessage over the interface endpoint, async hand-off"},
+              {"edge": 5, "caption": "SQS to fan-out workers: ReceiveMessage long-poll over the interface endpoint"},
+              {"edge": 6, "caption": "Fan-out workers to DynamoDB follows: Query followers over the gateway endpoint, sync"},
+              {"edge": 7, "caption": "Fan-out workers to timeline cache: LPUSH and LTRIM pipelined per node, cache write"}
+            ],
             "legend": "The write half of the architecture, the same boxes as the neutral diagram's write path, one AWS service each: the post service and the fan-out workers are ECS on Fargate tasks, the posts store and the social graph are DynamoDB tables, the post events log is an SQS standard queue, and the timeline cache is an ElastiCache for Valkey cluster. CloudFront and the load balancer are the edge the neutral diagram leaves implicit. Each arrow says how the call is made: HTTPS from clients, HTTP inside the VPC, named AWS SDK calls over VPC endpoints, SQS long-poll, cache writes. Sync means the caller waits for the answer; async means the work goes on after the caller has been answered. The VPC frames are one VPC in one Region across three Availability Zones, drawn apart so each frame's title stays readable. DynamoDB and SQS are Regional services outside the VPC, reached through endpoints, while the cache lives inside it."
           },
           {
-            "type": "diagram",
-            "mermaid": "flowchart TB\n  R[Readers] -->|HTTPS, sync| CF[Amazon CloudFront]\n  CF -->|HTTPS to the origin, sync| ALB\n  CF -->|media on an edge miss, HTTPS| S3[(\"Amazon S3: media objects\")]\n  subgraph PUB[\"VPC public subnets\"]\n    ALB[\"Application Load Balancer\"]\n  end\n  subgraph RP[\"VPC private: read path\"]\n    FS[\"ECS on Fargate: feed service\"]\n    RK[\"ECS on Fargate: ranking service\"]\n  end\n  subgraph CACHES[\"VPC private: caches\"]\n    TL[(\"ElastiCache for Valkey: timeline cache, post ids per user\")]\n    PC[(\"ElastiCache for Valkey: post content cache\")]\n  end\n  PDB[(\"Amazon DynamoDB: posts table, author_id index\")]\n  ALB -->|HTTP, sync| FS\n  FS -->|LRANGE, cache read, sync| TL\n  FS -->|Query the author_id index for celebrity posts, sync| PDB\n  FS -->|HTTP by Service Connect name, sync, 50 ms deadline| RK\n  FS -->|MGET, cache read, sync| PC\n  RK ~~~ PDB\n  PDB ~~~ TL\n  PDB ~~~ PC",
+            "type": "flow",
+            "nodes": [
+              {"id": "R", "label": "Readers", "kind": "actor"},
+              {"id": "CF", "label": "Amazon CloudFront", "kind": "service"},
+              {"id": "ALB", "label": "Application Load Balancer", "kind": "service"},
+              {"id": "S3", "label": "Amazon S3: media objects", "kind": "store"},
+              {"id": "FS", "label": "ECS on Fargate: feed service", "kind": "service"},
+              {"id": "RK", "label": "ECS on Fargate: ranking service", "kind": "service"},
+              {"id": "TL", "label": "ElastiCache for Valkey: timeline cache, post ids per user", "kind": "store"},
+              {"id": "PC", "label": "ElastiCache for Valkey: post content cache", "kind": "store"},
+              {"id": "PDB", "label": "Amazon DynamoDB: posts table, author_id index", "kind": "store"}
+            ],
+            "frames": [
+              {"id": "PUB", "title": "VPC public subnets", "nodes": ["ALB"]},
+              {"id": "RP", "title": "VPC private: read path", "nodes": ["FS", "RK"]},
+              {"id": "CACHES", "title": "VPC private: caches", "nodes": ["TL", "PC"]}
+            ],
+            "edges": [
+              {"from": "R", "to": "CF", "kind": "sync", "label": "HTTPS, sync", "short": "HTTPS"},
+              {"from": "CF", "to": "ALB", "kind": "sync", "label": "HTTPS to the origin, sync", "short": "HTTPS origin"},
+              {"from": "ALB", "to": "FS", "kind": "sync", "label": "HTTP, sync", "short": "HTTP"},
+              {"from": "FS", "to": "TL", "kind": "sync", "label": "LRANGE, cache read, sync", "short": "LRANGE"},
+              {"from": "FS", "to": "PDB", "kind": "sync", "label": "Query the author_id index for celebrity posts, sync", "short": "Query index"},
+              {"from": "FS", "to": "RK", "kind": "sync", "label": "HTTP by Service Connect name, sync, 50 ms deadline", "short": "HTTP / 50 ms"},
+              {"from": "FS", "to": "PC", "kind": "sync", "label": "MGET, cache read, sync", "short": "MGET"},
+              {"from": "CF", "to": "S3", "kind": "sync", "label": "media on an edge miss, HTTPS", "short": "Media HTTPS"}
+            ],
+            "steps": [
+              {"edge": 0, "caption": "Readers to Amazon CloudFront: HTTPS, sync"},
+              {"edge": 1, "caption": "CloudFront to Application Load Balancer: HTTPS to the origin, sync"},
+              {"edge": 2, "caption": "Load balancer to feed service: HTTP, sync"},
+              {"edge": 3, "caption": "Feed service to timeline cache: LRANGE, cache read, sync"},
+              {"edge": 4, "caption": "Feed service to DynamoDB posts: Query the author_id index for celebrity posts, sync"},
+              {"edge": 5, "caption": "Feed service to ranking service: HTTP by Service Connect name, sync, 50 ms deadline"},
+              {"edge": 6, "caption": "Feed service to post content cache: MGET, cache read, sync"},
+              {"edge": 7, "caption": "CloudFront to S3: media on an edge miss, HTTPS"}
+            ],
             "legend": "The read half, the neutral diagram's read path: the feed service and the ranking service are ECS on Fargate tasks, the two caches are ElastiCache for Valkey clusters, the posts table is the same DynamoDB table as in the write half, and S3 is the media store behind CloudFront. CloudFront, the load balancer and the timeline cache appear in both halves. Every arrow here is synchronous: HTTPS from clients, HTTP inside the VPC, a named SDK call over the gateway endpoint, cache reads; the cache clusters keep one replica per shard in another zone."
           },
           {
@@ -1861,6 +1973,11 @@
       "version": 10,
       "date": "2026-10-15",
       "change": "opt-in site-palette styling for the eleven sequence diagrams, body-size desktop labels, padded wrapping notes, wider actor boxes and no repeated bottom actors; explicit label breaks preserve identifiers and lane spacing; flowcharts unchanged"
+    },
+    {
+      "version": 11,
+      "date": "2026-10-15",
+      "change": "the neutral architecture and AWS write/read halves use text-authored flow blocks with computed SVG layout, manual request steps and opt-in prototype B animation; sequence diagrams, architecture labels, legends and citations unchanged; reviewed_by stays null"
     }
   ]
 }

@@ -508,6 +508,10 @@ BLOCK_SPECS = {
     "steps": {"type": str, "title?": str, "items": [str], "cites?": [str]},
     "decision": {"type": str, "caption?": str, "rows": [{"option": str, "pick_when": str, "avoid_when": str, "example?": str}], "cites?": [str]},
     "diagram": {"type": str, "mermaid": str, "legend?": str, "cites?": [str]},   # the legend names the source ids its arrows rest on
+    "flow": {"type": str, "nodes": [{"id": str, "label": str, "kind": str}],
+             "frames?": [{"id": str, "title": str, "nodes": [str]}],
+             "edges": [{"id?": str, "from": str, "to": str, "kind?": str, "label": str, "short?": str}],
+             "steps": [{"edge": (int, str), "caption": str}], "legend?": str, "cites?": [str]},
 }
 CALLOUT_KINDS = ("rule", "pitfall", "tip")
 CITING_BLOCKS = frozenset(t for t, spec in BLOCK_SPECS.items() if "cites?" in spec)
@@ -910,6 +914,74 @@ def as_blocks(v) -> list:
     return [v] if isinstance(v, dict) else v if isinstance(v, list) else []
 
 
+def flow_problems(b: dict, path: str) -> list[str]:
+    out = []
+    ids = [n["id"] for n in b["nodes"]]
+    known = set(ids)
+    if not 1 <= len(ids) <= 12:
+        out.append(f"{path}: a flow needs 1 to 12 nodes; split a larger architecture")
+    if len(known) != len(ids) or any(not n.strip() for n in ids):
+        out.append(f"{path}: node ids must be unique and non-empty")
+    for n in b["nodes"]:
+        if not n["label"].strip():
+            out.append(f"{path}: node labels must be non-empty")
+        if n["kind"] not in ("service", "store", "queue", "actor"):
+            out.append(f"{path}: invalid node kind {n['kind']!r}")
+        if set(n) - {"id", "label", "kind"}:
+            out.append(f"{path}: nodes accept only id, label and kind (no coordinates)")
+    edge_ids = [e["id"] for e in b["edges"] if "id" in e]
+    if len(edge_ids) != len(set(edge_ids)) or any(not i.strip() for i in edge_ids):
+        out.append(f"{path}: edge ids must be unique and non-empty")
+    for e in b["edges"]:
+        if e["from"] not in known or e["to"] not in known:
+            out.append(f"{path}: edges must reference existing nodes")
+        if not e["label"].strip():
+            out.append(f"{path}: edge labels must be non-empty")
+        if e.get("kind", "sync") not in ("sync", "async", "reply"):
+            out.append(f"{path}: invalid edge kind {e['kind']!r}")
+        if "short" in e and (not e["short"].strip() or "\n" in e["short"] or "\r" in e["short"]):
+            out.append(f"{path}: short labels must be non-empty single lines")
+        if set(e) - {"id", "from", "to", "kind", "label", "short"}:
+            out.append(f"{path}: edges accept only id, from, to, kind, label and short")
+    used = set()
+    for step in b["steps"]:
+        ref = step["edge"]
+        index = next((i for i, e in enumerate(b["edges"]) if e.get("id") == ref), -1) if isinstance(ref, str) else ref
+        if isinstance(index, bool) or not 0 <= index < len(b["edges"]):
+            out.append(f"{path}: steps must reference existing edges")
+        else:
+            used.add(index)
+        if not step["caption"].strip() or "\n" in step["caption"] or "\r" in step["caption"]:
+            out.append(f"{path}: step captions must be non-empty single lines")
+        if set(step) - {"edge", "caption"}:
+            out.append(f"{path}: steps accept only edge and caption")
+    if not b["edges"] or used != set(range(len(b["edges"]))):
+        out.append(f"{path}: every edge needs a step")
+    held, frame_ids = set(), set()
+    for frame in b.get("frames", []):
+        if not frame["id"].strip() or frame["id"] in frame_ids or frame["id"] in known:
+            out.append(f"{path}: frame ids must be unique, non-empty and distinct from nodes")
+        frame_ids.add(frame["id"])
+        if not frame["title"].strip():
+            out.append(f"{path}: frame titles must be non-empty")
+        members = frame["nodes"]
+        if not members or any(n not in known for n in members):
+            out.append(f"{path}: frames must hold existing nodes, never nested frames")
+        if len(set(members)) != len(members) or held.intersection(members):
+            out.append(f"{path}: frames must not overlap")
+        held.update(members)
+        if set(frame) - {"id", "title", "nodes"}:
+            out.append(f"{path}: frames accept only id, title and nodes; no nesting or coordinates")
+    for source in re.findall(r"\bs[1-9]\d*\b", b.get("legend", "")):
+        if source not in b.get("cites", []):
+            out.append(f"{path}: legend source {source} must resolve to the block's cites")
+    return out
+
+
+def architecture_block(b: dict) -> bool:
+    return b.get("type") == "flow" or (b.get("type") == "diagram" and bool(FLOWCHART_START.match(b.get("mermaid", ""))))
+
+
 def block_problems(b, path: str) -> list[str]:
     if not isinstance(b, dict):
         return [f"{path}: a block is an object, got {type(b).__name__}"]
@@ -941,6 +1013,8 @@ def block_problems(b, path: str) -> list[str]:
             out += [f"{path}.rows[{i}].{f}: empty" for f in ("option", "pick_when", "avoid_when") if not r[f].strip()]
     if t == "diagram" and (re.search(r"(?i)^\s*C4", b["mermaid"]) or "%%{" in b["mermaid"]):
         out.append(f"{path}: no C4 syntax and no Mermaid directives in a diagram")
+    if t == "flow":
+        out += flow_problems(b, path)
     return out
 
 
@@ -1070,16 +1144,16 @@ def exercise2_checks(l: dict) -> list[str]:
         tables = [b for b in bl if b.get("type") == "table"]
         if sid == AWS_SECTION:
             first = bl[0].get("type") if bl else "missing"
-            if first != "diagram":
+            if first not in ("diagram", "flow"):
                 out.append(f"section {sid}: must start with a diagram block (the AWS architecture, mirroring the high-level-design one); "
                            f"the first block is {first!r}")
-            elif not FLOWCHART_START.match(bl[0]["mermaid"]):
+            elif not architecture_block(bl[0]):
                 out.append(f"section {sid}: must start with a flowchart (the AWS architecture); a sequence diagram comes after it")
             lead = 0   # the architecture: one flowchart, or its write half and read half
-            while lead < min(len(bl), AWS_MAX_LEADING_FLOWCHARTS) and bl[lead].get("type") == "diagram" and FLOWCHART_START.match(bl[lead]["mermaid"]):
+            while lead < min(len(bl), AWS_MAX_LEADING_FLOWCHARTS) and architecture_block(bl[lead]):
                 lead += 1
             for i, b in enumerate(bl[lead:], lead):
-                if b.get("type") == "diagram" and not SEQUENCE_START.match(b["mermaid"]):
+                if b.get("type") == "flow" or (b.get("type") == "diagram" and not SEQUENCE_START.match(b["mermaid"])):
                     out.append(f"section {sid}: a later diagram (block {i}) must be a sequence diagram (the paths through the services); "
                                f"the architecture flowchart, or its write and read halves, comes first only")
             if not any(b.get("type") == "decision" for b in bl):
@@ -1092,19 +1166,19 @@ def exercise2_checks(l: dict) -> list[str]:
             out.append(f"section {sid}: needs a table block with the columns {EST_COLUMNS}")
         if sid == "data-model" and not (any(t["columns"] == DATA_COLUMNS for t in tables) or any(b.get("type") == "code" for b in bl)):
             out.append(f"section {sid}: needs a table block with the columns {DATA_COLUMNS} or a code block")
-        diagrams = [b for b in bl if b.get("type") == "diagram"]
+        diagrams = [b for b in bl if b.get("type") in ("diagram", "flow")]
         if sid == "core-flow":
-            if not any(b.get("type") == "steps" for b in bl) and not any(SEQUENCE_START.match(b["mermaid"]) for b in diagrams):
+            if not any(b.get("type") == "steps" for b in bl) and not any(SEQUENCE_START.match(b.get("mermaid", "")) for b in diagrams):
                 out.append(f"section {sid}: needs a steps block or a sequence diagram")
             for b in diagrams:
-                if not SEQUENCE_START.match(b["mermaid"]):
+                if not SEQUENCE_START.match(b.get("mermaid", "")):
                     out.append(f"section {sid}: a diagram here is a sequence diagram (the flow, request by request); the flowchart is high-level-design's")
         n_diagrams = len(diagrams)
         if sid == "high-level-design":
             if n_diagrams != 1:
                 out.append(f"section {sid}: needs exactly one diagram block, has {n_diagrams}")
-            elif not FLOWCHART_START.match(diagrams[0]["mermaid"]):
-                out.append(f"section {sid}: the diagram must be a Mermaid flowchart (the architecture)")
+            elif not architecture_block(diagrams[0]):
+                out.append(f"section {sid}: the diagram must be a Mermaid flowchart or flow block (the architecture)")
         if sid not in ("high-level-design", AWS_SECTION, "core-flow") and n_diagrams:
             out.append(f"section {sid}: a diagram block belongs in high-level-design only (or in {AWS_SECTION}, or a sequence diagram in core-flow)")
         for t in tables:
