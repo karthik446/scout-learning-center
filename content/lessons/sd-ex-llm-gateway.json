@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-llm-gateway",
-  "version": 5,
+  "version": 6,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: LLM gateway",
@@ -688,6 +688,13 @@
                 "short": "Dispatch"
               },
               {
+                "from": "DIS",
+                "to": "RES",
+                "kind": "sync",
+                "label": "Conditionally mark sent after dispatch",
+                "short": "Mark sent"
+              },
+              {
                 "from": "LOG",
                 "to": "AG",
                 "kind": "async",
@@ -746,14 +753,18 @@
               },
               {
                 "edge": 10,
-                "caption": "LOG to AG: Deliver usage event"
+                "caption": "DIS to RES: Conditionally mark sent after dispatch"
               },
               {
                 "edge": 11,
+                "caption": "LOG to AG: Deliver usage event"
+              },
+              {
+                "edge": 12,
                 "caption": "AG to EV: Idempotent usage and review rollup"
               }
             ],
-            "legend": "Router is inside the gateway. Hosted routes are alternatives, not a fan-out to every provider. The settlement transaction writes an immutable usage-change event with the ledger update; only the separate dispatcher reads those events and sends them, so accounting remains correct if dispatch fails. In AWS the dispatcher is its own task role."
+            "legend": "Router is inside the gateway. Hosted routes are alternatives, not a fan-out to every provider. The settlement transaction writes an immutable usage-change event with the ledger update; only the separate dispatcher reads those events, sends them and marks them sent, so accounting remains correct if dispatch fails. In AWS the dispatcher is its own task role."
           },
           {
             "type": "p",
@@ -789,7 +800,7 @@
               },
               {
                 "id": "POL",
-                "label": "DynamoDB policy and requests",
+                "label": "DynamoDB policy, request and budget tables",
                 "kind": "store"
               },
               {
@@ -935,7 +946,7 @@
               },
               {
                 "id": "DIS",
-                "label": "ECS intent dispatcher",
+                "label": "ECS usage dispatcher",
                 "kind": "service"
               },
               {
@@ -977,7 +988,7 @@
                 "to": "DB",
                 "kind": "sync",
                 "label": "Query pending usage-change events",
-                "short": "Query intents"
+                "short": "Query events"
               },
               {
                 "from": "DIS",
@@ -985,6 +996,13 @@
                 "kind": "async",
                 "label": "SendMessage one event per request and settlement version",
                 "short": "SendMessage"
+              },
+              {
+                "from": "DIS",
+                "to": "DB",
+                "kind": "sync",
+                "label": "Conditionally mark sent after SendMessage",
+                "short": "Mark sent"
               },
               {
                 "from": "Q",
@@ -1041,22 +1059,26 @@
               },
               {
                 "edge": 3,
-                "caption": "Q to AG: ReceiveMessage long-poll"
+                "caption": "DIS to DB: Conditionally mark sent after SendMessage"
               },
               {
                 "edge": 4,
-                "caption": "AG to S3: PutObject deterministic redacted record"
+                "caption": "Q to AG: ReceiveMessage long-poll"
               },
               {
                 "edge": 5,
-                "caption": "AG to VIEW: Transactional dedupe and rollup update"
+                "caption": "AG to S3: PutObject deterministic redacted record"
               },
               {
                 "edge": 6,
+                "caption": "AG to VIEW: Transactional dedupe and rollup update"
+              },
+              {
+                "edge": 7,
                 "caption": "ADMIN to AG: HTTPS authorised usage request"
               }
             ],
-            "legend": "Accounting and usage-read half. SQS may duplicate or reorder events. Each event is a per-change delta keyed by request id and settlement version; the aggregator conditionally records that key with its rollup delta, so duplicates and reordering neither lose nor double-count showback. The live budget was already settled in the authoritative transaction. Sources: s21, s14.",
+            "legend": "Accounting and usage-read half. SQS may duplicate or reorder events. Each event is a per-change delta keyed by request id and settlement version; the aggregator conditionally records that key with its rollup delta, so duplicates and reordering neither lose nor double-count showback. A dispatcher crash between send and mark resends the same key, which is harmless. The live budget was already settled in the authoritative transaction. Sources: s21, s14.",
             "cites": [
               "s21",
               "s14"
@@ -1092,7 +1114,7 @@
           },
           {
             "type": "diagram",
-            "mermaid": "sequenceDiagram\n  autonumber 18\n  participant G as Gateway\n  participant D as DynamoDB\n  participant X as Dispatcher\n  participant Q as SQS\n  participant W as Aggregator\n  G->>D: settle plus change event\n  alt expected version matches\n   D-->>G: delta and event committed\n  else stale settlement version\n   D-->>G: reject, reread request\n  end\n  X->>D: read pending change events\n  D-->>X: request id, version, deltas\n  X-)Q: one event per version\n  Q-)W: usage delivery\n  W->>D: apply delta once per key\n  alt key not yet applied\n   D-->>W: rollup updated\n  else key already applied\n   D-->>W: no change\n  end\n  W->>Q: DeleteMessage",
+            "mermaid": "sequenceDiagram\n  autonumber 18\n  participant G as Gateway\n  participant D as DynamoDB\n  participant X as Dispatcher\n  participant Q as SQS\n  participant W as Aggregator\n  G->>D: settle plus change event\n  alt expected version matches\n   D-->>G: delta and event committed\n  else stale settlement version\n   D-->>G: reject, reread request\n  end\n  X->>D: read pending change events\n  D-->>X: request id, version, deltas\n  X-)Q: one event per version\n  X->>D: conditionally mark sent\n  Q-)W: usage delivery\n  W->>D: apply delta once per key\n  alt key not yet applied\n   D-->>W: rollup updated\n  else key already applied\n   D-->>W: no change\n  end\n  W->>Q: DeleteMessage",
             "legend": "Solid calls and dashed replies are synchronous; open arrows hand work off asynchronously. Failure branches are mutually exclusive. Sources: s21, s9.",
             "cites": [
               "s21",
@@ -1125,7 +1147,7 @@
               ],
               [
                 "Dispatcher role",
-                "Query intents; SendMessage; conditionally mark delivered.",
+                "Query pending usage-change events; SendMessage; conditionally mark sent.",
                 "SQS interface endpoint."
               ],
               [
@@ -1217,7 +1239,7 @@
             "rows": [
               {
                 "option": "SQS standard",
-                "pick_when": "Background usage projection with durable source intent and event deduplication.",
+                "pick_when": "Background usage projection with durable source events and event deduplication.",
                 "avoid_when": "The queue is expected to be a permanent audit log.",
                 "example": "For this design: chosen; spend admission never waits for a rollup."
               },
@@ -1316,9 +1338,9 @@
               ],
               [
                 "Request budget transactions",
-                "DynamoDB: 8 write units/request, sub-KiB records, no retries/indexes",
-                "$750",
-                "$7,500"
+                "DynamoDB: 10 write units/request (five transactional items at two units each), sub-KiB records, no retries/indexes",
+                "$937.50",
+                "$9,375"
               ],
               [
                 "Usage delivery",
@@ -1329,12 +1351,12 @@
               [
                 "Priced subtotal",
                 "Excludes the following unquantified lines",
-                "$36,138.35",
-                "$361,383.50"
+                "$36,325.85",
+                "$363,258.50"
               ],
               [
                 "Unpriced metadata and projections",
-                "DynamoDB policy reads, rollup/dedupe writes, storage, dispatcher scans and transaction retries need item sizes and rates.",
+                "DynamoDB policy reads, sent markers, rollup/dedupe writes, storage, dispatcher scans and transaction retries need item sizes and rates.",
                 "Not priced",
                 "Not priced"
               ],
@@ -1401,7 +1423,7 @@
                 "UsageChange",
                 "request_id, settlement_version, spend_delta, exposure_delta, budget_month, sent",
                 "tenant_id, request_id, settlement_version",
-                "Immutable event written in the same transaction as each settlement change; dispatcher marks sent only after SendMessage."
+                "Immutable delta event written in the same transaction as each settlement change; only the sent marker changes, and the dispatcher sets it only after SendMessage."
               ],
               [
                 "DeploymentState",
@@ -1508,7 +1530,7 @@
               "Choose a route allowed for this alias and data classification. Check per-provider request, input-token, output-token and concurrency dimensions; cache hits may affect these differently by provider.",
               "A confirmed rejection before inference may permit bounded failover. An ambiguous timeout can have incurred usage even with no first byte; failover is allowed only under an explicit duplicate-inference policy with both attempt costs reserved. Never retry a tool side effect; tools are out of scope.",
               "After any client-visible output, do not splice another completion into the same stream. Return an interrupted marker, not a fabricated resume cursor. The client may choose a new request with a new id and budget.",
-              "Settle by conditional settlement-version transition with cumulative spend/exposure deltas and one immutable UsageChange event in the same transaction against the original month. Replay or racing reconciliation rereads on conflict; later known usage adjusts only the prior totals once. Unknown attempt exposure remains reserved. The dispatcher alone reads pending events and sends one per request and version.",
+              "Settle by conditional settlement-version transition with cumulative spend/exposure deltas and one immutable UsageChange event in the same transaction against the original month. Replay or racing reconciliation rereads on conflict; later known usage adjusts only the prior totals once. Unknown attempt exposure remains reserved. The dispatcher alone reads pending events, sends one per request and version, then marks it sent.",
               "Project usage asynchronously: the aggregator applies each per-change delta once per request-and-version key, so duplicates and reordering neither lose nor double-count showback; the rollup's delay never authorises additional spending. Show spent, reserved and unknown usage separately."
             ],
             "cites": [
@@ -1812,9 +1834,9 @@
       "type": "steps",
       "title": "A 45-minute interview",
       "items": [
-        "0:00 to 0:05: Requirements: whose limits matter, what a outcome-aware retry permits, what the cache caches, who chooses the provider, what is logged, hard or soft budgets. Say the numbers aloud: 174 requests per second at peak, 15 billion input tokens and 1.6 billion output tokens per day, 31 million input tokens per minute at peak against per-minute provider limits, about half of input tokens cacheable.",
-        "0:05 to 0:10: Entities and API: Team with limits and budget, Key, ModelAlias with ordered deployments, DeploymentState, RequestLog with cached tokens, Spend; the completions, embeddings and usage endpoints and the error classes.",
-        "0:10 to 0:20: High-level design with the diagram: gateway nodes, key and policy store, token counters, router to providers and the self-hosted fleet, response cache, redacted log, spend aggregator. Say which state is local and which is shared.",
+        "0:00 to 0:05: Requirements: whose limits matter, what an outcome-aware retry permits, what the cache caches, who chooses the provider, what is logged, hard or soft budgets. Say the numbers aloud: 174 requests per second at peak, 15 billion input tokens and 1.6 billion output tokens per day, 31 million input tokens per minute at peak against per-minute provider limits, about half of input tokens cacheable.",
+        "0:05 to 0:10: Entities and API: Team with limits and budget, Key, ModelAlias with ordered deployments, Request with its settlement version, UsageChange, DeploymentState, RequestLog with cached tokens, Spend; the completions, embeddings and usage endpoints and the error classes.",
+        "0:10 to 0:20: High-level design with the diagram: gateway nodes, key and policy store, durable budget ledger, token counters, router to providers and the self-hosted fleet, response cache, usage dispatcher, redacted log, spend aggregator. Say which state is local and which is shared.",
         "0:20 to 0:40: Two deep dives: limits and fairness under a shared provider ceiling (token buckets per team, concurrency per self-hosted deployment, shedding by priority, breakers and failover), then cost and privacy (prompt caching mechanics and prices, response cache, routing by policy, redaction and retention of logs, the in-flight reservation invariant).",
         "0:40 to 0:45: Failure modes from the table, the 10x platform (tenancy tiers, guardrails, routing evaluation, chargeback, capacity planning), and the L3 sentence: the gateway is a rate limiter, a cost allocator and a privacy boundary that happens to proxy requests."
       ]
@@ -1826,7 +1848,7 @@
         "Context and scope: The applications calling models today, the providers and contracts, the self-hosted fleet's capacity, the spend surprise or the 429 incident that motivates the gateway.",
         "Goals and non-goals: One API, team limits and budgets, safe failover, streaming, spend visibility, privacy by default; no evaluation product, no prompt tooling, no fine-tuning, no agent orchestration.",
         "Design: This answer fills it: admission, routing, streaming proxy, settlement, the counter and log design, caching.",
-        "Alternatives considered: An SDK per app, request-based limits, retry-anything, synchronous exact budgets, always-on text logging, with the trade-off table.",
+        "Alternatives considered: An SDK per app, request-based limits, retry-anything, delayed-rollup budgets, always-on text logging, with the trade-off table.",
         "Cross-cutting concerns: Security (key hashing, scopes, revocation propagation, admin audit), privacy (redaction, opt-in text, retention, access control on the log store), observability (first-token latency per deployment, failover ratio, cache hit ratio, spend per team per day, rejected requests by reason), cost (tokens by class per team), rollout by moving one team's alias at a time with the direct provider path as fallback.",
         "Review questions the doc must answer: What a client receives when a stream breaks after the first token, and by how much a team can exceed its budget before the gate closes."
       ]
@@ -1840,8 +1862,8 @@
   "provenance": {
     "generated_by": "Claude (Fable 5.1) by hand, Scout learning center M4a",
     "generated_on": "2026-10-12",
-    "reviewed_by": null,
-    "reviewed_on": null
+    "reviewed_by": "a third reader (Claude Sonnet 5.5, a different instance from the earlier readers), Scout learning center, format v2 E2B",
+    "reviewed_on": "2026-10-16"
   },
   "changelog": [
     {
@@ -1868,6 +1890,11 @@
       "version": 5,
       "date": "2026-10-16",
       "change": "Address reread G2-R and G4: neutral flow shows the usage dispatcher; usage events are immutable per-change deltas keyed by request id and settlement version, applied idempotently. Review provenance remains unset."
+    },
+    {
+      "version": 6,
+      "date": "2026-10-16",
+      "change": "Third read: DynamoDB cost row recomputed for the UsageChange item (10 write units per request, subtotal $36,325.85); dispatcher sent-marker added to both flows and the usage sequence; interview and design-doc frames aligned with the durable-reservation design."
     }
   ]
 }
