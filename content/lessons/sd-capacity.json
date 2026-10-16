@@ -1,7 +1,7 @@
 {
   "schema_version": "learning-center-lesson:2",
   "id": "sd-capacity",
-  "version": 2,
+  "version": 3,
   "status": "published",
   "superseded_by": null,
   "title": "Capacity planning and performance",
@@ -270,7 +270,7 @@
         },
         {
           "type": "p",
-          "text": "Two more conversions complete the chain. Little's law gives concurrency from rate and time: the average number of requests in a system equals the arrival rate times the average time each spends there, whatever the arrival pattern, which sizes thread pools, connection pools and memory per request. And the per-instance throughput that divides the peak rate into a machine count is a performance metric in the Auxon sense: it comes from a load test or production measurement, never from a reference table.",
+          "text": "Two conversions complete the chain. Little's law relates long-run average concurrency, arrival rate and time in a stable system; it does not bound arbitrary bursts. Apply request residence time to request concurrency and connection hold time to occupied connections, not interchangeably. Per-instance sustainable throughput comes from a production-like test or measurement, never a reference table. Use that measured capacity to divide the forecast peak into machines.",
           "cites": [
             "s4",
             "s1"
@@ -299,7 +299,7 @@
         },
         {
           "type": "table",
-          "caption": "The single-server queue: mean items in the system by utilisation.",
+          "caption": "M/M/1 steady-state means: Poisson arrivals, independent exponential service times and one server, with utilisation below one. Guidance is illustrative, not a universal safe-utilisation threshold.",
           "columns": [
             "utilisation",
             "mean items in the system",
@@ -309,22 +309,22 @@
             [
               "0.5",
               "1",
-              "comfortable; a burst doubles the queue briefly"
+              "lower mean occupancy; burst size and duration are not specified by this mean"
             ],
             [
               "0.8",
               "4",
-              "the knee; tail latency is already rising"
+              "higher mean occupancy; not a universal latency knee"
             ],
             [
               "0.9",
               "9",
-              "a dependency slowing by a little fills every pool"
+              "less headroom; pool exhaustion depends on the actual workload"
             ],
             [
               "0.99",
               "99",
-              "saturated; any growth or a lost node is an outage"
+              "very high mean occupancy; outage depends on limits and overload handling"
             ]
           ],
           "cites": [
@@ -565,7 +565,7 @@
       "blocks": [
         {
           "type": "p",
-          "text": "The Kubernetes HorizontalPodAutoscaler is the reference control loop. Every 15 seconds by default it reads a metric for the pods of its target, takes the mean, and sets the desired replica count to the current count times the ratio of the current metric value to the desired value, rounded up, taking no action when the ratio is within a tolerance of 0.1 of one. For CPU the metric is utilisation as a percentage of the container's resource request, so a pod without a request has no defined utilisation and is ignored, and requests must be set honestly. Pods that are not yet ready are set aside, and a pod's CPU is ignored for a configurable period after start, five minutes by default, so that a warming JVM does not look like load.",
+          "text": "The Kubernetes HorizontalPodAutoscaler polls every 15 seconds by default. Its starting recommendation is current replicas times current-to-target metric ratio, rounded up; the default tolerance is 0.1. CPU utilisation is relative to resource requests: missing relevant requests leave utilisation undefined, so scaling on that metric may be unavailable, not safely ignoreable. Missing metrics are set aside, then conservatively included when adjusting the recommendation. Readiness-related CPU filtering uses a five-minute initialisation period by default, but does not discard every sample throughout that period: readiness and whether the measurement window was entirely ready matter. Set requests and readiness probes deliberately.",
           "cites": [
             "s7",
             "s8"
@@ -650,14 +650,14 @@
         },
         {
           "type": "p",
-          "text": "Stateful tiers set the lead time. Amazon's active-standby pattern keeps a warm standby in another zone for a primary database, so that failover repoints a name rather than launching a replacement, and the general principle is that recovery never takes a new dependency on a control plane. Adding a shard or a replica moves data and takes hours to days; buying hardware or raising a cloud quota takes weeks. The plan names these tiers and the date by which their next step must start.",
+          "text": "Stateful tiers set the lead time. Amazon's active-standby pattern keeps a warm standby in another zone so failover does not require launching a replacement; recovery should avoid a new control-plane dependency. The planning durations below are illustrative assumptions, not provider promises: data movement, quota approval and procurement depend on the workload and account. Replace each with a measured or agreed lead time, name its owner, and schedule the next step before headroom runs out.",
           "cites": [
             "s10"
           ]
         },
         {
           "type": "table",
-          "caption": "What the plan records per tier.",
+          "caption": "What the plan records per tier; all lead times are illustrative planning assumptions, to replace with local evidence.",
           "columns": [
             "tier",
             "scales by",
@@ -718,7 +718,7 @@
     "blocks": [
       {
         "type": "p",
-        "text": "A checkout API needs a plan for the coming year: how many instances, at what utilisation, with what headroom for a zone loss and a deployment, and which tier runs out first. Every input is an assumption chosen to make the arithmetic concrete; the HPA manifest after the steps encodes the result."
+        "text": "A checkout API needs a plan for the coming year. All workload and test inputs are synthetic assumptions, not measurements. The design tolerates either a zone loss or a rolling deployment, not both together; deployment stops during an impairment. The HPA snippet supplies replica bounds, not placement or connection enforcement."
       },
       {
         "type": "steps",
@@ -727,17 +727,17 @@
           "Demand: 1,200 requests per second on average today (assumption from production metrics).",
           "Peak: a peak factor of 2.5 for the evening peak (assumption from the last quarter's traffic), so 3,000 requests per second.",
           "Growth: 40 percent over the planning year (assumption from the product forecast), so the plan targets 4,200 requests per second at peak.",
-          "Load test: a breakpoint test shows one instance of 2 vCPU sustains 400 requests per second before p99 latency leaves the flat region (assumption, measured).",
+          "Illustrative breakpoint result: assume one instance of 2 vCPU sustains 400 requests per second at the latency knee; the sample test has not produced this result.",
           "Base count: 4,200 divided by 400 is 10.5, so 11 instances would run at the knee with no headroom.",
           "Utilisation target: run the fleet at 60 percent of the knee, so 4,200 divided by (400 times 0.6) is 17.5, rounded up to 18 instances.",
-          "Zone loss: three zones and the 50 percent over-provision give 27 instances, 9 per zone; losing a zone leaves 18, the full target, with no scaling action needed.",
-          "Deployment: a rolling deploy takes 1 instance per zone out of rotation, so 24 serve during a deploy, still above the 18 the target needs.",
-          "Concurrency: at 120 ms mean latency (assumption, from the test) Little's law gives 4,200 times 0.12, about 500 requests in flight at peak across the fleet.",
-          "Connections: 500 in flight over 27 instances is about 19 database connections per instance; a pool of 25 per instance is 675 in total, inside a database limit of 1,000 (assumption).",
-          "Autoscaler: target CPU utilisation 60 percent of the request, minimum 27 replicas for static stability, maximum 60, downscale stabilisation at the 5-minute default.",
+          "Zone loss: enforce balanced placement across three zones, with 9 ready instances in each. The fleet of 27 then leaves 18 after one zone fails; a minimum count alone cannot ensure this.",
+          "Deploy separately: remove at most one instance per zone, leaving 24. A simultaneous zone loss would leave 16, below target, so overlapping failures are excluded from this capacity guarantee.",
+          "Request concurrency: assuming a stable peak and 120 ms mean residence time, Little's law gives 504 in-flight requests; these need not all hold database connections.",
+          "Connection concurrency: assume 60 ms total connection hold time per request, giving 252 occupied connections, or 14 per surviving instance after zone loss. Pools capped at 25 give 450 survivor slots; burst waiting still needs testing.",
+          "Joint ceiling: HPA maximum 36 pods with pools of 25 allows 900 connections, reserving 100 of the database's 1,000 for operations. Count surge and terminating pods against this bound; use zero surge and close pools on shutdown. CPU target 60 percent is a separate provisional control setting, not the throughput fraction; calibrate it against load tests.",
           "Startup: a new instance is ready in 90 seconds (assumption), so a spike must be carried by the 27 running instances for that long; at the knee they carry 10,800 requests per second, 2.5 times the planned peak.",
           "The database: each request makes 3 queries (assumption), so 4,200 requests per second is 12,600 queries per second against a database load-tested to 20,000, which is 63 percent utilisation at the planned peak.",
-          "The decider: the database. At the next doubling it saturates while the stateless tier simply adds replicas, so a read replica or a cache must be scheduled now, with weeks of lead time, not when the knee arrives."
+          "The decider: doubling demand implies 25,200 queries per second, above the assumed database capacity. A cache or read replica helps only the offloadable read portion; measure the read/write mix before choosing that remedy or write scaling. Lead time is a planning assumption, not a universal weeks-long bound."
         ],
         "cites": [
           "s4",
@@ -763,7 +763,7 @@
           [
             "Per-instance capacity",
             "400 requests per second",
-            "breakpoint test at the p99 knee"
+            "assumed breakpoint result, not a completed measurement"
           ],
           [
             "Instances at the knee",
@@ -782,13 +782,13 @@
           ],
           [
             "Requests in flight at peak",
-            "about 500",
+            "504",
             "4,200 times 0.12 s"
           ],
           [
-            "Database connections",
-            "675 of 1,000",
-            "25 per instance times 27"
+            "Database pool ceiling at maximum pods",
+            "900",
+            "36 pods times 25; reserve 100 connections separately"
           ],
           [
             "Database utilisation at peak",
@@ -800,14 +800,14 @@
       {
         "type": "code",
         "lang": "yaml",
-        "code": "apiVersion: autoscaling/v2\nkind: HorizontalPodAutoscaler\nmetadata:\n  name: checkout\nspec:\n  scaleTargetRef:\n    apiVersion: apps/v1\n    kind: Deployment\n    name: checkout\n  minReplicas: 27        # static stability: 9 per zone, a zone loss needs no scaling\n  maxReplicas: 60        # bounded; quota checked to match\n  metrics:\n    - type: Resource\n      resource:\n        name: cpu\n        target:\n          type: Utilization\n          averageUtilization: 60    # of the container's CPU request, which must be set\n  behavior:\n    scaleUp:\n      stabilizationWindowSeconds: 0\n      policies:\n        - type: Percent\n          value: 100\n          periodSeconds: 15\n    scaleDown:\n      stabilizationWindowSeconds: 300   # the default rolling maximum\n      policies:\n        - type: Percent\n          value: 10\n          periodSeconds: 60",
-        "caption": "The autoscaler from the plan: a floor that survives a zone, a ceiling with quota behind it, fast up and slow down."
+        "code": "apiVersion: autoscaling/v2\nkind: HorizontalPodAutoscaler\nmetadata:\n  name: checkout\nspec:\n  scaleTargetRef:\n    apiVersion: apps/v1\n    kind: Deployment\n    name: checkout\n  minReplicas: 27\n  maxReplicas: 36\n  metrics:\n    - type: Resource\n      resource:\n        name: cpu\n        target:\n          type: Utilization\n          averageUtilization: 60\n  behavior:\n    scaleUp:\n      stabilizationWindowSeconds: 0\n      policies:\n        - type: Percent\n          value: 100\n          periodSeconds: 15\n    scaleDown:\n      stabilizationWindowSeconds: 300\n      policies:\n        - type: Percent\n          value: 10\n          periodSeconds: 60",
+        "caption": "Replica bounds only. Deployment prerequisites: explicit CPU requests, enforced zone topology spreading, zero surge, bounded unavailability and connection release before replacement. Cap all live pools, including terminating pods; a database-side connection budget must enforce the limit. Validate the CPU-to-throughput relationship rather than equating their percentages."
       },
       {
         "type": "code",
         "lang": "javascript",
         "code": "import http from 'k6/http';\nimport { check } from 'k6';\n\n// Breakpoint test, open model: drive an arrival rate, not a user count,\n// so the generator does not throttle itself as latency rises.\nexport const options = {\n  scenarios: {\n    breakpoint: {\n      executor: 'ramping-arrival-rate',\n      startRate: 100, timeUnit: '1s',\n      preAllocatedVUs: 200, maxVUs: 2000,\n      stages: [{ duration: '10m', target: 1200 }],   // one instance: ramp past the expected knee\n    },\n  },\n  thresholds: { http_req_duration: ['p(99)<300'] },     // the knee is where this stops holding\n};\n\nexport default function () {\n  const res = http.post('https://checkout.example.test/orders',\n    JSON.stringify({ sku: 'A1', qty: 1 }), { headers: { 'Content-Type': 'application/json' } });\n  check(res, { 'status 2xx': r => r.status >= 200 && r.status < 300 });\n}",
-        "caption": "The breakpoint test that produced the per-instance figure: an open-model ramp against one instance until the p99 threshold fails."
+        "caption": "Illustrative open-model breakpoint test; it has not measured the assumed per-instance capacity. Replace the endpoint and workload with production-like inputs before running."
       }
     ]
   },
@@ -981,6 +981,11 @@
       "version": 2,
       "date": "2026-10-15",
       "change": "rewritten by hand at format v2 (version 2): the planning cycle and intent-based planning with the chain-of-intent table, the arithmetic from a rate to machines with the NALSD feasibility table and Little's law, utilisation targets with the M/M/1 table and the over-provisioning table, load test shapes as the k6 table, the USE checklist as a table, autoscaling with the HPA loop and the failure-mode table, the plan and its loop with the diagram in its subtopic, a worked checkout plan with the HPA manifest and the breakpoint test after the teaching, cited in-practice blocks (Auxon, NALSD, Niantic, Amazon, Borg), 12 verified sources"
+    }
+    ,{
+      "version": 3,
+      "date": "2026-10-15",
+      "change": "Corrected joint HPA/pool bounds, failure overlap and placement assumptions, readiness handling, queue-model caveats and illustrative measurements/lead times."
     }
   ]
 }
