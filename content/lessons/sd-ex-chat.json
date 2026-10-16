@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-chat",
-  "version": 17,
+  "version": 19,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: chat and presence",
@@ -1039,14 +1039,9 @@
                 "kind": "service"
               },
               {
-                "id": "GW2",
-                "label": "Gateway nodes: the members' sessions",
-                "kind": "service"
-              },
-              {
-                "id": "SS2",
-                "label": "Session registry: read by the push service",
-                "kind": "store"
+                "id": "PP",
+                "label": "Push providers: APNs and FCM",
+                "kind": "actor"
               }
             ],
             "frames": [
@@ -1058,8 +1053,7 @@
                   "LB",
                   "GW",
                   "PR",
-                  "SS",
-                  "GW2"
+                  "SS"
                 ]
               },
               {
@@ -1070,8 +1064,7 @@
                   "MS",
                   "Q",
                   "PN",
-                  "IX",
-                  "SS2"
+                  "IX"
                 ]
               }
             ],
@@ -1127,7 +1120,7 @@
               },
               {
                 "from": "CS",
-                "to": "GW2",
+                "to": "GW",
                 "kind": "async",
                 "label": "fan-out to members' gateways",
                 "short": "Fan-out"
@@ -1155,10 +1148,17 @@
               },
               {
                 "from": "PN",
-                "to": "SS2",
+                "to": "SS",
                 "kind": "sync",
                 "label": "look up the members' sessions",
                 "short": "Sessions"
+              },
+              {
+                "from": "PN",
+                "to": "PP",
+                "kind": "sync",
+                "label": "send a push for each device of a member with no session",
+                "short": "Send"
               },
               {
                 "from": "Q",
@@ -1226,14 +1226,18 @@
               },
               {
                 "edge": 12,
-                "caption": "The log feeds the search indexer"
+                "caption": "The push service sends a push for each device of the members with no session to the push providers"
               },
               {
                 "edge": 13,
+                "caption": "The log feeds the search indexer"
+              },
+              {
+                "edge": 14,
                 "caption": "The gateway reads the gap for a reconnecting client from the message store and writes the receipt cursors"
               }
             ],
-            "legend": "Boxes are containers; cylinders are stores; double brackets are logs. Gateways hold connections, conversation servers hold order. The gateway fleet is drawn twice, as the sender's gateway on the way in and as the members' gateways on the way out, and the session registry is drawn twice, the second box being the same registry as the push service reads it. The conversation servers and the push service read the members of the conversation from the conversation record, then look the members' sessions up in the registry (the push service to find the members who have none), and the gateway reads the message store to serve the gap of a reconnecting client and writes the receipt cursors. The message store box stands for the stores of the messages, the conversation records, the receipts and the device tokens. The gateway also forwards a history read to the owning conversation server, which serves it from its tail or the store. The push providers are not drawn."
+            "legend": "Boxes are containers; cylinders are stores; double brackets are logs. Gateways hold connections, conversation servers hold order. The gateway fleet is drawn once: the sender's gateway publishes to the conversation server, and the conversation server fans the message out to the gateways that hold the members' sessions, the same fleet; the session registry is drawn once, read by the conversation servers and by the push service. The conversation servers and the push service read the members of the conversation from the conversation record, then look the members' sessions up in the registry (the push service to find the members who have none), and the gateway reads the message store to serve the gap of a reconnecting client and writes the receipt cursors. The message store box stands for the stores of the messages, the conversation records, the receipts and the device tokens. The gateway also forwards a history read to the owning conversation server, which serves it from its tail or the store. The push service sends one push for each device of a member with no session to the push providers, APNs and FCM."
           },
           {
             "type": "p",
@@ -1303,14 +1307,9 @@
                 "kind": "service"
               },
               {
-                "id": "GW2",
-                "label": "ECS on Fargate: gateway tasks of the members' sessions",
-                "kind": "service"
-              },
-              {
-                "id": "SS2",
-                "label": "ElastiCache for Valkey: session registry, read by the push service",
-                "kind": "store"
+                "id": "PP",
+                "label": "APNs and FCM",
+                "kind": "actor"
               }
             ],
             "frames": [
@@ -1326,7 +1325,6 @@
                 "title": "VPC private: services",
                 "nodes": [
                   "GW",
-                  "GW2",
                   "CS",
                   "PN",
                   "IX"
@@ -1385,7 +1383,7 @@
               },
               {
                 "from": "CS",
-                "to": "GW2",
+                "to": "GW",
                 "kind": "async",
                 "label": "batched deliveries and receipt frames, one per gateway task, by IP",
                 "short": "Fan-out"
@@ -1413,10 +1411,17 @@
               },
               {
                 "from": "PN",
-                "to": "SS2",
+                "to": "SS",
                 "kind": "sync",
                 "label": "GET the sessions of the conversation's members, cache read, sync",
                 "short": "Sessions"
+              },
+              {
+                "from": "PN",
+                "to": "PP",
+                "kind": "sync",
+                "label": "one push per device of the members with no session, out through the NAT gateways, sync",
+                "short": "Push"
               },
               {
                 "from": "Q",
@@ -1484,14 +1489,18 @@
               },
               {
                 "edge": 12,
-                "caption": "Kinesis to the search indexer: GetRecords, its own position"
+                "caption": "Push service to APNs and FCM: one push per device of the members with no session, out through the NAT gateways, sync"
               },
               {
                 "edge": 13,
+                "caption": "Kinesis to the search indexer: GetRecords, its own position"
+              },
+              {
+                "edge": 14,
                 "caption": "Gateway to DynamoDB chat tables: Query the gap and the receipts on a reconnect, GetItem and PutItem the conversations, UpdateItem the receipt cursors, sync"
               }
             ],
-            "legend": "The same boxes as the neutral diagram, one AWS service each: the L4 balancer is a Network Load Balancer; the gateways, the conversation servers, the push service and the indexer are ECS on Fargate services; presence and the session registry are two ElastiCache for Valkey clusters, kept apart so that the best-effort presence traffic never shares a failure with the registry the message path reads; and the message events are a Kinesis data stream. The DynamoDB box stands for four tables: messages (key conversation and bucket, sort key message id, with the client_msg_id as an attribute for the owner's duplicate check), conversations (key conversation id, with the member ids) receipts (key conversation and user) and device tokens (key user id, sort key device id); a Query reads one key s17 and a conversation is created with a conditional put s14. Each arrow says how the call is made: TLS from clients, TCP through the load balancer s7, RPC and batched deliveries between tasks by IP address, named SDK calls over the DynamoDB gateway endpoint s8 and the Kinesis interface endpoint s9, cache reads and writes with a TTL s10. Sync means the caller waits for the answer; async means the work goes on after the caller has been answered. The gateway fleet is drawn twice, as the sender's gateway on the way in and as the members' gateways on the way out, and the session registry is drawn twice, the second box being the same cluster as the push service reads it. The gateways list the conversation-server tasks that ECS service discovery registers s11 by calling Cloud Map's DiscoverInstances s59, sort the list by instance id and hash conversation ids over it. The conversation servers write the messages and read them back to serve history and to rebuild a tail, and they and the push service read a conversation record for the member ids and cache it with a TTL; the gateways read and create conversations, read the gap for a resync, and write and read the receipt cursors; each stream consumer keeps its position in DynamoDB tables of its own, which the Kinesis Client Library 3.x creates s63. History reads and the conversation calls reach the gateways over the same load balancer listener. The two caches run in the same private subnets as the services and are drawn beside the services frame; the push service sends to APNs and FCM through NAT gateways s55, and the push providers and the NAT gateways are not drawn. The VPC frames are one VPC in one Region across three Availability Zones.",
+            "legend": "The same boxes as the neutral diagram, one AWS service each: the L4 balancer is a Network Load Balancer; the gateways, the conversation servers, the push service and the indexer are ECS on Fargate services; presence and the session registry are two ElastiCache for Valkey clusters, kept apart so that the best-effort presence traffic never shares a failure with the registry the message path reads; the message events are a Kinesis data stream; and the push providers are APNs and FCM. The DynamoDB box stands for four tables: messages (key conversation and bucket, sort key message id, with the client_msg_id as an attribute for the owner's duplicate check), conversations (key conversation id, with the member ids) receipts (key conversation and user) and device tokens (key user id, sort key device id); a Query reads one key s17 and a conversation is created with a conditional put s14. Each arrow says how the call is made: TLS from clients, TCP through the load balancer s7, RPC and batched deliveries between tasks by IP address, named SDK calls over the DynamoDB gateway endpoint s8 and the Kinesis interface endpoint s9, cache reads and writes with a TTL s10. Sync means the caller waits for the answer; async means the work goes on after the caller has been answered. The gateway fleet and the session registry are each drawn once: the conversation servers fan out to the same gateway tasks the sender's frame came in through, and the push service reads the same registry cluster as the conversation servers. The gateways list the conversation-server tasks that ECS service discovery registers s11 by calling Cloud Map's DiscoverInstances s59, sort the list by instance id and hash conversation ids over it. The conversation servers write the messages and read them back to serve history and to rebuild a tail, and they and the push service read a conversation record for the member ids and cache it with a TTL; the gateways read and create conversations, read the gap for a resync, and write and read the receipt cursors; each stream consumer keeps its position in DynamoDB tables of its own, which the Kinesis Client Library 3.x creates s63. History reads and the conversation calls reach the gateways over the same load balancer listener. The two caches run in the same private subnets as the services and are drawn beside the services frame; the push service sends to APNs and FCM through NAT gateways s55, which are not drawn. The VPC frames are one VPC in one Region across three Availability Zones.",
             "cites": [
               "s7",
               "s8",
@@ -2520,7 +2529,7 @@
   "provenance": {
     "generated_by": "Claude (Fable 5.1) by hand, Scout learning center M4a; format v2 restructure by hand, Claude (Fable 5.1), Scout learning center F2-E1",
     "generated_on": "2026-10-12",
-    "reviewed_by": "a re-reader (Claude Sonnet 5.5, a different instance from the writer and the first reader), Scout learning center, format v2 E1A AWS pass, re-read",
+    "reviewed_by": "a second reader (Codex gpt-6-astra, a different instance from the worker), Scout learning center, format v2 flow redraw",
     "reviewed_on": "2026-10-16"
   },
   "changelog": [
@@ -2608,6 +2617,16 @@
       "version": 17,
       "date": "2026-10-16",
       "change": "Sixth read of the AWS pass (batch E1A), Claude (Sonnet 5.5), a different instance from the writer and the first reader; accepted with reviewed_by set; no change to the body: every finding of the fifth read (the device-token table and the push step's inputs, flow arrows in step order, the registry's key per session plus a set per user, the empty-tail branch, the sourced iterator age, zonal NAT and ordering statements, the member-list wording) confirmed fixed, the new text read as new text, every cost cell unchanged and recomputed, all 69 cited pages fetched with their phrases; lower-severity nits left in reviews/learning-center-F2-E1A-reread4.md (addendum)"
+    },
+    {
+      "version": 18,
+      "date": "2026-10-16",
+      "change": "flow redraw (F2-FLOW-LIMIT), now that a flow may have 16 nodes and the router takes a request and its reply between two boxes: the neutral and the AWS flows draw the gateway fleet once (the conversation servers' fan-out arrow returns to the gateway the publish arrow leaves) and the session registry once (read by the gateway, the conversation servers and the push service), and the push providers are drawn (a Push providers box and an arrow from the push service in the neutral flow, an APNs and FCM box and an arrow in the AWS flow, 11 boxes and 15 arrows each); the legends no longer say a box is drawn twice or that the providers are not drawn; the DynamoDB box still stands for four tables and the message store box for its four stores; the sequence diagrams are unchanged; reviewed_by cleared for a read of the diagrams"
+    },
+    {
+      "version": 19,
+      "date": "2026-10-16",
+      "change": "Second read of the flow redraw (F2-FLOW-LIMIT), Codex (gpt-6-astra), a different instance from the worker; accepted with reviewed_by set; no change to the body: the neutral and AWS flows (gateway once, session registry once, push providers box, 11 boxes and 15 arrows each) checked against the sequence diagrams, the identity table (the push service's NAT gateways to APNs and FCM) and the legends, the flows rendered at 1280 and 820 px with 16 px text and no label cut off"
     }
   ]
 }

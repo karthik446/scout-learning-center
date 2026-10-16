@@ -169,6 +169,11 @@ EXERCISE2_SECTION_IDS = EXERCISE_SECTION_IDS[:2] + [AWS_SECTION] + EXERCISE_SECT
 AWS_COST_COLUMN = re.compile(r"(?i)monthly|cost|price")
 AWS_MAX_LEADING_FLOWS = 2
 MAX_SEQUENCE_PARTICIPANTS = 5
+# A flow block has at most MAX_FLOW_NODES nodes: up to 12 start in the established two-lane layout, 13 to 16 on the grid of up
+# to three boxes per row (tools/build.py). Measured (F2-FLOW-LIMIT, 54 synthetic graphs of 13 to 18 nodes): every graph
+# routes; the 13 to 16-node ones are 736 to 1,534 px tall at the 760 px SVG width with 16 px text (the tallest earlier
+# diagram is 2,090 px) and lay out in at most 36 s, the 17 and 18-node worst cases are 2,798 px and 56 s.
+MAX_FLOW_NODES = 16
 TITLED_BODY = {"title": str, "body": str}
 FLOWCHART_START = re.compile(r"^\s*(flowchart|graph)\s")
 SEQUENCE_START = re.compile(r"^\s*sequenceDiagram\s")
@@ -918,8 +923,8 @@ def flow_problems(b: dict, path: str) -> list[str]:
     out = []
     ids = [n["id"] for n in b["nodes"]]
     known = set(ids)
-    if not 1 <= len(ids) <= 12:
-        out.append(f"{path}: a flow needs 1 to 12 nodes; split a larger architecture")
+    if not 1 <= len(ids) <= MAX_FLOW_NODES:
+        out.append(f"{path}: a flow needs 1 to {MAX_FLOW_NODES} nodes; split a larger architecture")
     if len(known) != len(ids) or any(not n.strip() for n in ids):
         out.append(f"{path}: node ids must be unique and non-empty")
     for n in b["nodes"]:

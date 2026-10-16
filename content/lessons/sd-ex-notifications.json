@@ -2,7 +2,7 @@
   "schema_version": "learning-center-lesson:2",
   "kind": "design-exercise",
   "id": "sd-ex-notifications",
-  "version": 10,
+  "version": 12,
   "status": "published",
   "superseded_by": null,
   "title": "Design exercise: notifications",
@@ -1107,28 +1107,58 @@
                 "kind": "service"
               },
               {
-                "id": "Q",
-                "label": "Channel queues: push, email and SMS, each with a transactional and an informational queue",
+                "id": "QP",
+                "label": "Push queues: transactional, informational",
                 "kind": "queue"
               },
               {
-                "id": "A",
-                "label": "Channel adapters + breaker: push, email, SMS",
+                "id": "QE",
+                "label": "Email queues: transactional, informational",
+                "kind": "queue"
+              },
+              {
+                "id": "QS",
+                "label": "SMS queues: transactional, informational",
+                "kind": "queue"
+              },
+              {
+                "id": "AP",
+                "label": "Push adapter + breaker",
+                "kind": "service"
+              },
+              {
+                "id": "AE",
+                "label": "Email adapter + breaker",
+                "kind": "service"
+              },
+              {
+                "id": "AS",
+                "label": "SMS adapter + breaker",
                 "kind": "service"
               },
               {
                 "id": "ST",
-                "label": "delivery status",
+                "label": "Delivery status",
                 "kind": "store"
               },
               {
                 "id": "DL",
-                "label": "dead letter",
+                "label": "Dead letter",
                 "kind": "queue"
               },
               {
-                "id": "X",
-                "label": "External providers: push, email, SMS",
+                "id": "FCM",
+                "label": "Push providers",
+                "kind": "actor"
+              },
+              {
+                "id": "SES",
+                "label": "Email provider",
+                "kind": "actor"
+              },
+              {
+                "id": "SMS",
+                "label": "SMS provider",
                 "kind": "actor"
               }
             ],
@@ -1139,8 +1169,12 @@
                 "nodes": [
                   "API",
                   "P",
-                  "Q",
-                  "A",
+                  "QP",
+                  "QE",
+                  "QS",
+                  "AP",
+                  "AE",
+                  "AS",
                   "ST",
                   "DL"
                 ]
@@ -1159,49 +1193,119 @@
                 "to": "P",
                 "kind": "sync",
                 "label": "Notification API to Preference lookup",
-                "short": "Preferences"
+                "short": "Lookup"
               },
               {
                 "from": "API",
                 "to": "ST",
                 "kind": "sync",
-                "label": "Notification API to delivery status",
-                "short": "Record queued"
+                "label": "Notification API to Delivery status",
+                "short": "Queued"
               },
               {
                 "from": "API",
-                "to": "Q",
+                "to": "QP",
                 "kind": "async",
-                "label": "Notification API to Channel queues",
+                "label": "Notification API to the push queues",
                 "short": "Enqueue"
               },
               {
-                "from": "Q",
-                "to": "A",
+                "from": "API",
+                "to": "QE",
                 "kind": "async",
-                "label": "Channel queues to Channel adapters",
+                "label": "Notification API to the email queues",
+                "short": "Enqueue"
+              },
+              {
+                "from": "API",
+                "to": "QS",
+                "kind": "async",
+                "label": "Notification API to the SMS queues",
+                "short": "Enqueue"
+              },
+              {
+                "from": "QP",
+                "to": "AP",
+                "kind": "async",
+                "label": "Push queues to the push adapter",
                 "short": "Take"
               },
               {
-                "from": "A",
-                "to": "X",
+                "from": "QE",
+                "to": "AE",
+                "kind": "async",
+                "label": "Email queues to the email adapter",
+                "short": "Take"
+              },
+              {
+                "from": "QS",
+                "to": "AS",
+                "kind": "async",
+                "label": "SMS queues to the SMS adapter",
+                "short": "Take"
+              },
+              {
+                "from": "AP",
+                "to": "FCM",
                 "kind": "sync",
-                "label": "Channel adapters to External providers",
+                "label": "Push adapter to the push providers",
                 "short": "Send"
               },
               {
-                "from": "A",
+                "from": "AE",
+                "to": "SES",
+                "kind": "sync",
+                "label": "Email adapter to the email provider",
+                "short": "Send"
+              },
+              {
+                "from": "AS",
+                "to": "SMS",
+                "kind": "sync",
+                "label": "SMS adapter to the SMS provider",
+                "short": "Send"
+              },
+              {
+                "from": "AP",
                 "to": "ST",
                 "kind": "sync",
-                "label": "Channel adapters to delivery status",
+                "label": "Push adapter to Delivery status",
                 "short": "Record"
               },
               {
-                "from": "A",
+                "from": "AE",
+                "to": "ST",
+                "kind": "sync",
+                "label": "Email adapter to Delivery status",
+                "short": "Record"
+              },
+              {
+                "from": "AS",
+                "to": "ST",
+                "kind": "sync",
+                "label": "SMS adapter to Delivery status",
+                "short": "Record"
+              },
+              {
+                "from": "AP",
                 "to": "DL",
                 "kind": "async",
-                "label": "retries exhausted on both providers",
-                "short": "Exhausted"
+                "label": "retries exhausted on both push providers",
+                "short": "Dead"
+              },
+              {
+                "from": "AE",
+                "to": "DL",
+                "kind": "async",
+                "label": "retries exhausted on both email providers",
+                "short": "Dead"
+              },
+              {
+                "from": "AS",
+                "to": "DL",
+                "kind": "async",
+                "label": "retries exhausted on both SMS providers",
+                "short": "Dead"
               }
             ],
             "steps": [
@@ -1219,26 +1323,66 @@
               },
               {
                 "edge": 3,
-                "caption": "API enqueues one message per channel on that channel's queue"
+                "caption": "API enqueues the push message on the push queues, the transactional or the informational one"
               },
               {
                 "edge": 4,
-                "caption": "A channel adapter takes the message from its queue"
+                "caption": "API enqueues the email message on the email queues, the transactional or the informational one"
               },
               {
                 "edge": 5,
-                "caption": "The adapter calls its provider, push, email or SMS"
+                "caption": "API enqueues the SMS message on the SMS queues, the transactional or the informational one"
               },
               {
                 "edge": 6,
-                "caption": "The adapter records the attempt in the delivery status"
+                "caption": "The push adapter takes the message from the push queues"
               },
               {
                 "edge": 7,
-                "caption": "A message whose retries are exhausted on both providers goes to the dead letter"
+                "caption": "The email adapter takes the message from the email queues"
+              },
+              {
+                "edge": 8,
+                "caption": "The SMS adapter takes the message from the SMS queues"
+              },
+              {
+                "edge": 9,
+                "caption": "The push adapter calls the push providers"
+              },
+              {
+                "edge": 10,
+                "caption": "The email adapter calls the email provider"
+              },
+              {
+                "edge": 11,
+                "caption": "The SMS adapter calls the SMS provider"
+              },
+              {
+                "edge": 12,
+                "caption": "The push adapter records the attempt in the delivery status"
+              },
+              {
+                "edge": 13,
+                "caption": "The email adapter records the attempt in the delivery status"
+              },
+              {
+                "edge": 14,
+                "caption": "The SMS adapter records the attempt in the delivery status"
+              },
+              {
+                "edge": 15,
+                "caption": "A push message whose retries are exhausted on both providers goes to the dead letter"
+              },
+              {
+                "edge": 16,
+                "caption": "An email message whose retries are exhausted on both providers goes to the dead letter"
+              },
+              {
+                "edge": 17,
+                "caption": "An SMS message whose retries are exhausted on both providers goes to the dead letter"
               }
             ],
-            "legend": "Boxes are containers, the outer frame is the system boundary, double brackets are queues. The queue box stands for six queues (push, email and SMS, each with a transactional and an informational queue), the adapter box for one adapter per channel with its own circuit breaker and secondary provider, and the providers box for the push providers, the email provider and the SMS provider; each is drawn as one box. The dotted edge carries messages whose retries are exhausted. The arrow from the API to the delivery status is the queued record the core flow writes."
+            "legend": "Boxes are containers, the outer frame is the system boundary, double brackets are queues. Each channel has its own two queues (a transactional and an informational one), its own adapter with a circuit breaker and a secondary provider, and its own provider; the providers stand outside the boundary. The dotted edges carry messages whose retries are exhausted. The arrow from the API to the delivery status is the queued record the core flow writes."
           },
           {
             "type": "p",
@@ -1444,7 +1588,7 @@
                 "caption": "Release poller to the notifications table: the record held to queued and the held item deleted, one transaction, sync"
               }
             ],
-            "legend": "The accept half of the architecture, the same boxes as the neutral diagram's left side, one AWS service each: the API is an ECS on Fargate service behind an internal load balancer, the preference lookup is a Valkey cache over a DynamoDB table, the delivery status is a DynamoDB table that also holds the idempotency key items (with a TTL), and the six channel queues are SQS standard queues. The load balancer is the entry the neutral diagram leaves implicit; the held table and the release poller (a function that EventBridge Scheduler invokes on a one-minute schedule s10) carry the quiet-hours hold of the neutral design. Each arrow says how the call is made: HTTPS and HTTP inside the VPC, named SDK calls over the gateway endpoint s11 and the SQS interface endpoint s12, cache reads and writes. Sync means the caller waits for the answer; async means the work goes on after the caller has been answered. The VPC frame is one VPC in one Region across three Availability Zones. Inside the quiet hours the record starts in state held, one of the states of the neutral data model, and a retry skips it. The held table is keyed by user and channel, sorted by release time, with a sparse index by release minute plus a shard number so that a morning's releases do not pile onto one key range; the index costs extra write units s30 and the shard number is write sharding s67. The preferences box also holds the templates (key team and template, one item per version with an active-version marker and a kill switch), the cache holds the templates too, and the API serves the three calls besides a send: GET a status (a GetItem, or a Query of the index by user), PUT preferences (a PutItem and a DEL of the cache entry) and POST a template (a conditional PutItem of the next version). The notifications table has two indexes, by user and by provider message id, each projecting the keys only; every entry written to an index costs a further write unit s30.",
+            "legend": "The accept half of the architecture, the neutral diagram's left side, one AWS service each: the API is an ECS on Fargate service behind an internal load balancer, the preference lookup is a Valkey cache over a DynamoDB table, the delivery status is a DynamoDB table that also holds the idempotency key items (with a TTL), and the six channel queues (the neutral diagram's three queue boxes, a transactional and an informational queue each) are SQS standard queues, drawn here as one box. The load balancer is the entry the neutral diagram leaves implicit; the held table and the release poller (a function that EventBridge Scheduler invokes on a one-minute schedule s10) carry the quiet-hours hold of the neutral design. Each arrow says how the call is made: HTTPS and HTTP inside the VPC, named SDK calls over the gateway endpoint s11 and the SQS interface endpoint s12, cache reads and writes. Sync means the caller waits for the answer; async means the work goes on after the caller has been answered. The VPC frame is one VPC in one Region across three Availability Zones. Inside the quiet hours the record starts in state held, one of the states of the neutral data model, and a retry skips it. The held table is keyed by user and channel, sorted by release time, with a sparse index by release minute plus a shard number so that a morning's releases do not pile onto one key range; the index costs extra write units s30 and the shard number is write sharding s67. The preferences box also holds the templates (key team and template, one item per version with an active-version marker and a kill switch), the cache holds the templates too, and the API serves the three calls besides a send: GET a status (a GetItem, or a Query of the index by user), PUT preferences (a PutItem and a DEL of the cache entry) and POST a template (a conditional PutItem of the next version). The notifications table has two indexes, by user and by provider message id, each projecting the keys only; every entry written to an index costs a further write unit s30.",
             "cites": [
               "s10",
               "s11",
@@ -1641,7 +1785,7 @@
                 "caption": "Callback handler to DynamoDB: find the record by provider message id, UpdateItem it, and for a bounce or complaint set the suppression flag of the address, sync"
               }
             ],
-            "legend": "The delivery half, the neutral diagram's right side: the channel queues feed the adapters, which call the providers (APNs and FCM directly, Amazon SES for email, AWS End User Messaging SMS for SMS) and record each attempt; a message that is received 6 times without success (3 attempts on each of the two providers) is moved to a dead-letter queue by SQS's redrive policy s26, and an operator can redrive it back to its source queue or delete it s68. The provider callbacks of the neutral design arrive as events: Amazon SES publishes them through a configuration set s13 and AWS End User Messaging SMS through an event destination s14, both to an SNS topic that invokes a callback function; APNs and FCM answer each request synchronously. The adapters run in private subnets with an interface endpoint for SQS s12 and for SES s15; the push providers are reached through NAT gateways s16. Sync means the caller waits for the answer; async means the work goes on after the caller has been answered. The adapters read the device tokens (push) or the address (email and SMS) from the device-token and address tables, which the DynamoDB box stands for beside the notifications table, and remove a token on a hard failure; the callback handler's suppression list is a flag on the address table.",
+            "legend": "The delivery half, the neutral diagram's right side, with its three queue boxes drawn as one SQS box (six queues) and its three adapter boxes as one box of three ECS services: the channel queues feed the adapters, which call the providers (APNs and FCM directly, Amazon SES for email, AWS End User Messaging SMS for SMS) and record each attempt; a message that is received 6 times without success (3 attempts on each of the two providers) is moved to a dead-letter queue by SQS's redrive policy s26, and an operator can redrive it back to its source queue or delete it s68. The provider callbacks of the neutral design arrive as events: Amazon SES publishes them through a configuration set s13 and AWS End User Messaging SMS through an event destination s14, both to an SNS topic that invokes a callback function; APNs and FCM answer each request synchronously. The adapters run in private subnets with an interface endpoint for SQS s12 and for SES s15; the push providers are reached through NAT gateways s16. Sync means the caller waits for the answer; async means the work goes on after the caller has been answered. The adapters read the device tokens (push) or the address (email and SMS) from the device-token and address tables, which the DynamoDB box stands for beside the notifications table, and remove a token on a hard failure; the callback handler's suppression list is a flag on the address table.",
             "cites": [
               "s12",
               "s13",
@@ -2751,7 +2895,7 @@
   "provenance": {
     "generated_by": "Claude (Fable 5.1) by hand, Scout learning center M4a; format v2 restructure by hand, Claude (Fable 5.1), Scout learning center F2-E1",
     "generated_on": "2026-10-12",
-    "reviewed_by": "a re-reader (Claude Sonnet 5.5, a different instance from the writer and the first reader), Scout learning center, format v2 E1A AWS pass, re-read",
+    "reviewed_by": "a second reader (Codex gpt-6-astra, a different instance from the worker), Scout learning center, format v2 flow redraw",
     "reviewed_on": "2026-10-16"
   },
   "changelog": [
@@ -2804,6 +2948,16 @@
       "version": 10,
       "date": "2026-10-16",
       "change": "Fourth read of the AWS pass (batch E1A), Claude (Sonnet 5.5), a different instance from the writer and the three earlier readers; accepted with reviewed_by set; no change to the body: every earlier finding confirmed fixed, every cost cell and size recomputed (stores at eight write units and 4.95 TB billable, totals about $952,000 and $9,487,000), every cited page fetched with its phrase, the fix round's new text read as new text; lower-severity findings left in reviews/learning-center-F2-E1A-reread3.md"
+    },
+    {
+      "version": 11,
+      "date": "2026-10-16",
+      "change": "flow redraw (F2-FLOW-LIMIT), now that a flow may have 16 nodes: the neutral high-level-design flow draws the 14 boxes of the first version in their frame (an arrow and a step for each of the 18 arrows: the API's three enqueues, the three takes, the three provider calls, the three status records and the three dead-letter arrows) in place of the eight boxes of version 4, and its legend no longer says that boxes are merged; the two AWS flows keep their one SQS box for the six queues and their one box for the three channel adapters, and their legends now say so (the neutral diagram's three queue boxes and three adapter boxes) instead of claiming the same boxes; the sequence diagrams are unchanged; reviewed_by cleared for a read of the diagrams"
+    },
+    {
+      "version": 12,
+      "date": "2026-10-16",
+      "change": "Second read of the flow redraw (F2-FLOW-LIMIT), Codex (gpt-6-astra), a different instance from the worker; accepted with reviewed_by set; no change to the body: the neutral flow's 14 boxes, frame and arrows checked against the first version's flowchart (the API to delivery status arrow is the queued record added in version 4, 18 arrows and 18 true steps), the AWS legends checked against the neutral diagram, the flows rendered at 1280 and 820 px with 16 px text and no label cut off"
     }
   ]
 }

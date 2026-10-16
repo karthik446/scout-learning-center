@@ -656,6 +656,32 @@ class Pages(Fixture):
         self.assertIn("The numbers", text)
 
 
+def lane_flow(count: int) -> dict:
+    """A notification-like flow of `count` boxes (13 to 16): an API, three channel lanes (queue, adapter, provider), two
+    shared sinks, and up to three side boxes; every arrow is a step."""
+    def box(i, label, kind):
+        return {"id": i, "label": label, "kind": kind}
+    nodes = [box("T", "Product teams", "actor"), box("API", "Notification API: idempotency key, validation", "service"),
+             box("ST", "Delivery status", "store"), box("DL", "Dead letter", "queue")]
+    edges = [("T", "API", "Send", "sync"), ("API", "ST", "Queued", "sync")]
+    for lane in ("push", "email", "sms"):
+        nodes += [box(f"Q{lane}", f"{lane.title()} queues: transactional, informational", "queue"),
+                  box(f"W{lane}", f"{lane.title()} adapter + breaker", "service"), box(f"X{lane}", f"{lane.title()} provider", "actor")]
+        edges += [("API", f"Q{lane}", "Enqueue", "async"), (f"Q{lane}", f"W{lane}", "Take", "async"),
+                  (f"W{lane}", f"X{lane}", "Send", "sync"), (f"W{lane}", "ST", "Record", "sync"), (f"W{lane}", "DL", "Dead", "async")]
+    nodes += [box("P", "Preference lookup: channels, quiet hours, per-user limits", "service"),
+              box("AUD", "Audit log", "store"), box("OP", "Operators", "actor")]
+    edges += [("API", "P", "Lookup", "sync"), ("API", "AUD", "Audit", "async"), ("OP", "DL", "Replay", "sync")]
+    nodes = nodes[:count]
+    ids = {n["id"] for n in nodes}
+    edges = [e for e in edges if e[0] in ids and e[1] in ids]
+    inside = [n["id"] for n in nodes if n["id"] not in ("T", "OP", "AUD") and not n["id"].startswith("X")]
+    return {"type": "flow", "nodes": nodes, "frames": [{"id": "sys", "title": "Notification system", "nodes": inside}],
+            "edges": [{"from": a, "to": z, "kind": k, "label": f"{a} to {z}", "short": s} for a, z, s, k in edges],
+            "steps": [{"edge": i, "caption": f"{a} to {z}"} for i, (a, z, s, k) in enumerate(edges)],
+            "legend": "Three lanes.", "cites": []}
+
+
 class Flows(unittest.TestCase):
     CONCEPTS = ("sd-caching", "sd-capacity", "sd-cost", "sd-data-modelling", "sd-load-balancing",
                 "sd-observability", "sd-outbox-cdc", "sd-queues-streams", "sd-rate-limiting-overload",
@@ -730,7 +756,54 @@ class Flows(unittest.TestCase):
                 self.assertTrue(any("invalid" in p for p in scan.block_problems(b, "$")))
 
     def test_node_limit(self):
-        self.rejects(lambda b: b["nodes"].extend({"id": f"x{i}", "label": "Extra", "kind": "service"} for i in range(9)), "1 to 12")
+        self.assertEqual(scan.MAX_FLOW_NODES, 16)
+        self.rejects(lambda b: b["nodes"].extend({"id": f"x{i}", "label": "Extra", "kind": "service"} for i in range(13)), "1 to 16")
+
+    def test_node_limit_accepts_13_to_16(self):
+        for total in range(13, 17):
+            with self.subTest(nodes=total):
+                block = copy.deepcopy(self.block)
+                block["nodes"].extend({"id": f"x{i}", "label": "Extra", "kind": "service"} for i in range(total-4))
+                self.assertEqual(len(block["nodes"]), total)
+                self.assertEqual(scan.block_problems(block, "$"), [])
+                self.assertEqual(scan.block_problems(lane_flow(total), "$"), [])
+
+    def test_pair_and_fan_in_flows_route(self):
+        """The chat neutral flow: a request and its reply between two boxes (publish, fan-out) and three arrows into one
+        box (the session registry, the message store). The two-lane layout cannot route it, the grid draws every arrow."""
+        doc = json.loads((ROOT / "content/lessons/sd-ex-chat.json").read_text())
+        neutral = next(b for b in section(doc, "high-level-design")["blocks"] if b["type"] == "flow")
+        self.assertEqual(scan.block_problems(neutral, "$"), [])
+        pair = [i for i, e in enumerate(neutral["edges"]) if {e["from"], e["to"]} == {"GW", "CS"}]
+        self.assertEqual([neutral["edges"][i]["from"] for i in pair], ["GW", "CS"])
+        self.assertEqual(sum(e["to"] == "SS" for e in neutral["edges"]), 3)
+        self.assertEqual(sum(e["to"] == "MS" for e in neutral["edges"]), 3)
+        for gap in (32, 48, 64, 96, 128, 192):
+            with self.assertRaises(build.FlowLayoutSpaceError):
+                build.flow_geometry(neutral, gap, plan="lanes")
+        geometry = build.flow_layout(neutral)
+        first, second = (geometry["routes"][i] for i in pair)
+        for a, z in zip(first, first[1:]):
+            for c, d in zip(second, second[1:]):
+                self.assertEqual(self.collinear_overlap(a, z, c, d), 0, "the two arrows of a pair share a track")
+        self.assertTrue(set(pair) <= {item["edge"] for item in geometry["labels"]}, "each arrow of the pair has its label")
+
+    def test_redrawn_lessons_draw_every_box_once(self):
+        notifications = json.loads((ROOT / "content/lessons/sd-ex-notifications.json").read_text())
+        neutral = next(b for b in section(notifications, "high-level-design")["blocks"] if b["type"] == "flow")
+        self.assertEqual([n["id"] for n in neutral["nodes"]],
+                         ["T", "API", "P", "QP", "QE", "QS", "AP", "AE", "AS", "ST", "DL", "FCM", "SES", "SMS"])
+        self.assertEqual(len(neutral["edges"]), 18)
+        self.assertEqual(len(neutral["steps"]), 18)
+        chat = json.loads((ROOT / "content/lessons/sd-ex-chat.json").read_text())
+        flows = [b for b in blocks_of(chat) if b["type"] == "flow"]
+        self.assertEqual(len(flows), 2)
+        for block in flows:
+            ids = [n["id"] for n in block["nodes"]]
+            self.assertEqual(len(ids), 11)
+            self.assertTrue({"GW", "SS", "PP"} <= set(ids) and not {"GW2", "SS2"} & set(ids), ids)
+            self.assertEqual(len(block["edges"]), 15)
+            self.assertEqual(len(block["steps"]), 15)
 
     def test_no_coordinates(self):
         self.rejects(lambda b: b["nodes"][0].update(x=1), "no coordinates")
@@ -863,11 +936,17 @@ class Flows(unittest.TestCase):
         news_blocks = [b for b in blocks_of(news) if b["type"] == "flow"]
         blocks = [self.block] + news_blocks
         self.assertEqual(len(blocks), 4)
+        strict = set()           # laid out on the grid: no box may stand inside a frame that is not its own
+        for count in (13, 16):
+            blocks.append(lane_flow(count))
+            strict.add(id(blocks[-1]))
         for path in (ROOT / "content/lessons").glob("sd-ex-*.json"):
             if path.stem != "sd-ex-news-feed":
                 doc = json.loads(path.read_text())
                 if doc["schema_version"] == build.V2:
                     blocks.extend(b for b in blocks_of(doc) if b["type"] == "flow")
+                    if path.stem in ("sd-ex-chat", "sd-ex-notifications"):
+                        strict.update(id(b) for b in blocks[-len([x for x in blocks_of(doc) if x["type"] == "flow"]):])
         for name in self.CONCEPTS:
             doc = json.loads((ROOT / f"content/lessons/{name}.json").read_text())
             converted = [b for b in blocks_of(doc) if b["type"] == "flow"]
@@ -881,6 +960,12 @@ class Flows(unittest.TestCase):
                 geometry = build.flow_layout(block, accepted=accepted)
                 self.assertEqual(geometry, build.flow_layout(block, accepted=accepted), "layout must be deterministic")
                 for frame in geometry["frames"]:
+                    if id(block) in strict:
+                        for key, node in geometry["nodes"].items():
+                            if key not in frame["nodes"]:
+                                self.assertFalse(max(node["x"], frame["x"]) < min(node["x"]+node["w"], frame["x"]+frame["w"])
+                                                 and max(node["y"], frame["y"]) < min(node["y"]+node["h"], frame["y"]+frame["h"]),
+                                                 ("a box stands inside a frame that is not its own", frame["id"], key))
                     for member in frame["nodes"]:
                         n = geometry["nodes"][member]
                         self.assertGreaterEqual(n["x"], frame["x"])
@@ -951,6 +1036,9 @@ class Flows(unittest.TestCase):
                     self.assertLessEqual(frame["y"]+frame["h"], geometry["height"], "frame clipped by viewBox")
                 for item in geometry["labels"]:
                     left, top, right, bottom = item["box"]
+                    if id(block) in strict:
+                        self.assertTrue(0 <= left and right <= geometry["width"] and 0 <= top and bottom <= geometry["height"],
+                                        ("label cut off by the view box", item["text"], item["box"]))
                     if not accepted:
                         distances = [
                             min(max(left-max(a[0], z[0]), min(a[0], z[0])-right, 0)

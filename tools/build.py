@@ -468,7 +468,32 @@ def table_html(columns: list[str], rows: list[list[str]], caption: str | None, *
     return f'<div class="table-scroll" role="region" tabindex="0"{label}><table{cls}>{cap}<thead><tr>{head_}</tr></thead><tbody>{body_}</tbody></table></div>'
 
 
-def flow_request_positions(b: dict, gap: int = 32, *, accepted: bool = False) -> tuple[dict, list, int, float]:
+def flow_forward_edges(nodes: dict, incoming: dict) -> dict:
+    """`incoming` without the edges that close a cycle (found by a depth-first walk in node order): a request and its
+    reply, or a call and its callback, must not push the two boxes apart without end when ranks are assigned."""
+    children = {key: [] for key in nodes}
+    for key, parents in incoming.items():
+        for p in parents:
+            children[p].append(key)
+    state, back = {}, set()
+
+    def visit(key):
+        state[key] = 1
+        for child in children[key]:
+            if state.get(child) == 1:
+                back.add((key, child))
+            elif child not in state:
+                visit(child)
+        state[key] = 2
+
+    roots = [k for k in nodes if not incoming[k]]+list(nodes)
+    for key in roots:
+        if key not in state:
+            visit(key)
+    return {key: [p for p in parents if (p, key) not in back] for key, parents in incoming.items()}
+
+
+def flow_request_positions(b: dict, gap: int = 32, *, accepted: bool = False, acyclic: bool = False) -> tuple[dict, list, int, float]:
     """Two-column request lanes, side branches and independent orthogonal edge tracks.
 
     Actor-rooted frames form stacked panels when there are independent request
@@ -508,6 +533,8 @@ def flow_request_positions(b: dict, gap: int = 32, *, accepted: bool = False) ->
     for e in b["edges"]:
         if e.get("kind", "sync") != "reply" and panel_of[e["from"]] == panel_of[e["to"]]:
             incoming[e["to"]].append(e["from"])
+    if acyclic:
+        incoming = flow_forward_edges(nodes, incoming)
     reachable = {key for key, n in nodes.items() if n["kind"] == "actor" and not incoming[key]}
     if not reachable:
         reachable = set(nodes)
@@ -560,6 +587,30 @@ def flow_request_positions(b: dict, gap: int = 32, *, accepted: bool = False) ->
                     changed = True
         if not changed:
             break
+    if acyclic:
+        # Two boxes of one lane and rank would be drawn on top of each other: the later one is pushed down, with everything
+        # it feeds. (Only for the retry: the diagrams that were drawn first time keep their ranks.)
+        for _ in range(len(nodes)*len(nodes)):
+            slots, clash = {}, None
+            for key in ordered:
+                slot = (panel_of[key], columns[key], ranks[key])
+                if slot in slots:
+                    clash = key
+                    break
+                slots[slot] = key
+            if clash is None:
+                break
+            ranks[clash] += 1
+            for _ in range(len(nodes)):
+                moved = False
+                for key in ordered:
+                    for parent in incoming[key]:
+                        delta = int(columns[parent] == columns[key] or nodes[key]["kind"] == "queue" or nodes[parent]["kind"] == "queue")
+                        if parent != key and ranks[key] < ranks[parent]+delta:
+                            ranks[key] = ranks[parent]+delta
+                            moved = True
+                if not moved:
+                    break
     title_lines = {f["id"]: textwrap.wrap(f["title"], 13) for f in groups}
     title_heights = {key: len(lines)*18+8 for key, lines in title_lines.items()}
     y = max([8]+[title_heights[owner[n]]+10 for n in nodes if ranks[n] == 0 and n in owner])
@@ -696,25 +747,185 @@ def flow_concept_positions(b: dict, gap: int = 32) -> tuple[dict, list, int, flo
     return nodes, [], width, y-gap
 
 
+FLOW_LANE_NODES = 12            # the most nodes the two-lane layout places before the grid takes over
+FLOW_GRID_BOX, FLOW_GRID_PITCH, FLOW_GRID_LEFT = 170, 260, 45
+
+
+def flow_grid_positions(b: dict, gap: int = 32) -> tuple[dict, list, int, float]:
+    """Rows of at most three boxes, for a flow of more than 12 nodes and for one the two-lane layout cannot route.
+
+    A box stands one row below its deepest parent (edges that close a cycle do not count), a box with one parent and no
+    children of its own beside that parent when its row would hold more than three. Boxes are placed row by row, in
+    the slots (left, middle, right) nearest their parents' slots, a box with children towards the middle and siblings
+    in the order they were written. A frame is the rectangle round its members, so a box that is not a member must not
+    stand in it: while a frame still has members to come, its slots are closed to every other box (a frame of one slot
+    is a stripe with the stores and queues beside it, a frame of three slots a band across the page), and a box
+    that cannot be placed waits for the next row.
+    """
+    import itertools
+    import textwrap
+
+    nodes = {n["id"]: dict(n) for n in b["nodes"]}
+    order = list(nodes)
+    groups = b.get("frames", [])
+    owner = {n: f["id"] for f in groups for n in f["nodes"]}
+    members = {f["id"]: list(f["nodes"]) for f in groups}
+    incoming = {key: [] for key in nodes}
+    for e in b["edges"]:
+        if e.get("kind", "sync") != "reply" and e["from"] != e["to"] and e["from"] not in incoming[e["to"]]:
+            incoming[e["to"]].append(e["from"])
+    incoming = flow_forward_edges(nodes, incoming)
+    children = {key: [k for k in order if key in incoming[k]] for key in nodes}
+    # A framed box is placed by its parents inside its frame (by all of them when it has none there), so a store that the
+    # frame shares with other frames does not stretch the frame down the page.
+    drivers = {key: [p for p in incoming[key] if owner.get(p) == owner[key]] or incoming[key] if key in owner else incoming[key]
+               for key in nodes}
+    depth = dict.fromkeys(order, 0)
+    for _ in order:
+        changed = False
+        for key in order:
+            for parent in drivers[key]:
+                if depth[key] < depth[parent]+1:
+                    depth[key] = depth[parent]+1
+                    changed = True
+        if not changed:
+            break
+    beside = {}
+    for key in order:
+        parents = incoming[key]
+        if (len(parents) == 1 and not children[key] and sum(d == depth[key] for d in depth.values()) > 3
+                and sum(d == depth[parents[0]] for d in depth.values()) < 3):
+            beside[key] = parents[0]
+            depth[key] = depth[parents[0]]
+
+    row, slot = {}, {}
+    frame_rows, frame_slots = {}, {}
+
+    def active(fid, at):
+        placed = [k for k in members[fid] if k in row]
+        return bool(placed) and (len(placed) < len(members[fid]) or max(row[k] for k in placed) >= at)
+
+    def centre(key):
+        placed = [slot[p] for p in incoming[key] if p in slot]
+        return sum(placed)/len(placed) if placed else 1
+
+    def allowed(key, at):
+        free = {0, 1, 2}
+        for fid in members:
+            if fid != owner.get(key) and active(fid, at):
+                free -= set(range(frame_slots[fid][0], frame_slots[fid][1]+1))
+        own = owner.get(key)
+        if own in frame_slots:
+            lo, hi = frame_slots[own]
+            reach = set(range(lo, hi+1))
+            for s in (lo-1, hi+1):
+                if 0 <= s <= 2 and not any(
+                        owner.get(k) != own and frame_rows[own][0] <= row[k] <= at and min(lo, s) <= slot[k] <= max(hi, s)
+                        for k in row):
+                    reach.add(s)
+            free &= reach
+        return free
+
+    at = 0
+    while len(row) < len(nodes):
+        if at > 4*len(nodes):
+            raise FlowLayoutSpaceError("flow: the grid cannot place every box")
+        ready = [k for k in order if k not in row and depth[k] <= at
+                 and all(p in row and row[p] < at for p in drivers[k] if beside.get(k) != p)]
+        ready = [k for k in ready if k not in beside or beside[k] in ready or row.get(beside[k], at) < at]
+        ready.sort(key=lambda k: (centre(k), order.index(k)))
+        free = {k: allowed(k, at) for k in ready}
+        ready = [k for k in ready if free[k]]
+        while True:
+            ready = [k for k in ready if k not in beside or beside[k] in ready or row.get(beside[k], at) < at]
+            if len(ready) > 3:
+                ready.remove(min(ready, key=lambda k: (len(free[k]), bool(children[k]), -order.index(k))))
+                continue
+            best = None
+            for perm in itertools.permutations((0, 1, 2), len(ready)):
+                if all(perm[i] in free[k] for i, k in enumerate(ready)):
+                    cost = (sum(abs(s-centre(k))+(.2*abs(s-1) if children[k] else 0) for s, k in zip(perm, ready))
+                            + 3*sum(perm[i] > perm[j] for i in range(len(perm)) for j in range(i+1, len(perm))))
+                    if best is None or cost < best[0]:
+                        best = (cost, perm)
+            if best or not ready:
+                break
+            ready.remove(min(ready, key=lambda k: (len(free[k]), bool(children[k]), -order.index(k))))
+        for key, s in zip(ready, best[1] if best else ()):
+            row[key], slot[key] = at, s
+            fid = owner.get(key)
+            if fid:
+                first, last = frame_rows.get(fid, (at, at))
+                frame_rows[fid] = (min(first, at), max(last, at))
+                lo, hi = frame_slots.get(fid, (s, s))
+                frame_slots[fid] = (min(lo, s), max(hi, s))
+        at += 1
+
+    for n in nodes.values():
+        n["lines"] = textwrap.wrap(n["label"], 13 if n["kind"] == "decision" else (24 if n["kind"] == "queue" else 26)*FLOW_GRID_BOX//230)
+        n["w"] = FLOW_GRID_BOX
+        n["h"] = max(38, len(n["lines"])*18 + (38 if n["kind"] == "store" else 14))
+        if n["kind"] == "decision":
+            n["h"] = 2*(len(n["lines"])*18+18)
+    title_lines = {f["id"]: textwrap.wrap(f["title"], 13) for f in groups}
+    title_heights = {key: len(lines)*18+8 for key, lines in title_lines.items()}
+    used = sorted(set(row.values()))
+    y = 8
+    for position, at in enumerate(used):
+        keys = [k for k in order if row[k] == at]
+        row_y = y
+        opening = [title_heights[fid] for fid in members if frame_rows.get(fid, (None,))[0] == at]
+        if opening:
+            row_y += max(opening)+2 if position == 0 else max(opening)+max(64, gap)-gap
+        height = max(nodes[k]["h"] for k in keys)
+        for key in keys:
+            nodes[key].update(x=FLOW_GRID_LEFT+slot[key]*FLOW_GRID_PITCH, y=row_y+(height-nodes[key]["h"])/2)
+        y = row_y+height+gap
+    frames = []
+    for frame in groups:
+        held = [nodes[n] for n in frame["nodes"]]
+        x = min(n["x"] for n in held)-38      # the title tab leaves the entry ports of a left-hand box clear
+        right = max(n["x"]+n["w"] for n in held)+10
+        title_h = title_heights[frame["id"]]
+        top = min(n["y"] for n in held)-title_h
+        bottom = max(n["y"]+n["h"] for n in held)+12
+        frames.append(dict(frame, x=x, y=top, w=right-x, h=bottom-top, lines=title_lines[frame["id"]],
+                           title_box=(x+5, top+2, x+119, top+title_h-4)))
+    return nodes, frames, 760, y
+
+
 class FlowLayoutSpaceError(BuildError):
     """The graph needs more room, without changing authored content."""
 
 
 def flow_layout(b: dict, *, accepted: bool = False) -> dict:
-    for gap in (32, 48, 64, 96, 128, 192):
-        try:
-            return flow_geometry(b, gap, accepted=accepted)
-        except FlowLayoutSpaceError:
-            if gap == 192:
-                raise
+    """The deterministic geometry, retrying with more row gap until every route and label has room.
+
+    Plans, in order: the established two-lane layout; the grid (rows of up to three boxes); the grid with the arrows
+    routed last to first (a different crowd in the corridors); the grid where a label that finds no room may be cut to
+    its step number; the two-lane layout again with the edges that close a cycle left out of the ranking and no two
+    boxes on one spot. A diagram the first plan draws never reaches the others, so no earlier diagram changes. A flow
+    of more than 12 nodes (none before) is placed on the grid first, then in the two lanes."""
+    plans = (["lanes"] if accepted else ["lanes", "grid", "grid-reversed", "grid-numbers", "retry"]
+             if len(b["nodes"]) <= FLOW_LANE_NODES else ["grid", "grid-reversed", "grid-numbers", "retry"])
+    for position, plan in enumerate(plans):
+        for gap in (32, 48, 64, 96, 128, 192):
+            try:
+                return flow_geometry(b, gap, accepted=accepted, plan=plan)
+            except FlowLayoutSpaceError:
+                if gap == 192 and position == len(plans)-1:
+                    raise
 
 
-def flow_geometry(b: dict, gap: int, *, accepted: bool = False) -> dict:
+def flow_geometry(b: dict, gap: int, *, accepted: bool = False, plan: str = "lanes") -> dict:
     import heapq
     import textwrap
 
+    grid = plan in ("grid", "grid-reversed", "grid-numbers")
     concept = all(e.get("kind") == "link" for e in b["edges"]) and not b.get("frames")
-    nodes, frames, width, y = flow_concept_positions(b, gap) if concept else flow_request_positions(b, gap, accepted=accepted)
+    nodes, frames, width, y = (flow_concept_positions(b, gap) if concept else
+                               flow_grid_positions(b, gap) if grid else
+                               flow_request_positions(b, gap, accepted=accepted, acyclic=plan == "retry"))
     obstacles = [(n["x"]-5, n["y"]-5, n["x"]+n["w"]+5, n["y"]+n["h"]+5) for n in nodes.values()]
     obstacles += [f["title_box"] for f in frames]
     borders = [(f["x"], f["y"], f["x"]+f["w"], f["y"]+f["h"]) for f in frames]
@@ -738,6 +949,16 @@ def flow_geometry(b: dict, gap: int, *, accepted: bool = False) -> dict:
             pair = (side, side)
         elif concept and a["y"] != z["y"]:
             pair = ("bottom", "top")
+        elif grid:
+            # Rows of the grid: a box in another row is entered from its top (below) or bottom (above); a box that does not
+            # stand under (over) the source is left through the source's side; a box in the same row is joined side to side.
+            beside = "left" if z["x"]+z["w"] <= a["x"] else "right" if z["x"] >= a["x"]+a["w"] else None
+            if z["y"] >= a["y"]+a["h"]:
+                pair = (beside or "bottom", "top")
+            elif a["y"] >= z["y"]+z["h"]:
+                pair = (beside or "top", "bottom")
+            else:
+                pair = ("right", "left") if a["x"] < z["x"] else ("left", "right")
         elif a["x"] == z["x"]:
             pair = ("bottom", "top") if a["y"] < z["y"] else ("top", "bottom")
         elif abs(a["y"]+a["h"]/2-z["y"]-z["h"]/2) < 2:
@@ -830,6 +1051,11 @@ def flow_geometry(b: dict, gap: int, *, accepted: bool = False) -> dict:
     label_obstacles += [(f["x"]-4, f["y"]-4, f["x"]+f["w"]+4, f["title_box"][3]+4) for f in frames]
     label_obstacles += [rect for l, t, r, bot in borders for rect in
                         ((l-4, t-4, l+4, bot+4), (r-4, t-4, r+4, bot+4), (l-4, bot-4, r+4, bot+4))]
+    label_obstacles_tight = [(n["x"]-8, n["y"]-8, n["x"]+n["w"]+8, n["y"]+n["h"]+8) for n in nodes.values()] + label_obstacles[len(nodes):]
+
+    def nearest(rect, path):
+        return min(max(rect[0]-max(a[0], z[0]), min(a[0], z[0])-rect[2], 0) +
+                   max(rect[1]-max(a[1], z[1]), min(a[1], z[1])-rect[3], 0) for a, z in zip(path, path[1:]))
 
     def place_label(i, route):
         edge = b["edges"][i]
@@ -838,46 +1064,63 @@ def flow_geometry(b: dict, gap: int, *, accepted: bool = False) -> dict:
             return
         text = f"{i+1} · {short}" if i in stepped else short
         candidates = []
-        avoid = label_obstacles+[item["box"] for item in labels]
-        if not accepted:
-            avoid += [(p[0]-16, p[1]-16, p[0]+16, p[1]+16)
-                      for j, endpoint in enumerate(endpoints) if j != i for p in endpoint[2:]]
-        alternatives = [[text], textwrap.wrap(text, 12)]
-        if not accepted:
-            alternatives.append(textwrap.wrap(text, 8, break_long_words=False, break_on_hyphens=False))
-        for lines in alternatives:
-            tw, th = max(map(len, lines))*8.2, len(lines)*18
-            for a, z in zip(route, route[1:]):
-                length = abs(a[0]-z[0])+abs(a[1]-z[1])
-                if length < 16:
-                    continue
-                for fraction in (j/40 for j in range(4, 37)):
-                    cx, cy = a[0]+(z[0]-a[0])*fraction, a[1]+(z[1]-a[1])*fraction
-                    positions = [(cx+10, cy-th/2), (cx-tw-10, cy-th/2)] if a[0] == z[0] else [(cx-tw/2, cy-th-6), (cx-tw/2, cy+7)]
-                    for lx, ly in positions:
-                        rect = (lx-3, ly-2, lx+tw+3, ly+th+2)
-                        if rect[0] < 4 or rect[2] > width-4 or rect[1] < 0:
-                            continue
-                        if any(max(rect[0], l) < min(rect[2], r) and max(rect[1], t) < min(rect[3], bot)
-                               for l, t, r, bot in avoid):
-                            continue
-                        if any(abs(i-item["edge"]) == 1 and max(rect[0], item["box"][0]) < min(rect[2], item["box"][2])
-                               and max(rect[1]-item["box"][3], item["box"][1]-rect[3]) < 10 for item in labels):
-                            continue
-                        if any((rect[0] < a[0] < rect[2] and max(min(a[1], z[1]), rect[1]) < min(max(a[1], z[1]), rect[3]))
-                               if a[0] == z[0] else (rect[1] < a[1] < rect[3] and max(min(a[0], z[0]), rect[0]) < min(max(a[0], z[0]), rect[2]))
-                               for a, z in segments):
-                            continue
-                        if not accepted:
-                            def distance_to(rect, path):
-                                return min(max(rect[0]-max(a[0], z[0]), min(a[0], z[0])-rect[2], 0) +
-                                           max(rect[1]-max(a[1], z[1]), min(a[1], z[1])-rect[3], 0)
-                                           for a, z in zip(path, path[1:]))
-                            own_distance = distance_to(rect, route)
-                            if any(distance_to(rect, other) <= own_distance+3 for j, other in indexed_routes.items() if j != i):
+        # On the grid a label that finds no room with the usual clearance round the boxes gets a second try with less, but
+        # only once the row gap is wide (128 or more): a smaller gap grows first, so the diagram keeps its air.
+        for tight in ((False, True) if grid and gap >= 128 else (False,)):
+            avoid = (label_obstacles_tight if tight else label_obstacles)+[item["box"] for item in labels]
+            if not accepted:
+                reach = 8 if tight else 16
+                avoid += [(p[0]-reach, p[1]-reach, p[0]+reach, p[1]+reach)
+                          for j, endpoint in enumerate(endpoints) if j != i for p in endpoint[2:]]
+            alternatives = [[text], textwrap.wrap(text, 12)]
+            if not accepted:
+                alternatives.append(textwrap.wrap(text, 8, break_long_words=False, break_on_hyphens=False))
+            if plan == "grid-numbers" and tight and i in stepped:
+                # Last resort on the grid, in the tight pass: the step number alone (the words stay in Exact calls).
+                alternatives.append([str(i+1)])
+            for lines in alternatives:
+                tw, th = max(map(len, lines))*8.2, len(lines)*18
+                for a, z in zip(route, route[1:]):
+                    length = abs(a[0]-z[0])+abs(a[1]-z[1])
+                    if length < 16:
+                        continue
+                    for fraction in (j/40 for j in range(4, 37)):
+                        cx, cy = a[0]+(z[0]-a[0])*fraction, a[1]+(z[1]-a[1])*fraction
+                        positions = [(cx+10, cy-th/2, 0), (cx-tw-10, cy-th/2, 0)] if a[0] == z[0] else [(cx-tw/2, cy-th-6, 0), (cx-tw/2, cy+7, 0)]
+                        if grid:
+                            # A crowded grid may leave no room beside the line: the label may stand a little further off (up to
+                            # 30 px more), nearest first, and later arrows then keep clear of it by that much.
+                            spread = range(10, 50, 10)
+                            positions = ([(cx+d, cy-th/2, d-10) for d in spread] + [(cx-tw-d, cy-th/2, d-10) for d in spread] if a[0] == z[0] else
+                                         [(cx-tw/2, cy-th-d+4, d-10) for d in spread] + [(cx-tw/2, cy+d-3, d-10) for d in spread])
+                        for lx, ly, away in positions:
+                            rect = (lx-3, ly-2, lx+tw+3, ly+th+2)
+                            if rect[0] < 4 or rect[2] > width-4 or rect[1] < 0 or (grid and rect[3] > y-18):
                                 continue
-                        anchor = ("end" if lx < cx else "start") if a[0] == z[0] else "middle"
-                        candidates.append((len(lines)*100+abs(fraction-.5)*30-length/100, lx, ly, rect, lines, anchor))
+                            if any(max(rect[0], l) < min(rect[2], r) and max(rect[1], t) < min(rect[3], bot)
+                                   for l, t, r, bot in avoid):
+                                continue
+                            if any(abs(i-item["edge"]) == 1 and max(rect[0], item["box"][0]) < min(rect[2], item["box"][2])
+                                   and max(rect[1]-item["box"][3], item["box"][1]-rect[3]) < 10 for item in labels):
+                                continue
+                            if any((rect[0] < a[0] < rect[2] and max(min(a[1], z[1]), rect[1]) < min(max(a[1], z[1]), rect[3]))
+                                   if a[0] == z[0] else (rect[1] < a[1] < rect[3] and max(min(a[0], z[0]), rect[0]) < min(max(a[0], z[0]), rect[2]))
+                                   for a, z in segments):
+                                continue
+                            if not accepted:
+                                def distance_to(rect, path):
+                                    return min(max(rect[0]-max(a[0], z[0]), min(a[0], z[0])-rect[2], 0) +
+                                               max(rect[1]-max(a[1], z[1]), min(a[1], z[1])-rect[3], 0)
+                                               for a, z in zip(path, path[1:]))
+                                own_distance = distance_to(rect, route)
+                                if any(distance_to(rect, other) <= own_distance+3 for j, other in indexed_routes.items() if j != i):
+                                    continue
+                            anchor = ("end" if lx < cx else "start") if a[0] == z[0] else "middle"
+                            number_only = grid and lines == [str(i+1)] and text != lines[0]
+                            candidates.append((len(lines)*100+(350 if number_only else 0)+abs(fraction-.5)*30-length/100+away,
+                                               lx, ly, rect, lines, anchor))
+            if candidates:
+                break
         if not candidates:
             raise FlowLayoutSpaceError(f"flow: no clear space for edge label {text!r}")
         _, lx, ly, rect, lines, anchor = min(candidates)
@@ -891,7 +1134,8 @@ def flow_geometry(b: dict, gap: int, *, accepted: bool = False) -> dict:
     route_order = sorted(range(len(b["edges"])), key=lambda i: (
         i in feedback, nodes[b["edges"][i]["from"]]["y"],
         -abs(nodes[b["edges"][i]["to"]]["y"]-nodes[b["edges"][i]["from"]]["y"]),
-        -abs(nodes[b["edges"][i]["to"]]["x"]-nodes[b["edges"][i]["from"]]["x"]), i)) if concept else range(len(b["edges"]))
+        -abs(nodes[b["edges"][i]["to"]]["x"]-nodes[b["edges"][i]["from"]]["x"]), i)) if concept else (
+            range(len(b["edges"])-1, -1, -1) if plan == "grid-reversed" else range(len(b["edges"])))
     for i in route_order:
         edge = b["edges"][i]
         source, destination = nodes[edge["from"]], nodes[edge["to"]]
@@ -992,7 +1236,16 @@ def flow_geometry(b: dict, gap: int, *, accepted: bool = False) -> dict:
             place_label(i, compact)
             if len(labels) > before:
                 l, t, r, bot = labels[-1]["box"]
-                obstacles.append((l-12, t-12, r+12, bot+12))
+                # A label that stands off its own arrow keeps later arrows farther from it than that arrow is.
+                margin = max(12, nearest(labels[-1]["box"], compact)+4) if grid else 12
+                obstacles.append((l-margin, t-margin, r+margin, bot+margin))
+    if grid:
+        # Safety net: a label with a foreign arrow nearer than its own is placed again, now that every arrow is known.
+        for item in list(labels):
+            own = nearest(item["box"], indexed_routes[item["edge"]])
+            if any(nearest(item["box"], other) <= own+3 for j, other in indexed_routes.items() if j != item["edge"]):
+                labels.remove(item)
+                place_label(item["edge"], indexed_routes[item["edge"]])
     routes = [indexed_routes[i] for i in range(len(b["edges"]))]
     if accepted:
         label_order = sorted(range(len(routes)), key=lambda i: sum(abs(a[0]-z[0])+abs(a[1]-z[1]) for a, z in zip(routes[i], routes[i][1:])))
