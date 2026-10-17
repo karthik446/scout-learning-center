@@ -1,7 +1,7 @@
 {
-  "schema_version": "learning-center-lesson:1",
+  "schema_version": "learning-center-lesson:2",
   "id": "llm-fundamentals",
-  "version": 1,
+  "version": 3,
   "status": "published",
   "superseded_by": null,
   "title": "How LLMs work inside applications: tokens, context windows and model APIs",
@@ -16,82 +16,1311 @@
     "applied-ai",
     "ai-powered-systems"
   ],
-  "summary": "A large language model is a function that takes a sequence of tokens and predicts the next one, repeated until a stop condition. Everything an application does with a model, including chat, tools and retrieval, is expressed by what is placed in a bounded context window and sent through a stateless API. Understanding tokens, the window and the request parameters explains most of the cost, latency and failure behavior seen in the field.",
+  "summary": "A model reads a window of tokens and predicts the next one until a stop condition, and everything an application does with it, chat, tools and retrieval, is a request metered in tokens. This lesson sets the numbers the rest of the LLM applications module refers to: tokens, context windows, dated prices, caching multipliers and lifetimes, thinking tokens and rate limits, with one request costed with and without prompt caching.",
   "detail": [],
-  "in_practice": "On a customer engagement the team first builds a token and cost model for the target workflow: typical input size, expected output size, calls per transaction and transactions per day, per model tier. They wrap the provider SDK in a thin client that sets timeouts and retries with backoff on rate limit and overload errors, records model id, token usage, stop reason and latency for every call, and enforces a maximum output size. Model ids are pinned in configuration instead of floating aliases so behavior does not shift under a release. Streaming is turned on for anything a person waits on, caching is applied to the stable prefix, and a cheaper model is tried on each step with the evaluation set deciding whether quality holds.",
+  "in_practice": {
+    "blocks": [
+      {
+        "type": "p",
+        "text": "Anthropic's own rate-limit example makes the caching point in throughput terms: with a 2,000,000 input-tokens-per-minute limit and an 80% cache hit rate, an organization can process 10,000,000 total input tokens per minute, because cached tokens do not count toward the limit.",
+        "cites": [
+          "s5"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "Anthropic's pricing page works the same arithmetic for a one-hour Managed Agents coding session on Claude Opus 5.5 with 50,000 input and 15,000 output tokens, with and without 40,000 cache reads.",
+        "columns": [
+          "line item",
+          "without caching",
+          "with cache reads"
+        ],
+        "rows": [
+          [
+            "Input tokens",
+            "$0.20",
+            "$0.04 uncached plus $0.008 cache reads"
+          ],
+          [
+            "Output tokens",
+            "$0.30",
+            "$0.30"
+          ],
+          [
+            "Session runtime",
+            "$0.08",
+            "$0.08"
+          ],
+          [
+            "Total",
+            "$0.58",
+            "$0.428"
+          ]
+        ],
+        "cites": [
+          "s2"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Anthropic documents cache pre-warming for latency-sensitive applications: a request with max_tokens set to 0 reads the system prompt or tool definitions into the cache and returns at once with no output, so the first real user request is not the one that pays the miss. The pre-warm is billed as a normal cache write, so its breakpoint, thinking configuration and effort must match the follow-up requests or it writes an entry the real traffic never hits.",
+        "cites": [
+          "s3"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "OpenAI recommends reserving at least 25,000 tokens for reasoning and visible output when starting with its reasoning models, then tuning from the reasoning_tokens a response reports, because a response can reach max_output_tokens before any visible text and still bill the input and the reasoning.",
+        "cites": [
+          "s12"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "OpenAI reports that, in its internal tests, the Responses API improves cache utilization by 40% to 80% compared with Chat Completions, and recommends it for all new projects. The figures are OpenAI's own claim from internal tests, not an independent measurement.",
+        "cites": [
+          "s9"
+        ]
+      }
+    ]
+  },
   "subtopics": [
     {
-      "body": [
-        {
-          "body": "Models do not read characters or words. A tokenizer splits text into subword units from a fixed vocabulary and maps each to an integer id; the model only ever sees those ids. Common English words are often a single token, while rare words, identifiers, non-English text and numbers split into several. A rough planning figure for English prose is three to four characters per token, but JSON, code and tables are noticeably denser in tokens than their character count suggests.",
-          "heading": "What a token is"
-        },
-        {
-          "body": "Tokens are the unit for everything a provider meters: the context limit, the output limit, rate limits and price. Token counts differ between model families because each uses its own tokenizer, so a prompt that fits one model may not fit another. Measure with the provider's token counting endpoint or library rather than estimating, and log input and output token counts from every response so that cost and capacity questions can be answered from data.",
-          "heading": "Why it matters in an application"
-        }
-      ],
       "id": "tokens-and-tokenization",
-      "title": "Tokens and tokenization"
-    },
-    {
-      "body": [
+      "title": "Tokens: the unit that is metered, limited and priced",
+      "blocks": [
         {
-          "body": "The Transformer replaced recurrence with attention. Each token id becomes an embedding vector, positional information is added, and a stack of layers repeatedly applies self-attention followed by a feed-forward network. In self-attention every position computes query, key and value vectors and takes a weighted mix of the other positions, so any token can directly use information from any other token in the window. Multiple attention heads run in parallel and learn different relationships. The final layer produces a probability distribution over the vocabulary for the next token.",
-          "heading": "The architecture in one pass"
+          "type": "p",
+          "text": "A model does not read characters or words. A tokenizer splits text into tokens from a fixed vocabulary: a token can be a single character such as z or a whole word such as cat, and long words are broken into several tokens. Everything this lesson quotes is in tokens: the context window, the output cap, the rate limits and the bill.",
+          "cites": [
+            "s11"
+          ]
         },
         {
-          "body": "Generation is autoregressive: the model samples one token, appends it, and runs again. Output is therefore produced sequentially and output tokens dominate latency, while input is processed in parallel. The model has no memory outside the window and no notion of truth, only of likely continuations, which is why fluent but wrong answers occur when the needed facts are absent. Sampling settings such as temperature change how the distribution is drawn from, so identical requests can return different text.",
-          "heading": "Consequences for builders"
-        }
-      ],
-      "id": "transformer-next-token-prediction",
-      "title": "Transformers and next-token prediction"
-    },
-    {
-      "body": [
-        {
-          "body": "The context window is the total number of tokens the model can consider in one request: system prompt, tool definitions, the full conversation history, retrieved documents, tool results, and the output being generated. Reasoning or thinking tokens, where a model supports them, also consume budget. Because the API is stateless, each turn resends the whole history, so input size grows linearly with turns and total tokens billed across a conversation grow roughly quadratically unless history is trimmed or cached.",
-          "heading": "What counts against the window"
+          "type": "p",
+          "text": "How many tokens a text makes depends on the model's tokenizer, the language and the type of content, so the same text costs a different number of tokens on different models. The table collects the planning figures the vendors publish. Treat them as estimates: they come from different tokenizers, and even one vendor's own figures do not reduce to a single characters-per-token rule.",
+          "cites": [
+            "s1",
+            "s2"
+          ]
         },
         {
-          "body": "Treat the window as working memory with a hard ceiling and a soft quality limit. Exceeding the ceiling yields an error or truncation depending on provider and model; well before that, very long contexts can dilute attention to the important parts. Standard techniques are to reserve space for the output, summarize or drop old turns, keep tool results compact, retrieve only what the current step needs, and place long reference material before the question that uses it.",
-          "heading": "Managing it"
+          "type": "table",
+          "caption": "Planning figures as published by the vendors, as of 2026-10. Estimates, not measurements.",
+          "columns": [
+            "measure",
+            "figure",
+            "applies to",
+            "source"
+          ],
+          "rows": [
+            [
+              "1M tokens, in words and characters",
+              "about 555k words, or 2.5M Unicode characters",
+              "Claude models on the current tokenizer, introduced with Claude Opus 4.7",
+              "s1"
+            ],
+            [
+              "1M tokens, in words, older tokenizer",
+              "about 750k words",
+              "Claude models before Opus 4.7",
+              "s1"
+            ],
+            [
+              "200k tokens, in words",
+              "roughly 150k words",
+              "Claude",
+              "s1"
+            ],
+            [
+              "One token, in characters",
+              "about 4 characters; 100 tokens is about 60 to 80 English words",
+              "Gemini models",
+              "s11"
+            ],
+            [
+              "Same text, newer Claude tokenizer",
+              "approximately 30% more tokens than on earlier models",
+              "Claude 4.7 and later",
+              "s2"
+            ],
+            [
+              "A web page of 10 kB",
+              "about 2,500 tokens",
+              "Claude, from the web fetch sizing example",
+              "s2"
+            ],
+            [
+              "A research paper PDF of 500 kB",
+              "about 125,000 tokens",
+              "Claude, from the web fetch sizing example",
+              "s2"
+            ]
+          ],
+          "cites": [
+            "s1",
+            "s2",
+            "s11"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Images and documents are tokens too. A single Claude request can include up to 600 images or PDF pages, or 100 on models with a 200k window, and every response reports what the request consumed in its usage field.",
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Count, do not guess. Count each prompt with the model ID you will call before it ships, and log the usage object of every response afterwards. A count measured on one model is not valid for another.",
+          "cites": [
+            "s2",
+            "s4"
+          ]
         }
-      ],
-      "id": "context-window-budgeting",
-      "title": "The context window as a budget"
+      ]
     },
     {
-      "body": [
+      "id": "one-stateless-call",
+      "title": "One request, one response: the API keeps no conversation",
+      "blocks": [
         {
-          "body": "Provider APIs converge on the same shape: a model id, a system or developer instruction, an ordered list of messages with roles such as user and assistant, optional tool definitions, and generation settings. The key settings are a maximum output token count, temperature or other sampling controls, and stop sequences. The response carries content blocks, a stop reason (finished naturally, hit the output limit, or requested a tool) and a usage object with token counts. Always branch on the stop reason: a response cut off by the output limit is a different outcome from a completed answer and should not be parsed as one.",
-          "heading": "Shape of a request and response"
+          "type": "p",
+          "text": "On the Claude Messages API each turn sends all previous conversation history plus the new user message, and the reply the model generates becomes part of the next turn's input. Your application keeps the conversation and sends it again, which is why input size, not only output size, grows as a conversation does. A request carries a model ID, a max_tokens cap on the output, the system prompt, the messages, optional tools and optionally an effort level; the response carries content blocks, a stop_reason and a usage object with the token counts.",
+          "cites": [
+            "s4",
+            "s6",
+            "s7"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Vendors differ in who holds the history, and they move their recommended surface. As of 2026-10, OpenAI recommends the Responses API for all new projects, keeps Chat Completions supported, and states that the Assistants API was sunset on August 26, 2026.",
+          "cites": [
+            "s9"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "API surfaces named in this lesson, as of 2026-10.",
+          "columns": [
+            "vendor",
+            "surface",
+            "what it does with state",
+            "status",
+            "source"
+          ],
+          "rows": [
+            [
+              "Anthropic",
+              "Messages API",
+              "stateless: you send the whole history each turn",
+              "used in every example on the cited Claude pages",
+              "s3, s4"
+            ],
+            [
+              "OpenAI",
+              "Responses API",
+              "input is a list of Items (a message, a function_call, a function_call_output); store: true keeps state from turn to turn",
+              "recommended for all new projects",
+              "s9"
+            ],
+            [
+              "OpenAI",
+              "Chat Completions",
+              "input is an array of Messages; can return parallel generations with n",
+              "remains supported",
+              "s9"
+            ],
+            [
+              "OpenAI",
+              "Assistants API",
+              "not applicable",
+              "sunset on August 26, 2026 and no longer available; migrate to the Responses API",
+              "s9"
+            ],
+            [
+              "Google",
+              "Gemini API, Interactions",
+              "the usage object reports input, output, thinking, cached and tool-use tokens",
+              "count_tokens checks the input before the call",
+              "s11"
+            ]
+          ],
+          "cites": [
+            "s3",
+            "s4",
+            "s9",
+            "s11"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The current Claude lineup, as of 2026-10.",
+          "columns": [
+            "model",
+            "API ID",
+            "latency, relative",
+            "default effort",
+            "thinking",
+            "retirement not before",
+            "source"
+          ],
+          "rows": [
+            [
+              "Claude Fable 5.1",
+              "claude-fable-5-1",
+              "Slower",
+              "high",
+              "Adaptive (always on)",
+              "September 1, 2027",
+              "s1"
+            ],
+            [
+              "Claude Opus 5.5",
+              "claude-opus-5-5",
+              "Moderate",
+              "medium",
+              "Adaptive (always on)",
+              "September 22, 2027",
+              "s1"
+            ],
+            [
+              "Claude Sonnet 5.5",
+              "claude-sonnet-5-5",
+              "Fast",
+              "high",
+              "Adaptive",
+              "September 28, 2027",
+              "s1"
+            ],
+            [
+              "Claude Haiku 5.5",
+              "claude-haiku-5-5",
+              "Fastest",
+              "medium",
+              "Adaptive",
+              "October 7, 2027",
+              "s1"
+            ]
+          ],
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Every Claude model ID is a pinned snapshot, so an ID in your configuration does not change under you. The retirement date is Anthropic's commitment for the platforms it operates; Amazon Bedrock and Google Cloud set their own. This lesson's convention: pin the ID, record it with every call, and treat a model change as a release.",
+          "cites": [
+            "s1"
+          ]
         }
-      ],
-      "id": "model-api-requests-and-parameters",
-      "title": "Model API requests and parameters"
+      ]
     },
     {
-      "body": [
+      "id": "streaming-and-stop-reasons",
+      "title": "Streaming and stop reasons: every way a call can end",
+      "blocks": [
         {
-          "body": "Cost is input tokens times input price plus output tokens times output price, with output usually priced several times higher. Latency splits into time to first token, driven by input size and queueing, and generation time, driven by output length. Streaming returns tokens as they are produced, which improves perceived latency and lets a client cancel early. Prompt caching lets a stable prefix such as the system prompt, tool definitions and reference documents be reused across requests at a reduced rate, so order content from most stable to most variable. Batch endpoints trade latency for a lower price on offline work, and smaller models handle routing and extraction steps cheaply.",
-          "heading": "The levers"
+          "type": "p",
+          "text": "The first diagram follows one streamed Claude request from send to the end of the stream, including the failures that can stop it. Solid arrows are calls, dashed arrows are events or replies the API sends back, and the Model lane is a drawing convenience: the documentation specifies the event and stop-reason contract, not the internals.",
+          "cites": []
+        },
+        {
+          "type": "diagram",
+          "mermaid": "sequenceDiagram\n  autonumber\n  participant A as App\n  participant P as API\n  participant M as Model\n  A->>P: POST /v1/messages, stream\n  alt HTTP error status, such as 400 or 429\n    P-->>A: error, no stream\n    Note over A,P: 429 may carry retry-after\n  else request accepted\n    P->>M: tools, system, messages\n    P-->>A: message_start, usage\n    loop until generation stops\n      M-->>P: next tokens\n      P-->>A: content delta\n    end\n    alt error event mid-stream\n      P-->>A: error event\n      Note over A: resume or retry\n    else generation ended\n      P-->>A: message_delta, stop_reason\n      P-->>A: message_stop\n    end\n  end",
+          "legend": "Content delta stands for the content_block_delta event; the stream also carries content_block_start and content_block_stop, and ping events may arrive at any point s8. A request refused before the stream opens is an HTTP error; the 429 for a monthly spend cap carries no retry-after header s5. Sources: s5, s8.",
+          "cites": [
+            "s5",
+            "s8"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The second diagram is what the application does with the stop_reason that ended the stream, one branch for each of the seven values, numbered on from the first.",
+          "cites": []
+        },
+        {
+          "type": "diagram",
+          "mermaid": "sequenceDiagram\n  autonumber 10\n  participant A as App\n  participant T as Tool\n  participant P as API\n  Note over A,P: the response carries a stop_reason\n  alt end_turn\n    Note over A,P: use the answer\n  else stop_sequence\n    Note over A,P: read which sequence fired\n  else max_tokens\n    A->>P: raise the cap or continue\n  else tool_use\n    A->>T: run the tool\n    T-->>A: result\n    A->>P: tool_result, next request\n  else pause_turn\n    A->>P: send the content back\n  else refusal\n    A->>P: retry on a fallback model\n  else model_context_<br/>window_exceeded\n    Note over A,P: truncated, shrink the context\n  end",
+          "legend": "Values and actions as the stop-reason page lists them; truncated means the text is cut off, not that the call failed s7. Sources: s7.",
+          "cites": [
+            "s7"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Every Claude stop_reason, as of 2026-10, and what the application does.",
+          "columns": [
+            "stop_reason",
+            "when it occurs",
+            "what the app does",
+            "source"
+          ],
+          "rows": [
+            [
+              "end_turn",
+              "Claude finished naturally",
+              "use the response; an empty 2 to 3 token reply can follow tool results",
+              "s7"
+            ],
+            [
+              "stop_sequence",
+              "Claude emitted one of your stop_sequences",
+              "read stop_sequence to see which one fired",
+              "s7"
+            ],
+            [
+              "max_tokens",
+              "the reply reached your max_tokens cap",
+              "raise the cap or continue the response; the text is cut off",
+              "s7"
+            ],
+            [
+              "tool_use",
+              "Claude is calling a tool",
+              "run the tool and return the result",
+              "s7"
+            ],
+            [
+              "pause_turn",
+              "a server-tool loop reached its iteration limit, 10 by default",
+              "send the assistant content back to continue",
+              "s7"
+            ],
+            [
+              "refusal",
+              "Claude declined, returned as HTTP 200 and not as an error",
+              "read stop_details and retry on a fallback model",
+              "s7"
+            ],
+            [
+              "model_context_window_exceeded",
+              "the reply filled the model's context window",
+              "treat the response as truncated",
+              "s7"
+            ]
+          ],
+          "cites": [
+            "s7"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Branch on stop_reason before using any content: a reply cut off by max_tokens or by the window is a different outcome from a finished answer. The token counts in the usage of message_delta are cumulative, and a failure after streaming has begun arrives as an error event inside the stream, such as overloaded_error, which in a non-streaming call would be HTTP 529. On Claude 4.5 models and newer a request whose input plus max_tokens exceeds the window is accepted and ends with model_context_window_exceeded; if the input alone exceeds the window the API returns a 400.",
+          "cites": [
+            "s4",
+            "s8"
+          ]
         }
-      ],
-      "id": "cost-latency-streaming-caching",
-      "title": "Cost, latency, streaming and caching"
+      ]
+    },
+    {
+      "id": "context-window",
+      "title": "The context window: size, what fills it, and what to do when it fills",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The context window is everything the model can reference while it generates, including the reply itself. It counts the system prompt, every message with its tool results, images and documents, the tool definitions and the output including thinking. Cached prefixes still count, because caching changes what you pay and not whether the tokens occupy the window. More context is not automatically better: accuracy and recall degrade as the token count grows, which Anthropic calls context rot.",
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Context window and output cap, as of 2026-10.",
+          "columns": [
+            "model family",
+            "context window",
+            "output cap per request",
+            "source"
+          ],
+          "rows": [
+            [
+              "Claude Fable 5.1, Opus 5.5, Sonnet 5.5, Haiku 5.5",
+              "1M tokens at the standard price; Haiku 5.5 charges more above 100,000 tokens",
+              "128K tokens on the synchronous Messages API",
+              "s1, s4"
+            ],
+            [
+              "Earlier Claude models, such as Sonnet 4.5 (deprecated)",
+              "200k tokens",
+              "not stated on the cited page",
+              "s4"
+            ],
+            [
+              "Gemini 4 (gemini-4-argon)",
+              "1,048,576 tokens shared by input, thinking and output",
+              "65,536 by default for synchronous responses; up to 1,048,576 with long decode",
+              "s11"
+            ],
+            [
+              "Gemini 3 and 2.5",
+              "1,048,576 tokens of input",
+              "65,536 tokens, a separate output budget",
+              "s11"
+            ],
+            [
+              "OpenAI models",
+              "listed on each model's reference page and different across snapshots",
+              "set with max_output_tokens",
+              "s12"
+            ]
+          ],
+          "cites": [
+            "s1",
+            "s4",
+            "s11",
+            "s12"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Because the API resends the history, the window fills in a fixed order. The flow shows what goes in, which part is the cacheable prefix, and how each reply joins the history for the next turn.",
+          "cites": []
+        },
+        {
+          "type": "flow",
+          "nodes": [
+            {
+              "id": "prefix",
+              "label": "Tools, then system prompt",
+              "kind": "store"
+            },
+            {
+              "id": "history",
+              "label": "Conversation history",
+              "kind": "store"
+            },
+            {
+              "id": "docs",
+              "label": "Documents and tool results",
+              "kind": "store"
+            },
+            {
+              "id": "window",
+              "label": "Context window",
+              "kind": "service"
+            },
+            {
+              "id": "model",
+              "label": "Model",
+              "kind": "service"
+            },
+            {
+              "id": "reply",
+              "label": "Reply and thinking",
+              "kind": "store"
+            }
+          ],
+          "edges": [
+            {
+              "id": "e-prefix",
+              "from": "prefix",
+              "to": "window",
+              "kind": "link",
+              "label": "Stable prefix, cacheable",
+              "short": "Stable prefix"
+            },
+            {
+              "id": "e-history",
+              "from": "history",
+              "to": "window",
+              "kind": "link",
+              "label": "All earlier turns, sent again",
+              "short": "Earlier turns"
+            },
+            {
+              "id": "e-docs",
+              "from": "docs",
+              "to": "window",
+              "kind": "link",
+              "label": "Content the app adds",
+              "short": "Added content"
+            },
+            {
+              "id": "e-model",
+              "from": "window",
+              "to": "model",
+              "kind": "link",
+              "label": "The whole window is the input",
+              "short": "Whole window"
+            },
+            {
+              "id": "e-reply",
+              "from": "model",
+              "to": "reply",
+              "kind": "link",
+              "label": "Output, capped by max_tokens",
+              "short": "Output"
+            },
+            {
+              "id": "e-next",
+              "from": "reply",
+              "to": "history",
+              "kind": "link",
+              "label": "The reply joins the history",
+              "short": "Joins history"
+            }
+          ],
+          "steps": [
+            {
+              "edge": "e-prefix",
+              "caption": "Tool definitions, then the system prompt: the prefix a cache can reuse."
+            },
+            {
+              "edge": "e-history",
+              "caption": "Every earlier turn goes in again on every request."
+            },
+            {
+              "edge": "e-docs",
+              "caption": "Retrieved documents and tool results the application adds for this step."
+            },
+            {
+              "edge": "e-model",
+              "caption": "Everything in the window is the model's input."
+            },
+            {
+              "edge": "e-reply",
+              "caption": "The reply, with any thinking, is capped by max_tokens."
+            },
+            {
+              "edge": "e-next",
+              "caption": "The reply becomes history and is sent again next turn."
+            }
+          ],
+          "legend": "Edges show data moving into and out of one request, not network calls; your application stores the history and sends it again, so the loop closes through it. Tools, then system, then messages is the order a Claude prefix is cached in s3; the window holds the whole request and the reply s4. Sources: s3, s4.",
+          "cites": [
+            "s3",
+            "s4"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Billed input grows faster than the conversation does, because turn n sends everything before it again. The table counts that with one assumption: every request's input is n times 1,000 tokens at turn n, history plus the new message, with no caching.",
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Input tokens billed over a conversation, assumption: 1,000 tokens added per turn, no caching.",
+          "columns": [
+            "turns",
+            "tokens written in total",
+            "input tokens billed in total",
+            "billed per token written",
+            "source"
+          ],
+          "rows": [
+            [
+              "10",
+              "10,000",
+              "55,000",
+              "5.5",
+              "s4"
+            ],
+            [
+              "20",
+              "20,000",
+              "210,000",
+              "10.5",
+              "s4"
+            ],
+            [
+              "40",
+              "40,000",
+              "820,000",
+              "20.5",
+              "s4"
+            ]
+          ],
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "When a conversation approaches the window, Anthropic's documentation names server-side compaction, which summarizes the earlier parts of the conversation on the server, as the primary strategy for long-running conversations and agentic workflows. As of 2026-10 it is in beta for Claude 4.6 and later models; context editing adds strategies that clear old tool results or old thinking blocks. Dropping or summarizing old turns in your own code is the same trade of detail for room.",
+          "cites": [
+            "s4"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "prices-and-the-cost-formula",
+      "title": "What a request costs: dated prices and the formula",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Cost is the sum of four meters: input tokens not read from cache, tokens written to the cache, tokens read from the cache and output tokens, each at its own price per million tokens (MTok). Output tokens include thinking, and on every current Claude model in the table the output price is five times the input price.",
+          "cites": [
+            "s2",
+            "s6"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "cost = (uncached input × input price + cache writes × write price + cache reads × read price + output, thinking included, × output price) ÷ 1,000,000, with every price in USD per MTok.",
+          "cites": [
+            "s2",
+            "s6"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Claude prices in USD per million tokens, as of 2026-10 (fetched 2026-10-16).",
+          "columns": [
+            "model",
+            "input",
+            "output",
+            "cache write, 5 minutes",
+            "cache write, 1 hour",
+            "cache read",
+            "batch input / output",
+            "source"
+          ],
+          "rows": [
+            [
+              "Claude Fable 5.1",
+              "$10",
+              "$50",
+              "$12.50",
+              "$20",
+              "$0.25",
+              "$5 / $25",
+              "s2"
+            ],
+            [
+              "Claude Opus 5.5",
+              "$4",
+              "$20",
+              "$5",
+              "$8",
+              "$0.20",
+              "$2 / $10",
+              "s2"
+            ],
+            [
+              "Claude Sonnet 5.5",
+              "$2",
+              "$10",
+              "$2.50",
+              "$4",
+              "$0.10",
+              "$1 / $5",
+              "s2"
+            ],
+            [
+              "Claude Haiku 5.5, prompt up to 100,000 tokens",
+              "$0.10",
+              "$0.50",
+              "$0.125",
+              "$0.20",
+              "$0.01",
+              "$0.05 / $0.25",
+              "s2"
+            ],
+            [
+              "Claude Haiku 5.5, prompt over 100,000 tokens",
+              "$0.50",
+              "$2.50",
+              "$0.625",
+              "$1",
+              "$0.05",
+              "$0.25 / $1.25",
+              "s2"
+            ]
+          ],
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Modifiers that change the price of the same tokens, as of 2026-10.",
+          "columns": [
+            "modifier",
+            "effect",
+            "applies to",
+            "source"
+          ],
+          "rows": [
+            [
+              "Batch API",
+              "50% off input and output; asynchronous",
+              "requests that can wait; not combinable with fast mode",
+              "s2"
+            ],
+            [
+              "Long prompt",
+              "the full 1M window at the standard per-token price; a 900k-token request costs the same per token as a 9k one",
+              "every current model except Haiku 5.5, which charges the higher rate for a whole request once its prompt passes 100,000 tokens, cache reads included",
+              "s2"
+            ],
+            [
+              "US-only inference (inference_geo)",
+              "1.1x on every token category",
+              "Claude 4.6 and later on the Claude API",
+              "s2"
+            ],
+            [
+              "Fast mode",
+              "premium prices: $8 input and $40 output per MTok",
+              "Claude Opus 5.5; not with batch",
+              "s2"
+            ],
+            [
+              "Newer tokenizer",
+              "about 30% more tokens for the same text, so the same words cost more",
+              "Claude 4.7 and later",
+              "s2"
+            ],
+            [
+              "Tool use",
+              "tool definitions, tool_use and tool_result blocks are input tokens; a request with tools adds a system prompt of 286 tokens when tool_choice is auto",
+              "Opus 5.5, Sonnet 5.5 and Haiku 5.5",
+              "s2"
+            ]
+          ],
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Cache multipliers and lifetimes are in the next subtopic. The Sonnet 5 introductory price became its standard price, and the rise scheduled for September 1, 2026 will not occur. A published price is a dated fact: re-read the pricing page before quoting a figure.",
+          "cites": [
+            "s2"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "prompt-caching",
+      "title": "Prompt caching: multipliers, lifetimes and what breaks a hit",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Prompt caching reuses the processed prefix of a prompt instead of computing it again. A cache read costs a fraction of the base input price, a cache write costs more than ordinary input, and the stored prefix lives for a limited time that every use refreshes. The cache covers tools, then system, then messages, up to the block marked with cache_control. OpenAI's reason it works: the cache keeps the model's key-value states for a reusable prefix.",
+          "cites": [
+            "s2",
+            "s3",
+            "s10"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Claude cache multipliers on the base input price, as of 2026-10.",
+          "columns": [
+            "operation",
+            "multiplier",
+            "lifetime",
+            "pays off after",
+            "source"
+          ],
+          "rows": [
+            [
+              "5-minute cache write",
+              "1.25x",
+              "5 minutes, refreshed by use",
+              "one cache read",
+              "s2, s3"
+            ],
+            [
+              "1-hour cache write",
+              "2x",
+              "1 hour",
+              "two cache reads",
+              "s2, s3"
+            ],
+            [
+              "Cache read, most models",
+              "0.1x",
+              "same as the write",
+              "none",
+              "s2"
+            ],
+            [
+              "Cache read, Opus 5.5 and Sonnet 5.5",
+              "0.05x",
+              "same as the write",
+              "none",
+              "s2"
+            ],
+            [
+              "Cache read, Fable 5.1",
+              "0.025x",
+              "same as the write",
+              "none",
+              "s2"
+            ]
+          ],
+          "cites": [
+            "s2",
+            "s3"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The lifetime is measured from the start of the request that wrote or read the entry, so a reply that streams for 4 minutes leaves about 1 minute for the next request.",
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Claude and OpenAI caching side by side, as of 2026-10.",
+          "columns": [
+            "property",
+            "Claude API",
+            "OpenAI API",
+            "source"
+          ],
+          "rows": [
+            [
+              "How you turn it on",
+              "one top-level cache_control field (automatic), or cache_control on blocks (explicit, up to 4 breakpoints)",
+              "on by default; OpenAI places implicit breakpoints, explicit ones are optional on GPT-5.6 and later",
+              "s3, s10"
+            ],
+            [
+              "Lifetime",
+              "5 minutes by default; 1 hour at extra cost",
+              "GPT-5.6 and later: at least 30 minutes from the last write or reuse; earlier models: a retention setting per model",
+              "s3, s10"
+            ],
+            [
+              "Minimum prefix",
+              "512 tokens on the current models; 1,024 to 4,096 on older ones",
+              "1,024 tokens on GPT-5.6 and later; varies by request settings on earlier models",
+              "s3, s10"
+            ],
+            [
+              "Price of a write",
+              "1.25x the base input price for 5 minutes, 2x for 1 hour",
+              "GPT-5.6 and later: 1.25x the uncached input rate",
+              "s2, s10"
+            ],
+            [
+              "Price of a read",
+              "0.1x, lower on some models (table above)",
+              "GPT-5.6 and later: 0.1x on most models, 0.05x on GPT-6.1 Sol",
+              "s2, s10"
+            ]
+          ],
+          "cites": [
+            "s3",
+            "s10"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "On Claude, a change at one level invalidates that level and every later one; switching fast mode, the thinking configuration or the effort level also invalidates the message blocks. A timestamp or other per-request text before the breakpoint means the prefix never matches, so every request pays a write and none gets a read. A cache entry exists only after the first response begins, so parallel requests that share a prefix should wait for the first.",
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "Check usage after you add a breakpoint. input_tokens counts only what follows the last breakpoint; total input is cache_read_input_tokens plus cache_creation_input_tokens plus input_tokens. If both cache fields are 0, nothing was cached, usually because the prompt is under the minimum length; no error is returned.",
+          "cites": [
+            "s3",
+            "s5"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "thinking-and-reasoning-tokens",
+      "title": "Thinking and reasoning tokens: billed as output, counted in the window",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Reasoning models spend tokens thinking before they answer, so a request's output can be far larger than the visible reply. OpenAI says reasoning tokens are not visible through the API yet occupy the context window and are billed as output tokens, and Anthropic says thinking tokens are a subset of max_tokens, billed as output tokens and counted toward rate limits.",
+          "cites": [
+            "s4",
+            "s12"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "On Claude, thinking is adaptive: the model decides per request whether to think and how much, so a turn can carry no thinking block at all, and effort is the lever that steers it. You do not set a thinking token budget. max_tokens is a hard cap on thinking and reply together, effort is soft guidance with no guaranteed token count, and a max_tokens sized for a reply without thinking is often too small once thinking starts. Changing the effort level between requests invalidates the message cache.",
+          "cites": [
+            "s3",
+            "s6"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Claude effort levels, as of 2026-10. Which levels a model accepts varies; the effort page lists them (s6).",
+          "columns": [
+            "level",
+            "thinking behavior",
+            "default on",
+            "source"
+          ],
+          "rows": [
+            [
+              "max",
+              "thinks most readily, with no constraint on thinking length",
+              "none",
+              "s6"
+            ],
+            [
+              "xhigh",
+              "more readily and deeper than high, for extended exploration",
+              "none",
+              "s6"
+            ],
+            [
+              "high",
+              "thinks on most requests that benefit; deep reasoning on complex tasks",
+              "Fable 5.1 and Sonnet 5.5",
+              "s1, s6"
+            ],
+            [
+              "medium",
+              "moderate thinking; may skip it for simple queries",
+              "Opus 5.5 and Haiku 5.5",
+              "s1, s6"
+            ],
+            [
+              "low",
+              "minimizes thinking and skips it for simple tasks",
+              "none",
+              "s6"
+            ]
+          ],
+          "cites": [
+            "s1",
+            "s6"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Thinking and reasoning tokens by vendor, as of 2026-10.",
+          "columns": [
+            "vendor",
+            "where it shows",
+            "billed as",
+            "in the window",
+            "how to bound it",
+            "source"
+          ],
+          "rows": [
+            [
+              "Claude",
+              "thinking_tokens in output_tokens_details; the full thinking is billed even when the visible text is a summary",
+              "output tokens",
+              "yes; on current models earlier thinking blocks stay and are billed again as input",
+              "max_tokens (hard) and effort (soft)",
+              "s4, s6"
+            ],
+            [
+              "OpenAI",
+              "reasoning_tokens in output_tokens_details",
+              "output tokens",
+              "yes, although not visible",
+              "max_output_tokens and reasoning.effort; reserve at least 25,000 tokens when starting out",
+              "s12"
+            ],
+            [
+              "Google",
+              "total_thought_tokens in usage",
+              "see Google's pricing page, not cited here",
+              "Gemini 4: one window shared by input, thinking and output",
+              "max_output_tokens, capped to the space left in the window",
+              "s11"
+            ]
+          ],
+          "cites": [
+            "s4",
+            "s6",
+            "s11",
+            "s12"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "OpenAI warns that the cap can bite before any visible text: when generated tokens reach the window or max_output_tokens the response is incomplete, and you pay for the input and the reasoning without a visible answer. Claude's remedy list is the same two moves: raise max_tokens or lower effort.",
+          "cites": [
+            "s6",
+            "s12"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "latency-rate-limits-and-levers",
+      "title": "Latency, rate limits and the levers you can pull",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Time to first token (TTFT), the definition used here, is the wait between sending a request and the first token arriving. This lesson's working model, not a vendor claim: input is processed before the first token and output is produced one token after another, so input size drives TTFT and output length, thinking included, drives the rest. Anthropic lists relative latency per model and says actual latency depends on prompt length, output length and thinking effort, and both vendors list shorter input processing among the benefits of caching. The pages cited here give relative speed, not tokens per second, so measure both from your own client. For the general latency ladder see sd-numbers.",
+          "cites": [
+            "s1",
+            "s3",
+            "s10"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Anthropic limits requests per minute (RPM), input tokens per minute (ITPM) and output tokens per minute (OTPM) per organization and model class. For most models, input tokens and cache writes count toward ITPM and cache reads do not, and OTPM counts the tokens actually generated, so a high max_tokens costs no limit. A 429 is a limit; wait for retry-after when it is sent. The 429 for a monthly spend cap has no retry-after, and retrying fails until access resumes.",
+          "cites": [
+            "s5"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Claude Messages API limits by tier, as of 2026-10. Opus 5.5, Sonnet 5.5 and Haiku 5.5 have equal separate limits and share one row; Fable 5.x is limited separately.",
+          "columns": [
+            "tier",
+            "models",
+            "RPM",
+            "ITPM",
+            "OTPM",
+            "monthly spend cap",
+            "source"
+          ],
+          "rows": [
+            [
+              "Start",
+              "Opus 5.5, Sonnet 5.5, Haiku 5.5",
+              "1,000",
+              "2,000,000",
+              "400,000",
+              "$500",
+              "s5"
+            ],
+            [
+              "Start",
+              "Fable 5.x",
+              "1,000",
+              "500,000",
+              "100,000",
+              "$500",
+              "s5"
+            ],
+            [
+              "Build",
+              "Opus 5.5, Sonnet 5.5, Haiku 5.5",
+              "5,000",
+              "5,000,000",
+              "1,000,000",
+              "$1,000",
+              "s5"
+            ],
+            [
+              "Build",
+              "Fable 5.x",
+              "2,000",
+              "1,500,000",
+              "300,000",
+              "$1,000",
+              "s5"
+            ],
+            [
+              "Scale",
+              "Opus 5.5, Sonnet 5.5, Haiku 5.5",
+              "10,000",
+              "10,000,000",
+              "2,000,000",
+              "$200,000",
+              "s5"
+            ],
+            [
+              "Scale",
+              "Fable 5.x",
+              "4,000",
+              "4,000,000",
+              "800,000",
+              "$200,000",
+              "s5"
+            ]
+          ],
+          "cites": [
+            "s5"
+          ]
+        },
+        {
+          "type": "decision",
+          "caption": "Which lever to pull first. Measure the quality effect on your own evaluation set before shipping any of them.",
+          "rows": [
+            {
+              "option": "Smaller model",
+              "pick_when": "classification, extraction, routing: high volume, latency-sensitive [s1].",
+              "avoid_when": "your evaluation set shows the quality drop matters.",
+              "example": "route on Haiku 5.5, escalate hard cases."
+            },
+            {
+              "option": "Lower effort",
+              "pick_when": "thinking dominates the output and requests are simple [s6].",
+              "avoid_when": "multistep reasoning where answers get worse.",
+              "example": "low effort on a routing step."
+            },
+            {
+              "option": "Prompt caching",
+              "pick_when": "a large prefix is reused inside its lifetime [s3].",
+              "avoid_when": "the prefix is under the minimum, rarely reused or changes every request.",
+              "example": "a long tool and system prefix."
+            },
+            {
+              "option": "Batch API",
+              "pick_when": "the work can wait; 50% off, asynchronous [s2].",
+              "avoid_when": "a person is waiting for the reply.",
+              "example": "overnight document labeling."
+            },
+            {
+              "option": "Streaming",
+              "pick_when": "a person watches the output arrive [s8].",
+              "avoid_when": "nothing consumes partial output.",
+              "example": "a chat reply."
+            },
+            {
+              "option": "Compaction or trimmed history",
+              "pick_when": "a long conversation nears the window [s4].",
+              "avoid_when": "the task needs earlier turns word for word.",
+              "example": "an agent session that runs for hours."
+            },
+            {
+              "option": "Fast mode",
+              "pick_when": "output speed matters more than price, on Opus 5.5 [s2].",
+              "avoid_when": "batch work or a tight cost budget.",
+              "example": "an interactive coding assistant."
+            }
+          ],
+          "cites": [
+            "s1",
+            "s2",
+            "s3",
+            "s4",
+            "s6",
+            "s8"
+          ]
+        }
+      ]
     }
   ],
-  "diagram": {
-    "source": "sequenceDiagram\n  participant App\n  participant API as Model API\n  participant Tok as Tokenizer\n  participant M as Model\n  App->>API: system, messages, max_tokens, params\n  API->>Tok: text\n  Tok->>M: token ids within context window\n  loop one token per step\n    M-->>API: next token\n  end\n  API-->>App: streamed deltas, stop reason, usage"
+  "worked_example": {
+    "title": "Worked example: one request with and without prompt caching, on Claude Sonnet 5.5",
+    "blocks": [
+      {
+        "type": "p",
+        "text": "A support assistant sends the same prefix of tool definitions and system prompt with every request, plus a small part that changes. The table fixes every input: the prices are the pricing page's, the sizes and the request count are assumptions chosen to make the arithmetic concrete.",
+        "cites": [
+          "s1",
+          "s2"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "Inputs to the example",
+        "columns": [
+          "quantity",
+          "value",
+          "basis"
+        ],
+        "rows": [
+          [
+            "Model",
+            "Claude Sonnet 5.5",
+            "pricing page"
+          ],
+          [
+            "Prefix, identical on every request",
+            "20,000 tokens",
+            "assumption"
+          ],
+          [
+            "Changing input (question and retrieved text)",
+            "1,000 tokens",
+            "assumption"
+          ],
+          [
+            "Reply, no thinking",
+            "500 tokens",
+            "assumption"
+          ],
+          [
+            "Input price",
+            "$2 per MTok",
+            "pricing page"
+          ],
+          [
+            "Output price",
+            "$10 per MTok",
+            "pricing page"
+          ],
+          [
+            "5-minute cache write",
+            "$2.50 per MTok",
+            "pricing page, 1.25x"
+          ],
+          [
+            "1-hour cache write",
+            "$4 per MTok",
+            "pricing page, 2x"
+          ],
+          [
+            "Cache read",
+            "$0.10 per MTok",
+            "pricing page, 0.05x on this model"
+          ],
+          [
+            "Requests",
+            "100, each starting within 5 minutes of the previous one",
+            "assumption"
+          ]
+        ],
+        "cites": [
+          "s1",
+          "s2"
+        ]
+      },
+      {
+        "type": "steps",
+        "title": "The cost of one request, then of 100, with and without caching",
+        "items": [
+          "Uncached input per request: (20,000 + 1,000) × $2 ÷ 1,000,000 = $0.042.",
+          "Output per request: 500 × $10 ÷ 1,000,000 = $0.005.",
+          "Without caching one request costs $0.042 + $0.005 = $0.047.",
+          "The first cached request writes the prefix: 20,000 × $2.50 ÷ 1,000,000 = $0.05.",
+          "So the first cached request costs the write, $0.05, plus its 1,000 changing tokens, 1,000 × $2 ÷ 1,000,000 = $0.002, plus the output, $0.005: $0.057.",
+          "That is $0.057 - $0.047 = $0.01 more than an uncached request, the write premium.",
+          "Every later request inside the window reads the prefix: 20,000 × $0.10 ÷ 1,000,000 = $0.002.",
+          "So a request that hits the cache costs the read, $0.002, plus the 1,000 changing tokens, $0.002, plus the output, $0.005: $0.009.",
+          "One read saves 20,000 × ($2 - $0.10) ÷ 1,000,000 = $0.038, more than the $0.01 premium, so a 5-minute write pays off after one read.",
+          "A 1-hour write costs 20,000 × ($4 - $2) ÷ 1,000,000 = $0.04 more than uncached.",
+          "Two reads save 2 × $0.038 = $0.076, more than $0.04, while one read saves less, so a 1-hour write pays off after two reads.",
+          "100 requests without caching cost 100 × $0.047 = $4.70.",
+          "100 requests with caching cost $0.057 + 99 × $0.009 = $0.948.",
+          "The saving is $4.70 - $0.948 = $3.752, about 80% of the uncached bill.",
+          "Rate limits: a cached request adds 1,000 tokens to ITPM instead of 21,000, because cache reads do not count toward it on this model class.",
+          "Add thinking, assuming 3,000 thinking tokens per request billed as output: 3,000 × $10 ÷ 1,000,000 = $0.03.",
+          "So a cached request with thinking costs $0.009 + $0.03 = $0.039, and thinking is its largest line."
+        ],
+        "cites": [
+          "s2",
+          "s3",
+          "s5",
+          "s6"
+        ]
+      },
+      {
+        "type": "code",
+        "lang": "python",
+        "caption": "The same arithmetic as code: the cost of one response from its usage object, with an explicit breakpoint at the end of the stable prefix.",
+        "code": "import anthropic\n\n# USD per million tokens for claude-sonnet-5-5, as of 2026-10 (pricing page).\nPRICE = {\"input\": 2.00, \"cache_write_5m\": 2.50, \"cache_read\": 0.10, \"output\": 10.00}\n\n\ndef request_cost(usage) -> float:\n    \"\"\"Cost of one Messages API response, from its usage object.\"\"\"\n    return (\n        usage.input_tokens * PRICE[\"input\"]\n        + usage.cache_creation_input_tokens * PRICE[\"cache_write_5m\"]\n        + usage.cache_read_input_tokens * PRICE[\"cache_read\"]\n        + usage.output_tokens * PRICE[\"output\"]  # thinking tokens are inside output_tokens\n    ) / 1_000_000\n\n\nclient = anthropic.Anthropic()  # reads the API key from the environment\n\nresp = client.messages.create(\n    model=\"claude-sonnet-5-5\",\n    max_tokens=1024,\n    # Explicit breakpoint at the end of the stable prefix. A top-level cache_control\n    # (automatic caching) would mark the changing question instead: every request\n    # would write the cache and none would read it.\n    system=[{\"type\": \"text\", \"text\": SYSTEM_PROMPT, \"cache_control\": {\"type\": \"ephemeral\"}}],\n    messages=[{\"role\": \"user\", \"content\": question}],\n)\n\nif resp.stop_reason != \"end_turn\":\n    handle_stop_reason(resp.stop_reason)  # max_tokens, tool_use, refusal: see the stop reason table\nprint(request_cost(resp.usage))"
+      }
+    ]
   },
-  "code": [
-    {
-      "code": "import anthropic\n\nclient = anthropic.Anthropic()  # reads the API key from the environment\n\nresp = client.messages.create(\n    model=\"claude-sonnet-5-5\",\n    max_tokens=512,\n    system=\"You answer questions about order status. Be brief.\",\n    messages=[{\"role\": \"user\", \"content\": \"Where is order 1042?\"}],\n)\n\nif resp.stop_reason == \"max_tokens\":\n    raise RuntimeError(\"output truncated; do not parse\")\n\nprint(resp.content[0].text)\nprint(resp.usage.input_tokens, resp.usage.output_tokens)",
-      "lang": "python"
-    }
-  ],
+  "code": [],
+  "diagram": null,
   "technologies": [
     "Anthropic Messages API",
     "OpenAI Responses API",
@@ -101,7 +1330,8 @@
     "tiktoken",
     "LiteLLM",
     "OpenRouter",
-    "Server-Sent Events"
+    "Server-Sent Events",
+    "Google Gemini API"
   ],
   "related": [
     "prompt-and-context-engineering",
@@ -109,42 +1339,166 @@
     "rag-vector-databases",
     "scaling-performance-cost",
     "gpu-inference-serving",
-    "observability-agent-traces"
+    "observability-agent-traces",
+    "bedrock-and-claude-apis",
+    "sd-numbers"
   ],
   "sources": [
     {
-      "kind": "paper",
-      "title": "Attention Is All You Need",
-      "url": "https://arxiv.org/abs/1706.03762"
-    },
-    {
-      "kind": "article",
-      "title": "The Illustrated Transformer",
-      "url": "https://jalammar.github.io/illustrated-transformer/"
-    },
-    {
+      "id": "s1",
+      "title": "Claude Docs: Models overview (model IDs, context window, max output, pricing summary, thinking, effort, retirement)",
+      "url": "https://platform.claude.com/docs/en/models/overview",
       "kind": "doc",
-      "title": "Claude Docs: Context windows",
-      "url": "https://platform.claude.com/docs/en/build-with-claude/context-windows"
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "1M tokens is roughly 555k words or 2.5M Unicode characters on the current tokenizer"
+      }
     },
     {
+      "id": "s2",
+      "title": "Claude Docs: Pricing (base prices, cache multipliers, batch, long-context, fast mode, data residency, tokenizer note)",
+      "url": "https://platform.claude.com/docs/en/about-claude/pricing",
       "kind": "doc",
-      "title": "OpenAI Docs: Text generation",
-      "url": "https://developers.openai.com/api/docs/guides/text"
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "caching pays off after one cache read for the 5-minute duration"
+      }
+    },
+    {
+      "id": "s3",
+      "title": "Claude Docs: Prompt caching (breakpoints, TTLs, minimum lengths, invalidation, usage fields)",
+      "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "By default, the cache has a 5-minute lifetime."
+      }
+    },
+    {
+      "id": "s4",
+      "title": "Claude Docs: Context windows (what counts, sizes, thinking, overflow, compaction)",
+      "url": "https://platform.claude.com/docs/en/build-with-claude/context-windows",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "server-side compaction is the primary strategy for context management"
+      }
+    },
+    {
+      "id": "s5",
+      "title": "Claude Docs: Rate limits (RPM, ITPM, OTPM, cache-aware ITPM, tiers, spend limits)",
+      "url": "https://platform.claude.com/docs/en/api/rate-limits",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "only uncached input tokens count toward your ITPM rate limits"
+      }
+    },
+    {
+      "id": "s6",
+      "title": "Claude Docs: Steering thinking (effort levels, thinking cost and pricing)",
+      "url": "https://platform.claude.com/docs/en/build-with-claude/thinking-steering-and-cost",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "You don't set a thinking token budget."
+      }
+    },
+    {
+      "id": "s7",
+      "title": "Claude Docs: Handling stop reasons (every stop_reason value and what to do)",
+      "url": "https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Every Messages API response includes a stop_reason field that tells you why Claude stopped generating."
+      }
+    },
+    {
+      "id": "s8",
+      "title": "Claude Docs: Streaming messages (server-sent event types, usage, errors)",
+      "url": "https://platform.claude.com/docs/en/build-with-claude/streaming",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "The token counts shown in the usage field of the message_delta event are cumulative."
+      }
+    },
+    {
+      "id": "s9",
+      "title": "OpenAI Docs: Migrate to the Responses API (which API surface is current)",
+      "url": "https://developers.openai.com/api/docs/guides/migrate-to-responses",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "While Chat Completions remains supported, Responses is recommended for all new projects."
+      }
+    },
+    {
+      "id": "s10",
+      "title": "OpenAI Docs: Prompt caching (prefixes, minimum length, retention, pricing basis)",
+      "url": "https://developers.openai.com/api/docs/guides/prompt-caching",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Prompt caching is enabled by default for supported OpenAI models."
+      }
+    },
+    {
+      "id": "s11",
+      "title": "Google AI for Developers: Understand and count tokens (Gemini token size, context window, usage fields)",
+      "url": "https://ai.google.dev/gemini-api/docs/tokens",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "For Gemini models, a token is equivalent to about 4 characters."
+      }
+    },
+    {
+      "id": "s12",
+      "title": "OpenAI Docs: Reasoning models (reasoning tokens, max_output_tokens, space for reasoning)",
+      "url": "https://developers.openai.com/api/docs/guides/reasoning",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "they still occupy space in the model's context window and are billed as output tokens"
+      }
     }
   ],
   "practice": "practice/llm-fundamentals",
   "provenance": {
-    "generated_by": "Claude through GigAI 0.1.11.10",
-    "generated_on": "2026-10-11",
-    "reviewed_by": null,
-    "reviewed_on": null
+    "generated_by": "Claude Sonnet 5.5 by hand, Scout learning center, format v2 llm fundamentals",
+    "generated_on": "2026-10-16",
+    "reviewed_by": "a second reader (Claude Sonnet 5.5, a different instance from the writer), Scout learning center, format v2 llm fundamentals",
+    "reviewed_on": "2026-10-16"
   },
   "changelog": [
     {
       "version": 1,
       "date": "2026-10-12",
       "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-16",
+      "change": "Rewritten to format v2 / shape v11 from vendor documentation fetched 2026-10-16 (originally imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer, Claude through GigAI 0.1.11.10): dated tables for tokens, context windows, prices, cache multipliers and lifetimes, thinking and reasoning tokens and rate limits; a stop-reason sequence diagram and a context-window flow; a worked cost example with and without prompt caching; a levers decision block; stale rows fixed (1M windows and compaction, cache TTLs, adaptive thinking and prices, OpenAI Responses and the Assistants sunset). Review pending."
+    },
+    {
+      "version": 3,
+      "date": "2026-10-16",
+      "change": "Second read against the vendor pages fetched 2026-10-16 (every price, multiplier, limit, window and date matched; the worked example, growth table and rate-limit example recomputed). Mechanical fixes: the worked-example code now puts an explicit cache breakpoint on the stable prefix, because a top-level (automatic) breakpoint would sit on the changing question and never read; the ITPM sentence says cache writes count toward ITPM and cache reads do not; OpenAI's 30 minutes is stated as a minimum; the rate-limit table caption says the three models have equal separate limits; the stream diagram's pre-stream branch is any HTTP error status and its mid-stream branch is an error event with resume or retry; effort levels note that availability varies by model; worked-example steps 5 and 8 show where $0.002 comes from; s1 added to the tokens-per-character cite."
     }
   ]
 }
