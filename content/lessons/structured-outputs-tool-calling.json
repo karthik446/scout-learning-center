@@ -1,7 +1,7 @@
 {
-  "schema_version": "learning-center-lesson:1",
+  "schema_version": "learning-center-lesson:2",
   "id": "structured-outputs-tool-calling",
-  "version": 1,
+  "version": 4,
   "status": "published",
   "superseded_by": null,
   "title": "Structured outputs and tool calling",
@@ -14,86 +14,1055 @@
     "structured-outputs",
     "tool-calling"
   ],
-  "summary": "Structured outputs make a model return data that conforms to a schema, so downstream code can consume it without parsing free text. Tool calling extends the same idea to actions: the model emits a typed request to call a function, the application executes it and returns the result, and the model continues. These two mechanisms are what connect a language model to real systems.",
+  "summary": "Structured outputs make a model return data that matches a schema; tool calling lets it request actions your code runs. This lesson is the site's reference for both: the tool definition and its schema on Claude, OpenAI, Gemini and MCP, the round trip with its failure branches, four ways to get structured data with dated provider limits, and the agent-computer interface rules for tools a model can use, with one refund tool worked through the loop.",
   "detail": [],
-  "in_practice": "Teams define each output and tool input once as a typed model in application code and generate the JSON Schema from it, so the contract, the validator and the documentation cannot drift. Extraction and classification steps use strict structured outputs; anything touching customer systems goes through tools with narrow scopes, read tools separated from write tools, and writes gated by approval or policy. The executor layer handles timeouts, retries, idempotency keys and logging, and returns errors to the model as tool results. Before go-live the team runs an evaluation set that checks not only final answers but also which tools were called with which arguments, since a correct answer reached through a wrong call is a latent incident.",
+  "in_practice": {
+    "blocks": [
+      {
+        "type": "p",
+        "text": "In a September 2025 post, Anthropic reports what it did to its own tools. Claude Code limits a tool response to 25,000 tokens by default; in one Slack example the concise response used about a third of the tokens of the detailed one; when it launched the web search tool it found Claude appending 2025 to the query and fixed that in the tool description; and Claude Sonnet 3.5 reached state-of-the-art on SWE-bench Verified after precise refinements to tool descriptions.",
+        "cites": [
+          "s1"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "As of 2026-10, Anthropic's tool search documentation puts a number on catalog cost: a multiserver setup of GitHub, Slack, Sentry, Grafana and Splunk can consume about 55k tokens in definitions before Claude does any work, and tool search typically reduces this by over 85 percent.",
+        "cites": [
+          "s6"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "OpenAI recommends always enabling strict mode and says every schema generated in its Playground has it on. Its own design advice is to offload what the code knows: define submit_refund() with no parameters and pass the order_id from application code.",
+        "cites": [
+          "s8"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Google documents a failure that comes from a design habit: a prompt that requires structured text such as XML immediately before a tool call can make the call fail with Malformed_Function_Call, and Google's preferred workaround is a dedicated update() function that carries the notes.",
+        "cites": [
+          "s10"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "The MCP specification says there SHOULD always be a human in the loop with the ability to deny tool invocations, and that clients SHOULD show tool inputs to the user before calling the server, to avoid malicious or accidental data exfiltration.",
+        "cites": [
+          "s12"
+        ]
+      }
+    ]
+  },
+  "worked_example": {
+    "title": "Worked example: a refund tool, two failed calls and one executed call",
+    "blocks": [
+      {
+        "type": "p",
+        "text": "A support agent has one tool, issue_refund. The example follows one request through the loop of subtopic 2 and shows what each check catches and what no schema can. The table fixes every input; the tool and the limits are this lesson's own assumptions, not vendor figures.",
+        "cites": [
+          "s3",
+          "s5"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "Inputs to the example",
+        "columns": [
+          "quantity",
+          "value",
+          "basis"
+        ],
+        "rows": [
+          [
+            "Tool",
+            "issue_refund(order_id, amount_cents, reason)",
+            "assumption"
+          ],
+          [
+            "Refundable balance of order A-1001",
+            "1,000 cents",
+            "assumption, from the system of record"
+          ],
+          [
+            "Cap on failed calls per request",
+            "3",
+            "this lesson's convention"
+          ],
+          [
+            "Timeout on the payment call",
+            "10 seconds",
+            "assumption"
+          ],
+          [
+            "Model and tool choice",
+            "Claude Sonnet 5.5 with the default auto",
+            "any and tool are rejected on this model as of 2026-10 (s2)"
+          ]
+        ],
+        "cites": [
+          "s2"
+        ]
+      },
+      {
+        "type": "steps",
+        "title": "One request, call by call",
+        "items": [
+          "The schema lists 3 required properties and forbids any other key (additionalProperties false); reason is an enum.",
+          "The user asks for a refund of 1,250 cents on order A-1001 because the parcel arrived damaged.",
+          "The first call sends amount_cents as the string '12.50'. The application's check rejects it before any side effect, so 0 calls reach the payment system.",
+          "The application answers with a tool_result, is_error true: 'Invalid amount_cents: Input should be a valid integer; got '12.50'. Fix it and call again.' That is 1 failed call so far.",
+          "The second call sends the integer 1250. The shape is valid, but the amount is 250 cents above the refundable balance, which no schema knows.",
+          "The application answers with another error result that names the limit: the amount exceeds the refundable balance of 1000 for A-1001, send at most 1000. That is 2 failed calls so far.",
+          "The third call sends 1000. All checks pass and the payment call carries the key request-abc:A-1001, so a repeat of a refund on that order in this request records one refund, not two.",
+          "With strict: true on this tool, Claude's strict mode guarantees the input matches the schema, so the first failure could not occur and 1 round trip is saved; the second failure would remain.",
+          "Two checks no schema carries. A call with amount_cents -5 is a valid integer, and Claude's strict mode cannot reject it because numeric constraints such as minimum are unsupported, so the code checks it: 'amount_cents must be a positive number of cents. Fix it and call again.' That is a failed call too.",
+          "A tool_use that names delete_everything gets the error result 'Unknown tool 'delete_everything'; the only tool is issue_refund.' and no refund code runs for it: 1 more failed call.",
+          "Had the third call failed too, the cap of 3 failed calls would end the loop, with 3 model requests and 0 payment calls in the stub run, and the user would see a handled error, not a fourth model turn. A limit of 8 turns ends a loop of successful calls the same way."
+        ],
+        "cites": [
+          "s3",
+          "s5"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Schemas do not replace validation. The schema fixes the shape; whether the amount is positive and within the balance, and whether the tool exists, is the application's check, and on Claude the strict subset cannot express a minimum or a maximum at all.",
+        "cites": [
+          "s5",
+          "s12"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "The loop below is the same logic in code. It checks the tool name, the shape and the meaning before any side effect, sends no tool_choice, puts every tool_result of a turn in one user message with nothing before them, and returns the response untouched when stop_reason is anything but tool_use, so a refusal or a cut-off reaches the caller instead of being parsed.",
+        "cites": [
+          "s3",
+          "s4",
+          "s5"
+        ]
+      },
+      {
+        "type": "code",
+        "lang": "python",
+        "code": "from typing import Literal\n\nfrom pydantic import BaseModel, ConfigDict, StrictInt, ValidationError\n\nMODEL = \"claude-sonnet-5-5\"\nMAX_FAILED = 3                   # this lesson's cap on failed calls per request\nREFUNDABLE = {\"A-1001\": 1000}    # cents, read from the system of record\n\n\nclass RefundArgs(BaseModel):\n    model_config = ConfigDict(extra=\"forbid\")        # additionalProperties: false\n    order_id: str\n    amount_cents: StrictInt                          # \"12.50\" fails, 1250 passes\n    reason: Literal[\"damaged\", \"late\", \"other\"]\n\n\nTOOLS = [{\n    \"name\": \"issue_refund\",\n    \"description\": (\n        \"Refund part or all of one order to the customer's original payment method. \"\n        \"Use it only after the customer has asked for a refund; do not use it to look up an order. \"\n        \"amount_cents is a positive integer number of cents, at most the order's refundable balance. \"\n        \"Returns the refund id.\"\n    ),\n    \"input_schema\": RefundArgs.model_json_schema(),\n}]\n\n\nclass ToolLoopError(Exception):\n    pass\n\n\ndef execute(block, request_id, payments):\n    \"\"\"Return (content, is_error) for one tool_use block.\"\"\"\n    if block.name != \"issue_refund\":                 # the model can name a tool that does not exist\n        return (f\"Unknown tool {block.name!r}; the only tool is issue_refund.\", True)\n    try:\n        args = RefundArgs.model_validate(block.input)\n    except ValidationError as e:\n        err = e.errors()[0]\n        return (f\"Invalid {err['loc'][0]}: {err['msg']}; got {err['input']!r}. \"\n                \"Fix it and call again.\", True)\n    if args.amount_cents <= 0:                       # a minimum is not in Claude's strict subset\n        return (\"amount_cents must be a positive number of cents. Fix it and call again.\", True)\n    limit = REFUNDABLE.get(args.order_id, 0)\n    if args.amount_cents > limit:                    # meaning, which no schema knows\n        return (f\"amount_cents {args.amount_cents} exceeds the refundable balance \"\n                f\"of {limit} for {args.order_id}. Send at most {limit}.\", True)\n    key = f\"{request_id}:{args.order_id}\"            # one refund per order per request, one key\n    try:\n        refund_id = payments.refund(args.order_id, args.amount_cents,\n                                    idempotency_key=key, timeout=10)\n    except TimeoutError:\n        return (\"The payment system did not answer within 10 seconds; the outcome is unknown. \"\n                \"Repeating the same call is safe.\", True)\n    return f\"Refunded {args.amount_cents} cents on {args.order_id}; refund id {refund_id}.\", False\n\n\ndef run(client, payments, request_id, user_text, max_turns=8):\n    messages = [{\"role\": \"user\", \"content\": user_text}]\n    failed = 0\n    for _ in range(max_turns):\n        resp = client.messages.create(          # no tool_choice: any and tool return a 400 on this model\n            model=MODEL, max_tokens=1024, tools=TOOLS, messages=messages)\n        if resp.stop_reason != \"tool_use\":\n            return resp                         # end_turn, refusal or max_tokens: the caller reads stop_reason\n        results = []\n        for block in resp.content:\n            if block.type != \"tool_use\":\n                continue\n            content, is_error = execute(block, request_id, payments)\n            result = {\"type\": \"tool_result\", \"tool_use_id\": block.id, \"content\": content}\n            if is_error:\n                result[\"is_error\"] = True\n                failed += 1\n            results.append(result)\n        if failed >= MAX_FAILED:\n            raise ToolLoopError(f\"{failed} failed tool calls; telling the user\")\n        # the assistant content goes back unchanged; every result of the turn goes in one user\n        # message, tool_result blocks only, with no text before them\n        messages += [{\"role\": \"assistant\", \"content\": resp.content},\n                     {\"role\": \"user\", \"content\": results}]\n    raise ToolLoopError(\"turn limit reached\")\n\n\n# usage: run(anthropic.Anthropic(), payments, \"request-abc\", \"Refund 1,250 cents on order A-1001, it arrived damaged.\")",
+        "caption": "The refund loop on the Claude Messages API, checked against the message rules of subtopic 2 and run locally against a stub client that scripts the calls above, including the -5 and delete_everything cases. The model ID is the one in the structured outputs page's supported-models list."
+      }
+    ]
+  },
+  "code": [],
+  "diagram": null,
   "subtopics": [
     {
-      "body": [
+      "id": "tool-definition-and-schema",
+      "title": "A tool is a name, a description and a schema, on every platform",
+      "blocks": [
         {
-          "body": "Both structured outputs and tool parameters are described with JSON Schema. The working vocabulary is small: type, properties, required, enum for closed sets, items for arrays, nested objects, anyOf for alternatives, and additionalProperties set to false to forbid unexpected keys. Descriptions on fields are read by the model and act as inline instructions. Strict modes accept only a subset of the specification; constraints such as string patterns, numeric ranges or deep recursion may be unsupported or limited depending on the provider, so check the supported subset and enforce the remaining rules in application code after parsing.",
-          "heading": "The parts that matter for models"
-        }
-      ],
-      "id": "json-schema-contracts",
-      "title": "JSON Schema as the contract language"
-    },
-    {
-      "body": [
-        {
-          "body": "Validation catches shape errors, not meaning errors: a schema-valid object can still hold a wrong value. Add semantic checks after parsing, such as cross-field consistency, ids that must exist in a system of record, and figures that must appear in the source. When a retry is needed, send the validation error text back to the model instead of repeating the same request, and cap attempts so a persistent failure becomes a handled error. Design schemas with an explicit way to express absence, for example a nullable field or a status enum, so the model is not forced to invent a value.",
-          "heading": "Beyond the basic pattern"
-        }
-      ],
-      "id": "validate-and-retry-typed-outputs",
-      "title": "Typed outputs with validation and bounded retry"
-    },
-    {
-      "body": [
-        {
-          "body": "There are three levels of structure. Asking for JSON in the prompt is best effort. JSON mode guarantees syntactically valid JSON but not a particular shape. Strict structured outputs go further: the provider compiles the schema into a grammar and, at each generation step, masks out tokens that would violate it, so the result always parses and matches the schema. This requires a supported schema subset, typically with every property listed as required and additionalProperties false, with optional values modeled as a union with null.",
-          "heading": "How schema adherence is guaranteed"
+          "type": "p",
+          "text": "A tool is a function the application offers to a model. The model never runs it: on Claude, OpenAI and Gemini the model returns a structured call and the application executes it. Anthropic describes a tool as a contract between a deterministic system and a non-deterministic agent, which is why the definition, not the code behind it, is what the model reads. The model sees a name, a description and a JSON Schema for the arguments; Anthropic calls the description by far the most important factor.",
+          "cites": [
+            "s1",
+            "s2",
+            "s8",
+            "s10"
+          ]
         },
         {
-          "body": "A guarantee on shape does not cover every outcome. Output cut off by the token limit can be incomplete, and a model may return a refusal instead of the object, which the API reports separately; handle both before using the data. The first request with a new schema can be slower while the grammar is prepared. Field order in the schema affects quality, since generation is sequential: place a reasoning or evidence field before the verdict field that depends on it.",
-          "heading": "Limits to plan for"
-        }
-      ],
-      "id": "strict-mode-constrained-decoding",
-      "title": "Strict mode and constrained decoding"
-    },
-    {
-      "body": [
-        {
-          "body": "The application sends tool definitions, each with a name, a description and an input schema. When the model decides a tool is needed, the response stops with a tool-use stop reason and contains one or more call blocks, each with an id, the tool name and JSON arguments. The application, not the model, executes the call, then sends a new request that includes the earlier assistant turn plus a tool result tied to the call id. The model reads the result and either calls another tool or answers. A model may request several calls in one turn, which can be executed in parallel.",
-          "heading": "Protocol"
+          "type": "p",
+          "text": "The idea is the same everywhere; the key names are not. The table is the mapping to use when a tool is ported from one platform to another.",
+          "cites": [
+            "s2",
+            "s8",
+            "s10",
+            "s12"
+          ]
         },
         {
-          "body": "A tool choice setting lets the application allow any tool, force a specific tool, or disable tools for a turn; forcing a single tool is a common way to get structured output. Client tools run in application code, while some providers also offer server tools they execute themselves. Cap the number of loop iterations, apply a timeout to every execution, and return failures as tool results marked as errors so the model can recover instead of the loop crashing.",
-          "heading": "Controls"
+          "type": "table",
+          "caption": "One tool in four vocabularies, as of 2026-10: the Claude Messages API, the OpenAI Responses API, the Gemini Interactions API and the MCP revision 2026-07-28.",
+          "columns": [
+            "concept",
+            "Claude",
+            "OpenAI",
+            "Gemini",
+            "MCP",
+            "sources"
+          ],
+          "rows": [
+            [
+              "Argument schema key",
+              "input_schema",
+              "parameters",
+              "parameters",
+              "inputSchema",
+              "s2, s8, s10, s12"
+            ],
+            [
+              "Name rule",
+              "letters, digits, underscore and hyphen, 1 to 128 characters",
+              "a descriptive name such as get_weather; no pattern stated",
+              "descriptive, no spaces or special characters",
+              "SHOULD be 1 to 128 characters: letters, digits, underscore, hyphen, dot",
+              "s2, s8, s10, s12"
+            ],
+            [
+              "Strict schema flag",
+              "strict: true",
+              "strict: true; set it, because Chat Completions defaults to non-strict and Responses falls back to non-strict when the schema cannot be made strict",
+              "validated mode of tool_choice",
+              "none: the server MUST validate inputs",
+              "s5, s8, s10, s12"
+            ],
+            [
+              "Usage examples",
+              "optional input_examples",
+              "written into the instructions",
+              "no field on the page",
+              "no field on the page",
+              "s2, s8, s10, s12"
+            ],
+            [
+              "The call arrives as",
+              "a tool_use block with id, name, input",
+              "a function call with a call_id",
+              "a function_call step with name, arguments",
+              "a tools/call request with name, arguments",
+              "s3, s8, s10, s12"
+            ],
+            [
+              "The result goes back as",
+              "a tool_result with tool_use_id, optional is_error",
+              "a function_call_output with call_id: a string, format up to you",
+              "a function_result step with call_id",
+              "content, isError, optional structuredContent; resultType complete, or input_required when the server asks for more input",
+              "s3, s8, s10, s12"
+            ]
+          ],
+          "cites": [
+            "s2",
+            "s3",
+            "s5",
+            "s8",
+            "s10",
+            "s12"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "In the MCP revision named in the caption, a tool is a name, an optional title, a description, an inputSchema, an optional outputSchema, annotations and optional icons. The inputSchema must be a JSON Schema object, and the page's own example declares the older draft-07 dialect explicitly.",
+          "cites": [
+            "s12"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Without a $schema field the dialect defaults to 2020-12. A schema published by an MCP server is therefore not guaranteed to fit the subset a strict mode accepts (subtopic 4), so test a server's schema against the provider before turning strict on; this is the lesson's advice, not a spec rule. MCP's structuredContent is server-produced result data and, the page says, is unrelated to the structured outputs of a model. The protocol itself is taught in the MCP lesson.",
+          "cites": [
+            "s12"
+          ]
         }
-      ],
-      "id": "tool-calling-loop",
-      "title": "The tool calling loop"
+      ]
     },
     {
-      "body": [
+      "id": "tool-call-round-trip",
+      "title": "The round trip: the model proposes, your code executes",
+      "blocks": [
         {
-          "body": "The description is the main factor in whether a tool is chosen and called correctly. State what the tool does, when to use it and when not to, what each parameter means with its format, and what comes back. Prefer a small number of task-shaped tools over a one-to-one mirror of an internal API, use enums and required fields to shrink the space of bad calls, and give tools distinct names so they are not confused. Keep results compact and relevant, since they are added to the window, and make error messages actionable, for example naming the invalid parameter and the accepted values.",
-          "heading": "Interface design for a model reader"
+          "type": "p",
+          "text": "The diagram follows one tool-using request from the user to the answer and shows the ways a turn goes wrong: the model asks for something that fails your check, the tool itself fails, the model stops for a reason other than a tool call or an answer, or the loop reaches its own cap.",
+          "cites": [
+            "s3",
+            "s5"
+          ]
+        },
+        {
+          "type": "diagram",
+          "mermaid": "sequenceDiagram\n  autonumber\n  participant U as User\n  participant A as App\n  participant M as Model\n  participant S as Your system\n  U->>A: request\n  A->>M: messages, tool definitions\n  loop until a turn has no tool call\n    M-->>A: stop_reason and content\n    alt tool_use\n      Note over A: check name and input\n      alt unknown name or bad input\n        A->>M: tool_result, is_error\n      else name and input valid\n        A->>S: call, timeout, idempotency key\n        alt call succeeds\n          S-->>A: result\n          A->>M: tool_result, same id\n        else error or timeout\n          S-->>A: error\n          A->>M: tool_result, is_error\n        end\n      end\n    else end_turn\n      A-->>U: answer\n    else any other stop_reason\n      A-->>U: handled error\n    end\n    opt failed calls or turns reach the cap\n      A-->>U: handled error\n    end\n  end",
+          "legend": "The tool_use stop reason, the tool_result block and is_error are Claude's s3; a failed or invalid call can go back as an error result s3. Refusal and max_tokens end a structured response without a matching shape s5. Claude's other stop reasons (stop_sequence, pause_turn, model_context_window_exceeded, and a tool_use block cut off at max_tokens, where the fix is a larger max_tokens) are taught in the LLM fundamentals lesson, subtopic streaming and stop reasons; pause_turn only occurs with server tools. The loop cap, the timeout and the idempotency key are this lesson's convention; retries and keys are taught in the timeouts, retries and idempotency lesson. Sources: s3, s5.",
+          "cites": [
+            "s3",
+            "s5"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The model only proposes. A call arrives with an id, a name and an input; your code runs it and answers with a result that carries the same id. The application, not the model, decides whether to run the call, how long to wait and whether to try again. Treat the input as untrusted data: a call can pass the schema and still be wrong, and MCP's own security section says servers MUST validate all tool inputs.",
+          "cites": [
+            "s3",
+            "s12"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Claude rejects a conversation whose messages break the format, so the format is part of the contract. These are the rules the cited pages state as of 2026-10.",
+          "cites": [
+            "s3",
+            "s4",
+            "s6"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Message rules on Claude. OpenAI and Gemini link each result to its call by call_id, and each also requires the model's own earlier output to be sent back as received: reasoning items on OpenAI, thought and function_call steps on Gemini.",
+          "columns": [
+            "rule",
+            "if it is broken",
+            "source"
+          ],
+          "rows": [
+            [
+              "The tool_result goes in the user message that immediately follows the assistant message holding the tool_use.",
+              "a 400 error: tool_use ids were found without tool_result blocks immediately after",
+              "s3"
+            ],
+            [
+              "In that user message the tool_result blocks come first and any text after them.",
+              "text before a tool_result causes a 400 error",
+              "s3"
+            ],
+            [
+              "Return every result of one assistant turn together, in one user message.",
+              "a separate message for each result teaches Claude to avoid parallel calls",
+              "s4"
+            ],
+            [
+              "Answer every tool_use, even a call you chose not to run.",
+              "send a tool_result with is_error true and a brief reason",
+              "s4"
+            ],
+            [
+              "Never send a tool_result for the tool search tool's own call, an id that starts srvtoolu_.",
+              "the API rejects the request",
+              "s6"
+            ]
+          ],
+          "cites": [
+            "s3",
+            "s4",
+            "s6",
+            "s8",
+            "s10"
+          ]
         }
-      ],
-      "id": "tool-design-and-descriptions",
-      "title": "Designing tools a model can use well"
+      ]
     },
     {
-      "body": [
+      "id": "choosing-a-structured-output-mechanism",
+      "title": "Four ways to get structured data, and which to pick",
+      "blocks": [
         {
-          "body": "Arguments produced by a model are untrusted input: validate them against the schema and against the caller's own permissions, since the model must never hold more authority than the user it acts for. Because a loop can retry or repeat a call, give every mutating tool an idempotency key so a duplicate request has no second effect. When calls run in parallel, make sure writes that depend on each other are sequenced by the application. Record each call, its arguments and its result with the request trace so any action can be audited later.",
-          "heading": "Beyond read and write separation"
+          "type": "p",
+          "text": "A model can be asked for structured data in four ways, which differ in what the provider guarantees, not in the JSON Schema you write. Prompted JSON asks in the prompt and relies on parsing. A forced tool makes the schema a tool's input and requires the call. Native structured outputs put the schema in a response-format parameter. Constrained decoding on tool inputs is the strict flag. Anthropic describes its structured outputs as constrained decoding over a compiled grammar; OpenAI says its strict function mode is built on its Structured Outputs feature.",
+          "cites": [
+            "s5",
+            "s8"
+          ]
+        },
+        {
+          "type": "decision",
+          "caption": "Which mechanism to pick, as of 2026-10. Validate values in every row: a valid shape is not a correct answer [s11].",
+          "rows": [
+            {
+              "option": "Prompted JSON, parsed and validated",
+              "pick_when": "No schema-constrained mode exists for the model or platform, or the job is a prototype. Validate with a library and retry if needed, with a cap on attempts (this lesson's addition) [s9, s11].",
+              "avoid_when": "Downstream code cannot tolerate a missing key or a wrong type. OpenAI's JSON mode promises valid JSON, not your schema [s9].",
+              "example": "A one-off date extractor."
+            },
+            {
+              "option": "Tool-forced output (tool_choice)",
+              "pick_when": "The structured result is an action you will execute anyway, and the platform still supports forcing: OpenAI forces one function and Gemini's any mode requires a call [s8, s10].",
+              "avoid_when": "The newest Claude models reject it: any and tool return an error, and a forced call skips thinking (table in subtopic 7) [s2].",
+              "example": "Route a request to one handler function on OpenAI."
+            },
+            {
+              "option": "Native structured outputs (response format)",
+              "pick_when": "The answer itself must be a fixed JSON shape: extraction, classification, a report [s5, s9, s11].",
+              "avoid_when": "The schema needs keywords outside the provider's subset, or on Claude you use citations or prefilling, which conflict with it [s5].",
+              "example": "Extract name and plan interest from an email with output_config.format."
+            },
+            {
+              "option": "Constrained decoding on tool inputs (strict)",
+              "pick_when": "The model calls your functions and a wrong type or a missing key would break them: strict: true on Claude and on OpenAI (set it explicitly) [s5, s8].",
+              "avoid_when": "You use programmatic tool calling, which does not accept strict tools, or exceed Claude's per-request strict-tool limits [s5, s7]. Strict checks shape, not meaning.",
+              "example": "A booking function that needs the passenger count as an integer."
+            }
+          ],
+          "cites": [
+            "s2",
+            "s5",
+            "s7",
+            "s8",
+            "s9",
+            "s10",
+            "s11"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The common advice to force a single tool to get structured output is now a workaround on Claude: Anthropic names JSON outputs and strict tool use as its two structured-output features, and for models that reject forced tool use points to auto with strict tools or to structured outputs. The two also combine in one request, one shaping the answer and the other the calls.",
+          "cites": [
+            "s2",
+            "s5"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Pick by where the structure sits. In the answer: native structured outputs. In a call the model makes: a strict tool. Neither offered for your model: prompt, validate and retry. This is the lesson's rule of thumb, not a vendor rule.",
+          "cites": [
+            "s5",
+            "s8",
+            "s9"
+          ]
         }
-      ],
-      "id": "tool-side-effects-and-approval",
-      "title": "Side effects, idempotency and approval"
-    }
-  ],
-  "diagram": {
-    "source": "sequenceDiagram\n  participant U as User\n  participant A as Application\n  participant M as Model\n  participant S as Customer system\n  U->>A: request\n  A->>M: messages plus tool definitions\n  M-->>A: stop reason tool use, call id, name, arguments\n  A->>A: validate arguments, check permissions\n  A->>S: execute with timeout and idempotency key\n  S-->>A: result or error\n  A->>M: tool result tied to call id\n  M-->>A: final answer or next tool call\n  A-->>U: response"
-  },
-  "code": [
+      ]
+    },
     {
-      "code": "{\n  \"name\": \"get_invoice\",\n  \"description\": \"Fetch one invoice by id. Use when the user asks about a specific invoice amount, status or due date. Do not use for listing invoices.\",\n  \"input_schema\": {\n    \"type\": \"object\",\n    \"properties\": {\n      \"invoice_id\": {\n        \"type\": \"string\",\n        \"description\": \"Invoice id, for example INV-20417\"\n      },\n      \"include_line_items\": {\n        \"type\": \"boolean\",\n        \"description\": \"Return line items as well as totals\"\n      }\n    },\n    \"required\": [\"invoice_id\", \"include_line_items\"],\n    \"additionalProperties\": false\n  }\n}",
-      "lang": "json"
+      "id": "native-structured-outputs-in-detail",
+      "title": "Native structured outputs: what is guaranteed and what still goes wrong",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "On Claude, native structured outputs and strict tools compile the schema into a grammar, which is why an unsupported keyword fails up front instead of producing a bad answer later. The flow shows one request on Claude and the four ways it can end; only the normal end guarantees the shape.",
+          "cites": [
+            "s5"
+          ]
+        },
+        {
+          "type": "flow",
+          "nodes": [
+            {
+              "id": "req",
+              "label": "Request with schema",
+              "kind": "actor"
+            },
+            {
+              "id": "compile",
+              "label": "Grammar compile",
+              "kind": "service"
+            },
+            {
+              "id": "cache",
+              "label": "Grammar cache",
+              "kind": "store"
+            },
+            {
+              "id": "model",
+              "label": "Model, constrained output",
+              "kind": "service"
+            },
+            {
+              "id": "valid",
+              "label": "Valid object",
+              "kind": "store"
+            },
+            {
+              "id": "refusal",
+              "label": "Refusal",
+              "kind": "store"
+            },
+            {
+              "id": "cut",
+              "label": "Cut off at max_tokens",
+              "kind": "store"
+            },
+            {
+              "id": "rejected",
+              "label": "400 error",
+              "kind": "store"
+            }
+          ],
+          "edges": [
+            {
+              "id": "e-schema",
+              "from": "req",
+              "to": "compile",
+              "kind": "link",
+              "label": "Schema in the request",
+              "short": "Schema"
+            },
+            {
+              "id": "e-store",
+              "from": "compile",
+              "to": "cache",
+              "kind": "link",
+              "label": "Compiled grammar stored",
+              "short": "Stored"
+            },
+            {
+              "id": "e-reject",
+              "from": "compile",
+              "to": "rejected",
+              "kind": "link",
+              "label": "Unsupported keyword or too complex",
+              "short": "Rejected"
+            },
+            {
+              "id": "e-use",
+              "from": "cache",
+              "to": "model",
+              "kind": "link",
+              "label": "Grammar constrains the output",
+              "short": "Constrains"
+            },
+            {
+              "id": "e-valid",
+              "from": "model",
+              "to": "valid",
+              "kind": "link",
+              "label": "Normal end: parses and matches",
+              "short": "Valid"
+            },
+            {
+              "id": "e-refuse",
+              "from": "model",
+              "to": "refusal",
+              "kind": "link",
+              "label": "stop_reason refusal, HTTP 200",
+              "short": "Refused"
+            },
+            {
+              "id": "e-cut",
+              "from": "model",
+              "to": "cut",
+              "kind": "link",
+              "label": "stop_reason max_tokens",
+              "short": "Cut off"
+            }
+          ],
+          "steps": [
+            {
+              "edge": "e-schema",
+              "caption": "The schema travels in the request, in output_config.format or on a strict tool."
+            },
+            {
+              "edge": "e-store",
+              "caption": "The first use of a schema compiles it into a grammar and stores it."
+            },
+            {
+              "edge": "e-reject",
+              "caption": "A keyword outside the subset, or a schema too complex to compile, is a 400 error."
+            },
+            {
+              "edge": "e-use",
+              "caption": "Later requests with the same schema reuse the stored grammar."
+            },
+            {
+              "edge": "e-valid",
+              "caption": "A normal end gives JSON that parses and matches the schema, apart from the capitalization of enum values."
+            },
+            {
+              "edge": "e-refuse",
+              "caption": "A refusal is a normal response whose text may not match the schema."
+            },
+            {
+              "edge": "e-cut",
+              "caption": "A response cut off at max_tokens may be incomplete JSON."
+            }
+          ],
+          "legend": "Edges are the stages one structured-output request passes through on Claude, not network calls. The grammar cache, the refusal and the complexity errors are Claude's s5; OpenAI documents the same refusal and cut-off cases s9. Sources: s5, s9.",
+          "cites": [
+            "s5",
+            "s9"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Limits per platform, as of 2026-10 (pages fetched 2026-10-16; the Gemini pages say last updated 2026-10-13 and 2026-09-23).",
+          "columns": [
+            "limit or rule",
+            "Claude",
+            "OpenAI",
+            "Gemini",
+            "sources"
+          ],
+          "rows": [
+            [
+              "Objects",
+              "set additionalProperties to false",
+              "set additionalProperties false and list every field as required; an optional value is a type union with null",
+              "a required list; additionalProperties may be a boolean or a schema",
+              "s5, s8, s9, s11"
+            ],
+            [
+              "Outside the subset",
+              "recursive schemas, numeric and string-length constraints, minItems above 1: a 400 error; SDK helpers move constraints into descriptions",
+              "allOf, not, if/then/else; the root must be an object, not anyOf",
+              "not listed; very large or deeply nested schemas may be rejected",
+              "s5, s9, s11"
+            ],
+            [
+              "Stated size limits",
+              "20 strict tools, 24 optional parameters and 16 union-typed parameters per request; 180-second compile timeout",
+              "5,000 object properties, 10 nesting levels, 1,000 enum values",
+              "none stated",
+              "s5, s9, s11"
+            ],
+            [
+              "First request",
+              "extra latency while the grammar compiles; cached 24 hours from last use; no figure",
+              "extra latency while the schema is processed; none for later requests; no figure",
+              "not stated",
+              "s5, s9, s11"
+            ],
+            [
+              "Key order",
+              "required properties first, then optional",
+              "the order of the keys in the schema",
+              "not stated",
+              "s5, s9, s11"
+            ],
+            [
+              "What still breaks",
+              "refusal, max_tokens, enum casing; a property that asks for step-by-step reasoning can draw a reasoning_extraction refusal",
+              "a refusal field; incomplete JSON at the token limit",
+              "values can be wrong although the JSON is valid",
+              "s5, s9, s11"
+            ],
+            [
+              "Cost and platform",
+              "an added system prompt means more input tokens; changing the format invalidates the prompt cache for the thread; on Amazon Bedrock only the legacy integration",
+              "fine-tuned models support fewer constraints; strict is switched off for a fine-tuned model's parallel calls",
+              "combining with built-in tools is a preview on Gemini 3 only",
+              "s5, s8, s9, s11"
+            ]
+          ],
+          "cites": [
+            "s5",
+            "s8",
+            "s9",
+            "s11"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "Check stop_reason before you parse, and validate values after. A guaranteed shape still allows a refusal, a cut-off, a wrong enum capitalization and a plausible wrong number. On Claude, mark every property required if key order matters, and ask for a short explanation field, not reasoning.",
+          "cites": [
+            "s5",
+            "s11"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "agent-computer-interface",
+      "title": "The agent-computer interface: choosing and describing tools",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The agent-computer interface is the surface a model acts through: tool names, descriptions, parameters and results. A common error Anthropic has observed is tools that merely wrap existing API endpoints, because an agent has limited context where a program has cheap, abundant memory. This lesson is the site's reference for these rules; the agent and MCP lessons link here.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Rules for the tools a model sees, with the page that states each.",
+          "columns": [
+            "rule",
+            "what the source says",
+            "source"
+          ],
+          "rows": [
+            [
+              "Build few tools for whole tasks",
+              "search_contacts or message_contact, not list_contacts; schedule_event, not list_users plus list_events plus create_event; get_customer_context, not three getters",
+              "s1"
+            ],
+            [
+              "Consolidate related operations",
+              "one tool with an action parameter instead of create_pr, review_pr and merge_pr",
+              "s2"
+            ],
+            [
+              "Namespace the names",
+              "asana_search and jira_search, asana_projects_search; prefix or suffix matters, so measure it on your evaluation",
+              "s1, s2"
+            ],
+            [
+              "Describe it as to a new hire",
+              "what it does, when to use it and when not, what each parameter means, what it does not return; at least 3 to 4 sentences",
+              "s1, s2"
+            ],
+            [
+              "Name parameters unambiguously",
+              "user_id, not user",
+              "s1"
+            ],
+            [
+              "Prevent invalid states",
+              "use enums and object structure; toggle_light(on, off) allows an invalid call",
+              "s8"
+            ],
+            [
+              "Do not make the model fill what you know",
+              "define submit_refund() with no parameters and pass the order_id from your code; merge functions always called in sequence",
+              "s8"
+            ],
+            [
+              "Show examples for complex inputs",
+              "input_examples must match the schema, and cost about 20 to 50 tokens, or 100 to 200 when nested; OpenAI warns examples may hurt reasoning models",
+              "s2, s8"
+            ],
+            [
+              "Ask for an explanation, not reasoning",
+              "a parameter that asks for step-by-step reasoning may draw a reasoning_extraction refusal",
+              "s2"
+            ]
+          ],
+          "cites": [
+            "s1",
+            "s2",
+            "s8"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Building few task-shaped tools and consolidating operations pull the same way, but a merged tool with an action parameter puts a read and a write behind one name. This lesson's convention is to keep writes in their own tools so that approval can attach to the tool. Google adds a failure to avoid: if a prompt requires structured text just before a tool call, the call can fail with Malformed_Function_Call, and the preferred fix is to put those notes inside a dedicated function call.",
+          "cites": [
+            "s2",
+            "s10"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "How many tools to expose at once, as of 2026-10.",
+          "columns": [
+            "vendor",
+            "guidance",
+            "source"
+          ],
+          "rows": [
+            [
+              "Claude",
+              "selection accuracy degrades past 30 to 50 tools; tool search is for 10 or more tools or over 10k tokens of definitions",
+              "s6"
+            ],
+            [
+              "OpenAI",
+              "fewer than 20 functions at the start of a turn, a soft suggestion; tool_search exists on gpt-5.4 and later",
+              "s8"
+            ],
+            [
+              "Gemini",
+              "keep the active set to 10 to 20 tools at most",
+              "s10"
+            ]
+          ],
+          "cites": [
+            "s6",
+            "s8",
+            "s10"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "tip",
+          "text": "Pass the intern test, OpenAI's phrase: could a person do the task with only what you gave the model? If they would ask questions, put the answers in the description.",
+          "cites": [
+            "s8"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "results-errors-and-side-effects",
+      "title": "Results, errors and side effects: what goes back to the model",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "A result is part of the interface because it enters the context window. Return only high-signal fields: Anthropic found that resolving cryptic UUIDs into meaningful names, or even a 0-indexed scheme, significantly improved retrieval precision by reducing hallucinations. An agent may still need identifiers for the next call, so offer a concise or detailed choice as a parameter, and cap what comes back with an instruction on how to ask for less.",
+          "cites": [
+            "s1",
+            "s2"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Result-shaping figures Anthropic reports for its own tools (published September 2025).",
+          "columns": [
+            "measure",
+            "figure",
+            "source"
+          ],
+          "rows": [
+            [
+              "A Slack tool response, detailed",
+              "206 tokens",
+              "s1"
+            ],
+            [
+              "The same response, concise (identifiers left out)",
+              "72 tokens, about a third",
+              "s1"
+            ],
+            [
+              "Claude Code's default cap on one tool response",
+              "25,000 tokens",
+              "s1"
+            ]
+          ],
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Return failures as results, not exceptions. On Claude, set is_error to true and say what went wrong and what to try: Rate limit exceeded, retry after 60 seconds, not failed. Anthropic says Claude retries an invalid call two to three times with corrections before apologizing. MCP separates protocol errors, such as an unknown tool, from tool execution errors, such as bad input or a business rule, which go in the result with isError true so the model can correct itself.",
+          "cites": [
+            "s3",
+            "s12"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Validate arguments yourself even when a strict mode is on: the guarantee covers shape, not meaning, so check that ids exist, amounts are within limits and the caller is allowed to do it. MCP says servers MUST validate inputs and rate limit calls, and clients SHOULD ask the user to confirm sensitive operations. Treat tool results as untrusted too, since they can carry injected instructions.",
+          "cites": [
+            "s3",
+            "s11",
+            "s12"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "A loop can repeat a call, so give each mutating tool an idempotency key derived from the business operation; the key design is taught in the timeouts, retries and idempotency lesson. As this lesson's convention, keep reading and writing tools apart so only the writes need approval. Anthropic's evaluation advice is to run realistic multi-call tasks and record accuracy, runtime, number of calls, tokens and errors; it says many redundant calls might suggest rightsizing pagination or token limits, and many invalid-parameter errors might suggest clearer descriptions or better examples.",
+          "cites": [
+            "s1"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tool-choice-and-parallel-calls",
+      "title": "Steering the loop: tool choice and parallel calls",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The tool choice setting decides whether the model may answer without a tool, must call one, or must call a particular one. Parallel settings decide whether one turn may carry several calls. The names differ per platform and the restrictions differ per model, so check the model you use.",
+          "cites": [
+            "s2",
+            "s8",
+            "s10"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Controls per platform, as of 2026-10.",
+          "columns": [
+            "behaviour",
+            "Claude",
+            "OpenAI",
+            "Gemini",
+            "sources"
+          ],
+          "rows": [
+            [
+              "The model decides (default)",
+              "auto",
+              "auto",
+              "auto",
+              "s2, s8, s10"
+            ],
+            [
+              "Must call some tool",
+              "any",
+              "required",
+              "any",
+              "s2, s8, s10"
+            ],
+            [
+              "Must call this tool",
+              "tool with a name",
+              "a forced function, by name",
+              "mode any with an allowed_tools list",
+              "s2, s8, s10"
+            ],
+            [
+              "No tool this turn",
+              "none",
+              "none",
+              "none",
+              "s2, s8, s10"
+            ],
+            [
+              "Limit to a subset, keep the tool list",
+              "not stated",
+              "allowed_tools, which keeps prompt caching",
+              "allowed_tools",
+              "s8, s10"
+            ],
+            [
+              "One call at most per turn",
+              "disable_parallel_tool_use: true inside the tool_choice object",
+              "parallel_tool_calls: false, zero or one call",
+              "not stated",
+              "s4, s8, s10"
+            ]
+          ],
+          "cites": [
+            "s2",
+            "s4",
+            "s8",
+            "s10"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Where forced tool use is rejected on Claude, as of 2026-10: any and tool fail, while auto and none still work.",
+          "columns": [
+            "model or setting",
+            "result",
+            "use instead"
+          ],
+          "rows": [
+            [
+              "Manual extended thinking enabled",
+              "an error",
+              "auto or none; adaptive thinking does not block forcing, but a forced call skips thinking"
+            ],
+            [
+              "Claude Opus 5.5, Sonnet 5.5, Fable 5.1 and Mythos 5.1",
+              "a 400 error",
+              "auto with strict tool use, or structured outputs"
+            ]
+          ],
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Where forcing works, the API prefills the turn, so the model writes no explanation before the call. Claude calls several tools in one turn by default and does not prescribe an order: independent read-only calls are usually safe to run concurrently, calls with side effects, shared state or ordering might be better run one after another, and a skipped call still gets an error result. OpenAI says built-in tools cannot join a parallel batch of functions, and Gemini names parallel and compositional calling.",
+          "cites": [
+            "s2",
+            "s4",
+            "s8",
+            "s10"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "Do not send one user message per result. Anthropic names that formatting error as the most common reason parallel calls stop happening, because it teaches the model to avoid them. Send all results of a turn together. The off switch for parallel calls goes inside the tool_choice object, not at the top level of the request.",
+          "cites": [
+            "s4"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "large-tool-catalogs",
+      "title": "Large catalogs: tool search and programmatic tool calling",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Tool definitions are input tokens on every request, and a long list also makes selection worse (the table in subtopic 5 gives each vendor's count). OpenAI says callable function definitions count against the context limit and are billed as input tokens. Claude has two answers: load tools on demand with tool search, or let the model call them from code so that intermediate results never enter its context.",
+          "cites": [
+            "s6",
+            "s7",
+            "s8"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "With tool search you send every definition and set defer_loading to true on the ones to hide. The model then finds the ones it needs by regex or BM25 search, and the matching definitions are loaded into the context. At least one tool must stay non-deferred.",
+          "cites": [
+            "s6"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Tool search facts, as of 2026-10.",
+          "columns": [
+            "item",
+            "figure or rule",
+            "source"
+          ],
+          "rows": [
+            [
+              "Definitions of a typical five-server setup (GitHub, Slack, Sentry, Grafana, Splunk)",
+              "about 55k tokens before any work",
+              "s6"
+            ],
+            [
+              "Typical reduction",
+              "over 85 percent, by loading 3 to 5 tools",
+              "s6"
+            ],
+            [
+              "Results per search",
+              "5 by default; the model may set a limit from 1 to 10,000",
+              "s6"
+            ],
+            [
+              "Deferred tools per request",
+              "at most 10,000",
+              "s6"
+            ],
+            [
+              "Always loaded",
+              "keep the 3 to 5 most used tools non-deferred",
+              "s6"
+            ],
+            [
+              "Caching",
+              "a deferred tool cannot carry cache_control (a 400 error); put the breakpoint on a non-deferred tool",
+              "s6"
+            ]
+          ],
+          "cites": [
+            "s6"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Programmatic tool calling lets Claude write code that calls your tools inside a code execution container, rather than one model round trip per call. Anthropic's example checks budgets for 20 employees: the traditional way needs 20 round trips and pulls thousands of line items into the context, while one script returns only the employees over budget.",
+          "cites": [
+            "s7"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Programmatic tool calling, as of 2026-10: what it needs and what it does not allow.",
+          "columns": [
+            "item",
+            "detail",
+            "source"
+          ],
+          "rows": [
+            [
+              "Requires",
+              "the code execution tool at version code_execution_20260120 or later; each tool lists that caller in allowed_callers",
+              "s7"
+            ],
+            [
+              "How a call arrives",
+              "the code pauses and the API returns a tool_use block with a caller field; you return the result and the code continues",
+              "s7"
+            ],
+            [
+              "Not supported",
+              "strict tools, forcing it with tool_choice, disable_parallel_tool_use, tools from an MCP connector",
+              "s7"
+            ],
+            [
+              "Timing",
+              "a pending call times out after about 4 minutes; the reply must hold only tool_result blocks",
+              "s7"
+            ],
+            [
+              "Security",
+              "allowed_callers is guidance, not a security boundary",
+              "s7"
+            ]
+          ],
+          "cites": [
+            "s7"
+          ]
+        }
+      ]
     }
   ],
   "technologies": [
@@ -101,8 +1070,11 @@
     "Pydantic",
     "Zod",
     "Anthropic tool use",
+    "Claude structured outputs",
     "OpenAI function calling",
     "OpenAI Structured Outputs",
+    "Gemini function calling",
+    "Gemini structured outputs",
     "Instructor",
     "Pydantic AI",
     "Vercel AI SDK",
@@ -115,42 +1087,170 @@
     "mcp-servers",
     "rest-apis-json-oauth",
     "responsible-ai-guardrails",
-    "llm-agent-evaluation"
+    "llm-agent-evaluation",
+    "sd-idempotency-retries"
   ],
   "sources": [
     {
-      "kind": "doc",
-      "title": "Claude Docs: Tool use overview",
-      "url": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview"
+      "id": "s1",
+      "title": "Anthropic Engineering: Writing effective tools for agents, with agents (published Sep 11, 2025)",
+      "url": "https://www.anthropic.com/engineering/writing-tools-for-agents",
+      "kind": "article",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Tools are a new kind of software which reflects a contract between deterministic systems and non-deterministic agents"
+      }
     },
     {
+      "id": "s2",
+      "title": "Claude Docs: Define tools (tool definition fields, descriptions, tool_choice, input_examples)",
+      "url": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/define-tools",
       "kind": "doc",
-      "title": "OpenAI Docs: Function calling",
-      "url": "https://developers.openai.com/api/docs/guides/function-calling"
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "This is by far the most important factor in tool performance"
+      }
     },
     {
+      "id": "s3",
+      "title": "Claude Docs: Handle tool calls (tool_use, tool_result, is_error)",
+      "url": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls",
       "kind": "doc",
-      "title": "OpenAI Docs: Structured outputs",
-      "url": "https://developers.openai.com/api/docs/guides/structured-outputs"
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "must come FIRST in the content array"
+      }
     },
     {
-      "kind": "guide",
-      "title": "Understanding JSON Schema",
-      "url": "https://json-schema.org/understanding-json-schema/reference"
+      "id": "s4",
+      "title": "Claude Docs: Parallel tool use",
+      "url": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/parallel-tool-use",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "By default, Claude may call multiple tools in a single response."
+      }
+    },
+    {
+      "id": "s5",
+      "title": "Claude Docs: Structured outputs (JSON outputs and strict tool use, schema limits, invalid outputs)",
+      "url": "https://platform.claude.com/docs/en/build-with-claude/structured-outputs",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Structured outputs constrain Claude's responses to follow a specific schema, ensuring valid, parseable output for downstream processing."
+      }
+    },
+    {
+      "id": "s6",
+      "title": "Claude Docs: Tool search tool",
+      "url": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Claude's ability to pick the right tool degrades once you exceed 30–50 available tools."
+      }
+    },
+    {
+      "id": "s7",
+      "title": "Claude Docs: Programmatic tool calling",
+      "url": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/programmatic-tool-calling",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "rather than requiring round trips through the model for each tool invocation"
+      }
+    },
+    {
+      "id": "s8",
+      "title": "OpenAI Docs: Function calling (tools, tool_choice, parallel calls, strict mode)",
+      "url": "https://developers.openai.com/api/docs/guides/function-calling",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Aim for fewer than 20 functions available at the start of a turn"
+      }
+    },
+    {
+      "id": "s9",
+      "title": "OpenAI Docs: Structured model outputs (text.format, supported schemas, refusals, JSON mode)",
+      "url": "https://developers.openai.com/api/docs/guides/structured-outputs",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Structured Outputs is a feature that ensures the model will always generate responses that adhere to your supplied JSON Schema"
+      }
+    },
+    {
+      "id": "s10",
+      "title": "Gemini API Docs: Function calling (last updated 2026-09-23)",
+      "url": "https://ai.google.dev/gemini-api/docs/function-calling",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Tool Selection: Keep active set to 10-20 tools maximum."
+      }
+    },
+    {
+      "id": "s11",
+      "title": "Gemini API Docs: Structured outputs (last updated 2026-10-13)",
+      "url": "https://ai.google.dev/gemini-api/docs/structured-output",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Validation: While output is syntactically correct JSON, always validate values in your application."
+      }
+    },
+    {
+      "id": "s12",
+      "title": "Model Context Protocol specification, version 2026-07-28: Tools",
+      "url": "https://modelcontextprotocol.io/specification/2026-07-28/server/tools",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Tools in MCP are designed to be model-controlled"
+      }
     }
   ],
   "practice": "practice/structured-outputs-tool-calling",
   "provenance": {
-    "generated_by": "Claude through GigAI 0.1.11.10",
-    "generated_on": "2026-10-11",
-    "reviewed_by": null,
-    "reviewed_on": null
+    "generated_by": "Claude Sonnet 5.5 by hand, Scout learning center, format v2 structured outputs and tool calling",
+    "generated_on": "2026-10-16",
+    "reviewed_by": "a second reader (Claude Sonnet 5.5, a different instance from the writer), Scout learning center, format v2 structured outputs and tool calling",
+    "reviewed_on": "2026-10-16"
   },
   "changelog": [
     {
       "version": 1,
       "date": "2026-10-12",
       "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-16",
+      "change": "Rewritten to format v2 / shape v11 from vendor documentation fetched 2026-10-16 (originally imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer, Claude through GigAI 0.1.11.10): eight subtopics (tool definition across Claude, OpenAI, Gemini and MCP; the round trip with an exhaustive failure diagram; a decision block on four structured-output mechanisms; native structured outputs with dated per-platform limits and a flow of the four ends; the agent-computer interface rules at full depth; results, errors and side effects; tool choice and parallel calls; tool search and programmatic tool calling), twelve dated sources, a refund-tool worked example with its loop code, five cited in-practice blocks. This lesson is now the site's canonical home of tool design."
+    },
+    {
+      "version": 3,
+      "date": "2026-10-16",
+      "change": "Fix round 1 after the second read: the worked-example loop now checks the tool name and rejects a non-positive refund amount (a schema cannot carry a minimum on Claude's strict subset), the idempotency key is per order and request, and the steps carry the re-run stub output; the round-trip diagram names the lane Your system and draws the other stop reasons and the loop-cap exit; the message-rules caption states the OpenAI and Gemini send-back rules; the OpenAI strict default, the MCP input_required result and the enum-casing exception in the flow are stated; the reader's mechanical edits (dated Anthropic figures, 'might suggest' wording, OpenAI's wording for the invalid-states rule) are kept."
+    },
+    {
+      "version": 4,
+      "date": "2026-10-16",
+      "change": "Accepted after the second read and the fix-round verification: provenance.reviewed_by and reviewed_on set; no content change."
     }
   ]
 }
