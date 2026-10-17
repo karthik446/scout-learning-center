@@ -1,11 +1,11 @@
 {
   "schema_version": "learning-center-practice:1",
   "id": "practice/mcp-servers",
-  "version": 1,
+  "version": 2,
   "lesson": "mcp-servers",
   "tool": "Model Context Protocol (MCP)",
   "tool_key": "mcp",
-  "why_this_tool": "MCP is the open standard the lesson teaches, so building a server against its own documentation practises the contract of tools, resources, prompts, lifecycle and authorization that every compliant host understands.",
+  "why_this_tool": "MCP is the open standard the lesson teaches, so building a server against its own documentation practises the contract of tools, resources, prompts, request metadata and authorization that every compliant host understands.",
   "alternatives": "Framework-specific tool definitions such as LangChain or LlamaIndex tools (quick to write but tied to one agent framework), plain function calling against an OpenAPI-described REST API (reuses existing APIs but has no shared discovery or lifecycle), and agent-to-agent protocols such as A2A (connect whole agents to each other, not systems to one agent).",
   "setup": [
     {
@@ -116,19 +116,19 @@
       "why": "The trust boundary of a deployment follows these three roles. One host runs one client per server, which is why servers stay isolated from each other."
     },
     {
-      "do": "Write out by hand the initialize request, the initialize response and the initialized notification that your server would exchange with a client.",
-      "done_when": "Your three JSON-RPC messages carry a protocol version, the capabilities of each side and the correct method names, matching the section.",
+      "do": "Write out by hand the `server/discover` request your server would receive and the `tools/call` request for your tool, each with the `_meta` block (protocol version and client capabilities) and the headers `MCP-Protocol-Version`, `Mcp-Method` and `Mcp-Name`.",
+      "done_when": "Your two JSON-RPC messages carry the same protocol version in the header and in `_meta` and the same tool name in `Mcp-Name` and in the body, and there is no `initialize` message and no session id anywhere.",
       "n": 4,
       "source": {
-        "title": "Lifecycle - Model Context Protocol",
-        "url": "https://modelcontextprotocol.io/specification/2025-06-18/basic/lifecycle#initialization",
+        "title": "Streamable HTTP - Model Context Protocol",
+        "url": "https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http#request-metadata",
         "verified": {
-          "checked": "2026-10-11",
+          "checked": "2026-10-16",
           "http": 200,
-          "section_found": "Initialization"
+          "section_found": "Request Metadata"
         }
       },
-      "why": "The lifecycle begins with version and capability negotiation. Knowing these three messages lets you diagnose a connection that never reaches the operation phase."
+      "why": "Under revision 2026-07-28 there is no handshake: every request is self-contained, so a server needs nothing from an earlier call. Writing one request by hand shows what a server validates and which mismatch becomes a 400."
     },
     {
       "do": "Create a resource on your server that exposes read-only data by URI, plus one resource template with a parameter.",
@@ -166,9 +166,9 @@
       "n": 7,
       "source": {
         "title": "Tools - Model Context Protocol",
-        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/tools#error-handling",
+        "url": "https://modelcontextprotocol.io/specification/2026-07-28/server/tools#error-handling",
         "verified": {
-          "checked": "2026-10-11",
+          "checked": "2026-10-16",
           "http": 200,
           "section_found": "Error Handling"
         }
@@ -176,7 +176,7 @@
       "why": "A model can recover from an execution error it can read, but not from a broken protocol exchange. This distinction shapes how agents behave on bad input."
     },
     {
-      "do": "Write a small client that launches your server over stdio, initializes a session and lists its tools; save the listing, add a tool, then compare a second listing against it. Skip the chat loop, which needs a paid model API key.",
+      "do": "Write a small client that launches your server over stdio, connects with the SDK's Client (it negotiates the protocol version itself) and lists its tools; save the listing, add a tool, then compare a second listing against it. Skip the chat loop, which needs a paid model API key.",
       "done_when": "The client prints your tool names, and the second saved listing differs from the first only by the tool you added.",
       "n": 8,
       "source": {
@@ -241,14 +241,44 @@
       "n": 12,
       "source": {
         "title": "Authorization - Model Context Protocol",
-        "url": "https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization#token-audience-binding-and-validation",
+        "url": "https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization#token-requirements",
         "verified": {
-          "checked": "2026-10-11",
+          "checked": "2026-10-16",
           "http": 200,
-          "section_found": "Token Audience Binding and Validation"
+          "section_found": "Token Requirements"
         }
       },
       "why": "A remote server is a protected resource that must accept only tokens issued for it. Passing a client's token through to other services creates a confused deputy."
+    },
+    {
+      "do": "Configure the filesystem server in the host with one allowed directory, trigger a write action, and deny it once before approving it.",
+      "done_when": "The denied action left no file behind and the approved action created the file in the allowed directory.",
+      "n": 13,
+      "source": {
+        "title": "Connect to local MCP servers - Model Context Protocol",
+        "url": "https://modelcontextprotocol.io/docs/2026-07-28/develop/connect-local-servers#how-approval-works",
+        "verified": {
+          "checked": "2026-10-16",
+          "http": 200,
+          "section_found": "How Approval Works"
+        }
+      },
+      "why": "Approval gates are enforced by the host, not the server, and you should see both the refusal path and the approved path."
+    },
+    {
+      "do": "Package your server as an installable package and draft the registry metadata for it locally, without publishing anything.",
+      "done_when": "A built package exists on disk and your draft metadata names that package and its version.",
+      "n": 14,
+      "source": {
+        "title": "The MCP Registry - Model Context Protocol",
+        "url": "https://modelcontextprotocol.io/registry/about#relationship-with-package-registries",
+        "verified": {
+          "checked": "2026-10-16",
+          "http": 200,
+          "section_found": "Relationship with Package Registries"
+        }
+      },
+      "why": "A tool catalog is built from registry metadata that points at packages in ordinary package registries, so the two pieces must line up."
     }
   ],
   "sources": [
@@ -294,12 +324,12 @@
     },
     {
       "kind": "doc",
-      "title": "Lifecycle - Model Context Protocol",
-      "url": "https://modelcontextprotocol.io/specification/2025-06-18/basic/lifecycle",
+      "title": "Streamable HTTP - Model Context Protocol",
+      "url": "https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http",
       "verified": {
-        "checked": "2026-10-11",
+        "checked": "2026-10-16",
         "http": 200,
-        "section_found": "Initialization"
+        "section_found": "Request Metadata"
       }
     },
     {
@@ -315,9 +345,9 @@
     {
       "kind": "doc",
       "title": "Tools - Model Context Protocol",
-      "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/tools",
+      "url": "https://modelcontextprotocol.io/specification/2026-07-28/server/tools",
       "verified": {
-        "checked": "2026-10-11",
+        "checked": "2026-10-16",
         "http": 200,
         "section_found": "Error Handling"
       }
@@ -355,11 +385,21 @@
     {
       "kind": "doc",
       "title": "Authorization - Model Context Protocol",
-      "url": "https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization",
+      "url": "https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization",
       "verified": {
-        "checked": "2026-10-11",
+        "checked": "2026-10-16",
         "http": 200,
-        "section_found": "Token Audience Binding and Validation"
+        "section_found": "Token Requirements"
+      }
+    },
+    {
+      "kind": "doc",
+      "title": "The MCP Registry - Model Context Protocol",
+      "url": "https://modelcontextprotocol.io/registry/about",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "Relationship with Package Registries"
       }
     }
   ],
@@ -378,6 +418,11 @@
       "version": 1,
       "date": "2026-10-12",
       "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-16",
+      "change": "brought to the 2026-07-28 model: no initialize handshake or session (step 4 writes server/discover and tools/call requests, step 8 uses the SDK Client), 2026-07-28 sources for tools, transport and authorization; steps 13 (approval trial) and 14 (registry metadata draft) moved in from the retired agents-and-mcp path"
     }
   ]
 }

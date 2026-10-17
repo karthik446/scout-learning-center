@@ -117,7 +117,7 @@ class Imported(unittest.TestCase):
         self.assertEqual(case["concept_keys"], ["system-design"])
         self.assertEqual(case["subtopics"], [{"id": "the-idea", "title": "The idea"}])
         self.assertEqual(by_id["fixture-artifact-lesson"]["practice_kind"], "artifact")
-        self.assertEqual(by_id["agents-and-mcp"]["practice_kind"], "tool")
+        self.assertEqual(by_id["mcp-servers"]["practice_kind"], "tool")
         self.assertIsNone(by_id["sd-numbers"]["practice_kind"])
         # the real content plus the two fixture lessons and the one fixture module (counts come from content/, not literals)
         published = sum(1 for f in (ROOT / "content" / "lessons").glob("*.json") if json.loads(f.read_text())["status"] == "published")
@@ -165,7 +165,7 @@ class Imported(unittest.TestCase):
         self.assertIn('href="/learn/practice/fixture-case-lesson/"', lesson)
 
     def test_a_tool_page_is_unchanged_in_shape(self) -> None:
-        html = self.page("agents-and-mcp")
+        html = self.page("mcp-servers")
         self.assertIn("Done when", html)
         self.assertNotIn(MODEL_LINE, html)
 

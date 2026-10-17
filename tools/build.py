@@ -105,12 +105,21 @@ class Library:
                     self.home_of[e["id"]] = (mid, len(ids), e)
                 else:
                     self.planned[e["id"]] = e
+        # a superseded lesson is listed in no module (scan.py refuses a published module entry for it). Its page and its practice page
+        # borrow the module of the lesson that replaces it; position 0 marks "not in that module's lesson list".
+        for lid, l in self.lessons.items():
+            if l["status"] == "superseded" and lid not in self.home_of:
+                succ = l["superseded_by"]   # scan.py: always a published lesson, so it sits in a module
+                if succ in self.home_of:
+                    self.home_of[lid] = (self.home_of[succ][0], 0, {"id": lid, "status": "superseded"})
         self.children: dict[str, list[str]] = {}
         for k in self.keys.values():
             if k["parent"]:
                 self.children.setdefault(k["parent"], []).append(k["key"])
         self.lessons_by_key: dict[str, list[str]] = {}
         for lid, l in self.lessons.items():
+            if l["status"] == "superseded":
+                continue   # a retired lesson is not offered on the concept pages; its URL keeps working
             for k in l["keys"]:
                 self.lessons_by_key.setdefault(k, []).append(lid)
 
@@ -361,7 +370,10 @@ def render_lesson(lib: Library, l: dict) -> tuple[str, str]:
     if l["secondary_keys"]:
         krow.append("also covers " + ", ".join(a(f"/learn/keys/{k}/", esc(lib.keys[k]["display"])) for k in l["secondary_keys"]))
     line = " &middot; ".join(krow)
-    line += f" &middot; Lesson {pos} of {len(lib.module_lessons[mid])} in " + a(f"/learn/modules/{mid}/", esc(lib.modules[mid]["title"]))
+    if pos:
+        line += f" &middot; Lesson {pos} of {len(lib.module_lessons[mid])} in " + a(f"/learn/modules/{mid}/", esc(lib.modules[mid]["title"]))
+    else:   # superseded: not in the module's lesson list
+        line += " &middot; Module: " + a(f"/learn/modules/{mid}/", esc(lib.modules[mid]["title"]))
     body.append(f'<p class="key-line">{line} &middot; version {l["version"]}</p>')
     if lid in lib.practice:
         body.append(a(f"/learn/practice/{lid}/", "Practice this", "practice-link-button"))
@@ -403,9 +415,10 @@ def render_lesson(lib: Library, l: dict) -> tuple[str, str]:
         body.append(a(f"/learn/practice/{lid}/", "Practice this", "practice-link-button practice-link-button-end"))
     ids = lib.module_lessons[mid]
     i = pos - 1
-    prev_ = a(f"/learn/lessons/{ids[i-1]}/", esc(lib.lessons[ids[i-1]]["title"])) if i > 0 else "<span></span>"
-    next_ = a(f"/learn/lessons/{ids[i+1]}/", esc(lib.lessons[ids[i+1]]["title"])) if i + 1 < len(ids) else "<span></span>"
-    body.append(f'<div class="prevnext">{prev_}{next_}</div>')
+    if pos:
+        prev_ = a(f"/learn/lessons/{ids[i-1]}/", esc(lib.lessons[ids[i-1]]["title"])) if i > 0 else "<span></span>"
+        next_ = a(f"/learn/lessons/{ids[i+1]}/", esc(lib.lessons[ids[i+1]]["title"])) if i + 1 < len(ids) else "<span></span>"
+        body.append(f'<div class="prevnext">{prev_}{next_}</div>')
     crumbs = [("/learn/", "Learning center"), (f"/learn/modules/{mid}/", lib.modules[mid]["title"]), (here, l["title"])]
     code = bool(l["code"])
     page = lesson_shell(lib, f"{l['title']} - Learning center", "\n".join(body), mid=mid, current=here, crumbs=crumbs,
@@ -1459,7 +1472,10 @@ def render_lesson_v2(lib: Library, l: dict) -> tuple[str, str]:
     if l["secondary_keys"]:
         krow.append("also covers " + ", ".join(a(f"/learn/keys/{k}/", esc(lib.keys[k]["display"])) for k in l["secondary_keys"]))
     line = " &middot; ".join(krow)
-    line += f" &middot; Lesson {pos} of {len(lib.module_lessons[mid])} in " + a(f"/learn/modules/{mid}/", esc(lib.modules[mid]["title"]))
+    if pos:
+        line += f" &middot; Lesson {pos} of {len(lib.module_lessons[mid])} in " + a(f"/learn/modules/{mid}/", esc(lib.modules[mid]["title"]))
+    else:   # superseded: not in the module's lesson list
+        line += " &middot; Module: " + a(f"/learn/modules/{mid}/", esc(lib.modules[mid]["title"]))
     body.append(f'<p class="key-line">{line} &middot; version {l["version"]}</p>')
     body.append(f"<p>{esc(l['summary'])}</p>")
     has_practice_blocks = bool(l["in_practice"]["blocks"])
@@ -1494,9 +1510,10 @@ def render_lesson_v2(lib: Library, l: dict) -> tuple[str, str]:
         body.append(a(f"/learn/practice/{lid}/", "Practice this", "practice-link-button practice-link-button-end"))
     ids = lib.module_lessons[mid]
     i = pos - 1
-    prev_ = a(f"/learn/lessons/{ids[i-1]}/", esc(lib.lessons[ids[i-1]]["title"])) if i > 0 else "<span></span>"
-    next_ = a(f"/learn/lessons/{ids[i+1]}/", esc(lib.lessons[ids[i+1]]["title"])) if i + 1 < len(ids) else "<span></span>"
-    body.append(f'<div class="prevnext">{prev_}{next_}</div>')
+    if pos:
+        prev_ = a(f"/learn/lessons/{ids[i-1]}/", esc(lib.lessons[ids[i-1]]["title"])) if i > 0 else "<span></span>"
+        next_ = a(f"/learn/lessons/{ids[i+1]}/", esc(lib.lessons[ids[i+1]]["title"])) if i + 1 < len(ids) else "<span></span>"
+        body.append(f'<div class="prevnext">{prev_}{next_}</div>')
     crumbs = [("/learn/", "Learning center"), (f"/learn/modules/{mid}/", lib.modules[mid]["title"]), (here, l["title"])]
     page = lesson_shell(lib, f"{l['title']} - Learning center", "\n".join(body), mid=mid, current=here, crumbs=crumbs,
                         description=l["summary"][:200], mermaid=pg.diagram, code=pg.code, sim="sim" in l, flow=pg.flow, concept_v2=True)
@@ -1874,7 +1891,7 @@ def render_key(lib: Library, k: dict) -> tuple[str, str]:
         body.append("<h2>The lesson for this</h2>" + lesson_list(prim))
     if also:
         body.append("<h2>Also covered in</h2>" + lesson_list(also))
-    prac = [p["lesson"] for p in lib.practice.values() if p.get("tool_key") == key]
+    prac = [p["lesson"] for p in lib.practice.values() if p.get("tool_key") == key and lib.lessons[p["lesson"]]["status"] != "superseded"]
     if prac:
         body.append("<h2>Practice paths with this tool</h2><ul>" + "".join(f'<li>{a(f"/learn/practice/{i}/", esc("Practice: " + lib.lessons[i]["title"]))}</li>' for i in sorted(prac)) + "</ul>")
     if not (prim or also or prac):

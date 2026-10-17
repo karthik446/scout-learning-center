@@ -769,6 +769,8 @@ def validate(docs: dict) -> list[str]:
             out.append(f"{w}: bad status {l['status']!r}")
         if l["status"] == "superseded" and l["superseded_by"] not in lessons:
             out.append(f"{w}: superseded_by names an unknown lesson")
+        elif l["status"] == "superseded" and lessons[l["superseded_by"]]["status"] != "published":
+            out.append(f"{w}: superseded_by names a lesson that is not published")
         if l["version"] < 1 or l["changelog"][-1]["version"] != l["version"]:
             out.append(f"{w}: version does not match the last changelog entry")
         p = l["provenance"]

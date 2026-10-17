@@ -656,6 +656,70 @@ class Pages(Fixture):
         self.assertIn("The numbers", text)
 
 
+class Superseded(Fixture):
+    """A superseded lesson keeps its URL and shows a banner, sits in no module, and is not counted, exported or offered on concept pages."""
+    RETIRED = "fixture-v2-retired"
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        super().setUpClass()
+        doc = json.loads((cls.content / "lessons" / f"{LESSON}.json").read_text(encoding="utf-8"))
+        doc.update({"id": cls.RETIRED, "title": "Fixture retired lesson", "status": "superseded", "superseded_by": LESSON})
+        doc["changelog"].append({"version": doc["version"] + 1, "date": "2026-10-16", "change": "retired"})
+        doc["version"] += 1
+        # a tool practice path on the retired lesson, with the tool key of a real key page
+        pr = json.loads((cls.content / "practice" / "mcp-servers.json").read_text(encoding="utf-8"))
+        pr.update({"id": f"practice/{cls.RETIRED}", "lesson": cls.RETIRED})
+        doc["practice"] = pr["id"]
+        (cls.content / "practice" / f"{cls.RETIRED}.json").write_text(json.dumps(pr), encoding="utf-8")
+        cls.tool_key = pr["tool_key"]
+        (cls.content / "lessons" / f"{cls.RETIRED}.json").write_text(json.dumps(doc), encoding="utf-8")
+        cls.docs, problems = scan.load_all(cls.content)
+        assert not problems, problems
+        cls.stats = build.build(cls.content, cls.site)
+
+    def page(self, *parts: str) -> str:
+        return (self.site.joinpath(*parts) / "index.html").read_text(encoding="utf-8")
+
+    def test_scan_accepts_a_superseded_lesson_in_no_module(self) -> None:
+        self.assertEqual(scan.validate(copy.deepcopy(self.docs)), [])
+
+    def test_superseded_lesson_builds_with_a_banner_and_resolves(self) -> None:
+        page = self.page("learn", "lessons", self.RETIRED)
+        self.assertIn('class="banner"', page)
+        self.assertIn(f'href="/learn/lessons/{LESSON}/"', page.split('class="banner"', 1)[1].split("</p>", 1)[0])
+        self.assertNotIn("Lesson 0 of", page)
+        self.assertIn("Module: ", page)
+        self.assertIn(f"/learn/lessons/{self.RETIRED}/", (self.site / "sitemap.xml").read_text(encoding="utf-8"))
+
+    def test_superseded_lesson_is_not_listed_counted_or_exported(self) -> None:
+        self.assertNotIn(self.RETIRED, self.page("learn", "modules", "fixture-v2"))
+        for key in json.loads((self.content / "lessons" / f"{LESSON}.json").read_text(encoding="utf-8"))["keys"]:
+            self.assertNotIn(self.RETIRED, self.page("learn", "keys", key))
+        out = self.tmp / "catalog-superseded.json"
+        r = subprocess.run([sys.executable, str(TOOLS / "export_catalog.py"), str(out), "--content", str(self.content)], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn(self.RETIRED, out.read_text(encoding="utf-8"))
+
+    def test_scan_refuses_superseded_by_an_unknown_lesson(self) -> None:
+        self.refuses(self.RETIRED, lambda d: d.update(superseded_by="no-such-lesson"), "superseded_by names an unknown lesson")
+
+    def test_scan_refuses_superseded_by_a_lesson_that_is_not_published(self) -> None:
+        def m(docs):
+            docs[f"lessons/{LESSON}.json"]["status"] = "draft"
+        docs = copy.deepcopy(self.docs)
+        m(docs)
+        problems = scan.validate(docs)
+        self.assertTrue(any("superseded_by names a lesson that is not published" in p for p in problems), problems[:6])
+
+    def test_retired_practice_path_builds_but_the_key_page_does_not_offer_it(self) -> None:
+        self.assertTrue((self.site / "learn" / "practice" / self.RETIRED / "index.html").exists())
+        key_page = self.page("learn", "keys", self.tool_key)
+        self.assertNotIn(self.RETIRED, key_page)
+        self.assertIn("<h2>Lessons (2)</h2>", self.page("learn", "modules", "fixture-v2"))
+        self.assertEqual(self.stats["lessons"], len(list((self.content / "lessons").glob("*.json"))))
+
+
 def lane_flow(count: int) -> dict:
     """A notification-like flow of `count` boxes (13 to 16): an API, three channel lanes (queue, adapter, provider), two
     shared sinks, and up to three side boxes; every arrow is a step."""
