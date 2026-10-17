@@ -1,128 +1,1091 @@
 {
-  "schema_version": "learning-center-lesson:1",
-  "id": "prompt-and-context-engineering",
-  "version": 1,
-  "status": "published",
-  "superseded_by": null,
-  "title": "Prompt engineering and context engineering",
-  "area": "ai-ml",
-  "primary_key": "prompt-engineering",
-  "secondary_keys": [
-    "context-engineering"
-  ],
-  "keys": [
-    "prompt-engineering",
-    "context-engineering"
-  ],
-  "summary": "Prompt engineering is the practice of writing instructions a model can follow reliably; context engineering is deciding what information occupies the window at each step and in what form. Together they are the main control surface for model behavior that does not require training. The discipline is empirical: define success, write a first version, measure, and change one thing at a time.",
-  "detail": [],
-  "in_practice": "A deployed team starts by writing down success criteria with the customer and collecting a few dozen real inputs, including the awkward ones. The first prompt is plain and explicit; it is run against the cases, failures are read one by one, and each revision targets a named failure class. Prompts live in the repository as templates with typed variables, are reviewed like code, and are tagged with the model id they were tuned for. Customer documents, user input and tool results are wrapped in delimiters and treated as data, never spliced into the instruction text. When context grows, the team measures which sections the answers depend on and removes or summarizes the rest before reaching for a larger window.",
-  "subtopics": [
-    {
-      "body": [
-        {
-          "body": "A dependable prompt separates concerns. The system or developer message carries the role, the task, the audience, constraints and the definition of done. Reference material goes in clearly delimited sections, commonly with XML-style tags or headed blocks, so the model can tell instructions from data. The user turn carries the specific request. An output specification states the format and what to do when the answer is unknown. Variable parts are filled from a template so the fixed text stays identical across calls and can be versioned and cached.",
-          "heading": "Parts and their jobs"
-        },
-        {
-          "body": "Be explicit and direct, as if briefing a capable colleague with no background on the account. State what to do instead of only what to avoid, and give the reason behind a rule, since models generalize better from intent than from a bare prohibition. Put long documents near the top and the question after them. Remove contradictory or leftover instructions; most erratic behavior traces back to a prompt that asks for two incompatible things.",
-          "heading": "Writing instructions that hold"
-        }
-      ],
-      "id": "prompt-anatomy",
-      "title": "Anatomy of a production prompt"
-    },
-    {
-      "body": [
-        {
-          "body": "Zero-shot prompting gives only instructions; few-shot prompting adds worked input and output pairs. Examples are the strongest signal for format, tone and edge-case handling, and the model will imitate them closely, so make them varied and representative. A set of three to five diverse examples usually outperforms one, and near-identical examples cause the model to copy surface details. Include at least one example of the hard or negative case, such as the correct response when the input lacks the needed information.",
-          "heading": "Few-shot examples"
-        },
-        {
-          "body": "Asking the model to reason step by step before answering, known as chain of thought, improves accuracy on multi-step problems at the cost of more output tokens; models with a built-in reasoning mode expose this as a setting. Keep the reasoning separate from the final answer so code can parse only the answer. When one prompt tries to do too much, split it into a chain of smaller calls, each with a single job and its own check, which makes failures easy to locate.",
-          "heading": "Reasoning and decomposition"
-        }
-      ],
-      "id": "examples-and-reasoning-techniques",
-      "title": "Examples, reasoning and chaining"
-    },
-    {
-      "body": [
-        {
-          "body": "The model can only use what is in the window, and everything in the window competes for attention. Context engineering treats each call as an assembly step: choose the minimal set of facts, documents, history and tool results that the current step requires; compress the rest into summaries or references that can be fetched on demand; and order the result so stable content comes first and the live question last. For long-running work, keep durable state outside the window in files or a database and load slices of it, instead of carrying an ever-growing transcript.",
-          "heading": "Selection, compression and ordering"
-        }
-      ],
-      "id": "context-selection-and-assembly",
-      "title": "Context engineering: selecting and assembling what the model sees"
-    },
-    {
-      "body": [
-        {
-          "body": "Prompts are code and should be handled as such: stored in version control, changed through review, and gated by a regression run on a fixed case set before release. Two additions make the loop sturdier. First, re-run the full set whenever the model id changes, since a prompt tuned for one model version can regress on the next. Second, keep failures found in production as new cases, so the set tracks the real input distribution instead of the one imagined at design time.",
-          "heading": "Beyond the basic loop"
-        }
-      ],
-      "id": "eval-driven-prompt-iteration",
-      "title": "Iterating on prompts with evaluations"
-    }
-  ],
-  "diagram": {
-    "source": "flowchart TD\n  A[Success criteria and real cases] --> B[Prompt template]\n  C[Stable context: role, rules, tools] --> D[Assemble window]\n  E[Selected documents and history summary] --> D\n  F[Current user request] --> D\n  B --> D\n  D --> G[Model call]\n  G --> H[Score against cases]\n  H -->|failures by class| B\n  H -->|pass| I[Release with pinned model id]"
-  },
-  "code": [
-    {
-      "code": "SYSTEM = \"\"\"You are a support analyst for a billing platform.\nAnswer only from the material inside <documents>.\nIf the answer is not there, reply exactly: NOT_FOUND.\nGive the answer inside <answer> tags, one short paragraph.\"\"\"\n\ndef build_user_turn(docs: list[str], question: str) -> str:\n    blocks = \"\\n\".join(\n        f\"<document index=\\\"{i}\\\">\\n{d}\\n</document>\" for i, d in enumerate(docs)\n    )\n    # long reference material first, the question last\n    return f\"<documents>\\n{blocks}\\n</documents>\\n\\nQuestion: {question}\"",
-      "lang": "python"
-    }
-  ],
-  "technologies": [
-    "Anthropic Console Workbench",
-    "OpenAI Playground",
-    "Jinja2",
-    "Promptfoo",
-    "LangSmith",
-    "Langfuse",
-    "DSPy",
-    "Pydantic AI"
-  ],
-  "related": [
-    "llm-fundamentals",
-    "structured-outputs-tool-calling",
-    "rag-vector-databases",
-    "agent-architectures",
-    "llm-agent-evaluation",
-    "responsible-ai-guardrails"
-  ],
-  "sources": [
-    {
-      "kind": "doc",
-      "title": "Claude Docs: Prompt engineering overview",
-      "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/overview"
-    },
-    {
-      "kind": "doc",
-      "title": "OpenAI Docs: Prompt engineering",
-      "url": "https://developers.openai.com/api/docs/guides/prompt-engineering"
-    },
-    {
-      "kind": "guide",
-      "title": "Prompt Engineering Guide: Techniques",
-      "url": "https://www.promptingguide.ai/techniques"
-    }
-  ],
-  "practice": "practice/prompt-and-context-engineering",
-  "provenance": {
-    "generated_by": "Claude through GigAI 0.1.11.10",
-    "generated_on": "2026-10-11",
-    "reviewed_by": null,
-    "reviewed_on": null
-  },
-  "changelog": [
-    {
-      "version": 1,
-      "date": "2026-10-12",
-      "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
-    }
+ "schema_version": "learning-center-lesson:2",
+ "id": "prompt-and-context-engineering",
+ "version": 4,
+ "status": "published",
+ "superseded_by": null,
+ "title": "Prompt engineering and context engineering",
+ "area": "ai-ml",
+ "primary_key": "prompt-engineering",
+ "secondary_keys": [
+  "context-engineering"
+ ],
+ "keys": [
+  "prompt-engineering",
+  "context-engineering"
+ ],
+ "summary": "A model call is assembled from instructions, tools, examples, history and retrieved data, and all of it competes for a finite attention budget. Prompt engineering writes the instruction; context engineering decides which tokens are in the window at each step and where they sit. This lesson gives one context-management table (admit, retrieve, defer, clear, compact, note, delegate, order), shows how Anthropic, OpenAI and Google place content for caching, and ends with prompts handled as versioned code behind an evaluation gate. Window sizes, prices and cache numbers live in the LLM fundamentals lesson.",
+ "detail": [],
+ "in_practice": {
+  "blocks": [
+   {
+    "type": "p",
+    "text": "Anthropic documents how its own coding agent manages context. Claude Code compaction passes the message history to the model to summarize, keeps architectural decisions, unresolved bugs and implementation details, drops redundant tool output, and continues with the five most recently accessed files. Project instructions in CLAUDE.md are loaded up front, while glob and grep fetch files just in time.",
+    "cites": [
+     "s1"
+    ]
+   },
+   {
+    "type": "p",
+    "text": "Anthropic's tool search documentation sizes the problem of tool definitions: as of 2026-10, a typical setup with GitHub, Slack, Sentry, Grafana and Splunk servers can consume about 55k tokens of definitions before work starts, and tool search typically reduces this by over 85 percent by loading only the few tools a request needs.",
+    "cites": [
+     "s4"
+    ]
+   },
+   {
+    "type": "p",
+    "text": "OpenAI's guidance is to keep production prompts in application code with typed inputs, review and tests. As of 2026-10, OpenAI is deprecating reusable prompt objects in the API and has scheduled the v1/prompts endpoint to shut down on November 30, 2026, so a team that stored prompts on the platform has a migration to plan.",
+    "cites": [
+     "s8"
+    ]
+   },
+   {
+    "type": "p",
+    "text": "Google's Gemini long-context guide describes a chat-with-your-data app where a user uploads 10 PDFs, a video and some work documents. It says caching the uploaded files and paying to store them is the main optimization there, and puts the cost per request on Gemini Flash at about 4x less than the standard input and output cost (as of 2026-10).",
+    "cites": [
+     "s11"
+    ]
+   }
   ]
+ },
+ "subtopics": [
+  {
+   "id": "what-fills-a-call",
+   "title": "What fills one call, and who controls each part",
+   "blocks": [
+    {
+     "type": "p",
+     "text": "Anthropic separates two jobs. Prompt engineering is writing and organizing instructions, above all the system prompt. Context engineering curates the whole set of tokens present at inference, including what lands there outside the prompt: tools, retrieved data, message history. The split matters once a model runs in a loop, because the prompt is written once and the context is rebuilt every turn.",
+     "cites": [
+      "s1"
+     ]
+    },
+    {
+     "type": "table",
+     "caption": "The parts of one call. Each part has a different owner and fails in a different way.",
+     "columns": [
+      "part",
+      "who changes it",
+      "typical failure"
+     ],
+     "rows": [
+      [
+       "System or developer prompt",
+       "You, at release",
+       "Brittle if-else logic, or vague guidance that assumes shared context [s1]"
+      ],
+      [
+       "Tool definitions",
+       "You, at release",
+       "A bloated tool set; a typical five-server setup costs about 55k tokens before any work [s4]"
+      ],
+      [
+       "Examples",
+       "You, at release",
+       "A laundry list of edge cases instead of a few canonical ones [s1]"
+      ],
+      [
+       "Message history",
+       "The loop, every turn",
+       "Old tool results that are never needed again stay in the window [s1, s3]"
+      ],
+      [
+       "Retrieved data and tool results",
+       "Retrieval or tools, every call",
+       "Irrelevant tokens dilute the attention budget [s1, s12]"
+      ],
+      [
+       "The live request",
+       "The user",
+       "Put before long documents, it gets weaker answers: queries at the end improved quality by up to 30 percent in Anthropic's tests [s6]"
+      ]
+     ],
+     "cites": [
+      "s1",
+      "s3",
+      "s4",
+      "s6",
+      "s12"
+     ]
+    },
+    {
+     "type": "p",
+     "text": "Why not simply use a bigger window? Anthropic's guide and API docs describe context rot: as the token count grows, accuracy and recall degrade, so more context is not automatically better. Google's Gemini documentation leans the other way, inviting you to provide all relevant information up front in a window of 1M tokens or more, yet it admits that retrieving many separate facts at once is less accurate than retrieving one (as of 2026-10). The vendors differ in emphasis, so measure on your own cases.",
+     "cites": [
+      "s1",
+      "s12",
+      "s11"
+     ]
+    },
+    {
+     "type": "p",
+     "text": "This lesson uses one split from the table. Parts that change at release can be reviewed, versioned and cached; parts that change every call have to be selected. Window sizes, prices and cache numbers are in the LLM fundamentals lesson and are not repeated here.",
+     "cites": []
+    }
+   ]
+  },
+  {
+   "id": "writing-the-prompt",
+   "title": "Writing the instruction: structure, altitude and examples",
+   "blocks": [
+    {
+     "type": "p",
+     "text": "A prompt that holds up has distinct sections. Anthropic recommends delimiting them with XML tags or Markdown headers, while noting that exact formatting is likely becoming less important as models improve. OpenAI describes a developer message that usually runs in this order: identity, instructions, examples, then context. OpenAI also uses roles to give instructions different levels of authority: developer messages carry the system's rules and business logic, like a function definition, and user messages carry the inputs those rules are applied to, like arguments to a function.",
+     "cites": [
+      "s1",
+      "s8"
+     ]
+    },
+    {
+     "type": "p",
+     "text": "Anthropic calls the target the right altitude. One failure is hard-coded if-else logic that is brittle and costly to maintain. The other is vague guidance that falsely assumes shared context. The advice is to start with a minimal prompt on the best available model, then add instructions and examples for the failure modes the first tests expose. Minimal is not the same as short: the model still needs enough up front to follow the behaviour you want.",
+     "cites": [
+      "s1"
+     ]
+    },
+    {
+     "type": "p",
+     "text": "Anthropic calls examples the pictures worth a thousand words. Claude's guidance asks for relevant, diverse examples wrapped in their own tags, and says three to five work best. OpenAI's few-shot advice is the same in spirit: show a diverse range of inputs with the desired output, in place of fine-tuning for a new task. Anthropic adds a warning against stuffing a laundry list of edge cases into the prompt and prefers a small set of canonical examples. Include one example of the hard case, such as the correct reply when the documents lack the answer.",
+     "cites": [
+      "s6",
+      "s8",
+      "s1"
+     ]
+    },
+    {
+     "type": "p",
+     "text": "Prompting advice is now model-specific. As of 2026-10, OpenAI says reasoning models give better results from high-level goals while GPT models need precise instructions, and compares them to a senior and a junior colleague. Anthropic's prompting best-practices page opens with a table of per-model guides and says to read the one for your model first, then the general techniques. Copying a prompt from one model to another is a change to be tested, not a free move.",
+     "cites": [
+      "s8",
+      "s6"
+     ]
+    },
+    {
+     "type": "callout",
+     "kind": "pitfall",
+     "text": "On OpenAI's Responses API the instructions parameter applies only to the current request. If you chain turns with previous_response_id, the instructions from earlier turns are not in the context, so send them again every turn (as of 2026-10).",
+     "cites": [
+      "s8"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "choosing-the-lever",
+   "title": "Choose the lever before you rewrite the prompt",
+   "blocks": [
+    {
+     "type": "p",
+     "text": "Anthropic's docs frame prompt engineering as a cycle of test cases, a preliminary prompt, iterative testing and refinement, final validation, then ship. A failing case is evidence, and the first job is to name its class: ignored rule, missing fact, wrong format, weak reasoning or too much noise. Each class points at a different lever. The mapping from symptom to lever is this lesson's convention; the sources cover each lever's own behaviour.",
+     "cites": [
+      "s7"
+     ]
+    },
+    {
+     "type": "decision",
+     "caption": "Which lever to pull when a case fails. As of 2026-10.",
+     "cites": [
+      "s1",
+      "s6",
+      "s8",
+      "s11",
+      "s12"
+     ],
+     "rows": [
+      {
+       "option": "Rewrite or add an instruction",
+       "pick_when": "A stated rule is ignored, two rules contradict, or the format drifts [s1].",
+       "avoid_when": "The model lacks the fact; no wording supplies it.",
+       "example": "For this design: a NOT_FOUND rule, with its reason."
+      },
+      {
+       "option": "Add few-shot examples",
+       "pick_when": "Format, tone or edge handling must be shown, not described [s6, s8].",
+       "avoid_when": "You would list every edge case; curate a few canonical ones [s1].",
+       "example": "For this design: one example with the answer mid-document."
+      },
+      {
+       "option": "Retrieve or insert context",
+       "pick_when": "The answer needs private or fresh data outside the training data [s8].",
+       "avoid_when": "This lesson's convention: small, stable facts belong in the stable prefix.",
+       "example": "For this design: only matching passages, tagged with their source."
+      },
+      {
+       "option": "Use a reasoning model or setting",
+       "pick_when": "Multi-step planning; reasoning models are the stated fit [s8].",
+       "avoid_when": "A latency or cost target: they are slower and more expensive [s8].",
+       "example": "For this design: the escalation path only."
+      },
+      {
+       "option": "Switch model size",
+       "pick_when": "A smaller model is faster and cheaper and the set still passes [s8].",
+       "avoid_when": "The prompts span many domains, where larger models are more effective [s8].",
+       "example": "For this design: try the smaller tier first, same set."
+      },
+      {
+       "option": "Put the corpus in a long window",
+       "pick_when": "A bounded corpus fits and is queried repeatedly, so caching pays [s11].",
+       "avoid_when": "Many separate facts must each be recalled; recall degrades as context grows [s11, s12].",
+       "example": "For this design: a handbook that fits, not an open archive."
+      },
+      {
+       "option": "Fine-tune",
+       "pick_when": "This lesson's convention: instructions, examples and retrieval are measured and still fall short.",
+       "avoid_when": "This lesson's convention: no eval set exists yet.",
+       "example": "For this design: not yet."
+      }
+     ]
+    },
+    {
+     "type": "p",
+     "text": "OpenAI says snapshots within one model family can give different results, and advises pinning production applications to a specific snapshot and building tests that measure prompt behaviour (as of 2026-10).",
+     "cites": [
+      "s8"
+     ]
+    },
+    {
+     "type": "callout",
+     "kind": "rule",
+     "text": "One lever per run. If the prompt and the model id change together and the pass rate moves, you cannot tell which change did it.",
+     "cites": [
+      "s8"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "context-management-table",
+   "title": "The context-management table",
+   "blocks": [
+    {
+     "type": "p",
+     "text": "This is the lesson's reference table. Each row is one operation on the window, with when it applies, what it can lose and the vendor mechanism as of 2026-10. Mechanisms are quoted from vendor documentation and several are in beta, so check the page before building on one. Rows one to four and nine choose what enters the window and where it sits; rows five and six remove material the model has already seen; rows seven and eight keep work outside the window. Apply-when and risk cells without a source mark are this lesson's reasoning.",
+     "cites": [
+      "s1",
+      "s2",
+      "s3"
+     ]
+    },
+    {
+     "type": "table",
+     "caption": "Context-management table: operations on the window, as of 2026-10. Defaults are documented values, not measurements.",
+     "columns": [
+      "operation",
+      "apply when",
+      "what it can lose",
+      "vendor mechanism"
+     ],
+     "rows": [
+      [
+       "Admit: only the goal, constraints, evidence and unresolved work",
+       "Every call",
+       "Anything left out is unavailable unless it can be fetched",
+       "Pattern, no API: the smallest set of high-signal tokens [s1]"
+      ],
+      [
+       "Retrieve up front: fetch passages, place them in the prompt",
+       "The needed facts are predictable",
+       "Stale or wrong passages crowd out the right ones",
+       "Embedding-based retrieval before inference [s1]; RAG in OpenAI's guide [s8]"
+      ],
+      [
+       "Retrieve just in time: keep paths, queries or links, load with a tool",
+       "Large or changing stores",
+       "Slower than precomputed; the agent can chase dead ends [s1]",
+       "Claude Code: CLAUDE.md up front, glob and grep at runtime [s1]"
+      ],
+      [
+       "Defer tool definitions: load a schema only when a search finds it",
+       "A large tool catalog",
+       "The search can miss a tool with a weak description",
+       "Tool search tool: typically over 85 percent fewer definition tokens; selection degrades past 30 to 50 tools [s4]"
+      ],
+      [
+       "Clear tool results: replace the oldest with a placeholder by rule",
+       "Agent loops where old results are spent",
+       "The model cannot re-read them; the cached prefix is invalidated [s3]",
+       "Context editing, beta: trigger 100,000 input tokens, keep the 3 latest [s3]"
+      ],
+      [
+       "Compact: replace older turns with a model-written summary",
+       "A long conversation nears the limit",
+       "Subtle details whose importance shows up later [s1]",
+       "Claude server-side compaction, beta [s2]; OpenAI compact_threshold, an opaque item [s10]"
+      ],
+      [
+       "Write notes outside the window: save state to a file, reload it",
+       "Iterative work with clear milestones [s1]",
+       "A wrong note becomes trusted instruction",
+       "A NOTES.md file or Anthropic's memory tool [s1]"
+      ],
+      [
+       "Delegate to a subagent: a clean window digs and returns a summary",
+       "Parallel exploration pays off [s1]",
+       "The summary can hide the evidence behind it",
+       "Pattern, no API: lead agent plus subagents that return 1,000 to 2,000 tokens [s1]"
+      ],
+      [
+       "Order for the cache: stable content first, per-call content last",
+       "The same prefix is sent repeatedly",
+       "One changed early token invalidates what follows [s5, s9]",
+       "Prompt caching, rules per vendor in the assembly subtopic [s5, s9]"
+      ]
+     ],
+     "cites": [
+      "s1",
+      "s2",
+      "s3",
+      "s4",
+      "s5",
+      "s8",
+      "s9",
+      "s10"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "choosing-operations",
+   "title": "Choosing operations: lossless first, and what you can inspect",
+   "blocks": [
+    {
+     "type": "p",
+     "text": "Try the rows that choose what enters the window before the rows that remove material. Anthropic calls clearing tool results one of the safest, lightest-touch forms of compaction, and its API docs name server-side compaction the primary strategy for long-running conversations, with context editing kept for finer control. The simplest technique is dropping the oldest turns: Google's long-context guide lists arbitrarily dropping old messages beside summarizing and RAG as what smaller windows often require. It is the cheapest and the lossiest, since nothing records what mattered (this lesson's reasoning).",
+     "cites": [
+      "s1",
+      "s3",
+      "s11"
+     ]
+    },
+    {
+     "type": "p",
+     "text": "Anthropic's guide matches the lossy operations to task shapes: compaction for tasks with extensive back-and-forth, notes for iterative development with clear milestones, subagents for complex research where parallel exploration pays. A task can need more than one; Claude Code combines compaction with notes and just-in-time retrieval.",
+     "cites": [
+      "s1"
+     ]
+    },
+    {
+     "type": "p",
+     "text": "Compaction comes in two beta modes on Claude as of 2026-10. On demand, your application decides when to request the summary. At a token threshold, the API compacts when input tokens reach the trigger you set. The docs say to use on-demand compaction wherever it is available. OpenAI offers a similar pair: server-side compaction with a compact_threshold, and a standalone endpoint for stateless use.",
+     "cites": [
+      "s2",
+      "s10"
+     ]
+    },
+    {
+     "type": "p",
+     "text": "The vendors differ in what you can inspect. Claude's compaction overview lists a third option, your own summarizer, where you own the summarization call, its prompt and the history rewrite, and Anthropic advises tuning that prompt on complex agent traces: maximize recall first, then improve precision. OpenAI's compaction item is encrypted and not meant to be read, so test what survives by asking questions after the compaction (this lesson's advice).",
+     "cites": [
+      "s2",
+      "s1",
+      "s10"
+     ]
+    },
+    {
+     "type": "p",
+     "text": "Removal interacts with the cache. On Claude, clearing tool results invalidates the cached prefix, and the clear_at_least setting makes sure enough is cleared each time to be worth it. OpenAI lists its compaction setting among the settings that can prevent reuse from the first changed token onward.",
+     "cites": [
+      "s3",
+      "s9"
+     ]
+    },
+    {
+     "type": "p",
+     "text": "The agent-architectures lesson covers agent-side memory and subagents in depth; here the table stays about one window.",
+     "cites": []
+    }
+   ]
+  },
+  {
+   "id": "assembly-and-ordering",
+   "title": "Assembling a call: what comes first and what comes last",
+   "blocks": [
+    {
+     "type": "p",
+     "text": "The diagram below lists the parts of one call in the order their tokens sit in the window. The rule behind the order is that whatever is identical between calls goes first, so a cache can reuse it, and whatever changes goes last. In a multi-turn call the history is append-only, so it sits before this turn's documents: last turn's whole call is this turn's prefix. Anthropic and OpenAI state the caching rule in their guidance, and Google's long-context guide puts the question after all other context.",
+     "cites": [
+      "s5",
+      "s9",
+      "s8",
+      "s11"
+     ]
+    },
+    {
+     "type": "flow",
+     "nodes": [
+      {
+       "id": "tools",
+       "label": "Tool definitions",
+       "kind": "service"
+      },
+      {
+       "id": "rules",
+       "label": "Role, rules, examples",
+       "kind": "service"
+      },
+      {
+       "id": "hist",
+       "label": "History so far",
+       "kind": "service"
+      },
+      {
+       "id": "docs",
+       "label": "Selected documents",
+       "kind": "service"
+      },
+      {
+       "id": "req",
+       "label": "Live request",
+       "kind": "service"
+      },
+      {
+       "id": "room",
+       "label": "Room for the reply",
+       "kind": "service"
+      }
+     ],
+     "frames": [
+      {
+       "id": "stable",
+       "title": "Stable prefix",
+       "nodes": [
+        "tools",
+        "rules"
+       ]
+      },
+      {
+       "id": "grows",
+       "title": "Grows by one turn",
+       "nodes": [
+        "hist"
+       ]
+      },
+      {
+       "id": "turn",
+       "title": "This turn",
+       "nodes": [
+        "docs",
+        "req"
+       ]
+      }
+     ],
+     "edges": [
+      {
+       "id": "o1",
+       "from": "tools",
+       "to": "rules",
+       "kind": "link",
+       "label": ""
+      },
+      {
+       "id": "o2",
+       "from": "rules",
+       "to": "hist",
+       "kind": "link",
+       "label": "Breakpoint 1"
+      },
+      {
+       "id": "o3",
+       "from": "hist",
+       "to": "docs",
+       "kind": "link",
+       "label": "Breakpoint 2"
+      },
+      {
+       "id": "o4",
+       "from": "docs",
+       "to": "req",
+       "kind": "link",
+       "label": ""
+      },
+      {
+       "id": "o5",
+       "from": "req",
+       "to": "room",
+       "kind": "link",
+       "label": ""
+      }
+     ],
+     "legend": "Read top to bottom: the order of the tokens in one call, an arrow meaning followed by. The Claude cache hierarchy is tools, then system, then messages s5. Breakpoint 1 ends the stable prefix; breakpoint 2 ends the history, which is append-only between compactions, so last turn's cached entry is a prefix of this turn's call s9. Documents and the request change every turn, so they come after it; long documents sit above the query s6. That placement of history is this lesson's reading of s5 and s9. The reply counts toward the window s12, so room is kept for it; window mechanics are in the LLM fundamentals lesson. A layout sketch, not an API trace.",
+     "cites": [
+      "s5",
+      "s6",
+      "s9",
+      "s12"
+     ]
+    },
+    {
+     "type": "table",
+     "caption": "Where each vendor says to put content, as of 2026-10.",
+     "columns": [
+      "vendor",
+      "stable content",
+      "long documents",
+      "the question",
+      "keep out of the prefix"
+     ],
+     "rows": [
+      [
+       "Anthropic (Claude)",
+       "Cached in the order tools, system, messages; up to 4 breakpoints [s5]",
+       "Near the top, above query, instructions and examples [s6]",
+       "At the end; up to 30 percent better in tests [s6]",
+       "Content that changes every request, such as a timestamp [s5]"
+      ],
+      [
+       "OpenAI",
+       "Reused content at the beginning of the prompt and among the first parameters [s8]",
+       "Context sits near the end of the prompt [s8]",
+       "Not stated on the guide's ordering list [s8]",
+       "Settings that can change the rendered prefix: tools, text.format, reasoning.effort [s9]"
+      ],
+      [
+       "Google (Gemini)",
+       "Context caching is the main long-context optimization [s11]",
+       "Context first, then the query [s11]",
+       "At the end, after all other context [s11]",
+       "Not stated on the page [s11]"
+      ]
+     ],
+     "cites": [
+      "s5",
+      "s6",
+      "s8",
+      "s9",
+      "s11"
+     ]
+    },
+    {
+     "type": "p",
+     "text": "The vendors disagree on where instructions sit relative to long documents. Anthropic's long-context advice puts documents above instructions; OpenAI's developer-message order puts instructions and examples before context. Reading this against the cache rule: on Claude, rules in the system prompt come ahead of messages in the cache order, so documents on top means the top of this turn's user message. This is this lesson's reading; test your layout on your own cases.",
+     "cites": [
+      "s6",
+      "s8",
+      "s5"
+     ]
+    },
+    {
+     "type": "callout",
+     "kind": "pitfall",
+     "text": "A cache breakpoint on content that changes every request writes a new entry each time and never reads one. Anthropic's example is a timestamp inside the prefix. Put the breakpoint at the end of the static prefix, not on the varying block.",
+     "cites": [
+      "s5"
+     ]
+    },
+    {
+     "type": "p",
+     "text": "Compaction interacts with the cache. OpenAI lists context_management, its compaction setting, among the settings that can prevent reuse from the first changed token onward. What breaks a hit, the lifetimes and the price multipliers are in the LLM fundamentals lesson.",
+     "cites": [
+      "s9"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "versioning-and-eval-gates",
+   "title": "Prompts as code: versions, pinned models and an eval gate",
+   "blocks": [
+    {
+     "type": "p",
+     "text": "Treat a prompt as a release artifact. OpenAI's guide says to store production prompts in application code, which gives typed inputs, code review, tests and the normal deployment process, and to roll changes out through feature flags or configuration when you need staged releases. The table lists the controls and the dated fact that decides where a prompt lives on that platform.",
+     "cites": [
+      "s8"
+     ]
+    },
+    {
+     "type": "table",
+     "caption": "Release controls for a prompt, as of 2026-10.",
+     "columns": [
+      "control",
+      "what it is",
+      "source"
+     ],
+     "rows": [
+      [
+       "Prompt in code",
+       "A small builder module near the feature; typed arguments for customer data, files and options",
+       "s8"
+      ],
+      [
+       "Fixtures and checks",
+       "Representative cases and evaluation checks added before any production change",
+       "s8"
+      ],
+      [
+       "Staged rollout",
+       "Feature flags or configuration for a gradual release",
+       "s8"
+      ],
+      [
+       "Pinned model",
+       "Production pinned to a specific model snapshot",
+       "s8"
+      ],
+      [
+       "Model-specific re-run",
+       "Anthropic keeps a separate prompting guide per current model; this lesson reads a model change as a prompt change",
+       "s6"
+      ],
+      [
+       "Hosted prompt objects",
+       "OpenAI is deprecating reusable prompt objects: creation de-emphasized from June 3, 2026; v1/prompts shuts down November 30, 2026",
+       "s8"
+      ]
+     ],
+     "cites": [
+      "s6",
+      "s8"
+     ]
+    },
+    {
+     "type": "flow",
+     "nodes": [
+      {
+       "id": "cases",
+       "label": "Tuning cases",
+       "kind": "store"
+      },
+      {
+       "id": "held",
+       "label": "Held-out cases, run once",
+       "kind": "store"
+      },
+      {
+       "id": "tmpl",
+       "label": "Prompt template, version in code",
+       "kind": "store"
+      },
+      {
+       "id": "run",
+       "label": "Run the tuning cases",
+       "kind": "service"
+      },
+      {
+       "id": "score",
+       "label": "Score, name failure classes",
+       "kind": "service"
+      },
+      {
+       "id": "gate",
+       "label": "Gate passed?",
+       "kind": "decision"
+      },
+      {
+       "id": "rel",
+       "label": "Release, model id pinned",
+       "kind": "service"
+      },
+      {
+       "id": "model",
+       "label": "New model id",
+       "kind": "actor"
+      },
+      {
+       "id": "prod",
+       "label": "Production failure",
+       "kind": "actor"
+      }
+     ],
+     "edges": [
+      {
+       "id": "f-cases",
+       "from": "cases",
+       "to": "run",
+       "kind": "sync",
+       "label": "Tuning cases",
+       "short": "Cases"
+      },
+      {
+       "id": "f-tmpl",
+       "from": "tmpl",
+       "to": "run",
+       "kind": "sync",
+       "label": "Template version n",
+       "short": "Template"
+      },
+      {
+       "id": "f-score",
+       "from": "run",
+       "to": "score",
+       "kind": "sync",
+       "label": "Outputs",
+       "short": "Outputs"
+      },
+      {
+       "id": "f-gate",
+       "from": "score",
+       "to": "gate",
+       "kind": "sync",
+       "label": "Tuning results",
+       "short": "Results"
+      },
+      {
+       "id": "f-held",
+       "from": "held",
+       "to": "gate",
+       "kind": "sync",
+       "label": "Run once, at the gate",
+       "short": "Held-out"
+      },
+      {
+       "id": "f-pass",
+       "from": "gate",
+       "to": "rel",
+       "kind": "sync",
+       "label": "Pass: ship",
+       "short": "Pass"
+      },
+      {
+       "id": "f-fail",
+       "from": "gate",
+       "to": "tmpl",
+       "kind": "sync",
+       "label": "Fail: change one lever",
+       "short": "Fail"
+      },
+      {
+       "id": "f-model",
+       "from": "model",
+       "to": "run",
+       "kind": "sync",
+       "label": "Re-run the full set",
+       "short": "Re-run"
+      },
+      {
+       "id": "f-prod",
+       "from": "prod",
+       "to": "cases",
+       "kind": "async",
+       "label": "Becomes a new case",
+       "short": "New case"
+      }
+     ],
+     "steps": [
+      {
+       "edge": "f-cases",
+       "caption": "The tuning cases go to the run"
+      },
+      {
+       "edge": "f-tmpl",
+       "caption": "The template, with its version, goes to the same run"
+      },
+      {
+       "edge": "f-score",
+       "caption": "Every output is scored against the criteria"
+      },
+      {
+       "edge": "f-gate",
+       "caption": "The tuning results, regressions included, reach the gate"
+      },
+      {
+       "edge": "f-held",
+       "caption": "The held-out cases are run once, at the gate, never while editing"
+      },
+      {
+       "edge": "f-pass",
+       "caption": "Pass: release with the model id pinned"
+      },
+      {
+       "edge": "f-fail",
+       "caption": "Fail: name the failure class, change one lever, run again"
+      },
+      {
+       "edge": "f-model",
+       "caption": "A new model id re-runs the full set before the pin moves"
+      },
+      {
+       "edge": "f-prod",
+       "caption": "A failure found in production is added to the cases"
+      }
+     ],
+     "legend": "The loop follows the cycle of test cases, prompt, iterate, validate, ship s7; the figure on that page ends with a test against held-out evals. Pinning snapshots, tests and code-managed prompts follow s8. The gate and the split are this lesson's convention. A sketch of the process, not a tool.",
+     "cites": [
+      "s7",
+      "s8"
+     ]
+    },
+    {
+     "type": "p",
+     "text": "The gate needs an evaluation set built to Anthropic's design principles: cases that mirror the real task distribution, edge cases included, graded automatically where possible, with volume preferred over a few hand-graded items. Success criteria should be specific and measurable, such as an F1 floor on a held-out set, not a wish for good performance. Keep part of the set out of the tuning loop and run it only at the gate; the cycle in Anthropic's figure ends with a test against held-out evals. Once a held-out case has decided a release, move it into the tuning set and draw a fresh one, because a case you have seen no longer measures anything new (this lesson's convention). The methods for grading, golden sets and judges belong to the agent-evaluation lesson; this lesson keeps only the loop and the gate.",
+     "cites": [
+      "s7"
+     ]
+    },
+    {
+     "type": "p",
+     "text": "Two rules make the gate hold. First, a release needs both a pass rate on the held-out cases and no regressions on the tuning cases: a change that lifts the average while breaking a case that used to pass is blocked, and a pass rate measured on the cases you tuned against overstates the result. Second, a model-id change re-runs the full set before the pin moves, and each failure found in production is added to the set, so it tracks the real inputs instead of the ones imagined at design time. Both are this lesson's conventions, applied to the loop in the flow above.",
+     "cites": []
+    }
+   ]
+  }
+ ],
+ "diagram": null,
+ "code": [],
+ "technologies": [
+  "OpenAI Playground",
+  "Jinja2",
+  "Promptfoo",
+  "LangSmith",
+  "Langfuse",
+  "DSPy",
+  "Pydantic AI",
+  "Claude server-side compaction",
+  "Claude context editing",
+  "Claude tool search tool",
+  "Claude prompt caching",
+  "OpenAI Responses API compaction"
+ ],
+ "related": [
+  "llm-fundamentals",
+  "structured-outputs-tool-calling",
+  "rag-vector-databases",
+  "agent-architectures",
+  "llm-agent-evaluation",
+  "responsible-ai-guardrails"
+ ],
+ "sources": [
+  {
+   "id": "s1",
+   "title": "Effective context engineering for AI agents (Anthropic Engineering, published 2025-09-29)",
+   "url": "https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents",
+   "kind": "article",
+   "verified": {
+    "checked": "2026-10-16",
+    "http": 200,
+    "section_found": "Context is a critical but finite resource for AI agents."
+   }
+  },
+  {
+   "id": "s2",
+   "title": "Claude Docs: Compaction overview",
+   "url": "https://platform.claude.com/docs/en/build-with-claude/compaction",
+   "kind": "doc",
+   "verified": {
+    "checked": "2026-10-16",
+    "http": 200,
+    "section_found": "Compaction replaces the older turns of a conversation with a summary that Claude writes on the server"
+   }
+  },
+  {
+   "id": "s3",
+   "title": "Claude Docs: Context editing",
+   "url": "https://platform.claude.com/docs/en/build-with-claude/context-editing",
+   "kind": "doc",
+   "verified": {
+    "checked": "2026-10-16",
+    "http": 200,
+    "section_found": "Context editing allows you to selectively clear specific content from conversation history as it grows."
+   }
+  },
+  {
+   "id": "s4",
+   "title": "Claude Docs: Tool search tool",
+   "url": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool",
+   "kind": "doc",
+   "verified": {
+    "checked": "2026-10-16",
+    "http": 200,
+    "section_found": "Claude's ability to pick the right tool degrades once you exceed 30–50 available tools."
+   }
+  },
+  {
+   "id": "s5",
+   "title": "Claude Docs: Prompt caching",
+   "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching",
+   "kind": "doc",
+   "verified": {
+    "checked": "2026-10-16",
+    "http": 200,
+    "section_found": "Modifying tool definitions (names, descriptions, parameters) invalidates the entire cache"
+   }
+  },
+  {
+   "id": "s6",
+   "title": "Claude Docs: Prompting best practices",
+   "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices",
+   "kind": "doc",
+   "verified": {
+    "checked": "2026-10-16",
+    "http": 200,
+    "section_found": "Place your long documents and inputs near the top of your prompt, above your query, instructions, and examples."
+   }
+  },
+  {
+   "id": "s7",
+   "title": "Claude Docs: Define success criteria and build evaluations",
+   "url": "https://platform.claude.com/docs/en/test-and-evaluate/develop-tests",
+   "kind": "doc",
+   "verified": {
+    "checked": "2026-10-16",
+    "http": 200,
+    "section_found": "Building a successful LLM-based application starts with clearly defining your success criteria and then designing evaluations to measure performance against them."
+   }
+  },
+  {
+   "id": "s8",
+   "title": "OpenAI Docs: Prompt engineering",
+   "url": "https://developers.openai.com/api/docs/guides/prompt-engineering",
+   "kind": "doc",
+   "verified": {
+    "checked": "2026-10-16",
+    "http": 200,
+    "section_found": "Store production prompts in your application code instead of creating reusable prompt objects."
+   }
+  },
+  {
+   "id": "s9",
+   "title": "OpenAI Docs: Prompt caching",
+   "url": "https://developers.openai.com/api/docs/guides/prompt-caching",
+   "kind": "doc",
+   "verified": {
+    "checked": "2026-10-16",
+    "http": 200,
+    "section_found": "Cache reuse requires the entire rendered prefix to match."
+   }
+  },
+  {
+   "id": "s10",
+   "title": "OpenAI Docs: Compaction",
+   "url": "https://developers.openai.com/api/docs/guides/compaction",
+   "kind": "doc",
+   "verified": {
+    "checked": "2026-10-16",
+    "http": 200,
+    "section_found": "To support long-running interactions, you can use compaction to reduce context size while preserving state needed for subsequent turns."
+   }
+  },
+  {
+   "id": "s11",
+   "title": "Gemini API Docs: Long context",
+   "url": "https://ai.google.dev/gemini-api/docs/long-context",
+   "kind": "doc",
+   "verified": {
+    "checked": "2026-10-16",
+    "http": 200,
+    "section_found": "the model's performance will be better if you put your query / question at the end of the prompt (after all the other context)."
+   }
+  },
+  {
+   "id": "s12",
+   "title": "Claude Docs: Context windows",
+   "url": "https://platform.claude.com/docs/en/build-with-claude/context-windows",
+   "kind": "doc",
+   "verified": {
+    "checked": "2026-10-16",
+    "http": 200,
+    "section_found": "more context isn't automatically better. As token count grows, accuracy and recall degrade"
+   }
+  }
+ ],
+ "practice": "practice/prompt-and-context-engineering",
+ "provenance": {
+  "generated_by": "Claude Sonnet 5.5 by hand, Scout learning center, format v2 prompt and context engineering",
+  "generated_on": "2026-10-16",
+  "reviewed_by": "a second reader (Claude Sonnet 5.5, a different instance from the writer), Scout learning center, format v2 prompt and context engineering",
+  "reviewed_on": "2026-10-16"
+ },
+ "changelog": [
+  {
+   "version": 1,
+   "date": "2026-10-12",
+   "change": "imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer"
+  },
+  {
+   "version": 2,
+   "date": "2026-10-16",
+   "change": "format v2 concept lesson written by hand (six subtopics, twelve dated primary sources, the context-management table, a lever decision block, two flow blocks, a worked example behind an eval gate); original attribution: imported from the gigai 0.1.11.10 shipped course ai-forward-deployed-engineer, generated by Claude through GigAI 0.1.11.10; review pending"
+  },
+  {
+   "version": 3,
+   "date": "2026-10-16",
+   "change": "Fix round 1 after the second read: assembly flow reordered so history precedes this turn's documents (one column, breakpoints drawn); eval gate runs on a held-out set separate from the tuning cases in the text, flow, worked example and code; minimum-cacheable-length comment, Claude model IDs are snapshots, pattern-not-mechanism cells, one sentence on dropping the oldest turns. Review pending."
+  },
+  {
+   "version": 4,
+   "date": "2026-10-16",
+   "change": "accepted by a second reader (Claude Sonnet 5.5, a different instance from the writer) after the fix round: all sources re-fetched, held-out gate numbers and the v3 gate code recomputed and run, both flows looked at at 1280 and 820 px; one wording fix (dropping old turns is called the simplest technique, as the Gemini page says smaller windows often require it)"
+  }
+ ],
+ "worked_example": {
+  "title": "One prompt change behind a gate: 30 tuning cases, 10 held out, three versions",
+  "blocks": [
+   {
+    "type": "table",
+    "caption": "Pass counts on the 40-case set: 30 tuning cases and 10 held-out cases. All numbers are this lesson's assumptions, not measurements.",
+    "columns": [
+     "case group",
+     "cases",
+     "v1 passes",
+     "v2 passes",
+     "v3 passes"
+    ],
+    "rows": [
+     [
+      "Tuning: answer present in the documents",
+      "18",
+      "16",
+      "15",
+      "17"
+     ],
+     [
+      "Tuning: answer absent (reply NOT_FOUND)",
+      "6",
+      "1",
+      "6",
+      "6"
+     ],
+     [
+      "Tuning: format and edge cases",
+      "6",
+      "3",
+      "3",
+      "3"
+     ],
+     [
+      "Tuning total",
+      "30",
+      "20",
+      "24",
+      "26"
+     ],
+     [
+      "Held-out, run once at the gate",
+      "10",
+      "not run",
+      "not run",
+      "9"
+     ]
+    ],
+    "cites": []
+   },
+   {
+    "type": "steps",
+    "title": "One prompt change behind a gate",
+    "cites": [
+     "s7",
+     "s8"
+    ],
+    "items": [
+     "Write the gate before testing: at least 80 percent of the held-out cases must pass, and no tuning case that passed before may fail.",
+     "Build the set from real inputs, awkward ones included: 40 cases in all.",
+     "Split it before any tuning: 10 cases go to a held-out set that is run only at the gate, never while editing.",
+     "Make one group deliberately hard: 8 of the 40 cases have no answer in the documents, so the right reply is NOT_FOUND.",
+     "Run v1 on the tuning cases: 20 pass.",
+     "Sort the tuning failures by class. The largest class is an invented answer where the documents had none: 5 cases.",
+     "Change one thing: add a rule to reply NOT_FOUND with its reason. Change nothing else.",
+     "Run v2 on the tuning cases: 24 pass.",
+     "Apply the tuning half of the gate: 1 previously passing case now fails, because a present answer was reported as NOT_FOUND. The release is blocked, and the held-out cases stay unopened.",
+     "Change one thing again: add a positive example where the answer sits in the middle of a long document. Run v3 on the tuning cases: 26 pass and no earlier pass has failed.",
+     "Run v3 once on the held-out cases: 9 pass, which meets the gate. Release v3 with the model id pinned in the template module and the version tagged in source control.",
+     "When the provider ships a new model id, re-run all 40 cases before moving the pin."
+    ]
+   },
+   {
+    "type": "code",
+    "lang": "python",
+    "caption": "The v3 template and its gate, kept in source control next to the feature. The model id is pinned; the breakpoint ends the stable prefix. This sketch is a single-shot call, so it has no history.",
+    "code": "PROMPT_VERSION = \"support-answer@v3\"\nMODEL = \"claude-sonnet-5-5\"  # Claude model IDs are snapshots; re-run the case set before changing it\n\nRULES = \"\"\"You are a support analyst for a billing platform.\nAnswer only from the material inside <documents>.\nIf the answer is not there, reply exactly NOT_FOUND.\nGive the answer inside <answer> tags, one short paragraph.\n<examples> ...a few canonical cases, one of them with the answer mid-document... </examples>\"\"\"\n\ndef build_request(docs: list[str], question: str) -> dict:\n    blocks = \"\\n\".join(f'<document index=\"{i}\">\\n{d}\\n</document>' for i, d in enumerate(docs))\n    return {\n        \"model\": MODEL,\n        \"max_tokens\": 1024,\n        # stable prefix first; the breakpoint sits at the end of it. It caches only once the prefix\n        # reaches the model's minimum length (LLM fundamentals lesson), so the rules and examples must be long enough\n        \"system\": [{\"type\": \"text\", \"text\": RULES, \"cache_control\": {\"type\": \"ephemeral\"}}],\n        # documents above the question, the live request last\n        \"messages\": [{\"role\": \"user\", \"content\": f\"<documents>\\n{blocks}\\n</documents>\\n\\nQuestion: {question}\"}],\n    }\n\ndef gate(tuning: list, baseline: dict, held_out: list, threshold: float = 0.8) -> bool:\n    regressions = [r.id for r in tuning if not r.ok and baseline.get(r.id)]\n    passed = sum(r.ok for r in held_out)\n    return not regressions and passed / len(held_out) >= threshold\n"
+   }
+  ]
+ }
 }
