@@ -1,7 +1,7 @@
 {
   "schema_version": "learning-center-lesson:1",
   "id": "airflow-pipelines",
-  "version": 1,
+  "version": 2,
   "status": "published",
   "superseded_by": null,
   "title": "Orchestrating ML pipelines with Airflow",
@@ -35,7 +35,7 @@
     {
       "body": [
         {
-          "body": "A DAG has a start date and a schedule, which can be a cron expression, a preset such as daily, a timedelta, a custom timetable, or a data-aware trigger that fires when an upstream dataset or asset is updated. Each run carries a logical date and a data interval describing the slice of data it is responsible for. A daily run typically processes the previous complete day, so the run for an interval starts after that interval ends. Tasks should read the interval from the runtime context or templates instead of calling the current time, so that a rerun months later processes the same slice.",
+          "body": "A DAG has a start date and a schedule, which can be a cron expression, a preset such as daily, a timedelta, a custom timetable, or a data-aware trigger that fires when an upstream dataset or asset is updated. Each run carries a logical date and a data interval describing the slice of data it is responsible for. A daily run typically processes the previous complete day, so the run for an interval starts after that interval ends. As of 2026-10, in Airflow 3 a Dag that passes a bare cron string to schedule= uses CronTriggerTimetable by default (create_cron_data_intervals is False by default), so data_interval_start and data_interval_end and the ds and ts values derived from logical_date shift between the two timetables, and create_cron_data_intervals=True keeps the CronDataIntervalTimetable behaviour described here. Tasks should read the interval from the runtime context or templates instead of calling the current time, so that a rerun months later processes the same slice.",
           "heading": "How runs are timed"
         },
         {
@@ -90,7 +90,7 @@
   },
   "code": [
     {
-      "code": "from datetime import datetime, timedelta\nfrom airflow.decorators import dag, task\n\n@dag(schedule=\"@daily\", start_date=datetime(2025, 1, 1), catchup=False,\n     default_args={\"retries\": 2, \"retry_delay\": timedelta(minutes=5)})\ndef train_daily():\n    @task\n    def build_features(data_interval_start=None) -> str:\n        # write to a partition keyed by the interval, overwrite on rerun\n        return f\"features/dt={data_interval_start:%Y-%m-%d}/\"\n\n    @task\n    def train(path: str) -> str:\n        print(\"training on\", path)\n        return \"model-version-ref\"\n\n    train(build_features())\n\ntrain_daily()",
+      "code": "from datetime import datetime, timedelta\nfrom airflow.sdk import dag, task   # Airflow 3 import path; airflow.decorators is deprecated (as of 2026-10)\n\n@dag(schedule=\"@daily\", start_date=datetime(2025, 1, 1), catchup=False,\n     default_args={\"retries\": 2, \"retry_delay\": timedelta(minutes=5)})\ndef train_daily():\n    @task\n    def build_features(data_interval_start=None) -> str:\n        # write to a partition keyed by the interval, overwrite on rerun\n        return f\"features/dt={data_interval_start:%Y-%m-%d}/\"\n\n    @task\n    def train(path: str) -> str:\n        print(\"training on\", path)\n        return \"model-version-ref\"\n\n    train(build_features())\n\ntrain_daily()",
       "lang": "python"
     }
   ],
@@ -129,6 +129,16 @@
       "kind": "doc",
       "title": "Airflow Best Practices",
       "url": "https://airflow.apache.org/docs/apache-airflow/stable/best-practices.html"
+    },
+    {
+      "kind": "doc",
+      "title": "Upgrading to Airflow 3",
+      "url": "https://airflow.apache.org/docs/apache-airflow/stable/installation/upgrading_to_airflow3.html",
+      "verified": {
+        "checked": "2026-10-16",
+        "http": 200,
+        "section_found": "create_cron_data_intervals"
+      }
     }
   ],
   "practice": "practice/airflow-pipelines",
@@ -143,6 +153,11 @@
       "version": 1,
       "date": "2026-10-12",
       "change": "imported from the gigai 0.1.11.10 shipped course mlops-ml-platform-engineer"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-16",
+      "change": "corrections 2026-10: sample imports dag and task from airflow.sdk (airflow.decorators is deprecated in Airflow 3); bare-cron schedules use CronTriggerTimetable by default in Airflow 3; Airflow 3 upgrade guide source added"
     }
   ]
 }
