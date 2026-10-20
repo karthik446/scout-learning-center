@@ -1,0 +1,904 @@
+{
+  "schema_version": "learning-center-lesson:2",
+  "id": "idi-authorization-policy-engines",
+  "version": 3,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Authorization and policy engines: RBAC, ABAC, ReBAC and OPA",
+  "area": "security",
+  "primary_key": "identity-and-access",
+  "secondary_keys": [
+    "threat-modeling",
+    "security-governance"
+  ],
+  "keys": [
+    "identity-and-access",
+    "threat-modeling",
+    "security-governance"
+  ],
+  "summary": "Authentication tells a service who is calling; authorization decides what that caller may do. This lesson teaches where that decision can live (in the service's code, at the gateway, or in a policy engine), three common models the rules are written in (roles, attributes, relationships), and the policy-engine pattern that Open Policy Agent (OPA) implements: the policy is code kept outside the service, the request goes in as data, and allow or deny comes out. You read a short Rego policy and predict its decisions for two requests, see where OPA runs (API authorization from a gateway or sidecar, Kubernetes admission control with Gatekeeper, Terraform plan checks), how Kyverno, AWS Cedar, OpenFGA and SpiceDB differ, and what running an engine means: tests, decision logs, data delivery and the fail-open or fail-closed choice.",
+  "detail": [],
+  "in_practice": {
+    "blocks": [
+      {
+        "type": "p",
+        "text": "When a customer's security review asks how authorization is enforced, answer with two places: where the decision is made (which engine, which policy repository) and where it is enforced (which gateway, sidecar or middleware), and offer the decision log as the audit trail. With decision logging enabled on the OPA server, each decision is recorded with its decision_id, the path queried, the input, the result, the revision of the bundle that produced it and a timestamp; a local opa eval writes no such record.",
+        "cites": [
+          "s5"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Start a policy engine in dry-run. The OPA-Envoy plugin's dry-run setting allows every request unconditionally while the decision logs show what would have happened; its documentation recommends this for the initial integration and for large policy refactors. Flip to enforcing once the log shows no surprises.",
+        "cites": [
+          "s3"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Decide the failure mode before the first outage. Gatekeeper ships fail-open (failurePolicy Ignore) and its documentation explains the deadlock that fail-closed can cause when the cluster must admit the very nodes the webhook runs on. For an API path, normally fail closed so that an unreachable engine cannot leak access, and verify that the recovery and administrative paths you would need during that outage do not themselves depend on the unavailable decision service.",
+        "cites": [
+          "s8"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Keep decisions local. OPA's guidance for Envoy is to evaluate policies next to the proxy because a network hop has implications for performance and availability; load the data a decision needs ahead of time through bundles, which OPA caches in memory, rather than calling out with http.send on the request path.",
+        "cites": [
+          "s3",
+          "s1"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Match the engine to the question. OpenFGA's documentation splits the toolbox in two: policy engines such as OPA and Cedar evaluate policies over application-supplied data (for OPA, that is the per-request input plus the policy and data loaded ahead of time and cached in memory), while relationship engines such as OpenFGA, SpiceDB and Ory Keto, all in the Zanzibar tradition, additionally own a relationship store: they keep the tuples and answer queries against the stored graph. Pick the second when the data behind the decision is too large or too dynamic to ship on every request, or when you need reverse queries such as list every resource this user can read.",
+        "cites": [
+          "s11",
+          "s1"
+        ]
+      }
+    ]
+  },
+  "subtopics": [
+    {
+      "id": "authentication-vs-authorization",
+      "title": "Authentication says who, authorization says what",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Authentication is how a person or a machine proves it is who it claims to be: a password and a second factor, a signed SAML assertion, an OAuth client credential. Authorization is the decision that follows: may this caller run this action on this resource, now? NIST SP 800-162 states it directly: authentication is the act of verifying that the subject has been authorized to use the presented identifier by a trusted identity provider; access control, or authorization, is the decision to permit or deny a subject access to system objects. The OPA documentation adds that authorization usually uses the results of authentication (the username, attributes, groups, claims) but decides on far more than who the user is, and that policy is wider still, since some rules, such as every binary must come from a trusted source, involve no user at all.",
+          "cites": [
+            "s12",
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The earlier lessons of this module establish identity and credentials: sessions and cookies, JWT validation, the delegated grants of OAuth 2.x, OpenID Connect and SAML single sign-on, SCIM provisioning of accounts, and machine credentials. They prove who is calling, create the account, and obtain and validate tokens, including the scopes a client was granted. None of them decides whether this authenticated caller may refund this order. That request-specific, resource-specific decision is authorization, and it has to live somewhere."
+        },
+        {
+          "type": "table",
+          "caption": "Where the authorization decision can live",
+          "columns": [
+            "place",
+            "what it looks like",
+            "fits when",
+            "cost"
+          ],
+          "rows": [
+            [
+              "In the service's code",
+              "if statements next to the handler: if the caller's role is admin, proceed",
+              "one service, a few rules, and the rules change with the code",
+              "every service re-implements it, a rule change is a code release, and nobody can list the rules; OPA's docs call this policy as a hard-coded feature of the service it governs [s1]"
+            ],
+            [
+              "At the gateway",
+              "the API gateway or proxy checks the token's scopes, or calls an authorizer, before forwarding",
+              "coarse rules that apply to whole routes: this route needs the scope orders:read",
+              "the gateway sees the request, not the business data, so a fine-grained decision needs a call to something that does"
+            ],
+            [
+              "In a policy engine",
+              "the service or the gateway sends the request as data to an engine that evaluates the policy and returns a decision",
+              "many services, rules that change faster than code, auditors who want to read the rules",
+              "one more component to run; its data freshness and availability become your problem [s1]"
+            ]
+          ],
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "You have already met three hand-rolled versions of the last row. A scope in an OAuth access token (orders:read) is a coarse grant the authorization server made when the client was authorized; it says what the client was allowed to ask for, not whether this user may touch this order, so the service still needs a decision. A custom authorizer that an API gateway calls before forwarding (a serverless function, or a service behind Envoy's external authorization filter) is a policy decision point (a PDP, the engine role defined in the next section) you wrote yourself. A business rules engine that answers whether an order may ship from a table of rules is the same shape with a different vocabulary. A policy engine is the general tool for that shape: OPA's docs describe it as offloading policy decisions from your software so that you do not implement policy management from scratch.",
+          "cites": [
+            "s1",
+            "s3"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Authentication produces facts: who, which tenant, which scopes, which groups. Authorization consumes those facts plus the request and the business data, and produces one decision. Keep the two apart in code and in conversation; a token that validates is not a request that is allowed.",
+          "cites": [
+            "s12"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "rbac-abac-rebac",
+      "title": "Three ways to write the rules: roles, attributes, relationships",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Whatever evaluates the rules, three common models cover most of what you will meet, and real systems mix them. The names matter because vendors sort themselves by them: OPA and Cedar are policy engines that evaluate rules over attributes and can express roles; OpenFGA and SpiceDB are relationship engines that store the relationships themselves and can express roles and, through conditions, attributes.",
+          "cites": [
+            "s10",
+            "s11"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The three models",
+          "columns": [
+            "model",
+            "a rule looks like",
+            "fits when",
+            "breaks when"
+          ],
+          "rows": [
+            [
+              "RBAC, role-based access control",
+              "access to an object is granted to locally defined roles, and the subject is a member of a role [s12]",
+              "a short list of roles tied to stable organizational positions [s12]",
+              "decisions depend on dynamic conditions: the fix is ever more roles, ad hoc and limited in membership, which NIST calls role explosion [s12]"
+            ],
+            [
+              "ABAC, attribute-based access control",
+              "operations are allowed by evaluating attributes of the subject, the object, the requested operation and sometimes the environment against policy [s12]",
+              "rules that depend on the request and its context: amount, tenant, time, classification, device; all the data for the decision is in hand at request time [s11]",
+              "the data behind the decision is too large or too dynamic to ship on every request, such as millions of memberships or deep hierarchies [s11]"
+            ],
+            [
+              "ReBAC, relationship-based access control",
+              "access follows relationships between users and objects and between objects, stored as tuples (object, relation, user: document-42, editor, Alice) in a graph the engine owns [s11]",
+              "group membership, document sharing, folder hierarchies, multi-tenant ownership, and reverse queries, meaning list every resource this user can read [s11]",
+              "the rules are a few attributes of the request with no relationships to store; the relationship store is one more system of record"
+            ]
+          ],
+          "cites": [
+            "s11",
+            "s12"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "NIST SP 800-162 is the reference definition of ABAC: a logical access control methodology where authorization to perform a set of operations is determined by evaluating attributes associated with the subject, object, requested operations and, in some cases, environment conditions against policy, rules or relationships that describe the allowable operations for a given set of attributes. Note the last clause: relationships are already inside the definition. OpenFGA's documentation says the two engine shapes are often paired, a relationship engine for application authorization and a policy engine at the infrastructure or admission layer, and that inside an application a relationship engine covers most attribute-driven rules with conditions.",
+          "cites": [
+            "s12",
+            "s11"
+          ]
+        },
+        {
+          "type": "decision",
+          "caption": "Which model to start from",
+          "rows": [
+            {
+              "option": "RBAC",
+              "pick_when": "a handful of roles describe the job, there is one tenant, and the rules rarely change",
+              "avoid_when": "you find yourself creating a role per customer, per project or per folder",
+              "example": "an internal admin tool with viewer, operator and admin"
+            },
+            {
+              "option": "ABAC in a policy engine (OPA, Cedar)",
+              "pick_when": "the decision depends on the request and on loaded data: amount under a limit, same tenant, office hours, resource tags",
+              "avoid_when": "the hard part is who shares what with whom across millions of objects",
+              "example": "the refund rule in the worked example"
+            },
+            {
+              "option": "ReBAC in a relationship engine (OpenFGA, SpiceDB)",
+              "pick_when": "per-object sharing, nested folders and groups, many tenants, and the question list everything Alice can see",
+              "avoid_when": "the rules are a few attributes of the request, with no relationships to store",
+              "example": "documents, folders and shared drives"
+            }
+          ],
+          "cites": [
+            "s10",
+            "s11",
+            "s12"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "policy-engine-pattern",
+      "title": "The policy-engine pattern: decision point, enforcement point, policy as code",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "This lesson uses two names from NIST SP 800-162. The policy enforcement point (PEP) enforces policy decisions in response to a request from a subject that wants to reach a protected object: a gateway, a sidecar proxy, a middleware inside the service. The policy decision point (PDP) computes the access decisions by evaluating the applicable policies; NIST adds that the two can be distributed or centralized and physically separated from each other. OPA is a PDP: services offload policy decisions to OPA by executing queries, OPA evaluates policies and data to produce query results, and the results go back to the caller. It is a lightweight, general-purpose engine that can run as a sidecar (a helper process or container that runs beside the service or proxy on the same host), a host-level daemon or a library inside the service.",
+          "cites": [
+            "s12",
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Policy as code means the rules are files in a repository: reviewed in pull requests, tested, versioned and shipped separately from the services they govern. OPA calls this decoupling policy: the people responsible for policy can read, write, analyze, version and distribute it separately from the service, and policies can be updated at any time without recompiling or redeploying the service.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Data in, decision out. OPA sees two kinds of data. The input is the request itself, pushed with each query: who, which method, which path, which body. Everything else (roles, limits, entitlements) is loaded ahead of time under the global name data, pushed through OPA's API or pulled as bundles from a server, and cached in memory so a decision does not wait on a database. The policy reads both and returns a decision, which can be a boolean or any structured value.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "How data reaches OPA (the OPA document model)",
+          "columns": [
+            "model",
+            "name in the policy",
+            "how it gets there"
+          ],
+          "rows": [
+            [
+              "Synchronous push",
+              "input",
+              "sent in the body of the query, POST /v1/data [s1]"
+            ],
+            [
+              "Asynchronous push",
+              "data",
+              "your service calls PUT /v1/data when the world changes [s1]"
+            ],
+            [
+              "Asynchronous pull",
+              "data",
+              "the bundle feature: OPA downloads a tarball of policy and data from a bundle server [s1]"
+            ],
+            [
+              "Synchronous pull",
+              "built-in functions such as http.send",
+              "fetched during evaluation; a network call on the decision path [s1]"
+            ]
+          ],
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The sequence below follows one request from a client through a gateway acting as the PEP, to OPA as the PDP, and on to the service only if the answer is allow. The gateway validates the token first (the JWT lesson); OPA then decides on the claims it is handed. Where the policy returns an object instead of a boolean, the OPA-Envoy plugin reads an allowed field and optional headers, body and http_status fields from it; a denied request gets HTTP 403 unless the policy sets another status.",
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "diagram",
+          "mermaid": "sequenceDiagram\n  autonumber\n  participant C as Client\n  participant G as Gateway (PEP)\n  participant P as OPA (PDP)\n  participant S as Order service\n  C->>G: POST /orders/o1/refund<br/>bearer token\n  G->>G: validate the token<br/>(signature, exp, aud)\n  G->>P: query allow with input:<br/>claims, method, path, body\n  alt allow is true\n    P-->>G: allowed: true\n    G->>S: forward the request\n    S-->>G: 200 OK\n    G-->>C: 200 OK\n  else allow is false or undefined\n    P-->>G: allowed: false\n    G-->>C: 403 Forbidden\n  end\n  Note over P: logged with a<br/>decision_id if<br/>logging is enabled",
+          "legend": "Solid arrows are calls, dashed arrows are replies. The query, the boolean or object decision and the 403 default are from the OPA-Envoy plugin's documentation s3. The note assumes the OPA server runs with decision logging enabled; only then does it record each decision with a decision_id s5. The token check before the query is this lesson's design: a gateway that validates the token keeps OPA's input to claims it can trust. An undefined decision (no rule matched and no default) is treated as deny by the enforcement point.",
+          "cites": [
+            "s3",
+            "s5"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Note what the engine never does: it does not fetch the token, it does not speak HTTP to the client, and it forwards nothing. The enforcement point owns the wire; the decision point owns the rule. That split is what makes the rule testable on its own.",
+          "cites": [
+            "s3"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "reading-rego",
+      "title": "Reading a Rego policy",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Rego is OPA's language for reasoning about structured data such as JSON. It is declarative: a policy states what must be true, not how to check it. A rule reads rule-name IS value IF body; when the value is left out it is true; the body is a list of expressions that must all hold, which OPA reads as expression-1 AND expression-2 AND so on. If no set of variable bindings makes the body true, the rule is undefined, not false. That is why a policy queried for allow starts with a default: default allow := false turns undefined into a definite deny.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "rego",
+          "code": "package orders.authz\n\ndefault allow := false\n\n# Read an order: the token carries the scope and belongs to the order's tenant\nallow if {\n\tinput.action == \"read\"\n\t\"orders:read\" in input.token.scopes\n\tinput.token.tenant == input.order.tenant\n}\n\n# Refund an order: same tenant, the caller holds the refund_agent role\n# (data from the bundle) and the amount is within the caller's limit\nallow if {\n\tinput.action == \"refund\"\n\tinput.token.tenant == input.order.tenant\n\t\"refund_agent\" in data.roles[input.token.sub]\n\tinput.amount <= data.limits[input.token.sub]\n}",
+          "caption": "orders.rego, the policy of the worked example; formatted with opa fmt and evaluated with opa eval on OPA 1.21.3 on 2026-10-19"
+        },
+        {
+          "type": "p",
+          "text": "Read it rule by rule. The package names the decision: this policy lives at data.orders.authz and the query asks for data.orders.authz.allow. Two rules share the name allow; in Rego that is an OR, the decision is true if either body holds. Inside a body, the keyword in tests membership of an array or set, and a reference such as data.roles[input.token.sub] walks into the loaded data using the value of another reference as the key. The last line compares a number from the request with a number from the loaded data.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "list",
+          "items": [
+            "The default rule. Without it a request no rule matches is undefined, and every caller has to remember that undefined means deny.",
+            "What comes from input (per request) and what from data (loaded earlier). The second is only as fresh as its last bundle.",
+            "Whether the decision is a boolean or an object. An object can carry a reason, headers or an HTTP status for the enforcement point (the Envoy plugin's allowed, headers, body and http_status fields).",
+            "Any http.send. That is a network call inside the decision, on the latency path, and the OPA documentation lists it as the synchronous-pull model."
+          ],
+          "cites": [
+            "s1",
+            "s3"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "where-opa-runs",
+      "title": "Where OPA runs: gateways, Kubernetes admission, Terraform plans",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "OPA is a graduated project of the Cloud Native Computing Foundation (CNCF), the maturity level OpenFGA's own comparison cites when it calls OPA the default choice among policy engines. The same engine and language serve three jobs; only the input and the enforcement point differ.",
+          "cites": [
+            "s11"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Three jobs, one engine",
+          "columns": [
+            "job",
+            "enforcement point",
+            "what the input holds",
+            "the decision"
+          ],
+          "rows": [
+            [
+              "API authorization",
+              "an API gateway, a library in the service, or the Envoy proxy's external authorization filter with OPA as a sidecar; the OPA-Envoy plugin implements Envoy's external authorization API as a gRPC server (the remote-procedure-call interface Envoy uses for the check), so the microservice is not modified [s3]",
+              "the request context Envoy hands over: source, destination and the HTTP request itself [s3]",
+              "a boolean, or an object with allowed plus optional headers, body and http_status; a denied request gets HTTP 403 unless the policy says otherwise [s3]"
+            ],
+            [
+              "Kubernetes admission control",
+              "an admission webhook: the call the API server makes to accept or reject an object when it is created, updated or deleted, before it is stored. Gatekeeper is the OPA project's recommended integration for it; on top of plain OPA it adds a parameterized policy library, Kubernetes CRDs for constraints and constraint templates, and audit [s7]",
+              "the admission review: the kind of object, the operation, the caller's identity and the entire object [s7]",
+              "allowed true or false with a message; the API server denies if any admission controller denies [s7]; audit reports the resources already in the cluster that violate a constraint, which also catches what a fail-open webhook let through [s8]"
+            ],
+            [
+              "Infrastructure as code",
+              "a CI step before terraform apply: terraform show -json turns the saved plan into JSON and opa exec --decision evaluates it [s6]",
+              "the plan: resource_changes with each resource's type and change.actions (create, update, delete) [s6]",
+              "authorize or deny the plan, or a score; values unknown until apply time cannot be checked [s6]"
+            ]
+          ],
+          "cites": [
+            "s3",
+            "s6",
+            "s7",
+            "s8"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Kyverno is the other common Kubernetes policy engine and the usual comparison. Its policies are written in YAML and CEL (the Common Expression Language), with no new language to learn, and managed as Kubernetes resources; it can validate, mutate, generate and clean up resources, verify container images, run as an admission controller or a CLI scanner, and its documentation says it now also applies to JSON payloads outside a cluster such as Terraform resources. The trade: Gatekeeper gives you Rego and the same OPA engine you run at the gateway and in CI, plus constraint templates to parameterize a policy library; Kyverno gives Kubernetes-native policies to a team that will not write Rego.",
+          "cites": [
+            "s9",
+            "s7"
+          ]
+        },
+        {
+          "type": "flow",
+          "nodes": [
+            {
+              "id": "client",
+              "label": "Client",
+              "kind": "actor"
+            },
+            {
+              "id": "gateway",
+              "label": "Gateway or Envoy (PEP)",
+              "kind": "service"
+            },
+            {
+              "id": "opa",
+              "label": "OPA sidecar (PDP)",
+              "kind": "service"
+            },
+            {
+              "id": "svc",
+              "label": "Order service",
+              "kind": "service"
+            },
+            {
+              "id": "bundles",
+              "label": "Bundle server",
+              "kind": "store"
+            },
+            {
+              "id": "logs",
+              "label": "Decision log sink",
+              "kind": "store"
+            }
+          ],
+          "frames": [
+            {
+              "id": "pod",
+              "title": "Same pod or host",
+              "nodes": [
+                "gateway",
+                "opa",
+                "svc"
+              ]
+            },
+            {
+              "id": "control",
+              "title": "Control plane",
+              "nodes": [
+                "bundles",
+                "logs"
+              ]
+            }
+          ],
+          "edges": [
+            {
+              "id": "request",
+              "from": "client",
+              "to": "gateway",
+              "kind": "sync",
+              "label": "Request with bearer token",
+              "short": "Request"
+            },
+            {
+              "id": "query",
+              "from": "gateway",
+              "to": "opa",
+              "kind": "sync",
+              "label": "Query allow with the input",
+              "short": "Query"
+            },
+            {
+              "id": "decision",
+              "from": "opa",
+              "to": "gateway",
+              "kind": "reply",
+              "label": "allowed true or false",
+              "short": "Decision"
+            },
+            {
+              "id": "forward",
+              "from": "gateway",
+              "to": "svc",
+              "kind": "sync",
+              "label": "Forward only if allowed",
+              "short": "Forward"
+            },
+            {
+              "id": "poll",
+              "from": "opa",
+              "to": "bundles",
+              "kind": "link",
+              "label": "Polls bundles",
+              "dashed": true
+            },
+            {
+              "id": "log",
+              "from": "opa",
+              "to": "logs",
+              "kind": "link",
+              "label": "Decision logs",
+              "dashed": true
+            }
+          ],
+          "steps": [
+            {
+              "edge": "request",
+              "caption": "Client to gateway: the request arrives with a bearer token"
+            },
+            {
+              "edge": "query",
+              "caption": "Gateway to OPA: the claims, method, path and body go in as input"
+            },
+            {
+              "edge": "decision",
+              "caption": "OPA to gateway: allowed true or false, from policy plus cached data"
+            },
+            {
+              "edge": "forward",
+              "caption": "Gateway to service: forwarded only on allow; otherwise 403"
+            }
+          ],
+          "legend": "Solid arrows are the request path. Dashed links are the control plane: policy distribution and log collection, off the request path, where the policy repository's CI publishes the bundle the sidecar polls. The sidecar next to the proxy, the query and the forward-or-403 are from s3; the bundle pull and the in-memory cache of policy and data from s1; the decision-log upload, which happens only when decision logging is configured on the server, from s5.",
+          "cites": [
+            "s1",
+            "s3",
+            "s5"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "alternatives",
+      "title": "Alternatives worth knowing: Cedar and Verified Permissions, OpenFGA and SpiceDB",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "OPA is not the only shape. Two others come up by name in architecture reviews, and one of them answers a question OPA is not built for."
+        },
+        {
+          "type": "p",
+          "text": "Cedar is a policy language and authorization engine from AWS; its reference guide is at version 4.5. A Cedar policy says which principal may perform which actions on which resources in what context; the application calls the engine before an operation with the policies and the entities the decision needs (users, groups, resources and their attributes), and gets allow or deny. A schema validates policies when they are written, not during evaluation, and the language expresses both RBAC and ABAC. Amazon Verified Permissions is the managed service that hosts Cedar policies and answers authorization requests on behalf of your applications.",
+          "cites": [
+            "s10"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "OpenFGA and SpiceDB are relationship engines in the Zanzibar tradition (Google's authorization system; Ory Keto is a third): they store relationship tuples in a database and answer checks against the stored graph, so the engine owns the relationship store rather than only evaluating policies over supplied data. OpenFGA's documentation contrasts this with policy engines such as OPA and Cedar, which evaluate policies over the data the application supplies; for OPA that is the per-request input plus the policy and data loaded ahead of time through bundles or its API. OpenFGA recommends a relationship engine when permissions are per resource and per user, when the data changes at write time (group membership, sharing, folder hierarchies), or when you need reverse queries. Its model language is itself policy as code: types, relations and conditions in a text file you commit, review and deploy.",
+          "cites": [
+            "s11",
+            "s1"
+          ]
+        },
+        {
+          "type": "decision",
+          "caption": "Which engine for which decision",
+          "rows": [
+            {
+              "option": "OPA with Rego",
+              "pick_when": "one engine for API requests, Kubernetes admission and CI checks; decisions over the request plus loaded data; the team will learn Rego",
+              "avoid_when": "the decision is a graph walk over millions of shared objects",
+              "example": "the refund rule; admission constraints; Terraform plan checks"
+            },
+            {
+              "option": "Cedar, or Amazon Verified Permissions as the managed service",
+              "pick_when": "application-level permissions, a schema-validated language, and on AWS a managed decision point",
+              "avoid_when": "the decisions are about Kubernetes objects or Terraform plans rather than application requests",
+              "example": "can this user open this record, asked from the application's own code"
+            },
+            {
+              "option": "OpenFGA or SpiceDB (Zanzibar-style relationship engines)",
+              "pick_when": "sharing, folders, groups and list-what-I-can-see at scale",
+              "avoid_when": "the rules are attributes of the request with no relationships to store",
+              "example": "documents, folders and shared drives"
+            },
+            {
+              "option": "Kyverno",
+              "pick_when": "Kubernetes policy by a team that writes YAML and CEL and does not want Rego",
+              "avoid_when": "you want the same Rego policies at the gateway, in the cluster and in CI, or you already run OPA",
+              "example": "validation and mutation of Deployments at admission"
+            }
+          ],
+          "cites": [
+            "s9",
+            "s10",
+            "s11"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "operating-a-policy-engine",
+      "title": "Operating a policy engine: tests, decision logs, data, failure mode",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Once the rule is out of the code, its lifecycle is yours to run: it needs tests, an audit trail, fresh data, and a defined behaviour when the engine is down."
+        },
+        {
+          "type": "table",
+          "caption": "What running an engine means",
+          "columns": [
+            "concern",
+            "what OPA gives you",
+            "what you still decide"
+          ],
+          "rows": [
+            [
+              "Testing",
+              "opa test runs the rules named test_ in files next to the policy; with input as and with data as replace the request and the data; the report lists PASS, FAIL and ERROR and can include line coverage, where an uncovered rule head means no test ever made that body true [s4]",
+              "which inputs form the regression suite: at least one allow and one deny per rule, and a test for the undefined case"
+            ],
+            [
+              "Decision logs",
+              "once enabled in the server's configuration, every decision can be reported to an HTTP sink or the console with its decision_id, path, input, result, bundle revision and timestamp; a mask policy erases or upserts fields such as passwords before upload [s5]",
+              "where the sink is, how long the log is kept, and what the mask hides"
+            ],
+            [
+              "Data and latency",
+              "policy and data are cached in memory; bundles are pulled from a server; http.send fetches during evaluation [s1]; a sidecar next to Envoy avoids a network hop for the check [s3]",
+              "how stale the data may be, and what the input must carry so the policy needs no call-out"
+            ],
+            [
+              "Rollout",
+              "the Envoy plugin's dry-run allows every request while the decision logs show what would have happened [s3]",
+              "when to switch from dry-run to enforcing, and who reads the log in between"
+            ],
+            [
+              "Failure mode",
+              "Gatekeeper's webhook defaults to failurePolicy Ignore: when the webhook is unreachable constraints are not enforced and audit is expected to catch what got in; setting it to Fail makes it fail closed [s8]",
+              "fail closed on the API path and check that recovery and administrative paths do not depend on the decision service; weigh fail-closed admission against the deadlock Gatekeeper documents: delete every node and the webhook that gates new nodes cannot come back [s8]"
+            ]
+          ],
+          "cites": [
+            "s1",
+            "s3",
+            "s4",
+            "s5",
+            "s8"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "Failing open silently. A gateway that forwards when the engine times out has no authorization at exactly the moment it is overloaded. Gatekeeper's default is fail-open for a documented reason; choose your mode on purpose, write it down, and test it by stopping the engine.",
+          "cites": [
+            "s8"
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "rego",
+          "code": "package orders.authz_test\n\nimport data.orders.authz\n\ntest_read_same_tenant_allowed if {\n\tauthz.allow with input as {\n\t\t\"action\": \"read\",\n\t\t\"token\": {\"sub\": \"u42\", \"tenant\": \"acme\", \"scopes\": [\"orders:read\"]},\n\t\t\"order\": {\"id\": \"o1\", \"tenant\": \"acme\"},\n\t}\n}\n\ntest_refund_over_limit_denied if {\n\tnot authz.allow with input as {\n\t\t\"action\": \"refund\",\n\t\t\"amount\": 900,\n\t\t\"token\": {\n\t\t\t\"sub\": \"u17\",\n\t\t\t\"tenant\": \"acme\",\n\t\t\t\"scopes\": [\"orders:read\", \"orders:write\"],\n\t\t},\n\t\t\"order\": {\"id\": \"o1\", \"tenant\": \"acme\"},\n\t}\n\t\twith data.roles as {\"u17\": [\"refund_agent\"]}\n\t\twith data.limits as {\"u17\": 500}\n}",
+          "caption": "orders_test.rego: the two inputs of the worked example as tests; opa test . -v reported PASS: 2/2 on OPA 1.21.3 on 2026-10-19"
+        }
+      ]
+    }
+  ],
+  "worked_example": {
+    "title": "A refund request through the gateway: two inputs, two decisions",
+    "blocks": [
+      {
+        "type": "table",
+        "caption": "The loaded data and the two requests (illustrative values; both decisions checked with opa eval on OPA 1.21.3 on 2026-10-19)",
+        "columns": [
+          "item",
+          "value"
+        ],
+        "rows": [
+          [
+            "data.roles",
+            "u17 holds refund_agent"
+          ],
+          [
+            "data.limits",
+            "u17 may refund up to 500"
+          ],
+          [
+            "Input A",
+            "action read; token with sub u42, tenant acme and the scope orders:read; order o1 of tenant acme"
+          ],
+          [
+            "Input B",
+            "action refund, amount 900; token with sub u17, tenant acme and the scopes orders:read and orders:write; order o1 of tenant acme"
+          ]
+        ]
+      },
+      {
+        "type": "steps",
+        "title": "Predict, then check",
+        "items": [
+          "Input A against the first rule: the action is read, orders:read is in the scopes, and the token's tenant acme equals the order's tenant acme. All three expressions hold, so allow is true; the second rule is not needed.",
+          "The gateway receives allowed true and forwards the read to the order service.",
+          "Input B against the first rule: the action is refund, not read, so the body fails at its first line.",
+          "Input B against the second rule: the action is refund, the tenants match, and u17 holds refund_agent in data.roles; then 900 <= 500 is false. The body fails, no rule makes allow true, and the default sets it to false.",
+          "The gateway receives allowed false and answers 403 Forbidden; the service never sees the request. In production, an OPA server with decision logging enabled records the decision with its decision_id and, when the policy and data arrived as a bundle, the bundle revision.",
+          "Checked locally, where nothing is logged: opa eval -d orders.rego -d data.json -i input_a.json data.orders.authz.allow printed true; the same command with input_b.json printed false (OPA 1.21.3, 2026-10-19).",
+          "Note what the orders:write scope did not do: the client was allowed to ask for writes, and the policy still said no. A scope is a grant to the client; the limit is a rule about this request."
+        ],
+        "cites": [
+          "s2",
+          "s3",
+          "s5"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Change one value and predict again: input B with the amount 300 is allowed (the engine printed true), and input A with a token of tenant beta is denied (false), because the tenant check sits in both rules.",
+        "cites": [
+          "s2"
+        ]
+      },
+      {
+        "type": "steps",
+        "title": "Exercise: a third rule and its tests",
+        "items": [
+          "Add a rule: a caller may read an order they own, without the orders:read scope, when input.order.owner equals input.token.sub. Keep the tenant check.",
+          "Write three tests in orders_test.rego with with input as: test_read_own_order_allowed, test_read_other_order_without_scope_denied, and test_refund_within_limit_allowed (amount 300 for u17, whose limit is 500). The third is needed because coverage marks a rule head as not covered when no test ever made its body true, and the two tests above only ever deny a refund.",
+          "Run opa test . -v until all tests pass; then run opa test . --coverage --format=json and confirm that orders.rego has no not_covered range (with the two lesson tests alone it reports 90 percent, the refund rule's head uncovered).",
+          "Predict before you run: does input A still pass with the new rule? Yes: the first rule still holds, and a second matching rule changes nothing. Does a caller from tenant beta reading their own order in tenant acme pass? No: the tenant check stops it."
+        ],
+        "cites": [
+          "s2",
+          "s4"
+        ]
+      }
+    ]
+  },
+  "code": [],
+  "diagram": null,
+  "technologies": [
+    "Open Policy Agent (OPA)",
+    "Rego",
+    "OPA-Envoy plugin",
+    "Envoy external authorization",
+    "OPA Gatekeeper",
+    "Kyverno",
+    "Terraform plan JSON",
+    "AWS Cedar",
+    "Amazon Verified Permissions",
+    "OpenFGA",
+    "SpiceDB",
+    "Google Zanzibar"
+  ],
+  "related": [
+    "idi-tokens-jwt",
+    "idi-oauth2",
+    "idi-m2m-api-auth",
+    "sd-security-basics",
+    "security-identity-and-governance",
+    "multi-tenant-platform-design"
+  ],
+  "sources": [
+    {
+      "id": "s1",
+      "title": "OPA documentation: Philosophy (What is OPA, The OPA Document Model)",
+      "url": "https://www.openpolicyagent.org/docs/philosophy",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-19",
+        "http": 200,
+        "section_found": "Services offload policy decisions to OPA by executing"
+      }
+    },
+    {
+      "id": "s2",
+      "title": "OPA documentation: Policy Language (Rego, The Basics)",
+      "url": "https://www.openpolicyagent.org/docs/policy-language",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-19",
+        "http": 200,
+        "section_found": "rule-name IS value IF body"
+      }
+    },
+    {
+      "id": "s3",
+      "title": "OPA documentation: OPA-Envoy Plugin (How does it work, Configuration)",
+      "url": "https://www.openpolicyagent.org/docs/envoy",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-19",
+        "http": 200,
+        "section_found": "Evaluating policies locally with Envoy is preferable because it avoids introducing a network hop"
+      }
+    },
+    {
+      "id": "s4",
+      "title": "OPA documentation: Policy Testing (Getting Started, Test Format, Test Results, Coverage)",
+      "url": "https://www.openpolicyagent.org/docs/policy-testing",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-19",
+        "http": 200,
+        "section_found": "If the line refers to the head of a rule, the body of the rule was never true."
+      }
+    },
+    {
+      "id": "s5",
+      "title": "OPA documentation: Decision Logs (Decision Log Service API, Masking Sensitive Data)",
+      "url": "https://www.openpolicyagent.org/docs/management-decision-logs",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-19",
+        "http": 200,
+        "section_found": "When decision logging is enabled the OPA server will include a"
+      }
+    },
+    {
+      "id": "s6",
+      "title": "OPA documentation: Terraform (Policy Limitations with Terraform Plans, steps 2 to 4)",
+      "url": "https://www.openpolicyagent.org/docs/terraform",
+      "kind": "tutorial",
+      "verified": {
+        "checked": "2026-10-19",
+        "http": 200,
+        "section_found": "OPA policies operate on the JSON plan generated by Terraform"
+      }
+    },
+    {
+      "id": "s7",
+      "title": "OPA documentation: OPA for Kubernetes Admission Control (What is OPA Gatekeeper, How Does It Work)",
+      "url": "https://www.openpolicyagent.org/docs/kubernetes",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-19",
+        "http": 200,
+        "section_found": "OPA Gatekeeper is the recommended project for using OPA for Kubernetes admission control"
+      }
+    },
+    {
+      "id": "s8",
+      "title": "Gatekeeper documentation v3.23.x: Failing Closed (Admission Webhook Fail-Open by Default, Admission Deadlock)",
+      "url": "https://open-policy-agent.github.io/gatekeeper/website/docs/failing-closed/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-19",
+        "http": 200,
+        "section_found": "Currently Gatekeeper is defaulting to using"
+      }
+    },
+    {
+      "id": "s9",
+      "title": "Kyverno documentation v1.19.0: Introduction (About Kyverno)",
+      "url": "https://kyverno.io/docs/introduction/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-19",
+        "http": 200,
+        "section_found": "use YAML and CEL (Common Expressions Language) to author policies, with no new language to learn"
+      }
+    },
+    {
+      "id": "s10",
+      "title": "Cedar Policy Language Reference Guide, version 4.5: What is Cedar? (Introduction, Features, Services that use Cedar)",
+      "url": "https://docs.cedarpolicy.com/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-19",
+        "http": 200,
+        "section_found": "Policies describe who (the principal) is allowed to perform which actions, on which resources, and in what context"
+      }
+    },
+    {
+      "id": "s11",
+      "title": "OpenFGA documentation: Policy Engines vs. Relationship Engines (when each fits, policy as code, you can use both)",
+      "url": "https://openfga.dev/docs/learn/policy-engine",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-19",
+        "http": 200,
+        "section_found": "OpenFGA, SpiceDB, Ory Keto, all in the Zanzibar tradition"
+      }
+    },
+    {
+      "id": "s12",
+      "title": "NIST SP 800-162: Guide to Attribute Based Access Control (ABAC) Definition and Considerations (abstract; 1.4 Notes on Terminology; 2.1 The Benefit of ABAC; 2.4.3 PDP and PEP, printed p. 15; updated 2019-08-02)",
+      "url": "https://nvlpubs.nist.gov/nistpubs/specialpublications/NIST.SP.800-162.pdf",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-19",
+        "http": 200,
+        "section_found": "Policy Enforcement Point (PEP): Enforces policy decisions in response to a request from a subject"
+      }
+    }
+  ],
+  "practice": null,
+  "provenance": {
+    "generated_by": "Claude Fable 5.1 by hand, Scout learning center, format v2 authorization and policy engines (first run of learn-add-topic)",
+    "generated_on": "2026-10-19",
+    "reviewed_by": "a second reader (Codex gpt-6-astra, a different model family from the writer), Scout learning center, format v2 authorization and policy engines",
+    "reviewed_on": "2026-10-19"
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-19",
+      "change": "new lesson in identity-integration-ops, part B, after idi-m2m-api-auth: authentication vs authorization and where the decision lives, RBAC/ABAC/ReBAC, the PDP/PEP policy-engine pattern with a request sequence, a Rego policy read line by line and run on OPA 1.21.3 with two inputs, OPA at the gateway (OPA-Envoy), in Kubernetes admission (Gatekeeper, with Kyverno as the contrast) and on Terraform plans, Cedar/Verified Permissions and OpenFGA/Zanzibar as alternatives with a decision table, operations (opa test, decision logs, bundles, dry-run, fail open vs closed); twelve sources fetched 2026-10-19"
+    },
+    {
+      "version": 2,
+      "date": "2026-10-19",
+      "change": "fix round 1 after the independent read: exercise coverage command corrected (opa test . --coverage) and a refund-within-limit test added so full coverage is reachable (verified: 90 percent with two tests, 100 with three); the bridge no longer calls OAuth and SCIM authentication; the unsupported claim that API gateways have no circular recovery dependency removed; decision logging stated as a server configuration that opa eval does not exercise; SpiceDB named beside OpenFGA; first-use definitions (PDP, sidecar, admission webhook, tuples and reverse queries, gRPC, control plane; Datalog dropped); PDP/PEP cited to NIST SP 800-162 (source moved to the PDF) and Gatekeeper's constraints, constraint templates and audit to the OPA Kubernetes admission page; the CNCF page and the OpenFGA concepts page left the source list for the two new pages under the 12-source cap"
+    },
+    {
+      "version": 3,
+      "date": "2026-10-19",
+      "change": "fix round 2 after the re-check: OPA and Cedar described as evaluating policies over application-supplied data (for OPA the per-request input plus the policy and data loaded ahead of time), not as stateless engines fed on every request; relationship engines described as additionally owning the relationship store; both blocks cite s1 alongside s11"
+    }
+  ]
+}
