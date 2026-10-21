@@ -1,0 +1,1221 @@
+{
+  "schema_version": "learning-center-lesson:2",
+  "id": "gcp-agent-platform-map",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Gemini Enterprise Agent Platform: the map, the names and how to read its status",
+  "area": "ai-ml",
+  "primary_key": "gemini-enterprise-agent-platform",
+  "secondary_keys": [
+    "google-cloud",
+    "agentic-ai",
+    "adk",
+    "agent-runtime",
+    "agent-identity"
+  ],
+  "keys": [
+    "gemini-enterprise-agent-platform",
+    "google-cloud",
+    "agentic-ai",
+    "adk",
+    "agent-runtime",
+    "agent-identity"
+  ],
+  "summary": "Gemini Enterprise Agent Platform is what Google Cloud now calls the platform that was Vertex AI, reorganised around agents in four pillars: Build, Scale, Govern and Optimize. This lesson is the front door of the module. It draws the map with the old names next to the new ones, dates the rename and shows how to translate Vertex-era snippets; separates the three products that share the Gemini name (the developer platform, the Gemini Enterprise end-user product and the Gemini API with an AI Studio key) and gives a decision table plus a sequence for the two backend routes an ADK program can take; and teaches how to read Preview and GA from the pages and the release notes without inferring either. It owns the module's shared dated status table, as of 2026-10-21, which the later lessons link to instead of repeating. A worked example translates five snippets and names each one's route; an optional step calls a model once on the Gemini API Free Tier, written from the quickstart and not run. No Google Cloud spend is needed.",
+  "detail": [],
+  "in_practice": {
+    "blocks": [
+      {
+        "type": "p",
+        "text": "Pin the model id and the SDK version in every deployed agent and record the date you chose them. The models page keeps Latest aliases \"hot-swapped with every new release\" and withdraws Preview ids on two weeks' notice, so an unpinned config changes behaviour without a commit; the Agent Runtime deployment page asks for pinned package versions for the same reason and names google-cloud-aiplatform, cloudpickle and pydantic among the ones to watch.",
+        "cites": [
+          "s5",
+          "s10"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Read the release notes, by date, before any upgrade or stage claim. In one quarter the notes replaced iamconnectors.googleapis.com with the Preview agentidentity.googleapis.com and moved Agent Gateway and Agent Registry from preview to GA; a design review that quotes April's stages in July is wrong on three rows. The models page, for its part, is where the 2.5-generation models were restricted to accounts that had already used them, which breaks a new project that hard-codes one.",
+        "cites": [
+          "s3",
+          "s5"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Keep a dated status table as a team artefact, not a memory. Copy the five columns used here, quote the stage word from the page you read, write \"not stated\" when there is none, and put the date read next to every row. The name-change page shows why the date matters: it carries no date of the rename in its body, only a \"Last updated\" footer that moves whenever the page is edited, so a table that cites it without a reading date cannot be re-checked.",
+        "cites": [
+          "s1",
+          "s3"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Expect the old names in the places you will actually read: ADK still accepts GOOGLE_GENAI_USE_VERTEXAI, the API to enable is still aiplatform.googleapis.com, and the rename table maps a dozen Vertex AI products onto the new names. The deployment package is the case to watch rather than assume: the Agent Runtime deployment page read on October 21 pins google-cloud-aiplatform, while the release notes' Breaking entry of September 18, 2026 introduces google-cloud-agentplatform (Agent Platform SDK for Python 2.0.1) as the dedicated agent package, so check which one the page you follow pins. When a search for the current name finds nothing, search the old one, and when you write documentation of your own, give both names once and the current one afterwards.",
+        "cites": [
+          "s1",
+          "s3",
+          "s9",
+          "s10"
+        ]
+      }
+    ]
+  },
+  "subtopics": [
+    {
+      "id": "one-platform-four-pillars",
+      "title": "One platform, four pillars",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Gemini Enterprise Agent Platform is Google Cloud's developer platform for agents: the overview calls it \"a unified platform to build, deploy, govern, and optimize enterprise-grade AI agents and model-based solutions\" and, in the same breath, \"an evolution of Vertex AI\". An agent here means a program that calls a foundation model (a large pretrained model such as Gemini) in a loop, decides which tools to call, and keeps state between turns. The platform's claim is that everything such a program needs, from model access through hosting to policy enforcement, lives in one Google Cloud project under one set of identity and access controls. The overview counts over 200 foundation models available through it.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The docs organise that surface into four pillars, and the navigation follows the same split. Build is where the agent is written: the Agent Development Kit (ADK, Google's open-source agent framework), Agent Studio for a no-code start, Agent Garden's prebuilt samples, Model Garden for choosing a model, plus RAG Engine and Vector Search for retrieval and the Managed Agents API. Scale is where it runs: Agent Runtime hosts it, Sessions and Memory Bank keep its short-term and long-term state, Code Execution gives it a sandbox. Govern is the control layer: Agent Registry (a catalog), Agent Identity (who the agent is), Agent Gateway (what it may call) and governance policies. Optimize covers evaluation, simulation and observability.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "flow",
+          "nodes": [
+            {
+              "id": "dev",
+              "label": "Developer",
+              "kind": "actor"
+            },
+            {
+              "id": "adk",
+              "label": "ADK (code)",
+              "kind": "service"
+            },
+            {
+              "id": "studio",
+              "label": "Agent Studio (low-code)",
+              "kind": "service"
+            },
+            {
+              "id": "garden",
+              "label": "Model Garden",
+              "kind": "store"
+            },
+            {
+              "id": "runtime",
+              "label": "Agent Runtime",
+              "kind": "service"
+            },
+            {
+              "id": "memory",
+              "label": "Sessions + Memory Bank",
+              "kind": "store"
+            },
+            {
+              "id": "sandbox",
+              "label": "Code Execution sandbox",
+              "kind": "service"
+            },
+            {
+              "id": "gateway",
+              "label": "Agent Gateway",
+              "kind": "service"
+            },
+            {
+              "id": "registry",
+              "label": "Agent Registry",
+              "kind": "store"
+            },
+            {
+              "id": "identity",
+              "label": "Agent Identity",
+              "kind": "service"
+            },
+            {
+              "id": "observe",
+              "label": "Observability + Evals",
+              "kind": "service"
+            }
+          ],
+          "frames": [
+            {
+              "id": "build",
+              "title": "Build",
+              "nodes": [
+                "adk",
+                "studio",
+                "garden"
+              ]
+            },
+            {
+              "id": "scale",
+              "title": "Scale",
+              "nodes": [
+                "runtime",
+                "memory",
+                "sandbox"
+              ]
+            },
+            {
+              "id": "govern",
+              "title": "Govern",
+              "nodes": [
+                "gateway",
+                "registry",
+                "identity"
+              ]
+            },
+            {
+              "id": "optimize",
+              "title": "Optimize",
+              "nodes": [
+                "observe"
+              ]
+            }
+          ],
+          "edges": [
+            {
+              "id": "write",
+              "from": "dev",
+              "to": "adk",
+              "kind": "sync",
+              "label": "Write the agent with ADK",
+              "short": "Write"
+            },
+            {
+              "id": "pick",
+              "from": "adk",
+              "to": "garden",
+              "kind": "sync",
+              "label": "Pick a model id from Model Garden",
+              "short": "Pick model"
+            },
+            {
+              "id": "deploy",
+              "from": "adk",
+              "to": "runtime",
+              "kind": "sync",
+              "label": "Deploy to Agent Runtime",
+              "short": "Deploy"
+            },
+            {
+              "id": "remember",
+              "from": "runtime",
+              "to": "memory",
+              "kind": "sync",
+              "label": "Keep the turns and long-term memory",
+              "short": "Remember"
+            },
+            {
+              "id": "run",
+              "from": "runtime",
+              "to": "sandbox",
+              "kind": "sync",
+              "label": "Run generated code in a sandbox",
+              "short": "Run code"
+            },
+            {
+              "id": "call",
+              "from": "runtime",
+              "to": "gateway",
+              "kind": "sync",
+              "label": "Call tools and MCP servers through the gateway",
+              "short": "Call tool"
+            },
+            {
+              "id": "lookup",
+              "from": "gateway",
+              "to": "registry",
+              "kind": "sync",
+              "label": "Find the registered agent or tool",
+              "short": "Look up"
+            },
+            {
+              "id": "prove",
+              "from": "gateway",
+              "to": "identity",
+              "kind": "sync",
+              "label": "Prove which agent is calling",
+              "short": "Prove"
+            },
+            {
+              "id": "trace",
+              "from": "runtime",
+              "to": "observe",
+              "kind": "async",
+              "label": "Traces and evaluation runs",
+              "short": "Trace"
+            },
+            {
+              "id": "lowcode",
+              "from": "studio",
+              "to": "runtime",
+              "kind": "link",
+              "label": "Low-code path to the same runtime",
+              "short": "Low-code",
+              "dashed": true
+            }
+          ],
+          "steps": [
+            {
+              "edge": "write",
+              "caption": "Developer to ADK: the agent is code in an open-source framework (or any other framework)"
+            },
+            {
+              "edge": "pick",
+              "caption": "ADK to Model Garden: the agent names a model id; Gemini or a partner or open model"
+            },
+            {
+              "edge": "deploy",
+              "caption": "ADK to Agent Runtime: the managed place the agent runs (this was Agent Engine)"
+            },
+            {
+              "edge": "remember",
+              "caption": "Runtime to Sessions and Memory Bank: the conversation turns and what is kept across them"
+            },
+            {
+              "edge": "run",
+              "caption": "Runtime to Code Execution: generated code runs in an isolated sandbox, not on the agent host"
+            },
+            {
+              "edge": "call",
+              "caption": "Runtime to Agent Gateway: outbound calls to tools, MCP servers and other agents pass the gateway"
+            },
+            {
+              "edge": "lookup",
+              "caption": "Gateway to Agent Registry: the catalog of registered agents and MCP servers"
+            },
+            {
+              "edge": "prove",
+              "caption": "Gateway to Agent Identity: the agent's own cryptographic identity, not a shared service account"
+            },
+            {
+              "edge": "trace",
+              "caption": "Runtime to Observability and Evals: traces and evaluation results, off the request path"
+            }
+          ],
+          "legend": "Frames are the four pillars named on the Agent Platform overview, with the components it lists under each: Build (ADK, Agent Studio, Agent Garden, Model Garden, RAG Engine, Vector Search, Managed Agents API, CodeMender), Scale (Agent Runtime, Sessions, Memory Bank, Code Execution), Govern (Agent Registry, Agent Identity, Agent Gateway, governance policies, AI threat scanning, AI Content Detection API), Optimize (evaluation, simulation, observability, optimize agent prompts) s2; the drawing shows the main ones. Old names for the labels: Agent Runtime was Vertex AI Agent Engine, Model Garden was Vertex AI Model Garden, Agent Studio was Vertex AI Studio, Sessions and Memory Bank were Agent Engine Sessions and Memory Bank s1. The registry as a catalog of agents and MCP servers and the gateway as the networking component are from the release notes s3. The order of the arrows is this lesson's reading path, not a protocol; the dashed link marks the low-code route.",
+          "cites": [
+            "s1",
+            "s2",
+            "s3"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Read the map as a set of optional parts, not a prescribed stack. A team can use ADK on its own laptops with a plain Gemini API key and never touch Agent Runtime; another can host a LangGraph agent on Agent Runtime and ignore ADK; a third buys Gemini Enterprise, the end-user product, and writes no code at all. What the overview does not tell you is how mature each box is. It carries no launch-stage words, so the question \"is Agent Gateway generally available?\" cannot be answered from this page. That answer lives in the release notes and on individual component pages, and the status table later in this lesson collects it, dated.",
+          "cites": [
+            "s2",
+            "s3"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "the-rename-and-how-to-translate",
+      "title": "The rename of April 2026 and how to translate",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Most material you will meet about this platform, including Google's own older pages, blog posts, sample repositories and interview questions, uses the names from before the rename. Being able to translate in both directions is the first practical skill. The release notes record the change in a single dated entry, \"Initial release of Gemini Enterprise Agent Platform\": \"Vertex AI is now part of Gemini Enterprise Agent Platform\", \"Agent Builder is now part of Gemini Enterprise Agent Platform\", and within it \"Agent Engine is now Agent Runtime\", \"Agent Builder Sessions is Agent Platform Sessions\" and \"Memory Bank is now Agent Platform Memory Bank\".",
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Two dates to keep apart. The rename entry in the release notes is dated April 22, 2026. The name-change page itself carries no date in its body; its footer said \"Last updated 2026-10-21\" when read for this lesson, which means the page was edited on the day it was read, not that the rename happened then. Quote the entry date for the event and the footer date for the page.",
+          "cites": [
+            "s1",
+            "s3"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Vertex-era name to current name, as listed on the name-change page and the release notes",
+          "columns": [
+            "was",
+            "is now",
+            "pillar",
+            "source"
+          ],
+          "rows": [
+            [
+              "Vertex AI Platform; Vertex AI",
+              "Gemini Enterprise Agent Platform; Agent Platform for short",
+              "the whole",
+              "s1"
+            ],
+            [
+              "Vertex AI Studio",
+              "Agent Studio on Gemini Enterprise Agent Platform",
+              "Build",
+              "s1"
+            ],
+            [
+              "Vertex AI Model Garden",
+              "Gemini Enterprise Agent Platform Model Garden",
+              "Build",
+              "s1"
+            ],
+            [
+              "Vertex AI Search",
+              "Agent Search on Gemini Enterprise Agent Platform",
+              "Build",
+              "s1"
+            ],
+            [
+              "Vertex AI Vector Search; Vertex AI Vector Search 2.0",
+              "Vector Search on the platform; Agent Retrieval on the platform",
+              "Build",
+              "s1"
+            ],
+            [
+              "Vertex AI Agent Engine (Agent Builder)",
+              "Agent Runtime on Gemini Enterprise Agent Platform",
+              "Scale",
+              "s1, s3"
+            ],
+            [
+              "Agent Engine Sessions; Agent Engine Memory Bank",
+              "Agent Platform Sessions; Agent Platform Memory Bank",
+              "Scale",
+              "s1, s3"
+            ],
+            [
+              "Vertex AI Agent Engine Code Execution",
+              "Gemini Enterprise Agent Platform Code Execution",
+              "Scale",
+              "s1"
+            ],
+            [
+              "Gen AI evaluation service on Vertex AI",
+              "Gemini Enterprise Agent Platform Evals",
+              "Optimize",
+              "s1"
+            ],
+            [
+              "Claude, Llama or other partner models on Vertex AI",
+              "the model name, \"available on Gemini Enterprise Agent Platform\"",
+              "Build",
+              "s1"
+            ],
+            [
+              "Vertex AI API",
+              "Gemini Enterprise Agent Platform API (the service is still aiplatform.googleapis.com)",
+              "the whole",
+              "s1, s9"
+            ]
+          ],
+          "cites": [
+            "s1",
+            "s3",
+            "s9"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Three patterns cover almost every row. A product keeps its own noun and gains the suffix \"on Gemini Enterprise Agent Platform\"; Agent Studio, Agent Search and Agent Runtime follow it. A model is now \"the model name, available on Gemini Enterprise Agent Platform\", so there is no longer a \"Claude on Vertex AI\" product name. And \"Vertex AI\" on its own becomes \"Agent Platform\". Most identifiers under the names did not move: the API a project must enable is still aiplatform.googleapis.com, and ADK's switch for the enterprise backend was renamed from GOOGLE_GENAI_USE_VERTEXAI to GOOGLE_GENAI_USE_ENTERPRISE with the old name kept as an equivalent. The Python package is the one in motion: the Agent Runtime deployment page, read for this lesson on October 21, pins google-cloud-aiplatform[agent_engines], while the release notes' Breaking entry of September 18, 2026 announces Agent Platform SDK for Python 2.0.1, package google-cloud-agentplatform, which \"decouples the agent surface from google-cloud-aiplatform into a dedicated package\" and comes with a migration guide. When you translate a snippet, rename the prose, keep the strings, and check which package the deploy page you follow pins.",
+          "cites": [
+            "s1",
+            "s3",
+            "s9",
+            "s10"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "Two names that the name-change page does not mention. \"Agent Builder\" was the umbrella for Agent Engine, Sessions and Memory Bank and is named only in the release notes; and \"Vertex AI Agent Engine\" appears in the name-change table while many pages still print the short \"Agent Engine\". If a search for the new name finds nothing, search the old one and read the date on what you find.",
+          "cites": [
+            "s1",
+            "s3"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "three-things-called-gemini",
+      "title": "Three things called Gemini: Agent Platform, Gemini Enterprise and the Gemini API",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The word Gemini now sits on three different products, and conversations go wrong when two people mean two of them. Gemini Enterprise Agent Platform is the developer platform of this lesson: it lives inside a Google Cloud project, is reached with Google Cloud credentials and is governed by IAM, the project's identity and access management. Gemini Enterprise, without \"Agent Platform\", is an end-user product; its own docs describe it as \"an intranet search, AI assistant, and agentic platform\" with prebuilt connectors to systems such as Confluence, Jira, SharePoint and ServiceNow, sold in editions. Employees use it; developers may extend it. The Gemini API is the third: the same Gemini models served from ai.google.dev, reached with an API key created in Google AI Studio, with a Free Tier and paid tiers of its own.",
+          "cites": [
+            "s2",
+            "s4",
+            "s6"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The two developer routes matter most, because the same code can take either. The ADK docs describe the switch as an environment variable: with it unset the agent talks to the Gemini API with a key; with it set to TRUE, plus a project id and a location, it talks to the Agent Platform API in your project. The ADK page also offers an \"Express Mode\" that gives the Agent Platform route an API key for prototyping without full gcloud authentication. The decision below is about which route a team should pick, and the sequence after it shows what differs on the wire.",
+          "cites": [
+            "s9"
+          ]
+        },
+        {
+          "type": "decision",
+          "caption": "Which route for a model call",
+          "rows": [
+            {
+              "option": "Gemini API with an AI Studio key",
+              "pick_when": "you are prototyping, teaching or running a personal tool; you want the Free Tier and no Cloud project to administer; the billing page says new users get a project and a key created for them",
+              "avoid_when": "the data is regulated or the organisation needs VPC Service Controls, customer-managed keys, org policies or audit through IAM; or when you plan to host on Agent Runtime anyway",
+              "example": "a weekend agent that summarises your own notes; a course exercise"
+            },
+            {
+              "option": "Agent Platform backend (project, IAM, location)",
+              "pick_when": "the agent runs inside a company's Google Cloud estate; you need partner or open models from Model Garden, Agent Runtime hosting, Agent Identity and Gateway, or spend that lands on the normal Cloud invoice",
+              "avoid_when": "nobody on the team has a Cloud project or billing account yet and the goal is a first call this afternoon",
+              "example": "a support agent over internal tickets, deployed to Agent Runtime in us-central1"
+            },
+            {
+              "option": "Agent Platform Express Mode",
+              "pick_when": "you want the Agent Platform route and its model catalogue but only an API key for now; the ADK docs offer it for prototyping",
+              "avoid_when": "production; anything that needs the IAM path, service accounts or workload identity",
+              "example": "trying a Model Garden model from a laptop before the project is set up"
+            },
+            {
+              "option": "Gemini Enterprise (the product)",
+              "pick_when": "employees need an assistant and search over company systems and nobody intends to write agent code",
+              "avoid_when": "you are writing code that calls a model; this is not an API choice",
+              "example": "an intranet assistant connected to Jira and SharePoint"
+            }
+          ],
+          "cites": [
+            "s2",
+            "s4",
+            "s6",
+            "s9"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "One request, two credentials: the sequence shows the same ADK agent reaching the same Gemini model by the key route and by the project route.",
+          "cites": [
+            "s9"
+          ]
+        },
+        {
+          "type": "diagram",
+          "mermaid": "sequenceDiagram\n  autonumber\n  participant A as ADK agent\n  participant K as Gemini API\n  participant I as Google Cloud IAM\n  participant E as Agent Platform API\n  participant M as Gemini model\n  alt GOOGLE_GENAI_USE_ENTERPRISE unset\n    A->>K: generate, model id,<br/>x-goog-api-key\n    K->>M: run the prompt\n    M-->>K: tokens\n    K-->>A: response (or 429 / 402)\n  else GOOGLE_GENAI_USE_ENTERPRISE=TRUE\n    A->>I: ADC or service account<br/>asks for a token\n    I-->>A: short-lived access token\n    A->>E: generate, model id,<br/>project + location, bearer\n    E->>M: run the prompt\n    M-->>E: tokens\n    E-->>A: response\n  end\n  Note over A: same google-genai client,<br/>same model id, two credentials",
+          "legend": "Solid arrows are calls, dashed arrows are replies. The switch is ADK's GOOGLE_GENAI_USE_ENTERPRISE variable (formerly GOOGLE_GENAI_USE_VERTEXAI; the docs call the two equivalent), set with GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION; local credentials come from gcloud auth application-default login, production ones from a service account or workload identity s9. The key route uses the API key an AI Studio account is created with and the x-goog-api-key header of the quickstart s11. The 402 reply is the billing page's \"Payment Required\" when a Prepay balance is empty; a 429 is a rate limit s6. The model lane is drawn once because the same model id is served on both routes.",
+          "cites": [
+            "s6",
+            "s9",
+            "s11"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Money follows the route. Gemini API usage is billed through a Cloud Billing account that AI Studio sets up for you, with Prepay credits that the billing page says are \"strictly locked to Gemini API usage\"; anything on the Agent Platform route is \"billed using the standard Cloud charging cycle\" like Compute or Storage. Tiers, rate limits and account caps on the key route are decided at the billing account level, so two projects on one account share them. A later lesson in this module covers the Agent Platform route's own pricing.",
+          "cites": [
+            "s6"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "reading-preview-and-ga",
+      "title": "Reading Preview and GA honestly",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Google Cloud ships features in launch stages, and the stage decides what you may rely on. A page or section in Preview carries a banner that the feature is subject to the \"Pre-GA Offerings Terms\" and that \"Pre-GA features are available 'as is' and might have limited support\"; General Availability (GA) means the normal service terms and support apply. The release notes add finer words, \"Private Preview\" and \"Public Preview\", and they are the only place where a stage comes with a date. A component page tells you the stage today; the release notes tell you when it got there.",
+          "cites": [
+            "s3",
+            "s10"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The rule this module follows, and that you should carry into your own notes, is to quote the stage word from a page you read and to date the reading. If a page carries no stage word, write \"not stated\" rather than guessing. That matters more than it sounds: the overview and the name-change page carry no stage words at all, so a component can be listed on the map and still be in Preview, and a product with a GA runtime can have a Preview section inside it, as Agent Runtime's resource controls show. Never infer GA from the absence of a banner; infer only that the page did not say.",
+          "cites": [
+            "s1",
+            "s2",
+            "s10"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Shared status table of this module: stage as stated on the page read, as of 2026-10-21",
+          "columns": [
+            "component",
+            "name now (was)",
+            "stage as stated",
+            "date read",
+            "source"
+          ],
+          "rows": [
+            [
+              "the platform",
+              "Gemini Enterprise Agent Platform (Vertex AI)",
+              "not stated on the page; initial release entry 2026-04-22",
+              "2026-10-21",
+              "s1, s3"
+            ],
+            [
+              "Agent Studio",
+              "Agent Studio (Vertex AI Studio)",
+              "not stated on the page",
+              "2026-10-21",
+              "s1, s2"
+            ],
+            [
+              "Model Garden",
+              "Model Garden (Vertex AI Model Garden)",
+              "not stated on the page",
+              "2026-10-21",
+              "s1, s2"
+            ],
+            [
+              "ADK",
+              "Agent Development Kit (same name)",
+              "open-source framework; no stage word on the page",
+              "2026-10-21",
+              "s8"
+            ],
+            [
+              "Agent Runtime",
+              "Agent Runtime (Vertex AI Agent Engine)",
+              "not stated on the page",
+              "2026-10-21",
+              "s1, s10"
+            ],
+            [
+              "Agent Runtime resource controls",
+              "min and max instances, cpu, memory, concurrency",
+              "\"Preview\" (label on the section)",
+              "2026-10-21",
+              "s10"
+            ],
+            [
+              "Sessions and Memory Bank",
+              "Agent Platform Sessions and Memory Bank (Agent Engine Sessions and Memory Bank)",
+              "multi-regional and global endpoints \"General Availability (GA)\", entry of 2026-06-17",
+              "2026-10-21",
+              "s1, s3"
+            ],
+            [
+              "Code Execution",
+              "Code Execution (Agent Engine Code Execution)",
+              "not stated on the page; the Computer Use and Shell sandboxes \"generally available (GA)\", entry of 2026-09-09",
+              "2026-10-21",
+              "s1, s3"
+            ],
+            [
+              "Agent Identity",
+              "Agent Identity (new)",
+              "\"General Availability\", initial release entry 2026-04-22",
+              "2026-10-21",
+              "s3"
+            ],
+            [
+              "Agent Identity API",
+              "agentidentity.googleapis.com (replaces iamconnectors.googleapis.com)",
+              "\"Preview\", entry of 2026-06-18",
+              "2026-10-21",
+              "s3"
+            ],
+            [
+              "Agent Gateway",
+              "Agent Gateway (new)",
+              "\"General Availability\", entry of 2026-06-18; was \"Private Preview\" at the initial release",
+              "2026-10-21",
+              "s3"
+            ],
+            [
+              "Agent Registry",
+              "Agent Registry (new)",
+              "\"generally available (GA)\", entry of 2026-06-18; was \"Public Preview\" at the initial release",
+              "2026-10-21",
+              "s3"
+            ],
+            [
+              "Model Armor for Agent Gateway",
+              "Model Armor (same name)",
+              "\"General Availability\", entry of 2026-06-24",
+              "2026-10-21",
+              "s3"
+            ],
+            [
+              "Agent Garden",
+              "Agent Garden (new)",
+              "\"Preview\" (label on the page)",
+              "2026-10-21",
+              "s12"
+            ],
+            [
+              "Managed Agents API",
+              "Managed Agents API on Agent Platform (new)",
+              "\"Preview\", entry of 2026-05-19; heading says (Preview)",
+              "2026-10-21",
+              "s3, s8"
+            ],
+            [
+              "Agent Search",
+              "Agent Search (Vertex AI Search)",
+              "not stated on the page",
+              "2026-10-21",
+              "s1"
+            ],
+            [
+              "Vector Search; Agent Retrieval",
+              "Vector Search (Vertex AI Vector Search); Agent Retrieval (Vertex AI Vector Search 2.0)",
+              "not stated on the page",
+              "2026-10-21",
+              "s1"
+            ],
+            [
+              "RAG Engine",
+              "RAG Engine (same name)",
+              "not stated on the page",
+              "2026-10-21",
+              "s2"
+            ],
+            [
+              "Gemini models, stable",
+              "gemini-4-argon, gemini-3.8-flash, gemini-3.6-flash and others",
+              "\"Stable\" (label per model)",
+              "2026-10-21",
+              "s5"
+            ],
+            [
+              "Gemini models, preview",
+              "gemini-3.1-pro-preview, gemini-3-flash-preview and others",
+              "\"Preview\" (label per model)",
+              "2026-10-21",
+              "s5"
+            ]
+          ],
+          "cites": [
+            "s1",
+            "s2",
+            "s3",
+            "s5",
+            "s8",
+            "s10",
+            "s12"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Every stage word in quotation marks above is copied from the page in the source column; \"entry of\" dates are release-note entry headings. \"Not stated on the page\" means the page read on the date shown carried no stage word. It is not a synonym for GA. Later lessons in this module link here instead of repeating the table.",
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Two things in the table deserve a second look. Agent Identity was GA at the initial release while its own API surface came later and in Preview, so \"is Agent Identity GA?\" has two honest answers depending on whether you mean the feature or the API you call. And both Agent Gateway and Agent Registry moved from a preview to GA within two months; a note written in May would already be wrong. The habit that protects you is a dated re-read of the release notes before you quote a stage, and a date next to every stage you write down.",
+          "cites": [
+            "s3"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "models-routes-ids-pinning",
+      "title": "Models: routes, ids and pinning",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Whichever route you take, you name a model by id. On the Agent Platform route the catalogue is Model Garden, which the overview places under Build and describes as the way to reach Google's, partners' and open models from one project; the rename table turns \"Claude or Llama on Vertex AI\" into \"the model name, available on Gemini Enterprise Agent Platform\". On the key route the catalogue is the Gemini API models page, which lists only Gemini-family models and labels each one. That page is also the clearest statement of the version policy, which applies to the same ids on both routes.",
+          "cites": [
+            "s1",
+            "s2",
+            "s5"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Version patterns on the Gemini API models page, as read on 2026-10-21",
+          "columns": [
+            "pattern",
+            "example id",
+            "what the page says",
+            "use it for"
+          ],
+          "rows": [
+            [
+              "Stable",
+              "gemini-3.6-flash",
+              "\"Most production apps should use a specific stable model\"",
+              "anything you deploy"
+            ],
+            [
+              "Preview",
+              "gemini-3.1-pro-preview",
+              "may be used for production, \"deprecated with at least 2 weeks notice\"",
+              "evaluation; production only with a planned swap"
+            ],
+            [
+              "Latest alias",
+              "gemini-flash-latest",
+              "\"hot-swapped with every new release\"; notice (by email, 2 weeks) only before a breaking swap",
+              "experiments where drift is acceptable"
+            ],
+            [
+              "Older generation",
+              "gemini-2.5-flash",
+              "access limited to accounts that used them before; \"not deprecated and will continue to be served until further notice\"",
+              "existing workloads only"
+            ]
+          ],
+          "cites": [
+            "s5"
+          ]
+        },
+        {
+          "type": "list",
+          "items": [
+            "Stable on the page today: gemini-4-argon (the flagship, GA in the release notes on 2026-10-13), gemini-3.8-flash, gemini-3.8-live, gemini-3.8-live-extended-thinking, gemini-3.8-flash-tts, gemini-3.8-flash-lite-tts, gemini-3.6-flash, gemini-3.5-flash-lite, gemini-3.1-flash-lite, plus the image, transcription and video models.",
+            "Preview on the page today: gemini-3.1-pro-preview, gemini-3-flash-preview, gemini-3.5-live-translate-preview, gemini-3.1-flash-live-preview, gemini-3.1-flash-tts-preview.",
+            "Already shut down and still listed so you can recognise the ids: Gemini 3 Pro Preview and Gemini 3.1 Flash-Lite Preview; Veo 3.1 is marked as shutting down on 2026-10-22."
+          ],
+          "cites": [
+            "s3",
+            "s5"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "One SDK serves both routes. The libraries page names google-genai (pip install google-genai) as the recommended, actively maintained library and lists the older ones, google-generativeai for Python and @google/generativeai for JavaScript among them, as \"Not actively maintained\". A client built with google-genai reads the same environment variables ADK uses, so switching an agent from the key route to the project route is a change of environment, not of code.",
+          "cites": [
+            "s7",
+            "s9"
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "bash",
+          "code": "# Route A: Gemini API with an AI Studio key (Free Tier or paid tier)\nexport GEMINI_API_KEY=\"YOUR_API_KEY\"        # the quickstart's variable name\n\n# Route B: Agent Platform in your Google Cloud project (IAM)\nexport GOOGLE_GENAI_USE_ENTERPRISE=TRUE       # was GOOGLE_GENAI_USE_VERTEXAI; both accepted\nexport GOOGLE_CLOUD_PROJECT=\"my-project\"\nexport GOOGLE_CLOUD_LOCATION=\"us-central1\"\n# credentials come from: gcloud auth application-default login (local)\n# or a service account / workload identity (production)\n",
+          "caption": "The two environments an ADK or google-genai program can run in; variable names from the Gemini API quickstart and the ADK Google Cloud page, read on 2026-10-21"
+        },
+        {
+          "type": "callout",
+          "kind": "tip",
+          "text": "Pin the model id you ship. A stable id such as gemini-3.8-flash changes only when you change it; a Latest alias is \"hot-swapped with every new release\", and the two-week emailed notice the page promises is only for breaking changes; a Preview id can be withdrawn with at least two weeks' notice. Pin the SDK too: the Agent Runtime deployment page tells you to \"pin your package versions for reproducible builds\" and names google-cloud-aiplatform among the packages to watch; the release notes' Breaking entry of September 18, 2026 moves the agent surface to google-cloud-agentplatform (SDK 2.0.1), so check which one the page you follow pins.",
+          "cites": [
+            "s3",
+            "s5",
+            "s10"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "the-younger-pieces",
+      "title": "The younger pieces, one line each",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The components below are the ones that did not exist, or did not exist under that name, before the platform's initial release. Each line gives the job, the stage as the release notes state it, and where this module goes deeper. Treat the stage words as snapshots from the status table above; they will age.",
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "list",
+          "items": [
+            "Agent Identity: a cryptographic identity per agent, so an agent authenticates to MCP servers, cloud resources and other agents as itself rather than through a shared service account. \"General Availability\" at the initial release (2026-04-22); its new API, agentidentity.googleapis.com, \"available in Preview\" from 2026-06-18 and replacing iamconnectors.googleapis.com. A later lesson in this module covers agent identity and IAM.",
+            "Agent Gateway: the networking component that agents' outbound calls pass through, where policy is enforced and traffic inspected. \"Private Preview\" at the initial release, \"General Availability\" from 2026-06-18. A later lesson in this module covers the gateway and Model Armor.",
+            "Model Armor for Agent Gateway: prompt and response screening attached to the gateway; \"General Availability\" from 2026-06-24.",
+            "Agent Registry: \"a centralized catalog for discovering and registering agents and Model Context Protocol (MCP) servers\"; \"Public Preview\" at the initial release, \"generally available (GA)\" from 2026-06-18, with Terraform support GA in the same entry.",
+            "Managed Agents API on Agent Platform: build an autonomous agent from configuration that runs in a managed sandbox and is driven through a dedicated API; \"released in Preview\" on 2026-05-19, and the Build page still heads it \"(Preview)\".",
+            "Agent Garden: a curated library of prebuilt agent samples you can open and test from the console; the page is labelled \"Preview\".",
+            "Agent Runtime resource controls: minimum and maximum instances, cpu and memory per container and per-container concurrency on a deployed agent; the section is labelled \"Preview\", and the page notes that idle time is not billed while it is. A later lesson in this module covers Agent Runtime.",
+            "Sessions and Memory Bank: the conversation store and the long-term memory store next to the runtime; their multi-regional and global endpoints reached \"General Availability (GA)\" on 2026-06-17 (the entry adds that CMEK cannot be used with the global endpoint). A later lesson in this module covers state.",
+            "Code Execution and the sandboxes: an isolated place to run model-written code; the Code Execution page carries no stage word, while the Computer Use and Shell sandboxes were declared \"generally available (GA)\" on 2026-09-09.",
+            "Agent Search, Vector Search, Agent Retrieval and RAG Engine: the retrieval family, renamed from Vertex AI Search, Vertex AI Vector Search and Vector Search 2.0, with RAG Engine keeping its name; none of the pages read carries a stage word. A later lesson in this module covers retrieval."
+          ],
+          "cites": [
+            "s1",
+            "s2",
+            "s3",
+            "s8",
+            "s10",
+            "s12"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Notice how the three governance pieces fit together, because the names alone do not say it: Identity proves which agent is calling, Registry records which agents and MCP servers exist, and Gateway sits on the path between them and enforces what a proven, registered agent may reach. That is why the release notes announce them together and why a GA gateway with a Preview identity API is a meaningful combination to notice rather than a contradiction. The map in the first section drew the same three arrows.",
+          "cites": [
+            "s3"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "free-tier-step-and-cost",
+      "title": "Optional: one free call, and what the tiers cost",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Nothing in this lesson needs a Google Cloud bill. If you want to touch the key route once, the Gemini API's Free Tier is the way: the billing page says \"new accounts begin on the Free Tier\", which allows access to certain models \"up to the models' free tier rate limits\", and the quickstart says Google AI Studio \"automatically creates a project and API key for new users\". Rate limits are applied per project and per tier; the numbers are per model and live on the rate-limits page, so read them there on the day rather than from a lesson. The steps below are written from the quickstart and were not run for this lesson.",
+          "cites": [
+            "s6",
+            "s11"
+          ]
+        },
+        {
+          "type": "steps",
+          "title": "One call on the Free Tier (written from the quickstart, not run)",
+          "items": [
+            "Open Google AI Studio and the API keys page; a new account already has 1 project and 1 key created for it. Copy the key; never paste it into a repository.",
+            "In a terminal, export GEMINI_API_KEY with that value, exactly the 1 variable name the quickstart uses.",
+            "Install the SDK: pip install -U google-genai, the 1 library the libraries page marks as actively maintained.",
+            "Run the snippet below; it names gemini-3.8-flash, 1 of the ids the models page labels Stable.",
+            "Open Dashboard then Usage in AI Studio and confirm 1 request was counted against the Free Tier of that project."
+          ],
+          "cites": [
+            "s6",
+            "s7",
+            "s11"
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "python",
+          "code": "from google import genai\n\nclient = genai.Client()  # reads GEMINI_API_KEY from the environment\n\ninteraction = client.interactions.create(\n    model=\"gemini-3.8-flash\",\n    input=\"Explain how AI works in a few words\"\n)\nprint(interaction.output_text)\n",
+          "caption": "The Python example of the Gemini API quickstart as read on 2026-10-21; written here, not run for this lesson"
+        },
+        {
+          "type": "table",
+          "caption": "Gemini API usage tiers as read on the billing page on 2026-10-21 (page updated 2026-09-28); caps in US dollars per billing account per month",
+          "columns": [
+            "tier",
+            "how an account gets there",
+            "monthly spend cap"
+          ],
+          "rows": [
+            [
+              "Free Tier",
+              "default for new accounts",
+              "none; free-tier rate limits apply instead"
+            ],
+            [
+              "Tier 1",
+              "link a billing account and prepay at least $5 of credits",
+              "$250"
+            ],
+            [
+              "Tier 2",
+              "$100 paid and 3 days since the first successful payment",
+              "$2,000"
+            ],
+            [
+              "Tier 3",
+              "$1,000 paid and 30 days since the first successful payment",
+              "$20,000 to $100,000+"
+            ]
+          ],
+          "cites": [
+            "s6"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "Two credits that do not pay for this. The billing page says a new Cloud Billing account may receive a $300 Welcome credit but that accounts opened after March 2, 2026 cannot spend it on the Gemini API or AI Studio; and Prepay credits bought for the Gemini API cannot be spent on Agent Platform, which is billed on the standard Cloud cycle. Budget the two routes separately.",
+          "cites": [
+            "s6"
+          ]
+        }
+      ]
+    }
+  ],
+  "worked_example": {
+    "title": "Five Vertex-era snippets, translated and routed",
+    "blocks": [
+      {
+        "type": "p",
+        "text": "Each item below is a line you could meet in a repository, a runbook or an interview. Translate the name to its current form, keep the strings that did not change, and say which route the code is on: the key route (Gemini API) or the project route (Agent Platform).",
+        "cites": [
+          "s1",
+          "s9"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "The five snippets",
+        "columns": [
+          "#",
+          "as found",
+          "current reading",
+          "route"
+        ],
+        "rows": [
+          [
+            "1",
+            "GOOGLE_GENAI_USE_VERTEXAI=TRUE in a .env file",
+            "GOOGLE_GENAI_USE_ENTERPRISE=TRUE; the old name still works",
+            "project route"
+          ],
+          [
+            "2",
+            "\"deploy the agent to Vertex AI Agent Engine\" in a runbook",
+            "deploy to Agent Runtime; check which package the deploy page pins: google-cloud-aiplatform[agent_engines] on the deployment page, google-cloud-agentplatform in the SDK 2.0.1 release note",
+            "project route"
+          ],
+          [
+            "3",
+            "pip install google-generativeai and import google.generativeai as genai",
+            "pip install google-genai and from google import genai",
+            "key route as written; the new SDK serves both"
+          ],
+          [
+            "4",
+            "\"ground on our Vertex AI Search datastore\"",
+            "Agent Search on Gemini Enterprise Agent Platform; stage not stated on the page",
+            "project route"
+          ],
+          [
+            "5",
+            "model=\"gemini-flash-latest\" in a production config",
+            "pin a Stable id such as gemini-3.8-flash; the alias is hot-swapped",
+            "either route"
+          ]
+        ],
+        "cites": [
+          "s1",
+          "s5",
+          "s7",
+          "s9",
+          "s10"
+        ]
+      },
+      {
+        "type": "steps",
+        "title": "Working through them",
+        "items": [
+          "Snippet 1: the ADK Google Cloud page says GOOGLE_GENAI_USE_ENTERPRISE \"was previously GOOGLE_GENAI_USE_VERTEXAI\" and that the names are equivalent; a value of TRUE means the agent authenticates with Google Cloud credentials and calls the Agent Platform API in GOOGLE_CLOUD_PROJECT, so this is the project route and the file needs no change to run, only a rename when you touch it.",
+          "Snippet 2: Agent Engine is Agent Runtime since the initial release entry, so the runbook's prose changes. Its pip line needs a date check rather than a reflex: the deployment page, read 2026-10-21, lists google-cloud-aiplatform[agent_engines,adk] in its requirements, while the release notes' Breaking entry of 2026-09-18 announces Agent Platform SDK for Python 2.0.1 (google-cloud-agentplatform), which \"decouples the agent surface from google-cloud-aiplatform into a dedicated package\" and points to a migration guide; pin whichever package the deploy page you follow pins today and record the date. Hosting on Agent Runtime exists only on the project route, in 1 named location such as us-central1.",
+          "Snippet 3: the libraries page marks google-generativeai \"Not actively maintained\" and recommends google-genai; the import becomes from google import genai, the client is genai.Client(), and because this code used an API key it is on the key route today, though the new SDK follows the same environment switch and can move to the project route with 0 code changes.",
+          "Snippet 4: Vertex AI Search is Agent Search on Gemini Enterprise Agent Platform in the rename table; it is a project resource, so project route; the page read carries no stage word, so the status table says \"not stated\" and you write the same, with the date, in the runbook.",
+          "Snippet 5: the models page says a Latest alias is \"hot-swapped with every new release\", with a 2-week emailed notice only for breaking changes, and that \"most production apps should use a specific stable model\"; replace the alias with a Stable id from the page and record the date you chose it; the id is the same on both routes, so the route is whatever the credentials say."
+        ],
+        "cites": [
+          "s1",
+          "s3",
+          "s5",
+          "s7",
+          "s9",
+          "s10"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Check yourself before reading the answers: the three questions below use only what the lesson has shown.",
+        "cites": [
+          "s3"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "Check: three questions, answers given",
+        "columns": [
+          "question",
+          "answer"
+        ],
+        "rows": [
+          [
+            "A colleague says \"Agent Gateway is still in private preview\". What do you ask and what does the record show?",
+            "Ask for the date of what they read. The release notes list Agent Gateway as \"Private Preview\" at the initial release and \"in General Availability\" in the entry of 2026-06-18; that GA entry stood on the day this lesson was read."
+          ],
+          [
+            "A deployment config contains GOOGLE_GENAI_USE_VERTEXAI=TRUE and GEMINI_API_KEY. Which route does it take?",
+            "The project route: the ADK docs treat the old variable name as equivalent to GOOGLE_GENAI_USE_ENTERPRISE, and with it set the agent uses Google Cloud credentials; the API key variable is for the key route and is not what selects the backend here."
+          ],
+          [
+            "The overview lists Agent Garden under Build. Is it GA?",
+            "The overview does not say; the Agent Garden page itself is labelled \"Preview\". Write \"Preview, read 2026-10-21\", never GA by inference."
+          ]
+        ],
+        "cites": [
+          "s2",
+          "s3",
+          "s9",
+          "s12"
+        ]
+      }
+    ]
+  },
+  "code": [],
+  "diagram": null,
+  "technologies": [
+    "Gemini Enterprise Agent Platform",
+    "Agent Development Kit (ADK)",
+    "Agent Runtime",
+    "Agent Studio",
+    "Model Garden",
+    "Agent Identity",
+    "Agent Gateway",
+    "Agent Registry",
+    "Model Armor",
+    "Gemini API",
+    "Google AI Studio",
+    "google-genai SDK"
+  ],
+  "related": [
+    "cloud-deployments",
+    "llm-fundamentals",
+    "structured-outputs-tool-calling",
+    "bedrock-and-claude-apis"
+  ],
+  "practice": null,
+  "provenance": {
+    "generated_by": "Claude Fable 5.1 by hand, Scout learning center, format v2 Gemini Enterprise Agent Platform map",
+    "generated_on": "2026-10-21",
+    "reviewed_by": "a second reader (a separate Claude Fable 5.1 instance, not the writer), Scout learning center, format v2 Gemini Enterprise Agent Platform map",
+    "reviewed_on": "2026-10-21"
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-21",
+      "change": "new lesson, entry 1 of the gcp-ai-platform module: the four pillars with a flow of the components and their old names; the rename of 2026-04-22 with a translation table; Agent Platform vs Gemini Enterprise vs the Gemini API with a decision block and a two-route sequence; how to read Preview and GA and the module's shared dated status table (as of 2026-10-21); model ids, version patterns, the google-genai SDK and the backend environment variables; the governance and runtime pieces one line each; an optional Free Tier call written from the quickstart and not run; worked example of five translated snippets with a check; twelve sources fetched 2026-10-21. Same-day review fixes: the deployment package stated as two dated facts (deploy page pins google-cloud-aiplatform; SDK 2.0.1 release note of 2026-09-18 introduces google-cloud-agentplatform) instead of 'still'; Latest-alias notice limited to breaking changes; flow legend names every component the overview lists"
+    }
+  ],
+  "sources": [
+    {
+      "id": "s1",
+      "title": "Gemini Enterprise Agent Platform docs: Vertex AI name changes (previous and new names)",
+      "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/vertex-ai-name-changes",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "Agent Runtime on Gemini Enterprise Agent Platform"
+      }
+    },
+    {
+      "id": "s2",
+      "title": "Gemini Enterprise Agent Platform docs: Overview (Build, Scale, Govern, Optimize)",
+      "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/overview",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "unified platform to build, deploy, govern, and optimize"
+      }
+    },
+    {
+      "id": "s3",
+      "title": "Gemini Enterprise Agent Platform release notes (dated entries, April to October 2026)",
+      "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/release-notes",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "Initial release of Gemini Enterprise Agent Platform"
+      }
+    },
+    {
+      "id": "s4",
+      "title": "Gemini Enterprise docs: Overview (the end-user product)",
+      "url": "https://docs.cloud.google.com/gemini/enterprise/docs/overview",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "intranet search, AI assistant, and agentic platform"
+      }
+    },
+    {
+      "id": "s5",
+      "title": "Gemini API docs: Models (stable, preview and latest ids, version patterns)",
+      "url": "https://ai.google.dev/gemini-api/docs/models",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "Most production apps should use a specific stable model"
+      }
+    },
+    {
+      "id": "s6",
+      "title": "Gemini API docs: Billing (Free Tier, paid tiers, Prepay, spend caps)",
+      "url": "https://ai.google.dev/gemini-api/docs/billing",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "New accounts begin on the Free Tier"
+      }
+    },
+    {
+      "id": "s7",
+      "title": "Gemini API docs: Libraries (google-genai and the legacy libraries)",
+      "url": "https://ai.google.dev/gemini-api/docs/libraries",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "Not actively maintained"
+      }
+    },
+    {
+      "id": "s8",
+      "title": "Gemini Enterprise Agent Platform docs: Build (ADK, Agent Studio, Agent Garden, Managed Agents API)",
+      "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/build",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "Managed Agents API on Agent Platform (Preview)"
+      }
+    },
+    {
+      "id": "s9",
+      "title": "Agent Development Kit docs: Connect to Google Cloud and Agent Platform (backend variables, credentials, Express Mode)",
+      "url": "https://adk.dev/get-started/google-cloud/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "GOOGLE_GENAI_USE_ENTERPRISE was previously GOOGLE_GENAI_USE_VERTEXAI"
+      }
+    },
+    {
+      "id": "s10",
+      "title": "Gemini Enterprise Agent Platform docs: Deploy an agent to Agent Runtime (requirements, resource controls)",
+      "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/runtime/deploy-an-agent",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "Define customized resource controls"
+      }
+    },
+    {
+      "id": "s11",
+      "title": "Gemini API docs: Quickstart (API key, google-genai, first request)",
+      "url": "https://ai.google.dev/gemini-api/docs/quickstart",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "pip install -U google-genai"
+      }
+    },
+    {
+      "id": "s12",
+      "title": "Gemini Enterprise Agent Platform docs: Agent Garden (Preview)",
+      "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/build/agent-garden",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "The Agent Garden is a curated"
+      }
+    }
+  ]
+}
