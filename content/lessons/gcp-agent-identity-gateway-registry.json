@@ -1,0 +1,1051 @@
+{
+  "schema_version": "learning-center-lesson:2",
+  "id": "gcp-agent-identity-gateway-registry",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Identity, gateway and registry for agents (with MCP and A2A on Google Cloud)",
+  "area": "security",
+  "primary_key": "agent-identity",
+  "secondary_keys": [
+    "agent-registry",
+    "model-armor",
+    "mcp",
+    "identity-and-access",
+    "responsible-ai"
+  ],
+  "keys": [
+    "agent-identity",
+    "agent-registry",
+    "model-armor",
+    "mcp",
+    "identity-and-access",
+    "responsible-ai"
+  ],
+  "summary": "Google Cloud governs an agent's tool calls with four pieces: Agent Identity says who is calling (a SPIFFE identity per deployed agent, not a shared service account), Agent Registry says which tools, MCP servers, endpoints and agents are allowed to exist, policies say what the agent may do (IAM allow policies with CEL conditions, Model Armor scans, semantic governance verdicts), and Agent Gateway is the point where all of it is enforced, with every connection blocked until a policy allows it. This lesson traces one MCP call through those checks, compares Agent Identity with service accounts and delegated user tokens, places MCP and A2A on the platform, and lists which of these pieces the release notes still call Preview as of 2026-10-21.",
+  "detail": [],
+  "in_practice": {
+    "blocks": [
+      {
+        "type": "p",
+        "text": "Grant least privilege per agent and per tool, not per MCP server. The gateway blocks every connection until an IAM policy allows it, and the policy's CEL condition can name a single tool through `iap.googleapis.com/mcp.toolName`, so an agent that only reads issues gets a binding for the read tools and nothing else. The same page's example goes further and tests `mcp.tool.isReadOnly`, which lets you say \"read-only tools only\" in one condition.",
+        "cites": [
+          "s2",
+          "s7"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Give each deployed agent its own identity, never one identity for a team or a project. Agent Identity is built that way: an agent identity is \"not shared by multiple workloads by default\", can't be impersonated, and issues no long-lived keys. The contrast is instructive: on Microsoft Foundry, \"all unpublished or in-development agents within the same project share a common identity\" until an agent is published, which is exactly the shape you want to leave behind before production.",
+        "cites": [
+          "s1",
+          "s12"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Log the decisions and start in dry-run. Model Armor's \"Inspect only\" setting logs violations to Cloud Logging without blocking, and the Model Armor page describes starting there as its policy-testing use case, tuning thresholds from the logs before enabling \"Inspect and block\"; the IAM policy page recommends configuring the gateway in dry-run mode at first, and IAM Unified Access Policies ship with dry-run and enforcement modes. A denial you can read in a log is a policy you can fix; a denial you cannot see is an outage.",
+        "cites": [
+          "s4",
+          "s7",
+          "s8"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Re-read the stage words before you commit a design. Of the pieces this lesson uses, the Agent Identity API, semantic governance policies and the Cloud Trace integration with Agent Gateway were still Preview in the release notes on 2026-10-21, and ADK marks its A2A pages Experimental. Gateway support on GKE, Cloud Run and other clouds reads \"Coming soon\". Build the IAM allow policies and Model Armor templates first; they are the GA parts.",
+        "cites": [
+          "s2",
+          "s8",
+          "s10"
+        ]
+      }
+    ]
+  },
+  "subtopics": [
+    {
+      "id": "four-questions-one-gateway",
+      "title": "Four questions, one gateway",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The Agent Gateway overview describes Google Cloud's governance layer for agents as four questions, each answered by one component. Agent Identity answers who sent the request: each agent gets \"a unique, secure ID (a SPIFFE ID)\". Agent Registry answers which destinations are approved; it is \"the central directory for all approved agents, tools, Model Context Protocol (MCP) servers, and endpoints\". Policies answer what the agent may do, and the page lists five kinds: IAM Unified Access Policies, Model Armor, semantic governance policies, token management policies and custom authorization engines plugged in through Service Extensions, of which token management policies and extension bindings are marked \"coming soon\". Agent Gateway answers where the rules are enforced: it \"serves as the main entry and exit point for network traffic between clients-to-agents, and agents-to-anywhere\", terminates mTLS, translates between MCP, REST and gRPC, and applies the checks on every request.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Two paths run through the same gateway. Client-to-Agent is ingress: a web app, a CLI or an external system reaching a hosted agent or an MCP tool, with the gateway authenticating the caller and inspecting the prompt. Agent-to-Anywhere is egress: the agent's own outbound calls to tools, remote MCP servers, SaaS APIs and other agents, where the gateway \"Enforces workload-bound identity, destination registry compliance, Identity and Access Management (IAM) access policies, and payload sanitization\". This lesson follows the egress path, because that is where an agent's tool calls are decided, and one sentence governs all of it: \"By default, all connections are blocked unless an explicit IAM policy grants access.\"",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "flow",
+          "nodes": [
+            {
+              "id": "agent",
+              "label": "Agent on Agent Runtime, Gemini Enterprise or Cloud Run",
+              "kind": "service"
+            },
+            {
+              "id": "identity",
+              "label": "Agent Identity: SPIFFE ID, X.509 certificate, bound tokens",
+              "kind": "service"
+            },
+            {
+              "id": "gateway",
+              "label": "Agent Gateway (mTLS, MCP/REST/gRPC)",
+              "kind": "service"
+            },
+            {
+              "id": "registry",
+              "label": "Agent Registry: Agent, McpServer, Endpoint, Skill, SkillRevision, Publisher",
+              "kind": "store"
+            },
+            {
+              "id": "iam",
+              "label": "IAM allow policy via IAP (roles/iap.egressor, CEL condition)",
+              "kind": "service"
+            },
+            {
+              "id": "armor",
+              "label": "Model Armor template",
+              "kind": "service"
+            },
+            {
+              "id": "engine",
+              "label": "Semantic governance policy engine (PDP)",
+              "kind": "service"
+            },
+            {
+              "id": "mcp",
+              "label": "Remote MCP server (Google Cloud or your own)",
+              "kind": "service"
+            },
+            {
+              "id": "peer",
+              "label": "Another agent (A2A)",
+              "kind": "service"
+            }
+          ],
+          "frames": [
+            {
+              "id": "who",
+              "title": "Who",
+              "nodes": [
+                "identity"
+              ]
+            },
+            {
+              "id": "what-destinations",
+              "title": "What destinations",
+              "nodes": [
+                "registry"
+              ]
+            },
+            {
+              "id": "what-actions",
+              "title": "What actions",
+              "nodes": [
+                "iam",
+                "armor",
+                "engine"
+              ]
+            },
+            {
+              "id": "where",
+              "title": "Where",
+              "nodes": [
+                "gateway"
+              ]
+            }
+          ],
+          "edges": [
+            {
+              "id": "e1",
+              "from": "agent",
+              "to": "identity",
+              "label": "Receives its SPIFFE identity and an access token bound to its certificate",
+              "short": "identity"
+            },
+            {
+              "id": "e2",
+              "from": "agent",
+              "to": "gateway",
+              "label": "Calls a tool or an agent through the gateway over mTLS",
+              "short": "call"
+            },
+            {
+              "id": "e3",
+              "from": "gateway",
+              "to": "registry",
+              "label": "Looks up the destination among the registered resources",
+              "short": "lookup"
+            },
+            {
+              "id": "e4",
+              "from": "gateway",
+              "to": "iam",
+              "label": "Evaluates the allow policy for this principal, this resource and this tool name",
+              "short": "allow?"
+            },
+            {
+              "id": "e5",
+              "from": "gateway",
+              "to": "armor",
+              "label": "Scans the prompt and later the tool response",
+              "short": "scan"
+            },
+            {
+              "id": "e6",
+              "from": "gateway",
+              "to": "engine",
+              "label": "Sends the model's proposed tool call for an ALLOW or DENY verdict",
+              "short": "verdict"
+            },
+            {
+              "id": "e7",
+              "from": "gateway",
+              "to": "mcp",
+              "label": "Forwards the allowed MCP call",
+              "short": "MCP"
+            },
+            {
+              "id": "e8",
+              "from": "gateway",
+              "to": "peer",
+              "label": "Forwards the allowed A2A call",
+              "short": "A2A"
+            },
+            {
+              "id": "e9",
+              "from": "iam",
+              "to": "registry",
+              "kind": "link",
+              "label": "A binding can only target a registered resource",
+              "short": "binds to",
+              "dashed": true
+            }
+          ],
+          "steps": [
+            {
+              "edge": "e1",
+              "caption": "The platform issues the agent its SPIFFE ID and a short-lived X.509 certificate; access tokens are bound to that certificate."
+            },
+            {
+              "edge": "e2",
+              "caption": "Every outbound call leaves through the gateway, which terminates mTLS and reads the MCP, REST or gRPC request."
+            },
+            {
+              "edge": "e3",
+              "caption": "The gateway queries the registry: an unregistered destination is not a destination."
+            },
+            {
+              "edge": "e4",
+              "caption": "The IAM allow policy, enforced through IAP, decides whether this principal may reach this resource and tool; the default is deny."
+            },
+            {
+              "edge": "e5",
+              "caption": "Model Armor scans prompts and tool responses for prompt injection, sensitive data and harmful content."
+            },
+            {
+              "edge": "e6",
+              "caption": "If a semantic governance policy is attached, the policy engine judges the proposed tool call against intent and natural-language constraints."
+            },
+            {
+              "edge": "e7",
+              "caption": "An allowed MCP call is forwarded as JSON-RPC to the registered MCP server."
+            },
+            {
+              "edge": "e8",
+              "caption": "An allowed agent-to-agent call is forwarded under the A2A protocol."
+            }
+          ],
+          "legend": "Boxes follow the four questions on the gateway overview (s2); the registry kinds are from s3, the policy and PDP wording from s6 and s7, the identity material from s1.",
+          "cites": [
+            "s1",
+            "s2",
+            "s3",
+            "s6",
+            "s7"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Read the stage words before you design around any of this. The gateway overview carries no launch-stage label, and neither do the identity, registry or MCP pages read for this lesson, while the Model Armor overview labels only its image-screening section \"Preview\"; the stages live in the release notes and are collected in the status box further down. Where the gateway runs matters as much: the Google-managed deployment covers agents on Agent Runtime and Gemini Enterprise, while the GKE, Cloud Run and cross-cloud rows of the deployment table read \"Coming soon\" with a sign-up form for early access. The module's first lesson, Gemini Enterprise Agent Platform: the map, the names and how to read its status, explains how to read those words and carries the full status table for the platform.",
+          "cites": [
+            "s2",
+            "s4",
+            "s8"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "agent-identity-is-not-a-service-account",
+      "title": "Agent Identity is not a service account",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Agent Identity gives each agent \"a strongly attested, cryptographic identity for each agent that is based on the SPIFFE standard\". The identity is written as a SPIFFE ID of the form `spiffe://TRUST_DOMAIN/resources/SERVICE/RESOURCE_PATH` and, for IAM bindings, as a principal of the form `principal://TRUST_DOMAIN/resources/SERVICE/RESOURCE_PATH`. The trust domain is per organisation, `agents.global.org-ORGANIZATION_ID.system.id.goog`, or `agents.global.proj-PROJECT_NUMBER.system.id.goog` for a project without an organisation, and the resource path is the deployed agent itself: an Agent Runtime reasoning engine, a Gemini Enterprise agent or a Cloud Run service, which the page lists as the supported hosts. Because the resource path is part of the name, the identity belongs to one deployment, not to a team, an environment or a codebase.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The overview states the difference from service accounts in one sentence: \"Unlike service accounts, agent identities are not shared by multiple workloads by default, can't be impersonated, and don't allow developers to generate long-lived service account keys. Access tokens generated for Google Cloud are cryptographically bound to the agent's unique X.509 certificates to prevent token theft.\" The certificate is issued to the agent and is \"valid for 24 hours\", with automatic renewal, so there is no key file to rotate or to leak. The binding is enforced in two ways: mutual TLS when the agent talks to Google APIs, and Demonstrating Proof of Possession (DPoP) when the call passes through Agent Gateway, which the page describes as double-bound credentials. A stolen token without the matching certificate is useless.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Three things an agent can present, and what differs",
+          "columns": [
+            "credential",
+            "what it is",
+            "who holds the secret",
+            "lifetime",
+            "revocation"
+          ],
+          "rows": [
+            [
+              "Agent Identity",
+              "A SPIFFE identity per deployed agent, with an X.509 certificate and access tokens bound to it (s1)",
+              "The platform issues the certificate to the agent; developers cannot generate keys for it (s1)",
+              "Certificate \"valid for 24 hours\", renewed automatically (s1)",
+              "Remove the IAM bindings on the principal; deleting the agent alone leaves the bindings in place (s1)"
+            ],
+            [
+              "Service account (contrast)",
+              "A Google Cloud principal that, as the overview puts it, can be shared by multiple workloads and impersonated (s1)",
+              "Whoever holds a user-managed key or an impersonation grant (s1)",
+              "User-managed keys are long-lived (s1)",
+              "Delete the key or the role grant; see the machine-to-machine API auth lesson"
+            ],
+            [
+              "User-delegated OAuth 2.0 token (three-legged)",
+              "A token the end user consents to, letting the agent act on the user's data rather than as itself (s1)",
+              "The auth manager, \"a centralized credentials vault and authentication broker\", stores it for the agent (s1)",
+              "Set by the OAuth provider that issued it; see the OAuth 2.0 lesson",
+              "The user or the provider withdraws consent; see the OAuth 2.0 lesson"
+            ]
+          ],
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "\"Deleting an agent doesn't remove the IAM bindings.\" The principal names the agent's resource path, so a replacement agent deployed under a new resource ID is a new principal with no grants; the old bindings stay in the policy until you remove them. Clean up bindings on delete and re-grant on redeploy.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Two stages apply, and they differ. Agent Identity the feature was released for General Availability at the platform's initial release in April 2026. The Agent Identity API, `agentidentity.googleapis.com`, is a later and separate thing: the release-notes entry of June 18, 2026 says it \"is available in Preview\" and that it \"replaces the legacy IAM Connectors API (`iamconnectors.googleapis.com`)\", with both operating side by side during the migration period. No later entry changes that stage. The identity is also the usual member of the gateway's IAM policies, which name the agent by this principal, by a principal set over it, or by a Workload Identity Federation principal for custom or external agents, so the two lessons on authorization policy engines and on machine-to-machine API auth are the right background here.",
+          "cites": [
+            "s7",
+            "s8"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "which-credential-for-which-call",
+      "title": "Which credential for which call",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The Agent Identity overview sorts an agent's credentials by one question: is the agent acting on behalf of a signed-in user, or as itself? On behalf of a user there is one method, user-delegated OAuth 2.0 with the three-legged flow, where the user consents and the agent receives a token scoped to that user's data. As itself the page lists five: Agent Identity for Google Cloud APIs, OIDC ID tokens for external services that verify a Google-signed token, two-legged OAuth 2.0 for SaaS APIs with client credentials, API keys, and HTTP basic authentication, which the page marks as not recommended. The auth manager holds the external credentials for the agent, as \"a centralized credentials vault and authentication broker\" in the page's words.",
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "decision",
+          "caption": "Which credential for which agent call",
+          "rows": [
+            {
+              "option": "Agent Identity (the agent as itself, Google Cloud)",
+              "pick_when": "The call is to a Google Cloud API, a registered MCP server or another agent through the gateway, and the action is the agent's own responsibility",
+              "avoid_when": "The action must be attributed to a particular human and limited to that person's data",
+              "example": "A triage agent reads its project's issue tracker MCP server and writes summaries to its own Cloud Storage bucket"
+            },
+            {
+              "option": "User-delegated OAuth 2.0 (three-legged)",
+              "pick_when": "A signed-in user asks the agent to act on the user's own data and the provider supports consent",
+              "avoid_when": "There is no user in the loop (scheduled jobs, agent-to-agent delegation)",
+              "example": "An assistant reads the user's own Jira tasks after the user consents, the page's own example"
+            },
+            {
+              "option": "OIDC ID token (the agent as itself, external)",
+              "pick_when": "The destination is outside Google Cloud and verifies a Google-signed ID token for the agent's identity",
+              "avoid_when": "The destination needs an access token with scopes rather than proof of identity",
+              "example": "An internal service behind your own reverse proxy accepts the agent's ID token"
+            },
+            {
+              "option": "OAuth 2.0 two-legged (client credentials)",
+              "pick_when": "A SaaS API issues client credentials to the agent and the auth manager can hold them",
+              "avoid_when": "The API offers per-user delegation and the work is for one user",
+              "example": "A ticketing SaaS API called as the organisation's agent, not as any person"
+            },
+            {
+              "option": "API key or HTTP basic",
+              "pick_when": "The tool offers nothing else and the auth manager stores the secret",
+              "avoid_when": "Any other method is available; the page marks HTTP basic as not recommended",
+              "example": "A legacy weather API with a single key"
+            }
+          ],
+          "cites": [
+            "s1"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The other two clouds have the same row-set with different names. Amazon Bedrock AgentCore Identity manages agent identities \"as specialized workload identities with agent-specific attributes\", each with a unique ARN under a workload-identity directory, and keeps the external credentials in a token vault that holds OAuth tokens, client credentials and API keys; it supports both the two-legged and the three-legged OAuth flows, and the page states that all operations are logged. Microsoft Foundry makes the agent identity \"a special service principal in Microsoft Entra ID\", created from a blueprint that acts as a reusable template; attended agents use the on-behalf-of flow with the user's identity and unattended agents use client credentials, and the recommended production credential is a federated credential rather than a secret.",
+          "cites": [
+            "s11",
+            "s12"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The same identity question on three clouds (no prices; identity shape only)",
+          "columns": [
+            "cloud",
+            "identity object",
+            "what proves it",
+            "delegated user flow",
+            "note"
+          ],
+          "rows": [
+            [
+              "Google Cloud (s1)",
+              "Agent Identity: SPIFFE ID and IAM principal per deployed agent",
+              "X.509 certificate, tokens bound to it, mTLS and DPoP",
+              "User-delegated OAuth 2.0 (three-legged) through the auth manager",
+              "No long-lived keys; not shared by default; can't be impersonated"
+            ],
+            [
+              "AWS (s11)",
+              "AgentCore workload identity with an ARN per agent",
+              "Workload identity plus the token vault for external credentials",
+              "Three-legged OAuth, alongside two-legged",
+              "\"All operations are logged\"; vault credentials encrypted with AWS KMS keys"
+            ],
+            [
+              "Microsoft (s12)",
+              "Entra agent identity (a service principal) created from an agent identity blueprint",
+              "Blueprint credential: client secret, certificate or federated credential, presented by Agent Service to obtain the agent identity's token; federated is \"Recommended for production\"",
+              "On-behalf-of flow for attended agents",
+              "Unpublished agents in a project share one identity; publishing creates a dedicated one, and roles must be reassigned"
+            ]
+          ],
+          "cites": [
+            "s1",
+            "s11",
+            "s12"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Whatever the cloud, the secret for an external tool belongs in the platform's vault (auth manager, token vault, Entra credential), the agent's own identity is proved by a certificate or workload identity the developer never downloads, and user-scoped actions use a delegated flow that the user consents to. If a design puts an API key in the agent's environment, it has skipped all three.",
+          "cites": [
+            "s1",
+            "s11",
+            "s12"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "status-box",
+      "title": "Status box: the pieces this lesson uses, dated",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The product pages for identity, gateway, registry and MCP carry no launch-stage label, the Model Armor overview labels only its image-screening section \"Preview\", and the semantic governance page carries only a \"Preview\" badge, so every stage word below is quoted from the release notes entry that announced it, with the date of that entry. The remaining platform components are in the first lesson of this module and are not repeated here, and VPC Service Controls, CMEK and data residency for these pieces are in the module's regulated-environment lesson, not here.",
+          "cites": [
+            "s4",
+            "s8"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Launch stage of each component this lesson uses, as the pages state it on the day read",
+          "columns": [
+            "component",
+            "name now (was)",
+            "stage as stated",
+            "date read",
+            "source"
+          ],
+          "rows": [
+            [
+              "Agent Identity",
+              "Agent Identity (new)",
+              "\"General Availability\", initial release entry 2026-04-22; the overview page itself carries no stage word",
+              "2026-10-21",
+              "s1, s8"
+            ],
+            [
+              "Agent Identity API",
+              "agentidentity.googleapis.com (replaces iamconnectors.googleapis.com)",
+              "\"Preview\", entry of 2026-06-18; no later entry through the October 14 heading",
+              "2026-10-21",
+              "s8"
+            ],
+            [
+              "Agent Gateway",
+              "Agent Gateway (new)",
+              "\"General Availability\", entry of 2026-06-18; was \"Private Preview\" at the initial release; GKE, Cloud Run and cross-cloud rows read \"Coming soon\"",
+              "2026-10-21",
+              "s2, s8"
+            ],
+            [
+              "Agent Registry",
+              "Agent Registry (new)",
+              "\"generally available (GA)\", entry of 2026-06-18; was \"Public Preview\" at the initial release",
+              "2026-10-21",
+              "s3, s8"
+            ],
+            [
+              "Model Armor for Agent Gateway",
+              "Model Armor (same name)",
+              "\"General Availability\", entry of 2026-06-24; the Model Armor overview carries no stage word for text screening, and its image-screening section is labelled \"Preview\"",
+              "2026-10-21",
+              "s4, s8"
+            ],
+            [
+              "IAM allow and deny policies for agents",
+              "IAM Unified Access Policies (IAM agent policies)",
+              "\"generally available (GA)\", entry of 2026-08-31",
+              "2026-10-21",
+              "s7, s8"
+            ],
+            [
+              "Semantic governance policies",
+              "Semantic Governance Policies (new)",
+              "\"Preview\" (label on the page); \"Public Preview\" in the release-notes heading, entry of 2026-06-29",
+              "2026-10-21",
+              "s6, s8"
+            ],
+            [
+              "Cloud Trace with Agent Gateway",
+              "Cloud Trace integration (new)",
+              "\"(Preview)\" in the heading, entry of 2026-09-30",
+              "2026-10-21",
+              "s8"
+            ],
+            [
+              "A2A in ADK",
+              "ADK A2A (Python, Go, Java)",
+              "\"Experimental\" (label on the page)",
+              "2026-10-21",
+              "s10"
+            ],
+            [
+              "Google Cloud remote MCP servers",
+              "Remote MCP servers for Google Cloud services",
+              "not stated on the page; the page says they \"support MCP version 2026-07-28\"",
+              "2026-10-21",
+              "s5"
+            ]
+          ],
+          "cites": [
+            "s1",
+            "s2",
+            "s3",
+            "s4",
+            "s5",
+            "s6",
+            "s7",
+            "s8",
+            "s10"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Quoted words are the page's words; \"not stated on the page\" means exactly that and is not evidence of General Availability. The release notes are a dated log, so a stage read here is the stage on the day read; a product page without a stage word can still be covered by a later entry you have not seen.",
+          "cites": [
+            "s8"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "one-call-through-the-gateway",
+      "title": "One call through the gateway",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The vocabulary of the authorization policy engines lesson fits this gateway exactly. The policy decision points are three: the IAM allow policy, which the configure page says the gateway enforces through Identity-Aware Proxy (IAP); the Model Armor template, whose verdict the Model Armor page leaves to \"the calling service or integration point or Policy Enforcement Point (PEP)\" to act on; and the semantic governance policy engine, which the semantic governance page names as the policy decision point (PDP). The policy enforcement point is one: Agent Gateway, which the same page says \"acts as a runtime enforcement point\". An agent never talks to IAP, Model Armor or the engine; it talks to the gateway, and the gateway asks.",
+          "cites": [
+            "s4",
+            "s6",
+            "s7"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The IAM check is the one that decides whether the connection exists at all. A policy binds the agent's principal to a registered target with the role `roles/iap.egressor` and a condition written in CEL, and the gateway \"inspects JSON-RPC requests to extract tool names and method attributes\" so that the condition can test them: the configure page's own example checks `iap.googleapis.com/mcp.toolName`, `iap.googleapis.com/mcp.tool.isReadOnly` and `iap.googleapis.com/request.auth.type`. The release notes entry that made these policies generally available lists what they can express: allow and deny rules in one policy, CEL conditions, dry-run and enforcement modes, and workload-bound credentials through mTLS and DPoP. Nothing matches, nothing passes.",
+          "cites": [
+            "s2",
+            "s7",
+            "s8"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Model Armor looks at content rather than at identity. Its template settings cover sensitive data, using Sensitive Data Protection, prompt injection and jailbreak attempts, harmful content in the responsible-AI categories (hate speech, harassment, sexually explicit and dangerous content, with the CSAM filter one that \"cannot be turned off\"), and malicious URLs. Each template runs in one of two enforcement types: \"Inspect only\", which logs violations and lets the request through, or \"Inspect and block\", where the enforcement point blocks it. The gateway page states what the scan covers on this path: \"user prompts and tool responses in real time\".",
+          "cites": [
+            "s2",
+            "s4"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Semantic governance is the newest check and still Preview. The gateway intercepts the model's response that proposes a tool call, sends the proposed call, the natural-language constraints and the chat history to the policy engine, and the engine returns `ALLOW` or `DENY` with a human-readable rationale; on `DENY` the verdict is added to the model response and the tool call is removed before the agent can act. Two checks are run, intent alignment and the natural-language constraints, and \"both checks must pass\". The sequence below puts the three decisions on one MCP call, with the deny branches.",
+          "cites": [
+            "s6"
+          ]
+        },
+        {
+          "type": "diagram",
+          "mermaid": "sequenceDiagram\n  autonumber\n  participant A as Agent\n  participant G as Agent Gateway\n  participant L as Model\n  participant C as Checks (Model Armor, policy engine, IAM via IAP)\n  participant S as MCP server\n  A->>G: user prompt for the model<br/>(agent identity, mTLS)\n  G->>C: Model Armor scans the prompt\n  alt violation found, template in Inspect and block\n    C-->>G: violation\n    G-->>A: blocked\n  else prompt clean, or violation only logged (Inspect only)\n    G->>L: forward the prompt\n    L-->>G: response proposing a tool call\n    opt semantic governance policy attached\n      G->>C: proposed tool call + NLCs + history\n      C-->>G: ALLOW, or DENY with rationale<br/>(tool call removed)\n    end\n    G-->>A: model response\n    A->>G: MCP tools/call (JSON-RPC)\n    G->>C: IAM allow policy for this principal,<br/>registered target and tool name\n    alt no allow binding, or condition false\n      C-->>G: deny (default: blocked)\n      G-->>A: denied, decision logged\n    else binding matches\n      C-->>G: allow\n      G->>S: forward tools/call\n      S-->>G: tool response\n      G->>C: Model Armor scans the tool response\n      C-->>G: verdict\n      G-->>A: tool response, or blocked\n    end\n  end",
+          "legend": "Lanes: the agent, the gateway as the single enforcement point, the model, the three decision points folded into one lane, and the MCP server. Prompt and tool-response scanning from s2 and s4; the policy-engine interception of the model's proposed tool call from s6; the IAM allow policy through IAP, with default deny, from s2 and s7.",
+          "cites": [
+            "s2",
+            "s4",
+            "s6",
+            "s7"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "One caution on the ordering. The pages describe where each check sits but do not print a single fixed order of evaluation; the diagram follows the descriptions: Model Armor on prompts and tool responses, the policy engine on the model's proposed tool call, the IAM policy on the outbound connection. Treat the numbers as the order of the story, not as a documented pipeline, and treat the three decisions as independent: a tool that the IAM policy allows can still be stopped by a `DENY` verdict or a blocked response.",
+          "cites": [
+            "s2",
+            "s4",
+            "s6"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "the-registry-decides-which-tools-may-exist",
+      "title": "The registry decides which tools may exist",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Agent Registry is \"a centralized catalog that lets you store, discover, and govern agentic components\" within Google Cloud. Its data model has six resource kinds, `Agent`, `McpServer`, `Endpoint`, `Skill`, `SkillRevision` and `Publisher`, and the overview gives the registry three goals: accelerate development by letting teams discover and reuse A2A skills, standalone skills and MCP tools instead of writing a custom integration for each process; simplify integration by locating and connecting to endpoints over MCP or A2A; and support governance, because \"other services can use the identifiers of your agentic components to define permissions and control which agents can access your data\", including metadata centralised across several projects for Agent Gateway.",
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "That last goal is why the registry is the control point for which tools may exist. The gateway's IAM policies bind an agent principal to a target that \"must be registered in Agent Registry\"; a binding against an unregistered target fails at bind time with a not-found error (`NOT_FOUND`), so for MCP servers and agents you cannot grant access to one nobody has catalogued. The one widening is in the release notes: the IAM Unified Access Policies entry says the gateway governs communication to MCP servers, other agents, and \"registered or unregistered endpoints\", so an endpoint can be addressed without a registry entry. The registry overview describes the runtime side in one sentence: before routing requests between agents, MCP servers or external endpoints, \"Agent Gateway queries Agent Registry and evaluates IAM and content security policies\". The gateway page sets the scale: one gateway serves up to 5,000 resources registered in Agent Registry, and a later release-notes entry lets a gateway draw on up to two registry instances.",
+          "cites": [
+            "s2",
+            "s3",
+            "s7",
+            "s8"
+          ]
+        },
+        {
+          "type": "list",
+          "items": [
+            "`Agent`: an agent entry; A2A agents declare their transport endpoints and bindings in their card (release notes, s8).",
+            "`McpServer`: a remote MCP server whose tools the gateway can extract from JSON-RPC and name in IAM conditions (s2, s7).",
+            "`Endpoint`: an external endpoint, such as a Google Cloud API, catalogued so the gateway can check and route to it (s2, s3).",
+            "`Skill` and `SkillRevision`: a standalone skill and its revisions, among the reusable capabilities the overview says teams can discover (s3).",
+            "`Publisher`: the kind for whoever publishes the others; the overview names it without further detail (s3).",
+            "Terraform: `google_iap_agent_registry_mcp_server_iam_member`, with `google_iap_agent_registry_agent_iam_member` and `google_iap_agent_registry_endpoint_iam_member` beside it, binds a policy to a registered server, agent or endpoint (s7)."
+          ],
+          "cites": [
+            "s2",
+            "s3",
+            "s7",
+            "s8"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Two details from the General Availability entry matter when you register agents. First, agent cards: Agent Registry supports A2A protocol version 1.0, \"letting you explicitly declare transport endpoints and bindings inside the `supportedInterfaces` array\", in addition to the existing 0.3 schema. Second, Terraform: the same entry says Terraform support graduated to General Availability and that you can use it to manage agents, MCP servers, endpoints and bindings, so the catalogue can be declared in code rather than clicked together, and the IAM bindings can live next to it in the same configuration. A registry maintained from a repository, with policies applied by a CI/CD pipeline as the configure page recommends, is the cheapest audit trail you will get for \"which tools may exist and who may call them\".",
+          "cites": [
+            "s7",
+            "s8"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "tip",
+          "text": "Register first, bind second, deploy third. The `NOT_FOUND` failure at bind time is a feature: a pipeline that registers the MCP server, then applies the IAM policy, then deploys the agent cannot leave a grant pointing at nothing.",
+          "cites": [
+            "s7"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mcp-and-a2a-on-google-cloud",
+      "title": "MCP and A2A on Google Cloud",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The Model Context Protocol is, in the MCP overview's words, an open source protocol \"Developed by Anthropic\" that standardizes how AI applications connect to tools and data; the MCP servers lesson covers the protocol itself. Google Cloud's part is the remote MCP servers it hosts for its own services. The page pins the revision: \"Google Cloud remote MCP servers support MCP version 2026-07-28\", and it describes what that revision changed: MCP became a stateless protocol, with no `initialize` handshake and no `Mcp-Session-Id`, so each request carries everything it needs in HTTP headers or the `_meta` parameter. Around that core sit discovery, toolsets that group a server's tools behind their own endpoint, IAM administrative controls, compliance with the MCP authorization specification, and Model Armor scanning of MCP calls and responses, with one gap the page names: Model Armor does not scan the `resource/read` calls that render an MCP app.",
+          "cites": [
+            "s5"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Calling one of those servers takes two grants, and it pays to keep them apart. The server-side grant is the IAM role `roles/mcp.toolUser`, which the page requires for Google Cloud remote MCP servers without stating the scope at which it is granted; the gateway-side grant is the `roles/iap.egressor` binding from the previous section, whose region flag reads `global` for Google-managed remote MCP servers. The page also draws a line between Google Cloud remote MCP servers, which IAM controls, and the remote MCP servers of other Google products, which it does not. If you publish your own server, the page's two routes are Apigee and Cloud Run.",
+          "cites": [
+            "s5",
+            "s7"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Agent2Agent is the other protocol, for agents calling agents. The A2A site says it \"was originally developed by Google and donated to the Linux Foundation\", under the Apache license, and that it is not a replacement for MCP: \"MCP is for agent-to-tool communication\" while A2A is for agent-to-agent, which is why the gateway's supported-protocols list names each. On the Google side the registry speaks both card schemas, and the ADK A2A pages show how to expose an agent and consume one; those pages carry an \"Experimental\" label on the Python, Go and Java support line, which is the ADK's own stage word and separate from the platform's release notes.",
+          "cites": [
+            "s2",
+            "s8",
+            "s9",
+            "s10"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Which of the MCP and A2A pieces are still Preview or Experimental",
+          "columns": [
+            "piece",
+            "where it runs",
+            "stage word",
+            "source"
+          ],
+          "rows": [
+            [
+              "Google Cloud remote MCP servers",
+              "Google-managed, per service",
+              "not stated on the page; MCP version 2026-07-28",
+              "s5"
+            ],
+            [
+              "IAM allow policies on an McpServer target",
+              "Agent Gateway through IAP",
+              "\"generally available (GA)\", entry of 2026-08-31",
+              "s8"
+            ],
+            [
+              "Model Armor on prompts and tool responses",
+              "Agent Gateway",
+              "\"General Availability\", entry of 2026-06-24",
+              "s8"
+            ],
+            [
+              "A2A cards, schema version 1.0 and 0.3",
+              "Agent Registry",
+              "part of the registry's \"generally available (GA)\" entry of 2026-06-18",
+              "s8"
+            ],
+            [
+              "A2A in ADK (expose and consume)",
+              "Your agent code",
+              "\"Experimental\" (label on the page)",
+              "s10"
+            ],
+            [
+              "Semantic governance on tool calls",
+              "Policy engine provisioned in your VPC network, gateway enforces",
+              "\"Public Preview\", entry of 2026-06-29",
+              "s6, s8"
+            ]
+          ],
+          "cites": [
+            "s5",
+            "s6",
+            "s8",
+            "s10"
+          ]
+        }
+      ]
+    }
+  ],
+  "worked_example": {
+    "title": "One agent, two tools allowed, a third denied, and an injected response blocked",
+    "blocks": [
+      {
+        "type": "p",
+        "text": "A triage agent on Agent Runtime, deployed as the reasoning engine `ticket-agent`, needs two read tools on a registered MCP server `tracker-mcp` and must never call its delete tool. The policy below is in the form the configure page documents: `roles/iap.egressor`, the agent's principal, and a CEL condition on the tool name and the request type. One binding per allowed tool keeps each grant readable and revocable on its own.",
+        "cites": [
+          "s7"
+        ]
+      },
+      {
+        "type": "code",
+        "lang": "json",
+        "code": "{\n  \"policy\": {\n    \"bindings\": [\n      {\n        \"role\": \"roles/iap.egressor\",\n        \"members\": [\n          \"principal://agents.global.org-ORGANIZATION_ID.system.id.goog/resources/aiplatform/projects/PROJECT_NUMBER/locations/us-central1/reasoningEngines/ticket-agent\"\n        ],\n        \"condition\": {\n          \"title\": \"ticket-agent may call list_issues\",\n          \"description\": \"Read tool on tracker-mcp\",\n          \"expression\": \"api.getAttribute('iap.googleapis.com/mcp.toolName', '') == 'list_issues' && api.getAttribute('iap.googleapis.com/request.auth.type', '') == 'MCP'\"\n        }\n      },\n      {\n        \"role\": \"roles/iap.egressor\",\n        \"members\": [\n          \"principal://agents.global.org-ORGANIZATION_ID.system.id.goog/resources/aiplatform/projects/PROJECT_NUMBER/locations/us-central1/reasoningEngines/ticket-agent\"\n        ],\n        \"condition\": {\n          \"title\": \"ticket-agent may call get_issue\",\n          \"description\": \"Read tool on tracker-mcp\",\n          \"expression\": \"api.getAttribute('iap.googleapis.com/mcp.toolName', '') == 'get_issue' && api.getAttribute('iap.googleapis.com/request.auth.type', '') == 'MCP'\"\n        }\n      }\n    ]\n  }\n}",
+        "caption": "agents-iap-policy.json: two allow bindings for one agent principal, each limited to one tool name (form from s7)"
+      },
+      {
+        "type": "code",
+        "lang": "bash",
+        "code": "gcloud iap web set-iam-policy agents-iap-policy.json \\\n  --project=PROJECT_ID \\\n  --resource-type=agent-registry \\\n  --mcp-server=tracker-mcp \\\n  --region=us-central1",
+        "caption": "Bind the policy to the registered McpServer; the server must already exist in Agent Registry or the command fails with NOT_FOUND (s7)"
+      },
+      {
+        "type": "steps",
+        "title": "What happens to four calls",
+        "items": [
+          "Register `tracker-mcp` as an `McpServer` in Agent Registry and deploy `ticket-agent`; the agent's principal is the one string in the policy, under the organisation's trust domain.",
+          "Run the gateway in dry-run mode first, as the configure page recommends, and read the decisions in the logs; then switch to enforcement. The policy holds 2 bindings and no deny rules.",
+          "Call `list_issues`: the gateway extracts the tool name from the JSON-RPC request, binding 1's condition is true, the call is forwarded, and the response is scanned by Model Armor.",
+          "Call `get_issue`: binding 2's condition is true; same path, same scan.",
+          "Call `delete_issue`: neither condition is true and there is no other binding, so the connection stays blocked by default; 0 tool calls reach the server, and the decision is logged.",
+          "A `list_issues` response arrives with an injected instruction in an issue body. A Model Armor template with prompt-injection detection at the Medium and above confidence level, in \"Inspect and block\", flags the tool response and the gateway blocks it; in \"Inspect only\" it would be logged and delivered. Across the table that is 4 identity decisions and 3 content scans, 1 of which blocks."
+        ],
+        "cites": [
+          "s2",
+          "s4",
+          "s7"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "Outcome per call",
+        "columns": [
+          "call",
+          "IAM allow policy",
+          "Model Armor",
+          "result"
+        ],
+        "rows": [
+          [
+            "list_issues",
+            "binding matches (tool name, request type MCP)",
+            "response clean",
+            "forwarded, response delivered"
+          ],
+          [
+            "get_issue",
+            "binding matches",
+            "response clean",
+            "forwarded, response delivered"
+          ],
+          [
+            "delete_issue",
+            "no binding matches; default blocked",
+            "not reached",
+            "denied, logged"
+          ],
+          [
+            "list_issues with an injected issue body",
+            "binding matches",
+            "prompt injection detected, Inspect and block",
+            "forwarded, response blocked, logged"
+          ]
+        ],
+        "cites": [
+          "s2",
+          "s4",
+          "s7"
+        ]
+      },
+      {
+        "type": "callout",
+        "kind": "pitfall",
+        "text": "Do not write the delete rule as a deny binding and stop there. The default already blocks everything the allow bindings do not match; a deny rule is for carving an exception out of a broader allow, which this policy does not have. Add bindings only for what the agent must do.",
+        "cites": [
+          "s2",
+          "s8"
+        ]
+      }
+    ]
+  },
+  "code": [],
+  "diagram": null,
+  "technologies": [
+    "Agent Identity",
+    "Agent Gateway",
+    "Agent Registry",
+    "Model Armor",
+    "IAM Unified Access Policies",
+    "Identity-Aware Proxy",
+    "Semantic governance policies",
+    "Model Context Protocol (MCP)",
+    "Agent2Agent (A2A)",
+    "Agent Development Kit (ADK)",
+    "SPIFFE",
+    "Amazon Bedrock AgentCore Identity",
+    "Microsoft Entra agent identity"
+  ],
+  "related": [
+    "idi-m2m-api-auth",
+    "idi-authorization-policy-engines",
+    "idi-oauth2",
+    "idi-oidc",
+    "security-identity-and-governance",
+    "responsible-ai-guardrails",
+    "mcp-servers",
+    "agent-architectures"
+  ],
+  "practice": null,
+  "provenance": {
+    "generated_by": "Claude Fable 5.1 by hand, Scout learning center, format v2 agent identity, gateway and registry on Google Cloud",
+    "generated_on": "2026-10-21",
+    "reviewed_by": "a second reader (a separate Claude Fable 5.1 instance, not the writer), Scout learning center, format v2 agent identity, gateway and registry on Google Cloud",
+    "reviewed_on": "2026-10-21"
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-21",
+      "change": "First version: Agent Identity vs service accounts vs delegated tokens, one MCP call through Agent Gateway (IAM allow policy via IAP, Model Armor, semantic governance), Agent Registry's six kinds, MCP and A2A on Google Cloud, cross-cloud identity shape, dated status box; sources read 2026-10-21."
+    }
+  ],
+  "sources": [
+    {
+      "id": "s1",
+      "title": "Agent Identity overview (Gemini Enterprise Agent Platform)",
+      "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/govern/agent-identity-overview",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "Unlike service accounts, agent identities are not shared by multiple workloads by default"
+      }
+    },
+    {
+      "id": "s2",
+      "title": "Agent Gateway overview (Gemini Enterprise Agent Platform)",
+      "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/govern/gateways/agent-gateway-overview",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "By default, all connections are blocked unless an explicit IAM policy grants access"
+      }
+    },
+    {
+      "id": "s3",
+      "title": "Agent Registry overview",
+      "url": "https://docs.cloud.google.com/agent-registry/overview",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "Agent Gateway queries Agent Registry and evaluates IAM and content security policies"
+      }
+    },
+    {
+      "id": "s4",
+      "title": "Model Armor overview",
+      "url": "https://docs.cloud.google.com/model-armor/overview",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "Policy Enforcement Point (PEP) is responsible for blocking"
+      }
+    },
+    {
+      "id": "s5",
+      "title": "Model Context Protocol (MCP) on Google Cloud: overview",
+      "url": "https://docs.cloud.google.com/mcp/overview",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "Google Cloud remote MCP servers support MCP version 2026-07-28"
+      }
+    },
+    {
+      "id": "s6",
+      "title": "Semantic governance overview (Gemini Enterprise Agent Platform)",
+      "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/govern/policies/semantic-governance-overview",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "The policy engine serves as the policy decision point (PDP)"
+      }
+    },
+    {
+      "id": "s7",
+      "title": "Configure IAM agent policies (Gemini Enterprise Agent Platform)",
+      "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/govern/policies/configure-iam-policies",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "Agent Gateway uses Identity-Aware Proxy (IAP) to enforce policies"
+      }
+    },
+    {
+      "id": "s8",
+      "title": "Gemini Enterprise Agent Platform release notes",
+      "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/release-notes",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "Agent Gateway in General Availability"
+      }
+    },
+    {
+      "id": "s9",
+      "title": "Agent2Agent (A2A) Protocol: official site",
+      "url": "https://a2a-protocol.org/latest/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "originally developed by Google and donated to the Linux Foundation"
+      }
+    },
+    {
+      "id": "s10",
+      "title": "Agent Development Kit: Agent2Agent (A2A) protocol",
+      "url": "https://adk.dev/a2a/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "Experimental"
+      }
+    },
+    {
+      "id": "s11",
+      "title": "Amazon Bedrock AgentCore Identity: key features and benefits",
+      "url": "https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/key-features-and-benefits.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "Agent identities are managed as specialized workload identities"
+      }
+    },
+    {
+      "id": "s12",
+      "title": "Microsoft Foundry: agent identity concepts",
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/agent-identity",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "An agent identity is a special service principal in Microsoft Entra ID"
+      }
+    }
+  ]
+}
