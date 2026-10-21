@@ -1,0 +1,1084 @@
+{
+  "schema_version": "learning-center-lesson:2",
+  "id": "gcp-adk-agents",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Building an agent with ADK: the loop, the local dev cycle, workflows, tools and evals",
+  "area": "ai-ml",
+  "primary_key": "adk",
+  "secondary_keys": [
+    "agent-frameworks",
+    "agentic-ai",
+    "mcp",
+    "gemini-enterprise-agent-platform"
+  ],
+  "keys": [
+    "adk",
+    "agent-frameworks",
+    "agentic-ai",
+    "mcp",
+    "gemini-enterprise-agent-platform"
+  ],
+  "summary": "ADK, the Agent Development Kit, is Google's open-source framework for writing agents in Python, TypeScript, Go, Java or Kotlin; it is also the Build pillar's code path on Gemini Enterprise Agent Platform. This lesson teaches the machine, not the brochure: what an Agent, a Runner, a Session and an Event are and how the loop between them turns a user message into model calls, tool calls and committed state; the local cycle of adk create, adk run, adk web and adk eval; the workflow types (template agents, graphs, dynamic, collaborative and the experimental Agent Routing) with a decision block for when a plain LLM agent, a workflow agent or a graph is the right shape; tools as typed functions, MCP toolsets and the experimental A2A protocol; and how ADK's evaluation files and observability work. A worked example builds a two-tool agent with a parallel step and five eval cases, with the parts that run without a model actually run by the author on google-adk 2.12.0. A free lab closes it. Twelve sources, all fetched on the date in the status table.",
+  "detail": [],
+  "in_practice": {
+    "blocks": [
+      {
+        "type": "p",
+        "text": "Pin google-adk to an exact version and record the date. The Python package moved to 2.12.0 in the month of writing and the five language repositories ship on their own cadences, so \"ADK\" in a design document names nothing without a version; the GitHub release page and the PyPI record are the two places to read it, and PyPI also tells you the interpreter floor, which for this release is stricter than the quickstart's prerequisite.",
+        "cites": [
+          "s10",
+          "s11",
+          "s2"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Write tools as small, typed functions that return a dictionary with a status field, because the function's name, type hints and docstring are the whole schema the model sees. The quickstart's own tool returns a status key next to its payload; a tool that raises instead of returning an error leaves the model with nothing to reason about, and a tool with ten optional parameters costs context on every turn. The MCP page makes the same point for servers: filter the tool list, and define the toolset synchronously in agent.py for anything that is deployed.",
+        "cites": [
+          "s2",
+          "s6"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Keep state outside the process. The Runner commits every event's state delta through the SessionService before the agent resumes, which is why the in-memory service is fine on a laptop and wrong behind a load balancer: a second replica has no copy. The runtime lesson later in this module covers the hosted session and memory services; until then, treat anything written to session state as something a different process must be able to read back.",
+        "cites": [
+          "s3"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Read the stage badges before you build on a feature. The A2A page says \"Supported in ADK Python Go Java Experimental\" and the workflows page labels Agent Routing \"Experimental\", while the MCP toolset and the template workflow agents carry version numbers back to the first release. An experimental feature can change its API between minor versions, so put it behind an interface you own and pin the version you tested against.",
+        "cites": [
+          "s7",
+          "s4",
+          "s6"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Check evaluation files into the repository next to the agent and run them in CI. The evaluate page's two file kinds, the quick .test.json cases and the larger eval sets with a test_config.json of criteria, are plain JSON that a pytest test can load through AgentEvaluator, and the tool-trajectory criterion fails on any deviation from the expected tool calls by default, which is the check that catches a prompt edit that silently stops a tool being called.",
+        "cites": [
+          "s9"
+        ]
+      }
+    ]
+  },
+  "subtopics": [
+    {
+      "id": "what-adk-is-and-its-status",
+      "title": "What ADK is, and the status of what this lesson uses",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The Agent Development Kit (ADK) is, in its own words, \"the open-source agent development framework\", \"Available in Python, TypeScript, Go, Java, and Kotlin\". An agent in ADK is a program that sends a model a prompt together with the declarations of the tools it may call, executes the tool calls the model asks for, feeds the results back and repeats until the model produces a final answer. On Gemini Enterprise Agent Platform, ADK is the code path of the Build pillar: the overview describes it as \"A modular, model-agnostic framework for building and deploying complex AI agents\". Model-agnostic is literal: the model field of an agent can name a Gemini model, a Claude model, a model hosted on Agent Platform, or anything reachable through a connector such as LiteLLM or Ollama.",
+          "cites": [
+            "s1",
+            "s12",
+            "s5"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "ADK is five code bases, not one. Each language has its own repository and its own version number, and the numbers do not line up: on the day this was written the Python package was at 2.12.0 while the Java library was still on a 1.x line. All five repositories carry the Apache-2.0 licence. The lesson is written against the Python package; where a page says a feature is supported only in some languages, the status table quotes that badge. The map lesson, gcp-agent-platform-map, is the front door of this module and owns the platform's shared status table; this lesson's table below covers only the ADK pieces it uses.",
+          "cites": [
+            "s10",
+            "s11",
+            "s4"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Status of the ADK components this lesson uses, as the pages state it on the day read",
+          "columns": [
+            "component",
+            "name now (was)",
+            "stage as the page states",
+            "date read",
+            "source"
+          ],
+          "rows": [
+            [
+              "ADK for Python",
+              "Agent Development Kit, package google-adk 2.12.0 (same name)",
+              "\"the open-source agent development framework\"; no stage word on the page",
+              "2026-10-21",
+              "s1, s10"
+            ],
+            [
+              "ADK Web (Dev UI)",
+              "ADK Web (same name)",
+              "\"ADK Web for development only\"; \"not meant for use in production deployments\"",
+              "2026-10-21",
+              "s2"
+            ],
+            [
+              "Template workflow agents",
+              "SequentialAgent, LoopAgent, ParallelAgent (same names)",
+              "\"pre-built workflows\"; the 2.12.0 package prints a DeprecationWarning in favour of Workflow when one is constructed (author's run)",
+              "2026-10-21",
+              "s4"
+            ],
+            [
+              "Graph-based workflows",
+              "Workflow (new in ADK 2.0)",
+              "\"(ADK 2.0 and higher)\"; home page: \"New in ADK 2.0!\"",
+              "2026-10-21",
+              "s4, s1"
+            ],
+            [
+              "Agent Routing",
+              "Agent Routing (same name)",
+              "\"Experimental: Agent Routing\"",
+              "2026-10-21",
+              "s4"
+            ],
+            [
+              "MCP toolset",
+              "McpToolset (same name)",
+              "\"Supported in ADK Python v0.1.0 TypeScript v0.2.0 Go v0.1.0 Java v0.1.0 Kotlin v0.1.0\"; no stage word",
+              "2026-10-21",
+              "s6"
+            ],
+            [
+              "A2A protocol support",
+              "Agent2Agent (A2A) (same name)",
+              "\"Supported in ADK Python Go Java Experimental\"",
+              "2026-10-21",
+              "s7"
+            ],
+            [
+              "Evaluation (adk eval)",
+              "adk eval, adk eval_set (same names)",
+              "\"Supported in ADK Python\"; no stage word; the command needs the extra google-adk[eval] (author's run)",
+              "2026-10-21",
+              "s9"
+            ],
+            [
+              "Observability",
+              "logging, metrics and traces (same names)",
+              "\"Supported in ADK Python v0.1.0 Go v0.1.0 Kotlin v0.1.0\"; no stage word",
+              "2026-10-21",
+              "s8"
+            ],
+            [
+              "adk create --type config",
+              "config agents (YAML)",
+              "CLI help: \"EXPERIMENTAL ... 'config' is not ready for use so it defaults to 'code'\" (author's run of adk create --help; s2 carries the adk create command only)",
+              "2026-10-21",
+              "s2"
+            ]
+          ],
+          "cites": [
+            "s1",
+            "s2",
+            "s4",
+            "s6",
+            "s7",
+            "s8",
+            "s9",
+            "s10"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "One mismatch worth knowing before you install: the Python quickstart asks for \"Python 3.10 or later\", but the PyPI record for the current release declares requires_python >=3.11. An older interpreter is not refused: pip quietly resolves to the previous release, 2.11.0, the last one whose floor matched the quickstart (PyPI release list, read today), so the pages would describe a newer package than the one installed. Use the PyPI floor or later; the author used 3.12. A second habit from the table: the pages mark stage with badges and words, never with dates, so the date-read column is yours to maintain, and a badge that reads \"Experimental\" today can read differently next quarter.",
+          "cites": [
+            "s2",
+            "s11"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "agent-runner-session-event",
+      "title": "Agent, Runner, Session and Event: the loop",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Four nouns carry the whole runtime. An Agent is the unit of logic; the common kind, LlmAgent (aliased as Agent), holds a model id, an instruction, a description and a list of tools, and the quickstart says the root_agent definition \"is the only required element of an ADK agent\". A Runner is the engine: it \"receives a user query and asks the main Agent to start processing\", then waits for the agent to \"yield or emit an Event\". An Event is \"the message passed back and forth between the Runner and the Execution Logic\", one atomic occurrence such as user input, agent text, a tool call or result, or a state change request, carrying both content and the side effects it asks for. A Session is the conversation's history and state, kept by a SessionService that the Runner, not the agent, writes to.",
+          "cites": [
+            "s2",
+            "s3"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The rule that makes the loop safe is the pause. When the agent yields an event, \"execution of the agent logic pauses immediately after the yield statement\"; the Runner commits the event's actions through the SessionService, ArtifactService and MemoryService (the state_delta and artifact_delta it carries), forwards the event upstream to the caller or UI, and only then lets the agent resume. The page is blunt about the consequence: a value written to state inside a callback is readable within the same invocation as a dirty read, but \"isn't guaranteed persistent yet\" until the Runner has processed the yielded event. Every tool call and every tool result passes through the same gate, which is what makes the trace a faithful record of what happened.",
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "flow",
+          "nodes": [
+            {
+              "id": "user",
+              "label": "User or UI",
+              "kind": "actor"
+            },
+            {
+              "id": "runner",
+              "label": "Runner",
+              "kind": "service"
+            },
+            {
+              "id": "agent",
+              "label": "LlmAgent (root_agent)",
+              "kind": "service"
+            },
+            {
+              "id": "model",
+              "label": "Model (Gemini or other)",
+              "kind": "service"
+            },
+            {
+              "id": "tool",
+              "label": "Tool (function or MCP)",
+              "kind": "service"
+            },
+            {
+              "id": "session",
+              "label": "SessionService (history + state)",
+              "kind": "store"
+            }
+          ],
+          "frames": [
+            {
+              "id": "logic",
+              "title": "Execution logic",
+              "nodes": [
+                "agent",
+                "model",
+                "tool"
+              ]
+            },
+            {
+              "id": "runtime",
+              "title": "Runtime",
+              "nodes": [
+                "runner",
+                "session"
+              ]
+            }
+          ],
+          "edges": [
+            {
+              "id": "ask",
+              "from": "user",
+              "to": "runner",
+              "kind": "sync",
+              "label": "New user message",
+              "short": "Ask"
+            },
+            {
+              "id": "start",
+              "from": "runner",
+              "to": "agent",
+              "kind": "sync",
+              "label": "run_async: start the agent",
+              "short": "Start"
+            },
+            {
+              "id": "think",
+              "from": "agent",
+              "to": "model",
+              "kind": "sync",
+              "label": "Prompt plus tool declarations",
+              "short": "Think"
+            },
+            {
+              "id": "call",
+              "from": "agent",
+              "to": "tool",
+              "kind": "sync",
+              "label": "Execute the function call the model chose",
+              "short": "Call tool"
+            },
+            {
+              "id": "emit",
+              "from": "agent",
+              "to": "runner",
+              "kind": "reply",
+              "label": "Yield an Event, then pause",
+              "short": "Event"
+            },
+            {
+              "id": "commit",
+              "from": "runner",
+              "to": "session",
+              "kind": "sync",
+              "label": "Commit state_delta, append history",
+              "short": "Commit"
+            },
+            {
+              "id": "answer",
+              "from": "runner",
+              "to": "user",
+              "kind": "reply",
+              "label": "Forward the event upstream",
+              "short": "Answer"
+            }
+          ],
+          "steps": [
+            {
+              "edge": "ask",
+              "caption": "User to Runner: the new message arrives; the Runner appends it to the session history first"
+            },
+            {
+              "edge": "start",
+              "caption": "Runner to Agent: the Runner calls the root agent's run_async and waits for events"
+            },
+            {
+              "edge": "think",
+              "caption": "Agent to Model: the instruction, the history and the tool declarations go to the model; it answers with text or a function call"
+            },
+            {
+              "edge": "call",
+              "caption": "Agent to Tool: the agent runs the function the model named with the arguments it gave; the result is a plain dictionary"
+            },
+            {
+              "edge": "emit",
+              "caption": "Agent to Runner: each step (the call, the result, the final text) is yielded as an Event and the agent pauses"
+            },
+            {
+              "edge": "commit",
+              "caption": "Runner to SessionService: the event's state_delta and content are committed before the agent is allowed to continue"
+            },
+            {
+              "edge": "answer",
+              "caption": "Runner to User: the processed event is forwarded upstream; the loop repeats until the agent has no more events"
+            }
+          ],
+          "legend": "The frames follow the event-loop page's split between the Runner with its services and the \"Execution Logic\" of agents, model calls, callbacks and tools; the pause-commit-resume order and the three services are from the same page s3. The root_agent, model and tools fields are the quickstart's s2; the model lane can be a Gemini id, a registry name, or a connector such as LiteLlm, Ollama or vLLM s5.",
+          "cites": [
+            "s3",
+            "s2",
+            "s5"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The sequence below follows one message that needs one tool call, with the branch the tool can take when it fails.",
+          "cites": [
+            "s3"
+          ]
+        },
+        {
+          "type": "diagram",
+          "mermaid": "sequenceDiagram\n  autonumber\n  participant R as Runner\n  participant A as Agent (LlmAgent)\n  participant M as Model\n  participant T as Tool function\n  participant S as SessionService\n  R->>A: run_async(user message)\n  A->>M: prompt + tool declarations\n  M-->>A: call convert_length(...)\n  A-->>R: Event: function call\n  R->>S: append_event (commit)\n  A->>T: convert_length(5, km, mi)\n  alt unit known\n    T-->>A: {status: success, value}\n  else unit unknown\n    T-->>A: {status: error, message}\n  end\n  A-->>R: Event: function response\n  R->>S: append_event (commit)\n  A->>M: history + tool result\n  M-->>A: final text\n  A-->>R: Event: final response\n  R->>S: commit state_delta",
+          "legend": "Solid arrows are calls, dashed arrows are replies and yielded events. The Runner commits each yielded event through the SessionService before the agent resumes, and the final text event is the one the Runner marks as the final response s3. The tool's status field is the convention of the quickstart's own tool, which returns a dictionary with a status key next to its payload s2; the error branch is the author's convert_length returning status error for an unknown unit (run without a model).",
+          "cites": [
+            "s3",
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The model lane deserves one more sentence, because it is the part people assume is fixed. The models page lists three ways to name a model: a direct string or registry entry (a Gemini id, a Claude id, or a model hosted on Agent Platform), a connector class such as ApigeeLlm or LiteLlm that wraps another provider or a local server like Ollama or vLLM, and model routing, which lets one agent name several models \"with automatic failover on error\". None of these change the loop above; they change what sits in the Model lane.",
+          "cites": [
+            "s5"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "local-loop-create-run-web-eval",
+      "title": "The local loop: create, run, web, eval",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The command-line tool is where a new ADK agent spends its first day. The author ran adk --help on google-adk 2.12.0 and it lists these commands: api_server, conformance, create, deploy, eval, eval_set, migrate, optimize, run, telemetry, test and web. Four of them make the local loop. adk create scaffolds a folder; adk run chats with the agent in the terminal; adk web serves a browser UI with a chat pane, an event list and a trace view; adk eval replays recorded cases against the agent and scores them. Everything else (deploy, api_server, the conformance and migrate helpers) belongs to later lessons in this module.",
+          "cites": [
+            "s2",
+            "s9"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The quickstart's adk create my_agent produces, per the page, agent.py, .env and __init__.py; the author's run of the same command on 2.12.0 also wrote a .gitignore that lists .env and .adk/, and printed a warning that secrets such as GOOGLE_API_KEY live in .env. Without flags the command asks two questions, a model and a backend (Google AI, Vertex AI, or Login with Google), and with the Google AI backend it asks for the API key and writes it into .env together with GOOGLE_GENAI_USE_ENTERPRISE=0. The generated agent.py is a single Agent with a model, a name, a description and an instruction, and __init__.py is one line, from . import agent, which is the import the CLI and the evaluator rely on.",
+          "cites": [
+            "s2",
+            "s9"
+          ]
+        },
+        {
+          "type": "flow",
+          "nodes": [
+            {
+              "id": "dev",
+              "label": "Developer",
+              "kind": "actor"
+            },
+            {
+              "id": "create",
+              "label": "adk create",
+              "kind": "service"
+            },
+            {
+              "id": "files",
+              "label": "my_agent/ (agent.py, .env, __init__.py)",
+              "kind": "store"
+            },
+            {
+              "id": "run",
+              "label": "adk run (terminal chat)",
+              "kind": "service"
+            },
+            {
+              "id": "web",
+              "label": "adk web (Dev UI, trace, eval tab)",
+              "kind": "service"
+            },
+            {
+              "id": "evalfiles",
+              "label": "eval sets and test_config.json",
+              "kind": "store"
+            },
+            {
+              "id": "eval",
+              "label": "adk eval",
+              "kind": "service"
+            }
+          ],
+          "frames": [
+            {
+              "id": "write",
+              "title": "Write",
+              "nodes": [
+                "create",
+                "files"
+              ]
+            },
+            {
+              "id": "try",
+              "title": "Try",
+              "nodes": [
+                "run",
+                "web"
+              ]
+            },
+            {
+              "id": "check",
+              "title": "Check",
+              "nodes": [
+                "evalfiles",
+                "eval"
+              ]
+            }
+          ],
+          "edges": [
+            {
+              "id": "scaffold",
+              "from": "dev",
+              "to": "create",
+              "kind": "sync",
+              "label": "adk create my_agent",
+              "short": "Create"
+            },
+            {
+              "id": "writes",
+              "from": "create",
+              "to": "files",
+              "kind": "sync",
+              "label": "Writes the agent folder",
+              "short": "Files"
+            },
+            {
+              "id": "edit",
+              "from": "dev",
+              "to": "files",
+              "kind": "sync",
+              "label": "Edit agent.py: tools, instruction",
+              "short": "Edit"
+            },
+            {
+              "id": "chat",
+              "from": "files",
+              "to": "run",
+              "kind": "sync",
+              "label": "adk run my_agent",
+              "short": "Run"
+            },
+            {
+              "id": "browse",
+              "from": "files",
+              "to": "web",
+              "kind": "sync",
+              "label": "adk web from the parent folder",
+              "short": "Web"
+            },
+            {
+              "id": "save",
+              "from": "web",
+              "to": "evalfiles",
+              "kind": "sync",
+              "label": "Eval tab: add current session",
+              "short": "Save case"
+            },
+            {
+              "id": "score",
+              "from": "evalfiles",
+              "to": "eval",
+              "kind": "sync",
+              "label": "adk eval my_agent <eval set>",
+              "short": "Score"
+            },
+            {
+              "id": "report",
+              "from": "eval",
+              "to": "dev",
+              "kind": "reply",
+              "label": "Pass or fail per case; back to editing",
+              "short": "Report"
+            }
+          ],
+          "steps": [
+            {
+              "edge": "scaffold",
+              "caption": "Developer runs adk create; it asks for a model and a backend, or takes them as flags"
+            },
+            {
+              "edge": "writes",
+              "caption": "The CLI writes agent.py, .env and __init__.py (and, on the author's run, a .gitignore)"
+            },
+            {
+              "edge": "edit",
+              "caption": "The developer edits agent.py: adds tool functions, tightens the instruction"
+            },
+            {
+              "edge": "chat",
+              "caption": "adk run opens a terminal chat; one message with a query argument gives a single-step run"
+            },
+            {
+              "edge": "browse",
+              "caption": "adk web, run from the folder that contains my_agent, serves the Dev UI with the event and trace views"
+            },
+            {
+              "edge": "save",
+              "caption": "A good session is saved from the Eval tab as a case; its expected tool calls come from what just happened"
+            },
+            {
+              "edge": "score",
+              "caption": "adk eval replays the cases and scores tool trajectory and response match against test_config.json"
+            },
+            {
+              "edge": "report",
+              "caption": "The report sends the developer back to agent.py; the saved cases stay in the repository as regression tests"
+            }
+          ],
+          "legend": "The commands and the folder layout are from the Python quickstart s2; the Eval tab's \"Add current session\", the eval set files, test_config.json and the adk eval invocation are from the evaluate page s9. The .gitignore and the two questions adk create asks are from the author's run on 2.12.0, not from a page.",
+          "cites": [
+            "s2",
+            "s9"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Two cautions the pages themselves put in boxes. The quickstart warns that \"ADK Web for development only\" and that the server is \"not meant for use in production deployments\"; the CLI help for adk web adds that its endpoints are unauthenticated and should be run on a trusted network only. And the key you paste into .env is a real credential: the .gitignore that adk create writes keeps it out of git, but only if you keep that file. The quickstart's full agent.py, with the mock tool that returns a status key, is reproduced below so you can compare it with the worked example later.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "python",
+          "caption": "The quickstart's agent.py after adding its mock tool (from the page; the author ran a variant of it, not this file)",
+          "code": "from google.adk.agents.llm_agent import Agent\n\n# Mock tool implementation\ndef get_current_time(city: str) -> dict:\n    \"\"\"Returns the current time in a specified city.\"\"\"\n    return {\"status\": \"success\", \"city\": city, \"time\": \"10:30 AM\"}\n\nroot_agent = Agent(\n    model='gemini-flash-latest',\n    name='root_agent',\n    description=\"Tells the current time in a specified city.\",\n    instruction=\"You are a helpful assistant that tells the current time in a city. Use the 'get_current_time' tool.\",\n    tools=[get_current_time],\n)"
+        }
+      ]
+    },
+    {
+      "id": "workflows-and-when-to-use-which",
+      "title": "Workflows: template agents, graphs and the decision between them",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "A single LlmAgent decides its own control flow: the model chooses which tool to call and when to stop. That is the right shape for a conversational assistant and the wrong one for a pipeline that must run step A, then B, then C every time. The workflows page frames the alternatives as composition: \"composing multiple agents and executable nodes into agent workflows\", for predictability (\"templated logic or graph-based execution mechanisms\"), reliability (\"tasks run in the required order or pattern consistently\") and structure. It then names four workflow families plus one experimental feature, and the table quotes the page's own status words for each.",
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "ADK workflow types, what each does, when to use it, and its status as the workflows page states it (read 2026-10-21)",
+          "columns": [
+            "workflow type",
+            "what it does",
+            "when to use",
+            "status as the page states"
+          ],
+          "rows": [
+            [
+              "Template workflows (SequentialAgent, LoopAgent, ParallelAgent)",
+              "\"pre-built workflows ... extended from BaseAgent\" with \"fixed execution logic structures including sequences, loops, and parallel execution\"; sub-agents run in order, repeatedly, or at the same time (LoopAgent also takes a max_iterations field: author's run, not on the page)",
+              "A short fixed pipeline of agents where the order never depends on data; a loop that refines a draft; a fan-out of independent lookups",
+              "listed without a stage word; on 2.12.0 constructing one prints \"deprecated in favor of Workflow\" (author's run)"
+            ],
+            [
+              "Graph-based workflows (Workflow)",
+              "\"compose both AI-powered agents and deterministic execution nodes into a flexible execution graph that can include decision branching\"",
+              "A process with branches and joins, where some nodes are plain code and some are agents; anything you would otherwise draw as a flowchart",
+              "\"(ADK 2.0 and higher)\""
+            ],
+            [
+              "Dynamic workflows",
+              "\"compose AI-powered agents and deterministic execution nodes using full programmatic code logic\": ordinary code calls agents as steps",
+              "Control flow that is easier to write as code than as a graph; loops with computed bounds; integration into an existing program",
+              "\"(ADK 2.0 and higher)\""
+            ],
+            [
+              "Collaborative workflows",
+              "\"a single agent to act in a dynamic coordinator role to accomplish tasks with a set of specified sub-agents\"; the coordinator's model decides who works next",
+              "Open-ended tasks where the division of labour is not known in advance and a model is trusted to delegate",
+              "\"(ADK 2.0 and higher)\""
+            ],
+            [
+              "Agent Routing",
+              "\"select between multiple agents at runtime using router functions for fallback, A/B testing, and auto-routing\"",
+              "Switching between two implementations of the same agent at runtime; not for business logic",
+              "\"Experimental: Agent Routing\" (read 2026-10-21)"
+            ]
+          ],
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "decision",
+          "caption": "LLM agent, workflow agent, graph or coordinator: which shape for the job",
+          "rows": [
+            {
+              "option": "One LlmAgent with tools",
+              "pick_when": "The task is a conversation or an open question; the set of tools is small and typed; the model is trusted to choose the order and to stop; you want the fewest moving parts.",
+              "avoid_when": "The same steps must happen in the same order every time, a step must not be skipped, or the output of one step must be checked by code before the next.",
+              "example": "The two-tool unit agent in the worked example: the user asks, the model picks convert_length or lookup_city, done."
+            },
+            {
+              "option": "Template workflow agent (sequential, loop, parallel)",
+              "pick_when": "The structure is one of the three fixed shapes and you can write it in a line; sub-agents share results through session state keys; you accept that the shape is the page's older mechanism.",
+              "avoid_when": "You need a branch, a join, or a code-only step between agents; or you are starting new work on 2.x and would rather not build on a class that warns it is deprecated.",
+              "example": "A ParallelAgent that runs the length and city lookups at once, inside a SequentialAgent that merges them; built by the author on 2.12.0 with a deprecation warning."
+            },
+            {
+              "option": "Graph-based Workflow",
+              "pick_when": "The process has branches, joins or decision nodes; some nodes are plain functions that must run without a model; you want a diagram that is also the code.",
+              "avoid_when": "The whole thing is one straight line (a template or a few lines of code are shorter); or you need an LlmAgent to own the Workflow as a sub-agent, which the 2.12.0 warning says is not yet possible.",
+              "example": "A classifier agent followed by a router function that sends a bug, a support request or a logistics question to a different handler."
+            },
+            {
+              "option": "LlmAgent with sub_agents (the page's Collaborative workflow)",
+              "pick_when": "The division of labour is not known in advance and you trust a model to decide which specialist runs next; each sub-agent has a clear description the coordinator can route on; the conversation may move between specialists.",
+              "avoid_when": "The order must be fixed or auditable, a step must never be skipped, or the cost of a wrong hand-off is high; then one of the deterministic shapes above is safer.",
+              "example": "A front-desk agent with a billing sub-agent and a shipping sub-agent, where the model reads the request and hands it to one of them."
+            }
+          ],
+          "cites": [
+            "s4"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The deprecation deserves a plain statement because the pages and the package disagree in tone. The workflows page lists template workflows next to the newer kinds with no warning; the installed 2.12.0 package, when the author constructed a ParallelAgent and a SequentialAgent, printed that each \"is deprecated in favor of Workflow and will be removed in a future version\" and that \"Workflow cannot yet be used as an LlmAgent sub-agent\". The agents still build and run. One catch when you try to reproduce it: Python shows a DeprecationWarning only when the constructor runs in the main module (or under python -W default), so an agent imported by adk run stays silent; the author saw it by running the parallel-step file as a script. The practical reading: use template agents for a quick fixed pipeline today, write new branching logic as a Workflow graph, and expect to move code by hand when the removal lands; the adk migrate command only migrates session databases today (author's run of adk migrate --help).",
+          "cites": [
+            "s4"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tools-functions-mcp-a2a",
+      "title": "Tools: functions, MCP servers and other agents",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "A function tool is a plain function in the tools list. ADK builds the declaration the model sees from three things: the function name, the parameter type hints, and the docstring. The author checked this on 2.12.0 by asking ADK for the declaration of a convert_length(value: float, from_unit: str, to_unit: str) function: the declaration carried the function name, the docstring verbatim as the description, and a JSON schema with value typed as number and the two units as strings, all three required. That is the whole contract, so a vague docstring is a vague tool. The return value is a dictionary; the quickstart's tool returns status next to its payload, and the worked example returns status error with a message when the input is bad, so the model can tell the user instead of guessing.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The Model Context Protocol (MCP) is a standard for a server to describe tools and resources that any client can call; this site's MCP lesson covers the protocol itself. In ADK an MCP server becomes a toolset: install the extra with pip install \"google-adk[mcp]\", then add McpToolset to the tools list with connection parameters for a local subprocess or a URL. A tool_filter lists the subset of the server's tools the agent may see, which matters because every tool declaration is spent context: the page's own table contrasts handing an agent all the tools, \"High Context Bloat\", with exposing the server through a dedicated sub-agent, \"Zero Context Bloat\" for the parent.",
+          "cites": [
+            "s6"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The MCP page describes three integration patterns. Direct: the agent holds an McpToolset. Agent-exposed: an ADK agent is itself published as an MCP server with to_mcp_server, so other MCP clients can call it. Sub-agent delegation: a child agent owns the toolset and the parent calls the child through an AgentTool, trading one extra hop for a parent prompt that never sees the server's tool list. Two rules from the page apply to anything that leaves the laptop: \"Agents deployed to production must define McpToolset synchronously in agent.py\", and ADK does \"not automatically re-establish active MCP connections\" when a paused agent is resumed, so a long-running agent must reconnect itself.",
+          "cites": [
+            "s6"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The third kind of tool is another agent on another host. Agent2Agent (A2A) is an open protocol for agents to discover and call each other; ADK's A2A page carries the badge \"Supported in ADK Python Go Java Experimental\" (read on the status table's date) and links two quickstarts, one for exposing an ADK agent as an A2A endpoint and one for consuming a remote one. The page does not define its Experimental badge; the author reads it as an API that may change between releases. Treat a remote agent the way you treat an MCP server: a typed boundary with its own version, timeouts and failure cases, not a function call that happens to be far away. The module's later lessons on Agent Gateway and Agent Registry are where the governed version of this lives.",
+          "cites": [
+            "s7"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "An agent with twenty tools from an MCP server and a vague instruction is slower, costlier and less accurate than one with the three tools the job needs; filter with tool_filter, or put the server behind a sub-agent, and write the instruction to say when each tool applies.",
+          "cites": [
+            "s6"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "evaluation-and-observability",
+      "title": "Evaluation and observability",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The evaluate page opens with the reason agents need their own tests: a model's output is probabilistic, so a unit test that asserts one exact string will flap, and what you actually want to check is the trajectory (which tools were called, with which arguments, in which order) and whether the final answer matches the expected one closely enough. ADK records both. The evaluation support is Python-only, per the page's badge, and the command needs the eval extra installed; the author's first adk eval on a bare install stopped with an error naming pip install \"google-adk[eval]\".",
+          "cites": [
+            "s9"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Two file kinds exist. A test file ends in .test.json (the page says the framework only checks that suffix) and holds a few simple cases; an eval set is a larger JSON document with an eval_set_id, a name, and a list of eval cases, each a conversation of invocations. Each invocation records the user_content, the expected final_response, and intermediate_data with the tool_uses expected (name and args) and any intermediate responses; a session_input gives the app name, user id and starting state. The author wrote a five-case set for the worked example and validated it against ADK's own EvalSet schema without calling a model. Cases are also recorded from the Dev UI: the Eval tab's \"Add current session\" turns a good conversation into a case.",
+          "cites": [
+            "s9"
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "json",
+          "caption": "test_config.json with the two default criteria and their default thresholds, as the evaluate page gives them",
+          "code": "{\n  \"criteria\": {\n    \"tool_trajectory_avg_score\": 1.0,\n    \"response_match_score\": 0.8\n  }\n}"
+        },
+        {
+          "type": "p",
+          "text": "Criteria are named in test_config.json. The two defaults are tool_trajectory_avg_score, which compares the actual tool calls with the expected ones exactly (so the default threshold of 1.0 means any deviation fails), and response_match_score, a ROUGE-1 overlap between the final answer and the expected one with a default threshold of 0.8. The page lists more: final_response_match_v2 and the rubric-based criteria use a judge model, and hallucinations_v1 and safety_v1 check grounding and safety. Run with adk eval <agent folder> <eval set file or id>, where the agent argument is the folder whose __init__.py exposes a module named agent, or from pytest through AgentEvaluator.evaluate with the agent module and the file or directory of cases.",
+          "cites": [
+            "s9"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Observability is what you read when an eval fails. The observability page says ADK \"provides built-in observability through logging, metrics, and traces\" and badges it for Python, Go and Kotlin. Traces follow OpenTelemetry: the page's quick start configures an OTLP exporter and a telemetry config whose captureMessageContent switch decides whether prompts and responses are recorded in spans, and adds a LoggingPlugin to the app so every event is logged. Locally you need none of that: the Dev UI's Trace tab groups traces by user message, and each one opens into the event, the request, the response and a graph of the tool calls and agent flow, which is where a wrong tool call is first seen. The deploy and runtime lessons of this module pick up the hosted side.",
+          "cites": [
+            "s8",
+            "s9"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "free-lab",
+      "title": "A free lab: the unit agent on your laptop",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Everything in this lesson runs on a laptop with a free Gemini API key from Google AI Studio and the open-source package: the quickstart's own setup is pip install google-adk plus a key pasted into .env, with no Google Cloud project or billing account, and within the free tier's limits the cost is nil. The free tier is rate-limited; the per-model numbers live on the Gemini API rate-limits page and in the map lesson, not here, because they change. The lab below is written for the learner and was not run with a model: the author ran the scaffold, the tool functions, the agent construction and the eval-file validation without a key, and those outputs are the ones quoted in the worked example.",
+          "cites": [
+            "s2"
+          ]
+        },
+        {
+          "type": "steps",
+          "title": "The lab (written for the learner, not run with a model)",
+          "items": [
+            "Create a virtual environment with a Python at or above the PyPI floor (3.11 for the current release) and run pip install google-adk; check with adk --version.",
+            "Create a key in Google AI Studio. Run adk create unit_agent, choose the Google AI backend and paste the key; confirm that .env holds it and that .gitignore lists .env before you do anything with git.",
+            "Replace the generated agent.py with the worked example's file: two tool functions returning status dictionaries and one Agent with both in its tools list.",
+            "Run adk run unit_agent \"How many miles is 5 km?\" for a single-step answer; then adk run unit_agent for a chat and ask for a unit the tool does not know. The answer should say the tool failed, not invent a number.",
+            "From the folder that contains unit_agent run adk web --port 8000, open the UI, send the same questions and open the Trace tab: find the function call event, its arguments and the function response event.",
+            "On the Eval tab, add the current session as a case; then save the worked example's tools.evalset.json and test_config.json into the unit_agent folder exactly as shown, install the extra with pip install \"google-adk[eval]\", and run adk eval unit_agent unit_agent/tools.evalset.json --config_file_path unit_agent/test_config.json.",
+            "Break the agent on purpose: remove lookup_city from the tools list and rerun the eval. The two city cases should fail on tool trajectory; put the tool back and confirm they pass.",
+            "Stop the web server, and if you created a project only for this, delete the key in AI Studio."
+          ],
+          "cites": [
+            "s2",
+            "s9",
+            "s11"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "The .env file is a credential. Keep the .gitignore that adk create writes, never paste the key into a chat or a ticket, and rotate it in AI Studio if it was ever printed to a terminal you shared.",
+          "cites": [
+            "s2"
+          ]
+        }
+      ]
+    }
+  ],
+  "worked_example": {
+    "title": "A two-tool agent with a parallel step and five eval cases",
+    "blocks": [
+      {
+        "type": "p",
+        "text": "The agent converts lengths and looks up cities. Both tools are pure functions, so everything except the model call can be run and checked without a key; the author did that on google-adk 2.12.0 with Python 3.12 and the numbers below are from those runs. The lookup is a two-row dictionary standing in for a service call.",
+        "cites": [
+          "s2"
+        ]
+      },
+      {
+        "type": "code",
+        "lang": "python",
+        "caption": "unit_agent/agent.py: two tools and the root agent (run by the author without a model: import, tool calls, declaration)",
+        "code": "from google.adk.agents.llm_agent import Agent\n\nRATES_PER_METRE = {\"m\": 1.0, \"km\": 1000.0, \"ft\": 0.3048, \"mi\": 1609.344}\n\n\ndef convert_length(value: float, from_unit: str, to_unit: str) -> dict:\n    \"\"\"Converts a length between m, km, ft and mi.\n\n    Args:\n        value: the number to convert.\n        from_unit: unit of the input, one of m, km, ft, mi.\n        to_unit: unit wanted, one of m, km, ft, mi.\n    \"\"\"\n    if from_unit not in RATES_PER_METRE or to_unit not in RATES_PER_METRE:\n        return {\"status\": \"error\", \"message\": f\"unknown unit: {from_unit} or {to_unit}\"}\n    metres = value * RATES_PER_METRE[from_unit]\n    result = metres / RATES_PER_METRE[to_unit]\n    return {\"status\": \"success\", \"value\": round(result, 4), \"unit\": to_unit}\n\n\nCITIES = {\"paris\": {\"country\": \"France\", \"timezone\": \"Europe/Paris\"},\n          \"tokyo\": {\"country\": \"Japan\", \"timezone\": \"Asia/Tokyo\"}}\n\n\ndef lookup_city(name: str) -> dict:\n    \"\"\"Returns the country and time zone of a city, or an error if unknown.\"\"\"\n    row = CITIES.get(name.strip().lower())\n    if row is None:\n        return {\"status\": \"error\", \"message\": f\"no record for {name}\"}\n    return {\"status\": \"success\", \"city\": name, **row}\n\n\nroot_agent = Agent(\n    model=\"gemini-flash-latest\",\n    name=\"root_agent\",\n    description=\"Converts lengths and looks up cities.\",\n    instruction=(\n        \"Answer with the tools. Use convert_length for unit questions and \"\n        \"lookup_city for city questions. If a tool returns status error, \"\n        \"say so and do not guess.\"\n    ),\n    tools=[convert_length, lookup_city],\n)"
+      },
+      {
+        "type": "steps",
+        "title": "Working through it",
+        "items": [
+          "Scaffold: adk create --model gemini-flash-latest unit_agent, answering the backend prompt with Google AI, wrote 4 files: .env, .gitignore, __init__.py and agent.py (the quickstart lists 3; the .gitignore is extra).",
+          "Tool arithmetic: convert_length(5, \"km\", \"mi\") returned status success with value 3.1069 mi, which is 5000 metres divided by 1609.344 and rounded to 4 places.",
+          "Second conversion: convert_length(3, \"ft\", \"m\") returned 0.9144 m, which is 3 times 0.3048.",
+          "Error path: convert_length(1, \"parsec\", \"m\") returned status error with the message \"unknown unit: parsec or m\"; no exception, so the model gets something to say.",
+          "Lookup: lookup_city(\"Paris\") returned France and Europe/Paris; lookup_city(\"Atlantis\") returned status error, \"no record for Atlantis\".",
+          "Declaration: FunctionTool(convert_length) produced a declaration whose description is the docstring and whose schema has 3 required parameters, value as number and the units as strings.",
+          "Parallel step: two one-tool agents with output_key length and city under a ParallelAgent named fanout, then a merge agent reading {length} and {city}, all inside a SequentialAgent named pipeline; it built with 2 sub-agents in the fan-out and, run as a script (python parallel_step.py, not imported), printed the deprecation warning quoted in the workflows subtopic.",
+          "Eval set: a file with 5 cases validated against ADK's EvalSet schema; test_config.json validated against EvalConfig with tool_trajectory_avg_score 1.0 and response_match_score 0.8.",
+          "adk eval on the bare install stopped with \"Eval module is not installed\" and named the extra google-adk[eval]; from there a key is needed, so the lab takes over."
+        ],
+        "cites": [
+          "s2",
+          "s4",
+          "s9"
+        ]
+      },
+      {
+        "type": "code",
+        "lang": "python",
+        "caption": "parallel_step.py, as built by the author on 2.12.0 (run as a script it prints a DeprecationWarning in favour of Workflow; still runs)",
+        "code": "from google.adk.agents import ParallelAgent, SequentialAgent\nfrom google.adk.agents.llm_agent import Agent\nfrom unit_agent.agent import convert_length, lookup_city\n\nlength = Agent(name=\"length_agent\", model=\"gemini-flash-latest\",\n               instruction=\"Convert the length in the request.\",\n               tools=[convert_length], output_key=\"length\")\ncity = Agent(name=\"city_agent\", model=\"gemini-flash-latest\",\n             instruction=\"Look up the city in the request.\",\n             tools=[lookup_city], output_key=\"city\")\nfanout = ParallelAgent(name=\"fanout\", sub_agents=[length, city])\nmerge = Agent(name=\"merge_agent\", model=\"gemini-flash-latest\",\n              instruction=\"Combine {length} and {city} into one sentence.\")\npipeline = SequentialAgent(name=\"pipeline\", sub_agents=[fanout, merge])"
+      },
+      {
+        "type": "table",
+        "caption": "The five eval cases: question, expected tool call, expected outcome (the file validated against the EvalSet schema; scores need a model run)",
+        "columns": [
+          "case id",
+          "user message",
+          "expected tool call",
+          "expected final answer"
+        ],
+        "rows": [
+          [
+            "km_to_mi",
+            "How many miles is 5 km?",
+            "convert_length(value 5, from_unit km, to_unit mi)",
+            "5 km is about 3.1069 miles."
+          ],
+          [
+            "city_paris",
+            "Which country and time zone is Paris in?",
+            "lookup_city(name Paris)",
+            "Paris is in France, time zone Europe/Paris."
+          ],
+          [
+            "unknown_unit",
+            "Convert 1 parsec to metres.",
+            "convert_length(value 1, from_unit parsec, to_unit m)",
+            "I cannot: the tool does not know the unit parsec."
+          ],
+          [
+            "unknown_city",
+            "What time zone is Atlantis in?",
+            "lookup_city(name Atlantis)",
+            "I have no record for Atlantis, so I cannot say."
+          ],
+          [
+            "no_tool_needed",
+            "What can you do?",
+            "none",
+            "I convert lengths between m, km, ft and mi, and look up a city's country and time zone."
+          ]
+        ],
+        "cites": [
+          "s9"
+        ]
+      },
+      {
+        "type": "code",
+        "lang": "json",
+        "caption": "unit_agent/tools.evalset.json: the five cases in the page's eval-set shape (validated against ADK's EvalSet model on 2.12.0; the final answers are the author's expectations, not model output)",
+        "code": "{\n  \"eval_set_id\": \"unit_agent_tools\",\n  \"name\": \"unit_agent_tools\",\n  \"description\": \"Five cases: two happy paths, one unknown unit, one unknown city, one no-tool answer.\",\n  \"eval_cases\": [\n    {\n      \"eval_id\": \"km_to_mi\",\n      \"conversation\": [\n        {\n          \"invocation_id\": \"c1\",\n          \"user_content\": {\"parts\": [{\"text\": \"How many miles is 5 km?\"}], \"role\": \"user\"},\n          \"final_response\": {\"parts\": [{\"text\": \"5 km is about 3.1069 miles.\"}], \"role\": \"model\"},\n          \"intermediate_data\": {\n            \"tool_uses\": [{\"name\": \"convert_length\", \"args\": {\"value\": 5, \"from_unit\": \"km\", \"to_unit\": \"mi\"}}],\n            \"intermediate_responses\": []\n          }\n        }\n      ],\n      \"session_input\": {\"app_name\": \"unit_agent\", \"user_id\": \"learner\", \"state\": {}}\n    },\n    {\n      \"eval_id\": \"city_paris\",\n      \"conversation\": [\n        {\n          \"invocation_id\": \"c2\",\n          \"user_content\": {\"parts\": [{\"text\": \"Which country and time zone is Paris in?\"}], \"role\": \"user\"},\n          \"final_response\": {\"parts\": [{\"text\": \"Paris is in France, time zone Europe/Paris.\"}], \"role\": \"model\"},\n          \"intermediate_data\": {\n            \"tool_uses\": [{\"name\": \"lookup_city\", \"args\": {\"name\": \"Paris\"}}],\n            \"intermediate_responses\": []\n          }\n        }\n      ],\n      \"session_input\": {\"app_name\": \"unit_agent\", \"user_id\": \"learner\", \"state\": {}}\n    },\n    {\n      \"eval_id\": \"unknown_unit\",\n      \"conversation\": [\n        {\n          \"invocation_id\": \"c3\",\n          \"user_content\": {\"parts\": [{\"text\": \"Convert 1 parsec to metres.\"}], \"role\": \"user\"},\n          \"final_response\": {\"parts\": [{\"text\": \"I cannot: the tool does not know the unit parsec.\"}], \"role\": \"model\"},\n          \"intermediate_data\": {\n            \"tool_uses\": [{\"name\": \"convert_length\", \"args\": {\"value\": 1, \"from_unit\": \"parsec\", \"to_unit\": \"m\"}}],\n            \"intermediate_responses\": []\n          }\n        }\n      ],\n      \"session_input\": {\"app_name\": \"unit_agent\", \"user_id\": \"learner\", \"state\": {}}\n    },\n    {\n      \"eval_id\": \"unknown_city\",\n      \"conversation\": [\n        {\n          \"invocation_id\": \"c4\",\n          \"user_content\": {\"parts\": [{\"text\": \"What time zone is Atlantis in?\"}], \"role\": \"user\"},\n          \"final_response\": {\"parts\": [{\"text\": \"I have no record for Atlantis, so I cannot say.\"}], \"role\": \"model\"},\n          \"intermediate_data\": {\n            \"tool_uses\": [{\"name\": \"lookup_city\", \"args\": {\"name\": \"Atlantis\"}}],\n            \"intermediate_responses\": []\n          }\n        }\n      ],\n      \"session_input\": {\"app_name\": \"unit_agent\", \"user_id\": \"learner\", \"state\": {}}\n    },\n    {\n      \"eval_id\": \"no_tool_needed\",\n      \"conversation\": [\n        {\n          \"invocation_id\": \"c5\",\n          \"user_content\": {\"parts\": [{\"text\": \"What can you do?\"}], \"role\": \"user\"},\n          \"final_response\": {\"parts\": [{\"text\": \"I convert lengths between m, km, ft and mi, and look up a city's country and time zone.\"}], \"role\": \"model\"},\n          \"intermediate_data\": {\n            \"tool_uses\": [],\n            \"intermediate_responses\": []\n          }\n        }\n      ],\n      \"session_input\": {\"app_name\": \"unit_agent\", \"user_id\": \"learner\", \"state\": {}}\n    }\n  ]\n}\n"
+      },
+      {
+        "type": "p",
+        "text": "Read the table as the contract the eval enforces. The tool-trajectory criterion checks the third column exactly, so the two error cases fail if the model answers from memory instead of calling the tool, and the last case fails if it calls a tool it did not need. The response-match criterion is an overlap score against the fourth column, which is why those answers are short and literal: a verbose expected answer lowers the overlap for every acceptable phrasing.",
+        "cites": [
+          "s9"
+        ]
+      }
+    ]
+  },
+  "code": [],
+  "diagram": null,
+  "technologies": [
+    "Agent Development Kit (ADK)",
+    "google-adk (Python)",
+    "ADK Web (Dev UI)",
+    "Gemini API",
+    "Google AI Studio",
+    "Model Context Protocol (MCP)",
+    "Agent2Agent (A2A)",
+    "OpenTelemetry",
+    "Gemini Enterprise Agent Platform"
+  ],
+  "related": [
+    "agent-architectures",
+    "mcp-servers",
+    "structured-outputs-tool-calling",
+    "llm-agent-evaluation"
+  ],
+  "practice": null,
+  "provenance": {
+    "generated_by": "Claude Fable 5.1 by hand, Scout learning center, format v2 ADK agents",
+    "generated_on": "2026-10-21",
+    "reviewed_by": "a second reader (a separate Claude Fable 5.1 instance, not the writer), Scout learning center, format v2 ADK agents",
+    "reviewed_on": "2026-10-21"
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-21",
+      "change": "new lesson, entry 2 of the gcp-ai-platform module: what ADK is with a dated status table of the components used; Agent, Runner, Session and Event with a flow and a sequence; the create, run, web, eval loop with a flow; the workflow types table and a decision block (LLM agent vs workflow agent vs graph) with the 2.12.0 deprecation warning recorded; function tools, MCP toolsets and the experimental A2A; evaluation files, criteria and observability; a free lab written for the learner and not run with a model; worked example of a two-tool agent with a parallel step and five eval cases, the model-free parts run by the author on google-adk 2.12.0; twelve sources fetched 2026-10-21"
+    }
+  ],
+  "sources": [
+    {
+      "id": "s1",
+      "title": "Agent Development Kit (ADK) home: the framework, the five languages, install",
+      "url": "https://adk.dev/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "Available in Python, TypeScript, Go, Java, and Kotlin"
+      }
+    },
+    {
+      "id": "s2",
+      "title": "ADK docs: Python quickstart (install, adk create, the mock tool, adk run, adk web)",
+      "url": "https://adk.dev/get-started/python/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "root_agent definition which is the only required element"
+      }
+    },
+    {
+      "id": "s3",
+      "title": "ADK docs: Runtime event loop (Runner, Execution Logic, Event, Session services, pause and resume)",
+      "url": "https://adk.dev/runtime/event-loop/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "Runner receives a user query and asks the main Agent to start processing"
+      }
+    },
+    {
+      "id": "s4",
+      "title": "ADK docs: Agent workflows (graph-based, dynamic, collaborative, template; Agent Routing experimental)",
+      "url": "https://adk.dev/workflows/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "Experimental: Agent Routing"
+      }
+    },
+    {
+      "id": "s5",
+      "title": "ADK docs: Models (direct string or registry, model connectors, model routing)",
+      "url": "https://adk.dev/agents/models/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "automatic failover on error"
+      }
+    },
+    {
+      "id": "s6",
+      "title": "ADK docs: MCP tools (McpToolset, connection parameters, tool_filter, integration patterns)",
+      "url": "https://adk.dev/tools-custom/mcp-tools/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "Agents deployed to production must define"
+      }
+    },
+    {
+      "id": "s7",
+      "title": "ADK docs: Agent2Agent (A2A) protocol support (experimental; exposing and consuming)",
+      "url": "https://adk.dev/a2a/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "Experimental"
+      }
+    },
+    {
+      "id": "s8",
+      "title": "ADK docs: Observability (logging, metrics, traces; OpenTelemetry quick start)",
+      "url": "https://adk.dev/observability/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "built-in observability through logging, metrics, and traces"
+      }
+    },
+    {
+      "id": "s9",
+      "title": "ADK docs: Why evaluate agents (test files, eval sets, criteria, adk eval, the Dev UI Eval and Trace tabs)",
+      "url": "https://adk.dev/evaluate/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "tool_trajectory_avg_score"
+      }
+    },
+    {
+      "id": "s10",
+      "title": "GitHub: google/adk-python latest release (v2.12.0); the other four language repositories read the same way",
+      "url": "https://github.com/google/adk-python/releases/latest",
+      "kind": "repo",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "Release v2.12.0"
+      }
+    },
+    {
+      "id": "s11",
+      "title": "PyPI: google-adk package record (version, requires_python)",
+      "url": "https://pypi.org/pypi/google-adk/json",
+      "kind": "repo",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "\"requires_python\": \">=3.11\""
+      }
+    },
+    {
+      "id": "s12",
+      "title": "Gemini Enterprise Agent Platform docs: Overview (ADK under the Build pillar)",
+      "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/overview",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "A modular, model-agnostic framework for building and deploying complex AI agents"
+      }
+    }
+  ]
+}
