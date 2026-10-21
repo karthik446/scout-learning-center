@@ -1,0 +1,355 @@
+{
+  "schema_version": "learning-center-lesson:2",
+  "id": "gcp-regulated-controls",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Running agents in a regulated environment: VPC Service Controls, CMEK, residency, access controls",
+  "area": "security",
+  "primary_key": "vpc-service-controls",
+  "secondary_keys": ["security", "compliance-governance", "google-cloud", "model-armor"],
+  "keys": ["vpc-service-controls", "security", "compliance-governance", "google-cloud", "model-armor"],
+  "summary": "A regulated workload on Gemini Enterprise Agent Platform is approved control by control, and each control answers one risk: a VPC Service Controls perimeter against data leaving the project, customer-managed encryption keys (CMEK) for key custody, a data-residency location for jurisdiction, Access Transparency and Access Approval for what Google staff may do with your data, a Model Garden organization policy for the model supply chain, Model Armor for prompt attacks. This lesson reads the platform's per-product control table as it stood on the day of writing, says what a Yes in that table does and does not mean, draws the perimeter with the model API, the data stores and the egress path, and fills a control matrix for a five-service agent, finding three gaps in the process. Google's Secure AI Framework (SAIF) is the neutral reference list; it is a framework, not a certification.",
+  "detail": [],
+  "in_practice": {
+    "blocks": [
+      {
+        "type": "p",
+        "text": "Run the perimeter in dry run mode before you enforce it. The VPC Service Controls overview lists, among the uses of the product, \"Use VPC Service Controls in dry run mode to monitor requests to protected services without preventing access and to understand traffic requests to your projects\". A regulated agent usually talks to more services than its design document admits (a logging sink, an artifact bucket, a secret store, the model API); dry run surfaces every call that would have been denied, as log entries, while nothing breaks. The sequence that works: add the project to a perimeter in dry run, run the agent's evaluation suite and a normal day of traffic, read the would-be denials, write ingress and egress rules for the legitimate ones, then switch the perimeter to enforced. Remember the Agent Platform rule that the project must be in the perimeter before the agent is deployed. Neither page says whether a project in a dry-run perimeter counts as part of a service perimeter for that rule, so the cautious reading, which is this lesson's and not the pages', is to treat the enforced perimeter as the one that counts and to redeploy the agent after the switch.",
+        "cites": ["s2", "s3"]
+      },
+      {
+        "type": "p",
+        "text": "Treat the control table as a living artefact with an owner and a date, not as a fact you learned once. The Scale page that carries it said \"Last updated\" on the very day it was read for this lesson, and its cells can move in either direction: the release notes of June 2026 both widened a capability (Memory Bank and Sessions multi-regional and global endpoints reaching General Availability) and narrowed another in the same entry (CMEK \"cannot be used\" with the global endpoint). Keep your own copy of the matrix next to the design document, with the column for the source page, the date each cell was read, and a short note for every exception that the summary table does not show. Re-read the page before every architecture review and before every audit; a cell that changed is a finding, not an embarrassment.",
+        "cites": ["s1", "s12"]
+      },
+      {
+        "type": "p",
+        "text": "Collect Access Transparency logs as audit evidence, and ship them where the auditors already look. The overview says the logs \"record the actions that Google personnel take when accessing Customer Data\", with the resource, the action, the time, the reason and details about the accessor including \"physical location, employing entity, and job category\"; it names \"Verifying and tracking compliance with legal or regulatory obligations\" as one reason to use them and recommends ingesting them into a security information and event management tool. An auditor who asks who at the provider touched this data, and why, gets a log rather than a letter. Where the workload needs consent rather than a record, Access Approval sits on top: \"Access is granted only after the Access Approval request is approved\", and its own page says you must enable Access Transparency first.",
+        "cites": ["s7", "s8"]
+      },
+      {
+        "type": "p",
+        "text": "Pin the model supply chain with a Model Garden organization policy. The Model Garden page says you \"can set a Model Garden organization policy at the organization, folder, or project level to control access to specific models\", and gives the regulated pattern as its own example: \"allow access to specific models that you've vetted and deny access to all others\". That turns a model review (what the model-risk lesson in this module calls an inventory entry) into something the platform enforces, so a developer cannot pull a model nobody assessed into a regulated project. Pair it with the perimeter note that Model Garden one-click public endpoint deployments are not supported inside a VPC Service Controls environment, so the vetted list should contain only models that can be reached in the deployment pattern the perimeter allows.",
+        "cites": ["s11", "s3"]
+      }
+    ]
+  },
+  "subtopics": [
+    {
+      "id": "yes-is-where-you-start",
+      "title": "A Yes in a control table is where you start, not where you finish",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "A regulated environment is one where someone outside the team (a regulator, an auditor, an internal risk function) must be shown that specific risks are controlled before the agent handles real data. That shifts the question from whether the team can build the agent to whether it can prove each control is in place. The controls this lesson covers are the infrastructure ones: a service perimeter against data leaving the project, customer-managed keys for custody of the encryption keys, a storage and processing location for jurisdiction, and a record (or a veto) of what the provider's own staff may do with the data. Two content-side controls are placed at the end so the picture is complete: an organization policy on which models may be used, and Model Armor against prompt attacks. Identity, the gateway and the registry are the subject of the identity-and-gateway lesson in this module, and model-risk governance (inventories, validation, effective challenge) is the subject of the model-risk lesson; neither is repeated here.",
+          "cites": ["s1", "s9", "s11"]
+        },
+        {
+          "type": "p",
+          "text": "The platform publishes a table that says, per product, whether each control is \"supported\". Read that word carefully. The Scale page introduces the table as showing \"which enterprise security features are supported for each Agent Platform service\": a Yes means the product accepts the control, not that a project using the product is compliant with anything. The data residency page makes the same distinction when it discusses its strictest endpoints: multi-region endpoints are \"a foundational technical capability\", but \"fully achieving compliance also requires broader customer-managed architecture, identity, and access controls\". So the honest reading of every cell in this lesson is capability, and the assessment stays yours.",
+          "cites": ["s1", "s4"]
+        },
+        {
+          "type": "table",
+          "caption": "Status of the components this lesson uses, read 2026-10-21; stage words are quoted from the page named in the source column, and the platform-map lesson in this module carries the full table for the rest of the platform",
+          "columns": ["component", "name now (was)", "stage as the page states it", "date read", "source"],
+          "rows": [
+            ["Agent Runtime", "Agent Runtime (was Vertex AI Agent Engine, per the rename table in the release notes)", "not stated on the page", "2026-10-21", "s1, s12"],
+            ["Sessions, Memory Bank", "Agent Platform Sessions, Agent Platform Memory Bank (were Vertex AI Agent Engine Sessions and Memory Bank)", "multi-regional and global endpoints: \"General Availability (GA)\", release note of June 17, 2026; the Scale page itself states no stage", "2026-10-21", "s12, s1"],
+            ["Code Execution", "Agent Platform Code Execution (was Vertex AI Agent Engine Code Execution)", "not stated on the page", "2026-10-21", "s1, s12"],
+            ["Model Armor", "Model Armor; the screening service the gateway can call", "no product-level stage word on its overview (only the image-screening section is labelled \"Preview\"); for Agent Gateway: \"generally available (GA)\", release note of June 24, 2026", "2026-10-21", "s9, s12"],
+            ["Model Garden organization policy", "Gemini Enterprise Agent Platform Model Garden", "not stated on the page", "2026-10-21", "s11"],
+            ["VPC Service Controls, CMEK, Access Transparency, Access Approval", "Google Cloud services, not Agent Platform products", "no stage word on any of the four overview pages", "2026-10-21", "s2, s6, s7, s8"]
+          ],
+          "cites": ["s1", "s2", "s6", "s7", "s8", "s9", "s11", "s12"]
+        }
+      ]
+    },
+    {
+      "id": "the-control-table-row-by-row",
+      "title": "The Agent Platform control table, row by row",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The Scale page's \"Enterprise security\" section lists six products across and six controls down. The columns are Agent Runtime, Agent evaluation, Sessions, Memory Bank, Example Store and Code Execution; the rows are VPC Service Controls, customer-managed encryption keys, data residency at rest (the page writes \"Data residency (DRZ) at rest\"), HIPAA, \"Access Transparency in Agent Platform\" and Access Approval. The table below copies the cells as they stood on the day of reading. Three products carry every control: Agent Runtime, Sessions and Memory Bank are Yes down the whole column. Code Execution is Yes for the four data-side controls and No for the two personnel controls. Agent evaluation has the same pair of No cells. Example Store is the outlier: No for everything except the HIPAA row.",
+          "cites": ["s1"]
+        },
+        {
+          "type": "table",
+          "caption": "Enterprise security on the Scale page, cells copied as printed, read 2026-10-21; a Yes means the page lists the control as supported for that product, nothing more",
+          "columns": ["control (row label as printed)", "Agent Runtime", "Agent evaluation", "Sessions", "Memory Bank", "Example Store", "Code Execution"],
+          "rows": [
+            ["VPC Service Controls", "Yes", "Yes", "Yes", "Yes", "No", "Yes"],
+            ["Customer-managed encryption keys (CMEK)", "Yes", "Yes", "Yes", "Yes", "No", "Yes"],
+            ["Data residency (DRZ) at rest", "Yes", "Yes", "Yes", "Yes", "No", "Yes"],
+            ["HIPAA", "Yes", "Yes", "Yes", "Yes", "Yes", "Yes"],
+            ["Access Transparency in Agent Platform", "Yes", "No", "Yes", "Yes", "No", "No"],
+            ["Access Approval", "Yes", "No", "Yes", "Yes", "No", "No"]
+          ],
+          "cites": ["s1"]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "The exception the table does not show. The CMEK row says Yes for Sessions and Memory Bank, and the release note that announced their multi-regional and global endpoints as \"General Availability (GA)\" on June 17, 2026 adds in the same entry: \"Note that Customer-Managed Encryption Keys (CMEK) cannot be used if your Memory Bank or Sessions instance is configured to use the global endpoint.\" A team that picks the global endpoint for model availability silently gives up the CMEK cell. Record this kind of exception as a note under your own copy of the table, because the summary cell will keep saying Yes.",
+          "cites": ["s12", "s1"]
+        },
+        {
+          "type": "p",
+          "text": "Three readings follow from the table. First, the HIPAA row is a different kind of fact from the other five: the others name a product feature you switch on, while HIPAA names a regulation, and a Yes there means the page lists the product as supported for HIPAA; whether your deployment meets HIPAA is the shared-responsibility question this lesson keeps returning to. Second, the two No cells under Code Execution and Agent evaluation are both in the personnel rows: the sandbox and the evaluation service produce no Access Transparency log and accept no Access Approval, so if the workload's evidence story depends on those logs, the sandbox is a gap to write down (the worked example does). Third, Example Store's column of No cells means a regulated design simply does not use it; the row count does not improve by wanting it to.",
+          "cites": ["s1"]
+        }
+      ]
+    },
+    {
+      "id": "the-perimeter-and-what-it-does-not-do",
+      "title": "VPC Service Controls: the perimeter, and what it does not do",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "VPC Service Controls is the exfiltration control. The overview defines a service perimeter as something that \"creates a security boundary around Google Cloud resources\": it \"allows free communication within the perimeter but, by default, blocks communication to Google Cloud services across the perimeter\". It is deliberately a second layer: the page says it \"provides an extra layer of security defense for Google Cloud services that is independent of Identity and Access Management (IAM)\", IAM being identity-based and the perimeter context-based, so a stolen credential still hits the boundary. Two limits matter for agents. The perimeter \"doesn't block access to any third-party APIs or services on the internet\" by itself, and it is \"not designed to enforce comprehensive controls on metadata movement\": it controls data, such as the contents of a Cloud Storage object, not names and attributes.",
+          "cites": ["s2"]
+        },
+        {
+          "type": "flow",
+          "nodes": [
+            {"id": "user", "label": "User or calling app", "kind": "actor"},
+            {"id": "runtime", "label": "Agent Runtime", "kind": "service"},
+            {"id": "pscep", "label": "PSC endpoint to Model Armor", "kind": "service"},
+            {"id": "armor", "label": "Model Armor (regional)", "kind": "service"},
+            {"id": "model", "label": "Gemini model API (regional endpoint)", "kind": "service"},
+            {"id": "memory", "label": "Sessions + Memory Bank", "kind": "store"},
+            {"id": "bucket", "label": "Cloud Storage bucket", "kind": "store"},
+            {"id": "proxy", "label": "Egress proxy + Cloud NAT", "kind": "service"}
+          ],
+          "frames": [
+            {"id": "perimeter", "title": "VPC Service Controls perimeter (the project)", "nodes": ["runtime", "model", "memory", "bucket", "pscep", "proxy"]}
+          ],
+          "edges": [
+            {"id": "call", "from": "user", "to": "runtime", "kind": "sync", "label": "Query the agent (ingress rule admits the caller)", "short": "Query"},
+            {"id": "screen", "from": "runtime", "to": "pscep", "kind": "sync", "label": "Screen prompt via the PSC endpoint", "short": "Screen"},
+            {"id": "toarmor", "from": "pscep", "to": "armor", "kind": "sync", "label": "Private path to the regional Model Armor API", "short": "Private path"},
+            {"id": "state", "from": "runtime", "to": "memory", "kind": "sync", "label": "Read and write session and memories", "short": "State"},
+            {"id": "files", "from": "runtime", "to": "bucket", "kind": "sync", "label": "Read documents (same perimeter)", "short": "Files"},
+            {"id": "egress", "from": "runtime", "to": "proxy", "kind": "sync", "label": "Tool call routed to the proxy, out through Cloud NAT", "short": "Tool call"},
+            {"id": "infer", "from": "runtime", "to": "model", "kind": "sync", "label": "Generate (service inside the perimeter)", "short": "Generate"}
+          ],
+          "steps": [
+            {"edge": "call", "caption": "A caller outside the perimeter needs an ingress rule; inside, communication is free."},
+            {"edge": "screen", "caption": "Model Armor's regional endpoint is reached through a Private Service Connect endpoint, or certificate errors follow."},
+            {"edge": "toarmor", "caption": "The PSC endpoint carries the request to the Model Armor API on a private path; the service itself is outside the project."},
+            {"edge": "state", "caption": "Sessions and Memory Bank are Yes for VPC Service Controls in the control table."},
+            {"edge": "files", "caption": "A bucket in the same perimeter is readable; one outside is not without an egress rule."},
+            {"edge": "egress", "caption": "With a perimeter, the runtime's default internet access is blocked; the proxy VM reaches the internet through Cloud NAT, and the runtime's tool calls get out only through it."},
+            {"edge": "infer", "caption": "Gemini models are on the Agent Platform page's list of artifacts that can't leave the perimeter; with context gathered, the answer is generated."}
+          ],
+          "legend": "The frame is one project inside one service perimeter; the overview says a perimeter does not require a VPC network of your own s2, while the egress path below does s3. The ingress rule, the free communication inside and the blocked bucket outside are the overview's own examples s2. The Model Armor leg follows the overview's \"Network requirements\": a Private Service Connect endpoint to the Model Armor APIs is required to reach its regional endpoints from inside a VPC network under Private Google Access or VPC Service Controls s9. The egress leg is the Agent Platform page's recommendation: with VPC Service Controls the Google-managed environment \"has its default internet access blocked\", and the way out is a proxy in a subnet inside the perimeter with a Cloud NAT gateway s3.",
+          "cites": ["s2", "s3", "s9"]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Order of operations. The Agent Platform page is explicit: \"the project must be part of a service perimeter before you deploy the agent. If an agent is deployed before the project is added to a perimeter, the agent won't be secured by VPC Service Controls and continues to have access to the public internet.\" Perimeter first, deploy second, and redeploy anything that was there before.",
+          "cites": ["s3"]
+        },
+        {
+          "type": "p",
+          "text": "The same page lists what you lose inside a perimeter, and a regulated design should accept these knowingly: Model Garden one-click public endpoint deployments \"aren't supported within a VPC-SC environment\", \"Request and response logging isn't available with VPC Service Controls\", and URL context live fetching is disabled. The second one bites hardest, because request and response logs are often the evidence a model-risk reviewer wants; plan to get that evidence from the agent's own tracing instead. Agent Gateway, covered in the identity-and-gateway lesson, enforces perimeter rules only when it is configured with VPC connectivity, and only for gateway deployments created after September 8, 2026 that use the agent connectivity template in ALL_TRAFFIC egress mode, per the release note of September 9, 2026; the gateway is not inside the perimeter by default.",
+          "cites": ["s3", "s12"]
+        }
+      ]
+    },
+    {
+      "id": "cmek-key-custody",
+      "title": "CMEK: custody of the key, not a stronger cipher",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Everything stored on Google Cloud is already encrypted at rest; the Cloud KMS page says so and adds that with default encryption \"Google Cloud owns and controls the keys\", you \"can't view or manage these keys or review key usage logs\", and data from several customers \"might use the same key encryption key\". Customer-managed encryption keys change who holds the key, not how strong the cipher is: they \"are encryption keys that you own\", with ownership meaning \"tightly restricted access or no access by Google\". Management covers creation, protection level, rotation, access, key status, and destruction; CMEK is still server-side symmetric envelope encryption and \"key material never leaves the Cloud KMS system boundary\". The regulated goals the page itself lists include owning the keys, setting policy on where they are used, logging administrative and data access to them, and \"crypto-shredding\": deleting the key to make the data it protected unreadable, for off-boarding or incident response.",
+          "cites": ["s6"]
+        },
+        {
+          "type": "p",
+          "text": "Operationally, a CMEK-integrated service works through a service agent: a per-project service account that encrypts and decrypts with your key. The user who reads a Memory Bank entry does not need permission on the key; the service agent does. If the agent \"has permission to decrypt using the key, and you have not disabled or destroyed the key\", the request proceeds; \"Otherwise, the request fails\". That sentence is the whole control: disable the key and the agent's sessions, memories and sandboxes stop being readable, by Google's service as much as by anyone else. Autokey can create the key rings and keys on demand with the right grants, which the page recommends when its defaults fit.",
+          "cites": ["s6"]
+        },
+        {
+          "type": "p",
+          "text": "On Agent Platform the CMEK row of the control table is Yes for every product except Example Store, with the one exception already quoted: the June 2026 release note says CMEK \"cannot be used\" if a Memory Bank or Sessions instance uses the global endpoint. The rule that falls out is simple to state and easy to forget: a regulated agent that needs key custody must create its Sessions and Memory Bank instances on a regional or multi-regional endpoint, and that choice is made at creation. The identity-and-gateway lesson does not change this; keys and perimeters are infrastructure controls that sit under whatever gateway is in front.",
+          "cites": ["s1", "s12"]
+        }
+      ]
+    },
+    {
+      "id": "residency-and-jurisdiction",
+      "title": "Residency and jurisdiction: where data rests and where it is processed",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The data residency page separates two things that teams often merge. Data at rest \"remains physically stored in the specific Google Cloud location you chose\", and \"this residency is maintained regardless of which endpoint you use to call the model\". ML processing, the computation that applies the model to your prompt, is placed by the endpoint you call. Three endpoint types exist: jurisdictional multi-region endpoints keep processing \"within that specific geographical region (such as the United States or the European Union)\"; locational endpoints process in the jurisdiction of the named region; global endpoints \"may be processed in any Google Cloud location around the world, and therefore don't provide any data residency guarantees\". The page adds a boundary note that catches people: the EU multi-region covers EU member states, and geographies outside the EU political boundary such as the United Kingdom are not in it.",
+          "cites": ["s4"]
+        },
+        {
+          "type": "p",
+          "text": "Memory Bank's own page shows why the processing side needs a decision, not a default. An instance is created in a regional or multi-regional location so that data at rest stays in that boundary, but \"If a regional endpoint is unavailable for your selected model or location (for example, Gemini 3 models or Asia single regions), global Gemini endpoints are used for ML processing\". A jurisdiction requirement therefore constrains the model choice, not just the storage location: the residency page's per-model tables say which models have regional processing where, and a model without it will process memories globally. The page also names the control that stops this silently happening: the \"gcp.resourceLocations organization policy constraint\" at organization, folder or project level, which it says \"restricts the creation and usage of Memory Bank resources to approved compliant regions and prevents unauthorized global endpoint usage\".",
+          "cites": ["s5", "s4"]
+        },
+        {
+          "type": "p",
+          "text": "The same page introduces a risk specific to agents: cross-border memory contamination, which it defines as \"when an agent runtime, agent identity, service account, or application operating in one jurisdiction (for example, the US) writes to or retrieves memories from a Memory Bank instance located in another jurisdiction (for example, the EU)\". Its answer is separation by identity: dedicated regional agent identities or service accounts per jurisdiction, each granted Memory Bank roles only on instances in the same jurisdiction, with least-privilege roles such as a viewer role for retrieval-only agents. That is an identity pattern used in service of residency, so this lesson names it and leaves the mechanics of agent identity to the identity-and-gateway lesson. The data residency \"at rest\" row of the control table is Yes for every product except Example Store.",
+          "cites": ["s5", "s1"]
+        }
+      ]
+    },
+    {
+      "id": "access-transparency-and-approval",
+      "title": "Access Transparency and Access Approval: the provider's staff, logged or vetoed",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The last two rows of the control table are about people at Google, not about your users. Access Transparency \"logs record the actions that Google personnel take when accessing Customer Data\", each entry carrying the resource, the action, the time, the reason, and accessor details that include \"physical location, employing entity, and job category\". The overview positions them next to Cloud Audit Logs: audit logs record what members of your organization did, Access Transparency records what Google personnel did, and \"when used together\" you have both sides. All such access \"requires a valid justification\" drawn from a fixed list of reason codes, which is why the logs are useful as evidence: a log entry with a justification is something an auditor can read.",
+          "cites": ["s7"]
+        },
+        {
+          "type": "p",
+          "text": "Access Approval is the veto. Its overview says it \"ensures that Cloud Customer Care and engineering teams require your explicit approval whenever they need to access your Customer Data\"; each request is cryptographically signed, you are notified by email or Pub/Sub, you approve or deny in the console or through the API, and \"Access is granted only after the Access Approval request is approved\". The page states the dependency plainly: \"Before enabling Access Approval, you must enable Access Transparency for your organization\". It also states the exception a regulated design must document: a request \"may be automatically approved without the customer's action to address time-sensitive outages\", and such requests are logged in an \"auto approved\" state. The signing key can be Google-managed or your own key from Cloud KMS or Cloud External Key Manager, which is where this control meets the CMEK story.",
+          "cites": ["s8"]
+        },
+        {
+          "type": "p",
+          "text": "In the Agent Platform table, both rows are Yes for Agent Runtime, Sessions and Memory Bank and No for Agent evaluation, Example Store and Code Execution. The practical consequence is that data inside a sandbox, or inside an evaluation run, is outside the evidence trail these two products give you. Teams in a strict regime usually answer this one of two ways: keep regulated data out of the sandbox and the evaluation set (synthetic or masked inputs), or accept the gap in writing with a compensating control. Either answer is fine; pretending the row says Yes is not. Access Approval is enabled per project, folder or organization once Access Transparency has been enabled for the organization, so both belong in the landing-zone configuration rather than in the agent's own deployment.",
+          "cites": ["s1", "s8", "s7"]
+        }
+      ]
+    },
+    {
+      "id": "content-controls-and-which-control-for-which-risk",
+      "title": "Model supply chain, prompt attacks, and which control answers which risk",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Two risks are not about infrastructure at all. The first is the model supply chain: which models a regulated project may call. Model Garden's page says \"You can set a Model Garden organization policy at the organization, folder, or project level to control access to specific models in Model Garden\", with the regulated pattern as its example: \"allow access to specific models that you've vetted and deny access to all others\". The second is prompt attacks. Model Armor is \"a Google Cloud service designed to enhance the security and safety of your AI applications\" by \"proactively screening LLM prompts and responses\"; its use cases include prompt injection and jailbreak attempts, redaction of sensitive data in prompts and responses, and malicious URLs. How it screens (templates, confidence levels, inspect-only versus block) is taught in the identity-and-gateway lesson in this module; here it is placed as the content control that sits beside the infrastructure ones, with the one network fact a perimeter design needs: a Private Service Connect endpoint to reach its regional endpoints from inside a VPC.",
+          "cites": ["s11", "s9"]
+        },
+        {
+          "type": "p",
+          "text": "A neutral list to check your set of controls against is Google's Secure AI Framework. SAIF describes itself as \"a conceptual framework to secure AI systems\" with six core elements: expand strong security foundations to the AI ecosystem; extend detection and response to bring AI into the organization's threat universe; automate defenses; harmonize platform-level controls; adapt controls and create faster feedback loops; contextualize AI system risks in surrounding business processes. The page also points to a risk self-assessment on its companion site. Say clearly what it is: a framework you map your controls to, not a certification you can obtain or a claim you can make to a regulator. The perimeter, keys and residency in this lesson are the first element; Access Transparency logs in a SIEM are the second; the organization policies are the fourth.",
+          "cites": ["s10"]
+        },
+        {
+          "type": "decision",
+          "caption": "Which control answers which risk; each row is one risk, and a regulated design normally picks all of them",
+          "rows": [
+            {
+              "option": "Data exfiltration: VPC Service Controls perimeter",
+              "pick_when": "the risk is data leaving the project through a Google Cloud API, by a stolen credential or a mistaken copy; the perimeter blocks cross-boundary calls independently of IAM",
+              "avoid_when": "you expect it to block third-party internet APIs or metadata movement on its own; the overview says it does neither, so pair it with the proxy egress and with Model Armor for content",
+              "example": "a bucket copy from inside the perimeter to a bucket outside fails; a support agent's documents stay in the project"
+            },
+            {
+              "option": "Key custody: CMEK in Cloud KMS",
+              "pick_when": "the regime requires keys you own, auditable key access, or the ability to crypto-shred data at off-boarding",
+              "avoid_when": "Sessions or Memory Bank must use the global endpoint; the release note excludes CMEK there, so choose a regional endpoint or accept default encryption",
+              "example": "disable the key after a contract ends; sessions and memories become unreadable"
+            },
+            {
+              "option": "Jurisdiction: residency location, endpoint type, resource-location org policy",
+              "pick_when": "data at rest and model processing must stay in a named jurisdiction; choose the location at creation and a jurisdictional or locational endpoint",
+              "avoid_when": "the chosen model lacks regional processing in that location; Memory Bank falls back to global endpoints for ML processing, so change the model, not the policy",
+              "example": "an EU Memory Bank instance with an EU agent identity; a UK requirement is not met by the EU multi-region"
+            },
+            {
+              "option": "Provider personnel access: Access Transparency, then Access Approval",
+              "pick_when": "the evidence story needs a record of what Google staff did, or the regime needs your consent first",
+              "avoid_when": "the data lives in Code Execution sandboxes, Agent evaluation or Example Store; those rows are No, so keep regulated data out of them or document a compensating control",
+              "example": "Access Transparency logs ingested into the SIEM the auditors already read"
+            },
+            {
+              "option": "Model supply chain: Model Garden organization policy",
+              "pick_when": "only vetted models may be called in regulated projects; the policy allows a list and denies the rest",
+              "avoid_when": "the list includes models that need one-click public endpoints, which are not supported inside a perimeter",
+              "example": "allow two reviewed Gemini ids at the folder level; everything else is denied"
+            },
+            {
+              "option": "Prompt attacks: Model Armor via the gateway",
+              "pick_when": "prompts or responses may carry injection, jailbreaks, sensitive data or malicious URLs; screen at the gateway",
+              "avoid_when": "you expect it to replace the perimeter; it screens content, it does not stop an API call leaving the project",
+              "example": "a regional Model Armor endpoint reached through a PSC endpoint from inside the perimeter"
+            }
+          ],
+          "cites": ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s11", "s12"]
+        }
+      ]
+    }
+  ],
+  "worked_example": {
+    "title": "A control matrix for a five-service agent, with its three gaps",
+    "blocks": [
+      {
+        "type": "p",
+        "text": "A control matrix is a table with one row per service the agent uses and one column per control the regime demands, each cell holding Yes, No or open (not answered by the sources read) together with where the answer was read and when. It is the artefact an auditor can follow and the one that goes stale, so it carries an owner and a date. The agent here is a claims-handling assistant for an insurer: it runs on Agent Runtime, keeps conversation state in Sessions, remembers claimant preferences in Memory Bank, runs small calculations in a Code Execution sandbox, and reads policy documents from a Cloud Storage bucket. The regime wants all six controls from the platform table. The steps fill the matrix from the sources this lesson read, and nothing else.",
+        "cites": ["s1", "s2"]
+      },
+      {
+        "type": "steps",
+        "title": "Filling the matrix",
+        "items": [
+          "Agent Runtime: copy the column from the control table (s1, read on the date the matrix caption gives): VPC Service Controls, CMEK, data residency at rest, HIPAA, Access Transparency and Access Approval are all Yes, so the row contributes 6 Yes cells.",
+          "Sessions: copy the column, again 6 Yes cells; add the release-note exception from s12 as a note under the CMEK cell: not with the global endpoint.",
+          "Memory Bank: copy the column, 6 Yes cells; same CMEK note, plus the Memory Bank page's warning (s5) that ML processing falls back to global endpoints when the model has no regional endpoint in the chosen location.",
+          "Code Execution: copy the column; VPC Service Controls, CMEK, residency and HIPAA are Yes, Access Transparency and Access Approval are No, so this row holds the matrix's only 2 No cells (s1).",
+          "Cloud Storage: not an Agent Platform product, so the table has no column. The VPC Service Controls overview (s2) uses a Cloud Storage bucket as its worked example of a protected resource, so write Yes under VPC Service Controls and leave the remaining 5 cells open, with an owner named to fill them from the Cloud Storage documentation.",
+          "Count the Agent Platform cells: four rows of six controls make 24 cells.",
+          "Of those, 22 are Yes (three full rows plus four from Code Execution) and the rest are the two No cells from the Code Execution step.",
+          "Gap 1 (from the No cells): calculations in the sandbox leave no Access Transparency log and accept no Access Approval. Decision recorded: the sandbox receives masked figures only, never the claimant's record.",
+          "Gap 2 (from the s12 note): the team wanted the global endpoint for Sessions and Memory Bank so that the newest model is always reachable, but CMEK is excluded there. Decision recorded: one multi-regional location, with the model choice constrained to ids that process in it, per s4.",
+          "Gap 3 (from s9): Model Armor screens the prompts through the gateway, but its regional endpoint reached from inside the perimeter needs a Private Service Connect endpoint, which the first network design did not have. Decision recorded: add the PSC endpoint before enforcement; test in dry run (s2).",
+          "Sign the matrix with the owner's name and the read date, and put the re-read on the calendar for the next architecture review."
+        ],
+        "cites": ["s1", "s2", "s4", "s5", "s9", "s12"]
+      },
+      {
+        "type": "table",
+        "caption": "The matrix after the steps; Y and N copy the Scale page cells read 2026-10-21, \"open\" means not answered by this lesson's sources, and the notes column holds the exceptions the summary cells hide",
+        "columns": ["service", "VPC-SC", "CMEK", "residency", "HIPAA", "Transparency", "Approval", "note"],
+        "rows": [
+          ["Agent Runtime", "Y", "Y", "Y", "Y", "Y", "Y", "perimeter before deploy (s3)"],
+          ["Sessions", "Y", "Y", "Y", "Y", "Y", "Y", "CMEK not with the global endpoint (s12)"],
+          ["Memory Bank", "Y", "Y", "Y", "Y", "Y", "Y", "same CMEK note; ML processing may fall back to global endpoints (s5)"],
+          ["Code Execution", "Y", "Y", "Y", "Y", "N", "N", "gap 1: masked data only"],
+          ["Cloud Storage", "Y (s2)", "open", "open", "open", "open", "open", "fill from the Cloud Storage docs; owner assigned"]
+        ],
+        "cites": ["s1", "s2", "s3", "s5", "s12"]
+      }
+    ]
+  },
+  "code": [],
+  "diagram": null,
+  "technologies": ["Gemini Enterprise Agent Platform", "VPC Service Controls", "Cloud Key Management Service", "Agent Runtime", "Agent Platform Sessions", "Agent Platform Memory Bank", "Agent Platform Code Execution", "Access Transparency", "Access Approval", "Model Armor", "Model Garden", "Private Service Connect"],
+  "related": ["networking-restricted-environments", "security-compliance-reviews", "sd-security-basics", "cloud-deployments"],
+  "practice": null,
+  "provenance": {
+    "generated_by": "Claude Fable 5.1 by hand, Scout learning center, format v2 regulated controls on Gemini Enterprise Agent Platform",
+    "generated_on": "2026-10-21",
+    "reviewed_by": "a second reader (a separate Claude Fable 5.1 instance, not the writer), Scout learning center, format v2 regulated controls on Gemini Enterprise Agent Platform",
+    "reviewed_on": "2026-10-21"
+  },
+  "changelog": [
+    {"version": 1, "date": "2026-10-21", "change": "new lesson, entry 5 of the gcp-ai-platform module: the per-product control table of the Scale page copied as read on 2026-10-21 with the CMEK/global-endpoint exception from the release notes; the perimeter flow with the Model Armor PSC endpoint and the proxy egress; a decision block mapping six risks to controls; a control matrix for a five-service agent with three gaps; SAIF named as a framework"}
+  ],
+  "sources": [
+    {"id": "s1", "title": "Gemini Enterprise Agent Platform docs: Scale (Enterprise security table)", "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale", "kind": "doc", "verified": {"checked": "2026-10-21", "http": 200, "section_found": "The following table shows which enterprise security features are supported for each Agent Platform service"}},
+    {"id": "s2", "title": "VPC Service Controls docs: Overview of VPC Service Controls", "url": "https://docs.cloud.google.com/vpc-service-controls/docs/overview", "kind": "doc", "verified": {"checked": "2026-10-21", "http": 200, "section_found": "A service perimeter creates a security boundary around Google Cloud resources"}},
+    {"id": "s3", "title": "Gemini Enterprise Agent Platform docs: VPC Service Controls with Agent Platform", "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/machine-learning/general/vpc-service-controls", "kind": "doc", "verified": {"checked": "2026-10-21", "http": 200, "section_found": "the project must be part of a service perimeter before you deploy the agent"}},
+    {"id": "s4", "title": "Gemini Enterprise Agent Platform docs: Data residency", "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/resources/data-residency", "kind": "doc", "verified": {"checked": "2026-10-21", "http": 200, "section_found": "Requests submitted to a global endpoint may be processed in any Google Cloud location around the world"}},
+    {"id": "s5", "title": "Gemini Enterprise Agent Platform docs: Memory Bank overview (data residency, cross-border contamination)", "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/memory-bank", "kind": "doc", "verified": {"checked": "2026-10-21", "http": 200, "section_found": "global Gemini endpoints are used for ML processing"}},
+    {"id": "s6", "title": "Cloud KMS docs: Customer-managed encryption keys (CMEK)", "url": "https://docs.cloud.google.com/kms/docs/cmek", "kind": "doc", "verified": {"checked": "2026-10-21", "http": 200, "section_found": "Customer-managed encryption keys are encryption keys that you own"}},
+    {"id": "s7", "title": "Google Cloud docs: Overview of Access Transparency", "url": "https://docs.cloud.google.com/assured-workloads/access-transparency/docs/overview", "kind": "doc", "verified": {"checked": "2026-10-21", "http": 200, "section_found": "Access Transparency logs record the actions that Google personnel take when accessing Customer Data"}},
+    {"id": "s8", "title": "Google Cloud docs: Overview of Access Approval", "url": "https://docs.cloud.google.com/assured-workloads/access-approval/docs/overview", "kind": "doc", "verified": {"checked": "2026-10-21", "http": 200, "section_found": "Access is granted only after the Access Approval request is approved"}},
+    {"id": "s9", "title": "Google Cloud docs: Model Armor overview (Network requirements)", "url": "https://docs.cloud.google.com/model-armor/overview", "kind": "doc", "verified": {"checked": "2026-10-21", "http": 200, "section_found": "you must create a Private Service Connect endpoint to the Model Armor APIs"}},
+    {"id": "s10", "title": "Google Safety Center: Google's Secure AI Framework (SAIF)", "url": "https://safety.google/safety/saif/", "kind": "doc", "verified": {"checked": "2026-10-21", "http": 200, "section_found": "a conceptual framework to secure AI systems"}},
+    {"id": "s11", "title": "Gemini Enterprise Agent Platform docs: Model Garden, explore models (Control access to specific models)", "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-garden/explore-models", "kind": "doc", "verified": {"checked": "2026-10-21", "http": 200, "section_found": "You can set a Model Garden organization policy at the organization, folder, or project level"}},
+    {"id": "s12", "title": "Gemini Enterprise Agent Platform release notes (June 17 and June 24, 2026 entries; rename table)", "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/release-notes", "kind": "doc", "verified": {"checked": "2026-10-21", "http": 200, "section_found": "Customer-Managed Encryption Keys (CMEK) cannot be used if your Memory Bank or Sessions instance is configured to use the global endpoint"}}
+  ]
+}
