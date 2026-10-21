@@ -1,0 +1,1317 @@
+{
+  "schema_version": "learning-center-lesson:2",
+  "id": "gcp-agent-runtime-deploy",
+  "version": 1,
+  "status": "published",
+  "superseded_by": null,
+  "title": "Where an agent runs: Agent Runtime, Cloud Run and GKE",
+  "area": "ai-ml",
+  "primary_key": "agent-runtime",
+  "secondary_keys": [
+    "google-cloud",
+    "gemini-enterprise-agent-platform",
+    "agentic-ai"
+  ],
+  "keys": [
+    "agent-runtime",
+    "google-cloud",
+    "gemini-enterprise-agent-platform",
+    "agentic-ai"
+  ],
+  "summary": "An ADK agent is a long-lived HTTP container, and Google Cloud offers it three homes: the managed, agent-specific Agent Runtime on Gemini Enterprise Agent Platform, the general container platform Cloud Run, and a GKE cluster you own. This lesson walks the five deployment methods of the Agent Runtime deploy page and the package pin they rely on, follows one request through each target, lays out the four knobs that set cost on both managed targets with the list prices and free allowances read on 2026-10-21, gives a decision table and a decision tree for choosing, maps the same shape onto AWS AgentCore Runtime and Microsoft Foundry hosted agents by units only, and ends with an optional, billed lab whose last step deletes the project. Identity and the gateway are left to the next lesson of the module.",
+  "detail": [],
+  "in_practice": {
+    "blocks": [
+      {
+        "type": "p",
+        "text": "Start on the target with the fewest chores and move only when a chore becomes a requirement. For an ADK agent that is the product, that is Agent Runtime with the SDK or Developer Connect method; for a container that happens to contain an agent, or an MCP or A2A server, it is Cloud Run; GKE is a choice you make because of the cluster, not because of the agent.",
+        "cites": [
+          "s2",
+          "s7",
+          "s6"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Set the shape before you look at the rate card. The Agent Runtime default is cpu 4 and memory 4Gi; the create call accepts a smaller shape and a concurrency that follows the page's rule, and on Cloud Run the same four knobs are revision settings passed after the double dash. The worked example shows the shape moving the bill more than the choice of platform.",
+        "cites": [
+          "s2",
+          "s5",
+          "s8",
+          "s9"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Treat the invoker flag on Cloud Run as a security review item. The documentation example carries --allow-unauthenticated; answer N to the CLI prompt, pass --no-allow-unauthenticated, and test with an identity token, so that a public agent endpoint is a decision someone made rather than a flag someone copied.",
+        "cites": [
+          "s5"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Pin the package the page you follow pins and record the date. On the day of this lesson the deploy page pins google-cloud-aiplatform with the agent extras while the release notes announce a separate google-cloud-agentplatform package with a Breaking entry; a requirements line without a version will drift under you between two deploys.",
+        "cites": [
+          "s2",
+          "s3"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Price with the free allowances for the billing mode you actually use, then put a teardown in the same runbook as the deploy. The Agent Runtime and Cloud Run free rows differ, the instance-based and request-based Cloud Run rows differ again, and the project delete at the end of the lab is the only step that guarantees the bill stops.",
+        "cites": [
+          "s8",
+          "s9",
+          "s10"
+        ]
+      }
+    ]
+  },
+  "subtopics": [
+    {
+      "id": "three-places-to-run-an-agent",
+      "title": "Three places an agent can run",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "An agent written with ADK, or any other framework, is a long-lived HTTP process: it accepts a request, calls a model in a loop, calls tools, keeps session state between turns and streams a reply. Google Cloud gives that process three homes. Agent Runtime is the managed, agent-specific one on Gemini Enterprise Agent Platform; the Scale overview describes it as \"a fully managed Agent Runtime to deploy and scale agents efficiently without the need to manage underlying infrastructure\". Cloud Run is the general managed container platform, which the Cloud Run AI page describes as running \"your containerized applications, including AI/ML workloads, directly on Google's scalable infrastructure\". GKE is \"the Google Cloud managed Kubernetes service\", where the agent is a Deployment in a cluster you own.",
+          "cites": [
+            "s1",
+            "s7",
+            "s6"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The split is about what the platform does for the agent, not about the code. On Agent Runtime the service builds or receives a container, starts the HTTP server for you, and its own request routing, Sessions, Memory Bank and the gateway sit next to it in the same product; when you hand it a Dockerfile or a container image, that container \"must adhere to the runtime contract\". On Cloud Run you ship a container that listens on the PORT environment variable; the ADK page shows a small FastAPI entry point built by get_fast_api_app and a Dockerfile, and Cloud Run supplies the scaling, the URL and the invoker check. On GKE you build the image, write a Deployment manifest, apply it with kubectl, and choose yourself whether the Service is a ClusterIP or a LoadBalancer. The stages below are those of the pages read for this lesson; the platform-map lesson of this module carries the full table for every component.",
+          "cites": [
+            "s2",
+            "s5",
+            "s6"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "Shared status table of this module, this lesson's components only: stage as stated on the page read, as of 2026-10-21",
+          "columns": [
+            "component",
+            "name now (was)",
+            "stage as stated",
+            "date read",
+            "source"
+          ],
+          "rows": [
+            [
+              "Agent Runtime",
+              "Agent Runtime on Gemini Enterprise Agent Platform (was Vertex AI Agent Engine; the resource is still a reasoningEngine)",
+              "not stated on the deploy page",
+              "2026-10-21",
+              "s2"
+            ],
+            [
+              "Agent Runtime resource controls",
+              "min_instances, max_instances, resource_limits, container_concurrency",
+              "\"Preview\"",
+              "2026-10-21",
+              "s2"
+            ],
+            [
+              "Agent2Agent agents on Agent Runtime",
+              "A2A framework template, google-adk[a2a]",
+              "\"Preview\"",
+              "2026-10-21",
+              "s2"
+            ],
+            [
+              "LlamaIndex on Agent Runtime",
+              "LlamaIndex Query Pipeline template",
+              "\"Preview\"",
+              "2026-10-21",
+              "s2"
+            ],
+            [
+              "Sessions and Memory Bank endpoints",
+              "global and multi-regional endpoints",
+              "\"GA\", entry dated June 17, 2026",
+              "2026-10-21",
+              "s3"
+            ],
+            [
+              "Agent Gateway; Agent Registry",
+              "Agent Gateway (Agent-to-Anywhere); Agent Registry",
+              "\"General Availability\" and \"generally available (GA)\", entries dated June 18, 2026",
+              "2026-10-21",
+              "s3"
+            ],
+            [
+              "ADK deploy to Agent Runtime",
+              "adk deploy agent_engine",
+              "\"Supported in ADK Python Go v1.2.0\"",
+              "2026-10-21",
+              "s4"
+            ],
+            [
+              "ADK deploy to GKE",
+              "adk deploy gke",
+              "\"Python only\"; stage not stated",
+              "2026-10-21",
+              "s6"
+            ],
+            [
+              "Cloud Run",
+              "Cloud Run (instance-based and request-based billing)",
+              "not stated on the pages read",
+              "2026-10-21",
+              "s7, s8"
+            ]
+          ],
+          "cites": [
+            "s2",
+            "s3",
+            "s4",
+            "s6",
+            "s7",
+            "s8"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Two things are deliberately not in this lesson. Which identity the running agent presents to other services, and how outbound calls are routed through Agent Gateway, belong to the identity and gateway lesson of this module; here they appear only as the knobs you set at deploy time. And the model call itself is unchanged by the hosting choice: the same google-genai client and the same model id run in all three places, as the platform-map lesson explains.",
+          "cites": [
+            "s2"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "five-ways-onto-agent-runtime",
+      "title": "Five ways onto Agent Runtime, and which package you pin",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The deploy page lists five deployment methods, all ending in the same call: client.runtimes.create. Three of them take Python source (a Git repository through Developer Connect, a source-files archive, or the live object in a notebook); the other two take a Dockerfile or a prebuilt image and so accept any language. The page's own recommendations are worth quoting because they sort the methods by workflow rather than by features: Developer Connect is \"Recommended for projects managed in a Git repository\"; source files are \"Well-suited for automated workflows such as CI/CD pipelines and Infrastructure as Code tools like Terraform\"; the SDK path is \"Ideal for interactive development in environments like Colab\". Whatever the method, the result is one resource named projects/PROJECT_NUMBER/locations/LOCATION/reasoningEngines/RESOURCE_ID, and the release notes say provisioning \"has been reduced to less than 1 minute\" while the ADK page still warns that packaging and deploying \"can take several minutes\".",
+          "cites": [
+            "s2",
+            "s3",
+            "s4"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The five methods of the deploy page, in the page's words (read 2026-10-21)",
+          "columns": [
+            "method",
+            "languages",
+            "what you hand over",
+            "the page's own placement",
+            "source"
+          ],
+          "rows": [
+            [
+              "Developer Connect (Git)",
+              "Python",
+              "a repository, revision, entrypoint_module and entrypoint_object; requirements_file defaults to requirements.txt",
+              "\"Recommended for projects managed in a Git repository\"",
+              "s2"
+            ],
+            [
+              "Source files",
+              "Python",
+              "a tar.gz of source_packages sent straight to the API; no staging bucket",
+              "\"Well-suited for automated workflows such as CI/CD pipelines and Infrastructure as Code tools like Terraform\"",
+              "s2"
+            ],
+            [
+              "Dockerfile",
+              "any",
+              "source files plus a Dockerfile; image_spec tells the service to build it; \"must adhere to the runtime contract\"",
+              "build on the service; same contract as a container image",
+              "s2"
+            ],
+            [
+              "Container image",
+              "any",
+              "an image already in Artifact Registry, for example us-central1-docker.pkg.dev/my-project/my-repo/my-image:tag",
+              "\"lower deployment latency\" than the Dockerfile method",
+              "s2"
+            ],
+            [
+              "Agent Platform SDK",
+              "Python",
+              "the in-memory local_agent object; the SDK pickles it and stages a bundle in Cloud Storage",
+              "\"Ideal for interactive development in environments like Colab\"",
+              "s2"
+            ],
+            [
+              "ADK CLI (not one of the five; wraps the service)",
+              "Python, Go",
+              "the agent directory; adk deploy agent_engine --project --region --display_name",
+              "\"recommended for users who are already familiar with configuring Google Cloud projects\"",
+              "s4"
+            ]
+          ],
+          "cites": [
+            "s2",
+            "s4"
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "python",
+          "code": "# From the deploy page's SDK method, read 2026-10-21. Not run by the author.\n# The page pins the agent extras of google-cloud-aiplatform; see the callout below.\nrequirements = [\n    \"google-cloud-aiplatform[agent_engines,adk]==1.112.0\",  # the page's pin example\n]\n\nremote_agent = client.runtimes.create(\n    agent=local_agent,                      # the ADK root_agent built in the ADK lesson\n    config={\n        \"requirements\": requirements,\n        \"display_name\": \"time-agent\",\n        \"min_instances\": 0,                 # Preview knob, see the next subtopics\n        \"max_instances\": 2,\n        \"resource_limits\": {\"cpu\": \"1\", \"memory\": \"2Gi\"},\n        \"container_concurrency\": 3,         # the page's rule: 2 * cpu + 1\n    },\n)\nprint(remote_agent.api_resource.name)   # projects/.../reasoningEngines/RESOURCE_ID\n",
+          "caption": "The SDK method with the resource controls set smaller than their defaults; field names and the pin example from the deploy page"
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Pin what the page you follow pins. On 2026-10-21 the deploy page pins google-cloud-aiplatform[agent_engines,adk] (its example is ==1.112.0, and the container-image method asks for >=1.144), while the release notes carry a Breaking entry dated September 18, 2026 for \"Agent Platform SDK for Python version 2.0.1\" in a separate package, google-cloud-agentplatform, which \"decouples the agent surface from google-cloud-aiplatform into a dedicated package\". This lesson teaches against the deploy page. Before you copy a requirements list, read which package that page imports today, and pin a version, because the deploy page says to pin package versions for reproducible builds and, separately, to keep the dependency list small so that updates bring fewer breaking changes.",
+          "cites": [
+            "s2",
+            "s3"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Two details of the SDK path matter for cost later. The bundle the SDK stages in Cloud Storage holds a pickle of the agent, a requirements.txt and any extra packages, and the page lets you name the folder (dev, staging, prod) so environments do not overwrite each other. And the deploy page lists environment variable names the service reserves, among them GOOGLE_CLOUD_PROJECT, PORT and K_SERVICE, which tells you the container is started much like a Cloud Run revision; set your own variables under another prefix.",
+          "cites": [
+            "s2"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "what-a-request-does-once-it-lands",
+      "title": "What a request does once it lands",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Follow one turn through each target and the cost model stops being abstract. On Agent Runtime the caller hits the regional Agent Platform endpoint with the resource id; the ADK page writes the URL as the location, the project, the location again and reasoningEngines/RESOURCE_ID followed by :query. The service routes the call to one of its containers, each of which handles container_concurrency requests at once; the agent reads its session from Sessions, runs its loop against the model, appends the new events and streams back. On Cloud Run the caller hits the service URL instead, Cloud Run checks whether the caller may invoke it, routes to a warm instance or starts one, and the ADK FastAPI app inside does the same loop; where the session lives is whatever --session_service_uri named at deploy time.",
+          "cites": [
+            "s4",
+            "s2",
+            "s5"
+          ]
+        },
+        {
+          "type": "flow",
+          "nodes": [
+            {
+              "id": "client",
+              "label": "Caller (app or test shell)",
+              "kind": "actor"
+            },
+            {
+              "id": "api",
+              "label": "Agent Platform API, regional endpoint",
+              "kind": "service"
+            },
+            {
+              "id": "rtc",
+              "label": "Agent Runtime container (1 of min..max)",
+              "kind": "service"
+            },
+            {
+              "id": "sessions",
+              "label": "Sessions / Memory Bank",
+              "kind": "store"
+            },
+            {
+              "id": "svc",
+              "label": "Cloud Run service URL (invoker check)",
+              "kind": "service"
+            },
+            {
+              "id": "crc",
+              "label": "Cloud Run instance, FastAPI app",
+              "kind": "service"
+            },
+            {
+              "id": "sdb",
+              "label": "session_service_uri store",
+              "kind": "store"
+            },
+            {
+              "id": "model",
+              "label": "Gemini model",
+              "kind": "service"
+            }
+          ],
+          "frames": [
+            {
+              "id": "ar",
+              "title": "Agent Runtime",
+              "nodes": [
+                "api",
+                "rtc",
+                "sessions"
+              ]
+            },
+            {
+              "id": "cr",
+              "title": "Cloud Run",
+              "nodes": [
+                "svc",
+                "crc",
+                "sdb"
+              ]
+            }
+          ],
+          "edges": [
+            {
+              "id": "q",
+              "from": "client",
+              "to": "api",
+              "kind": "sync",
+              "label": ":query on reasoningEngines/RESOURCE_ID",
+              "short": "query"
+            },
+            {
+              "id": "route",
+              "from": "api",
+              "to": "rtc",
+              "kind": "sync",
+              "label": "Route to a container, up to container_concurrency at once",
+              "short": "route"
+            },
+            {
+              "id": "turns",
+              "from": "rtc",
+              "to": "sessions",
+              "kind": "sync",
+              "label": "Read and append the session's turns",
+              "short": "turns"
+            },
+            {
+              "id": "gen1",
+              "from": "rtc",
+              "to": "model",
+              "kind": "sync",
+              "label": "Model call(s) of the agent loop",
+              "short": "model"
+            },
+            {
+              "id": "post",
+              "from": "client",
+              "to": "svc",
+              "kind": "sync",
+              "label": "POST /run_sse with or without a bearer token",
+              "short": "run_sse"
+            },
+            {
+              "id": "inst",
+              "from": "svc",
+              "to": "crc",
+              "kind": "sync",
+              "label": "Route to an instance; start one if none is warm",
+              "short": "instance"
+            },
+            {
+              "id": "sess",
+              "from": "crc",
+              "to": "sdb",
+              "kind": "sync",
+              "label": "Session service: in-memory, SQLite, or agentengine://",
+              "short": "session"
+            },
+            {
+              "id": "gen2",
+              "from": "crc",
+              "to": "model",
+              "kind": "sync",
+              "label": "Same model call, same client",
+              "short": "model"
+            }
+          ],
+          "steps": [
+            {
+              "edge": "q",
+              "caption": "Caller to the regional Agent Platform endpoint: the URL names the project, the location and the reasoningEngine resource id"
+            },
+            {
+              "edge": "route",
+              "caption": "The service picks one of its containers; each takes container_concurrency requests at once (default of the deploy page)"
+            },
+            {
+              "edge": "turns",
+              "caption": "The agent reads and appends the conversation in Sessions; Memory Bank holds what is kept across sessions"
+            },
+            {
+              "edge": "gen1",
+              "caption": "The agent loop calls the model one or more times; the hosting choice does not change this call"
+            },
+            {
+              "edge": "post",
+              "caption": "Caller to the Cloud Run service URL: a private service wants an identity token in the Authorization header, a public one does not"
+            },
+            {
+              "edge": "inst",
+              "caption": "Cloud Run routes to a warm instance or starts one; min and max instances bound how many exist"
+            },
+            {
+              "edge": "sess",
+              "caption": "The ADK app talks to whatever --session_service_uri named; with none set, the in-memory service, lost when the instance is recycled"
+            },
+            {
+              "edge": "gen2",
+              "caption": "The same model call as on Agent Runtime"
+            }
+          ],
+          "legend": "Top frame: the Agent Runtime path. The query URL shape and the resource name are from the ADK standard-deployment page and the deploy page s4 s2; container_concurrency and the instance bounds are the deploy page's Preview resource controls s2. Bottom frame: the Cloud Run path from the ADK Cloud Run page s5: run_sse and the session endpoints, the identity token for a private service, the session-service fallback sentence. The model lane is shared because the call is the same client in both places.",
+          "cites": [
+            "s2",
+            "s4",
+            "s5"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The session store is the first place the two paths differ in practice. On Agent Runtime, Sessions and Memory Bank are services of the same product, listed by the Scale overview under \"Context management\", and the ADK Cloud Run page lets a Cloud Run agent point at them too with an agentengine:// URI. Otherwise the page offers memory:// or any SQLAlchemy URL such as sqlite:// for --session_service_uri, with the warning that with nothing set \"sessions and artifacts are lost whenever a Cloud Run instance is recycled\". The sample main.py uses sqlite+aiosqlite:///./sessions.db, which is a file inside the container and so has the same fate. The sequence below shows the Cloud Run path, because it is the one where the invoker check is your flag to get right.",
+          "cites": [
+            "s1",
+            "s5"
+          ]
+        },
+        {
+          "type": "diagram",
+          "mermaid": "sequenceDiagram\n  autonumber\n  participant C as Caller\n  participant R as Cloud Run\n  participant A as ADK app\n  participant S as Session store\n  participant M as Model\n  alt private (no --allow-unauthenticated)\n    C->>R: POST /run_sse + identity token\n    R-->>C: 403 without run.invoker\n  else public (--allow-unauthenticated)\n    C->>R: POST /run_sse, no header\n  end\n  R->>A: route (start if cold)\n  A->>S: load session_abc\n  S-->>A: prior turns, or none\n  A->>M: generate\n  M-->>A: tokens, tool calls\n  A->>S: append events\n  A-->>C: SSE stream\n  Note over A,S: no --session_service_uri:<br/>in-memory, dies with the instance",
+          "legend": "Solid arrows are calls, dashed arrows are replies. The alt is the one flag of this lesson that is also a security decision: the ADK page's gcloud example carries --allow-unauthenticated and says \"Remove this flag for private services\", and its test section obtains the token with gcloud auth print-identity-token for a private service s5. The session id and the run_sse path are the page's own examples s5. The 403 reply for a caller without the invoker role is the behaviour the page's \"if your service requires authentication\" paragraph implies; the page does not print the status code.",
+          "cites": [
+            "s5"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Identity is set in the same create call: identity_type=AGENT_IDENTITY gives the agent its own identity, or a service_account email runs it as that account; the GKE page needs Workload Identity bound before the pod may call the model, and warns of a 403 PERMISSION_DENIED when it is not. What those identities may reach, and how the gateway governs it, is the identity and gateway lesson's subject; here the only rule is that every target has an identity knob and none of them is a pasted API key.",
+          "cites": [
+            "s2",
+            "s6"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "knobs-that-set-cost",
+      "title": "Knobs that set cost: instances, CPU, memory, concurrency",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Both targets bill the same two things, CPU time and memory time, and both expose the same four knobs that decide how much of each you consume: how many containers exist when nobody is calling, how many may exist at peak, how big each one is, and how many requests each takes at once. The deploy page groups the Agent Runtime versions of these under a section it labels Preview and calls resource controls; on Cloud Run they are ordinary revision settings, and the ADK page shows how to pass them through adk deploy cloud_run after a double dash, for example --min-instances=2.",
+          "cites": [
+            "s2",
+            "s5"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The knobs that set what you pay, as the two pages state them (read 2026-10-21)",
+          "columns": [
+            "knob",
+            "Agent Runtime (resource controls, Preview)",
+            "Cloud Run (ADK page and pricing page)",
+            "source"
+          ],
+          "rows": [
+            [
+              "minimum instances",
+              "min_instances, range 0 to 10, default 1; while in Preview \"you won't be billed for time when an agent is idle\", a behaviour the page says is \"subject to change\"",
+              "--min-instances passed after -- to adk deploy cloud_run; an idle minimum instance is billed at the idle rate in request-based billing and in full in instance-based billing",
+              "s2, s5, s8"
+            ],
+            [
+              "maximum instances",
+              "max_instances, range 1 to 1000, default 100; a VPC Service Controls or PSC-interface setup lowers the upper bound to a tenth of that",
+              "--max-instances the same way; the pricing page's example sizes by requests per month, request time and concurrency",
+              "s2, s5, s8"
+            ],
+            [
+              "CPU and memory per container",
+              "resource_limits, default cpu 4 and memory 4Gi; cpu takes five listed values up to 8, memory in whole GiB up to 32Gi",
+              "set per revision; the pricing page's example uses 1 vCPU and 512 MiB",
+              "s2, s8"
+            ],
+            [
+              "requests per container",
+              "container_concurrency, \"recommended value is 2 * cpu + 1\", default 9",
+              "concurrency per instance, the pricing example uses 20",
+              "s2, s8"
+            ],
+            [
+              "billing granularity",
+              "\"All usage is rounded to the nearest second\"; \"idle time spent waiting for the next prompt between turns is not billed\"",
+              "\"rounded up to the nearest 100 millisecond\"; instance-based billing counts the instance's \"entire lifetime\" with a \"minimum of 1 minute\"",
+              "s9, s8"
+            ]
+          ],
+          "cites": [
+            "s2",
+            "s5",
+            "s8",
+            "s9"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The rates convert cleanly once both are in hours. Cloud Run's CPU second, multiplied out, is $0.0648 per vCPU-hour against Agent Runtime's $0.085; Cloud Run's memory second is $0.0072 per GiB-hour against $0.009. Agent Runtime is the dearer meter per unit, but it rounds to the second, does not bill idle time between turns, and starts each container at a larger default shape, so which one is cheaper depends on the shape you choose and how bursty the traffic is, not on the rate card alone.",
+          "cites": [
+            "s8",
+            "s9"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "List prices and free allowances, Default (pay-as-you-go) columns, read 2026-10-21; Cloud Run figures are the Iowa (us-central1) instance-based rates",
+          "columns": [
+            "meter",
+            "Agent Runtime (Agent Compute, Agent Memory)",
+            "Cloud Run, instance-based",
+            "monthly free allowance",
+            "source"
+          ],
+          "rows": [
+            [
+              "CPU",
+              "$0.085 per vCPU-hour above the free hours",
+              "$0.000018 per vCPU-second, which is $0.0648 per vCPU-hour",
+              "Agent Runtime: first 50 vCPU-hours (180,000 vCPU-seconds); Cloud Run: 240,000 vCPU-seconds",
+              "s9, s8, s10"
+            ],
+            [
+              "memory",
+              "$0.009 per GiB-hour above the free hours",
+              "$0.000002 per GiB-second, which is $0.0072 per GiB-hour",
+              "Agent Runtime: first 100 GiB-hours (360,000 GiB-seconds); Cloud Run: 450,000 GiB-seconds",
+              "s9, s8, s10"
+            ],
+            [
+              "requests",
+              "no per-request meter in the Agents section",
+              "none in instance-based billing; request-based billing lists $0.40 per million",
+              "Cloud Run request-based: 2 million per month",
+              "s9, s8"
+            ],
+            [
+              "storage",
+              "Agent Storage: $0.000410959 per GiB-hour after the first GiB-month (the page also states it as $0.30 per GiB-month)",
+              "not on the page; images live in Artifact Registry, which \"has its own free tier of storage\"",
+              "Agent Storage: 1 GiB-month",
+              "s9, s8"
+            ],
+            [
+              "commitment columns",
+              "Flexible Savings Plan 1-year and 3-year columns exist; not used here",
+              "Committed use discounts exist; not used here",
+              "-",
+              "s9, s8"
+            ]
+          ],
+          "cites": [
+            "s8",
+            "s9",
+            "s10"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "The two free allowances are not the same allowance. The Free Tier page lists Agent Runtime's own row, \"First 180,000 vCPU-seconds (50 hours) per month\" and \"First 360,000 GiB-seconds (100 hours) per month\", and a separate Cloud Run row of 180,000 vCPU-seconds, 360,000 GB-seconds and 2 million requests, while the Cloud Run pricing page shows the instance-based free tier as 240,000 vCPU-seconds and 450,000 GiB-seconds. Read the row for the billing mode you use, and remember that model tokens, Artifact Registry storage and Cloud Build minutes are metered elsewhere and are not priced in this lesson.",
+          "cites": [
+            "s8",
+            "s9",
+            "s10"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "The default shape is the cost trap on Agent Runtime. A container created with the defaults is 4 vCPU and 4Gi, so one busy hour is $0.376 at list, while a Cloud Run instance of one vCPU and half a GiB costs $0.0684 for the same hour. Neither number is wrong for its own workload; the point is that the Agent Runtime default is a bigger machine, and the create call lets you ask for a smaller one.",
+          "cites": [
+            "s2",
+            "s8",
+            "s9"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "choosing-a-target",
+      "title": "Choosing a target",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The choice is rarely about capability, because all three targets run the same container and call the same model. It is about which chores you keep. Agent Runtime keeps the fewest: it builds the container, routes requests, provides Sessions and Memory Bank, emits ADK telemetry and sits inside the registry and gateway story of the platform. Cloud Run keeps the chores of a container service: you own the image, the session store, the invoker flag and the revision settings, and in return you get the cheaper per-unit meter, GPUs, and the how-tos the Cloud Run AI page lists for hosting MCP servers and A2A agents. GKE keeps everything, which is the right answer only when a team already owns a cluster or needs its own accelerators next to the agent.",
+          "cites": [
+            "s2",
+            "s7",
+            "s6"
+          ]
+        },
+        {
+          "type": "decision",
+          "caption": "Which target for this agent",
+          "rows": [
+            {
+              "option": "Agent Runtime",
+              "pick_when": "the agent is the product and you want the platform's own routing, Sessions, Memory Bank, telemetry and gateway wiring next to it; the team deploys from Git or CI with one create call; you can live with Preview resource controls and the larger default shape",
+              "avoid_when": "you need a GPU in the container, a non-HTTP protocol the runtime contract does not cover, or per-second rates lower than its compute meter for a steady, always-busy service",
+              "example": "a support agent registered in Agent Registry, called by other agents through the gateway"
+            },
+            {
+              "option": "Cloud Run",
+              "pick_when": "you already ship containers to Cloud Run; the agent is one HTTP service among others; you want the cheapest per-hour meter, GPUs for a model you host yourself, or MCP and A2A servers the Cloud Run AI page documents",
+              "avoid_when": "you would rebuild Sessions, Memory Bank and agent telemetry by hand; you forget the invoker flag and ship a public endpoint",
+              "example": "a remote MCP server for an internal tool, or an ADK agent whose sessions live in a Cloud SQL URL"
+            },
+            {
+              "option": "GKE",
+              "pick_when": "the organisation runs its services on Kubernetes already; you need node-level control, your own autoscaling policy, or open models served on your own accelerators next to the agent",
+              "avoid_when": "nobody will own the cluster; the agent is the only workload; you want the service and image deleted with one command when the experiment ends",
+              "example": "an agent that talks to a vLLM deployment in the same cluster through a ClusterIP service"
+            },
+            {
+              "option": "Any container host (Docker, another cloud)",
+              "pick_when": "the agent must run disconnected from Google Cloud or on a host the platform does not reach; the ADK Cloud Run page's Dockerfile and main.py are an ordinary container that runs anywhere a container runs",
+              "avoid_when": "you still want the Cloud Run or Agent Runtime free allowances, invoker checks, or managed sessions",
+              "example": "a developer laptop running the same image under Podman for an offline demo"
+            }
+          ],
+          "cites": [
+            "s2",
+            "s5",
+            "s6",
+            "s7"
+          ]
+        },
+        {
+          "type": "flow",
+          "nodes": [
+            {
+              "id": "start",
+              "label": "An ADK agent is ready to leave the laptop",
+              "kind": "actor"
+            },
+            {
+              "id": "q1",
+              "label": "Must it run outside Google Cloud or offline?",
+              "kind": "decision"
+            },
+            {
+              "id": "other",
+              "label": "Any container host (Docker, Podman)",
+              "kind": "service"
+            },
+            {
+              "id": "q2",
+              "label": "Does the team already own a GKE cluster, or need its own accelerators?",
+              "kind": "decision"
+            },
+            {
+              "id": "gke",
+              "label": "GKE: Deployment + Service",
+              "kind": "service"
+            },
+            {
+              "id": "q3",
+              "label": "Is it an agent that wants managed Sessions, Memory Bank, registry and gateway wiring?",
+              "kind": "decision"
+            },
+            {
+              "id": "ar",
+              "label": "Agent Runtime: client.runtimes.create",
+              "kind": "service"
+            },
+            {
+              "id": "q4",
+              "label": "Is it a plain HTTP container, MCP or A2A server, or needs a GPU?",
+              "kind": "decision"
+            },
+            {
+              "id": "cr",
+              "label": "Cloud Run: adk deploy cloud_run, private by default",
+              "kind": "service"
+            },
+            {
+              "id": "size",
+              "label": "Then set min, max, cpu, memory, concurrency",
+              "kind": "service"
+            }
+          ],
+          "edges": [
+            {
+              "id": "e0",
+              "from": "start",
+              "to": "q1",
+              "kind": "sync",
+              "label": "start",
+              "short": "start"
+            },
+            {
+              "id": "e1",
+              "from": "q1",
+              "to": "other",
+              "kind": "sync",
+              "label": "yes",
+              "short": "yes"
+            },
+            {
+              "id": "e2",
+              "from": "q1",
+              "to": "q2",
+              "kind": "sync",
+              "label": "no",
+              "short": "no"
+            },
+            {
+              "id": "e3",
+              "from": "q2",
+              "to": "gke",
+              "kind": "sync",
+              "label": "yes",
+              "short": "yes"
+            },
+            {
+              "id": "e4",
+              "from": "q2",
+              "to": "q3",
+              "kind": "sync",
+              "label": "no",
+              "short": "no"
+            },
+            {
+              "id": "e5",
+              "from": "q3",
+              "to": "ar",
+              "kind": "sync",
+              "label": "yes",
+              "short": "yes"
+            },
+            {
+              "id": "e6",
+              "from": "q3",
+              "to": "q4",
+              "kind": "sync",
+              "label": "no",
+              "short": "no"
+            },
+            {
+              "id": "e7",
+              "from": "q4",
+              "to": "cr",
+              "kind": "sync",
+              "label": "yes",
+              "short": "yes"
+            },
+            {
+              "id": "e8",
+              "from": "q4",
+              "to": "ar",
+              "kind": "sync",
+              "label": "otherwise",
+              "short": "otherwise"
+            },
+            {
+              "id": "e9",
+              "from": "ar",
+              "to": "size",
+              "kind": "link",
+              "label": "size it",
+              "short": "size",
+              "dashed": true
+            },
+            {
+              "id": "e10",
+              "from": "cr",
+              "to": "size",
+              "kind": "link",
+              "label": "size it",
+              "short": "size",
+              "dashed": true
+            }
+          ],
+          "steps": [
+            {
+              "edge": "e0",
+              "caption": "Start from a working local agent; nothing here changes the agent code"
+            },
+            {
+              "edge": "e1",
+              "caption": "Offline or off-cloud: build the image from the Cloud Run page's Dockerfile and run it anywhere a container runs"
+            },
+            {
+              "edge": "e2",
+              "caption": "Otherwise the question is how much platform you want"
+            },
+            {
+              "edge": "e3",
+              "caption": "A cluster you already run, or your own accelerators: GKE, with Workload Identity bound before the first model call"
+            },
+            {
+              "edge": "e4",
+              "caption": "No cluster to own: pick between the two managed targets"
+            },
+            {
+              "edge": "e5",
+              "caption": "Agent-shaped needs: Agent Runtime, one create call, resource controls in Preview"
+            },
+            {
+              "edge": "e6",
+              "caption": "Not agent-shaped, or the extras are not wanted"
+            },
+            {
+              "edge": "e7",
+              "caption": "A plain container, an MCP or A2A server, or a GPU: Cloud Run, with the invoker flag left off"
+            },
+            {
+              "edge": "e8",
+              "caption": "Anything else agent-shaped lands back on Agent Runtime"
+            }
+          ],
+          "legend": "The questions follow the deploy pages: the Cloud Run page's Dockerfile is the offline container option and its flags are the invoker choice s5, the GKE page states the Workload Identity requirement s6, the deploy page the Agent Runtime create call and the Preview label on resource controls s2, the Cloud Run AI page the MCP, A2A and GPU how-tos s7. The dashed links lead to the sizing subtopic above; they are not steps.",
+          "cites": [
+            "s2",
+            "s5",
+            "s6",
+            "s7"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "A deliberate omission in the tree: there is no branch for \"cheapest\". The worked example at the end prices one profile both ways, and the answer flips with the shape and the idle pattern, so cost belongs after the shape is chosen, not before. The branch that does matter for cost is the invoker flag on Cloud Run, which is why the Cloud Run node carries \"private by default\": the Go CLI deploys that way and the Python CLI asks before allowing unauthenticated calls.",
+          "cites": [
+            "s5"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "same-shape-on-other-clouds",
+      "title": "The same shape on other clouds",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "If you have deployed an agent on another cloud, the mapping is close enough that the knobs transfer. AWS calls its equivalent AgentCore Runtime, and its developer guide describes each session as running \"in a dedicated microVM with completely isolated CPU, memory, and filesystem resources\", with versions and endpoints as the deployment unit and a snapshot-restore mode it calls V2 for consistent cold starts. Microsoft's Foundry Agent Service calls the equivalent a hosted agent, shipped \"as either a container image or a .zip file of your source code\", and its comparison table lists the hosting as \"Container compute, Foundry-managed\". Google's Agent Runtime sits between them: a container rather than a per-session microVM, with the platform's resource controls in Preview.",
+          "cites": [
+            "s11",
+            "s12",
+            "s2"
+          ]
+        },
+        {
+          "type": "table",
+          "caption": "The same shape on three clouds: hosting unit and metering unit as each page states them (read 2026-10-21); no AWS or Azure prices are quoted, and the Foundry pricing page was not used",
+          "columns": [
+            "dimension",
+            "Agent Runtime (Google Cloud)",
+            "AgentCore Runtime (AWS)",
+            "Foundry hosted agents (Microsoft)",
+            "source"
+          ],
+          "rows": [
+            [
+              "what you ship",
+              "Python source, a Dockerfile, or a container image; five methods",
+              "a container image pushed to Amazon ECR, or code the SDK packages; \"any AI framework or custom code\"",
+              "\"either a container image or a .zip file of your source code\"",
+              "s2, s11, s12"
+            ],
+            [
+              "isolation unit",
+              "a container; up to container_concurrency requests per container",
+              "\"a dedicated microVM with completely isolated CPU, memory, and filesystem resources\" per session",
+              "a container instance; with a customer VNet \"each session runs in a VM-isolated sandbox\"",
+              "s2, s11, s12"
+            ],
+            [
+              "session lifetime",
+              "not stated on the deploy page; long-running operations \"up to 7 days\" in the release notes",
+              "\"up to 8 hours of total runtime\"; terminated after 15 minutes idle",
+              "\"session-level state persistence\"; no limit stated on the overview",
+              "s2, s3, s11, s12"
+            ],
+            [
+              "metering unit",
+              "Agent Compute in vCPU-hours and Agent Memory in GiB-hours, rounded to the second, idle between turns not billed",
+              "\"V2 charges based on what your agent actively uses\"; unit not stated on the page read",
+              "\"Per-call inference + tool usage + container compute\"; unit not stated on the overview",
+              "s9, s11, s12"
+            ],
+            [
+              "protocols named",
+              "HTTP query and streaming; A2A template in Preview",
+              "\"HTTP\", \"MCP\", \"A2A\"",
+              "A2A v1.0 \"generally available\", v0.3 \"in preview\"; Invocations, OpenResponses and Activity protocols",
+              "s1, s2, s11, s12"
+            ],
+            [
+              "scaling",
+              "min_instances and max_instances (Preview)",
+              "versions and endpoints; snapshot restore on V2 for consistent cold starts",
+              "\"Automatic, Foundry-managed; scales container instances per session and request volume\"",
+              "s2, s11, s12"
+            ]
+          ],
+          "cites": [
+            "s1",
+            "s2",
+            "s3",
+            "s9",
+            "s11",
+            "s12"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Only units are compared here. The AWS page read for this lesson states the charging principle for V2 but not the unit, and the Foundry overview names \"container compute\" without a rate; the Foundry pricing page was not opened, and no AWS price is quoted, so the table says \"not stated\" where a page does not state it rather than filling the cell from memory. The useful transfer is the three questions every one of them asks you: what is the isolation unit, how long may a session live, and what exactly is metered while the agent waits.",
+          "cites": [
+            "s11",
+            "s12"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "optional-billed-lab",
+      "title": "Optional, billed lab: deploy once each way, price it, tear it down",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "This lab is optional and it is billed. It deploys the ADK lesson's small agent to Agent Runtime and to Cloud Run inside a project created only for the lab, calls each once, and deletes everything. Nothing in it was run by the author; the commands are those printed on the ADK pages read on the date in the caption, and the numbers are the list prices of the cost table. If you have a Google Cloud account already, use a new project; if you do not, read the trial terms in the callout first, because the credit has an end date and a card behind it.",
+          "cites": [
+            "s4",
+            "s5",
+            "s10"
+          ]
+        },
+        {
+          "type": "callout",
+          "kind": "rule",
+          "text": "Free Trial terms as the Free Tier page stated them on 2026-10-13 (read 2026-10-21): a \"$300 Welcome credit to spend over 90 days\" for a new account, a \"90-day program\" that requires \"a credit card or other payment method\" at signup; the credit does not pay for Gemini API use in AI Studio or partner model-as-a-service, and GPUs cannot be added to VM instances while the account is a trial account. The credit expires with the trial. If you upgrade to a paid billing account, the remaining credit is still usable within the original ninety days and after that \"your payment method is charged for any usage that exceeds your remaining credit\"; if you do not upgrade, the trial closes when the credit is spent or the days run out, resources are stopped, and a thirty-day grace period follows before they are removed.",
+          "cites": [
+            "s10"
+          ]
+        },
+        {
+          "type": "steps",
+          "title": "Optional, billed lab: one agent, two targets, then tear it down (not run by the author; every step below is a cloud-side step)",
+          "items": [
+            "Create a throwaway project named for this lab, with billing attached; on the Free Trial that is the trial billing account, and nothing from this lab should live in a project you keep.",
+            "Enable the Agent Platform API and the Cloud Resource Manager API, the 2 APIs the ADK standard-deployment page lists before the first deploy.",
+            "Deploy to Agent Runtime with the SDK call from the second subtopic, asking for cpu 1, memory 2Gi, min_instances 0 and max_instances 2; write down the reasoningEngines resource id the create call returns.",
+            "Send 1 query to the regional endpoint with the URL shape from the request-path subtopic and confirm a reply.",
+            "Deploy the same agent to Cloud Run with adk deploy cloud_run, answer N to the unauthenticated prompt, and pass --min-instances=0 after the double dash; note the service URL.",
+            "Obtain an identity token with gcloud auth print-identity-token, create 1 session on the service and call run_sse; a private service without the header should refuse you, which is the check that the flag took.",
+            "Know the cost per hour before you start the clock, from the price pages read on 2026-10-21: an Agent Runtime container at the default shape of cpu 4 and memory 4Gi is 4 × $0.085 + 4 × $0.009 = $0.376 per busy hour; the shape this lab asked for (cpu 1, memory 2Gi) is $0.085 + 2 × $0.009 = $0.103 per busy hour; a Cloud Run instance at 1 vCPU and 512 MiB, the pricing page's example shape, is $0.0648 + $0.0036 = $0.0684 per instance-hour.",
+            "Record the clock: 2 busy hours on the lab's Agent Runtime shape is 2 × $0.103 = $0.206 and 2 instance-hours on Cloud Run is 2 × $0.0684 = $0.137, about $0.34 for the two targets together at list; had you kept the Agent Runtime default shape, that side alone would be 2 × $0.376 = $0.752. All of it falls inside the monthly free allowances if nothing else ran this month, as the cost table shows.",
+            "Tear down in this order: delete the Cloud Run service in the Cloud Run console page; delete the agent in the Agent Runtime UI, where the ADK deployment guide sends you for the resource id and the deployment status; list the Artifact Registry repositories in your region with gcloud artifacts repositories list and delete the one the Cloud Run build pushed to (the Cloud Run page says gcloud pushes the image to Artifact Registry without naming the repository); then delete the project with gcloud projects delete, the command the GKE page gives as the cleanup that removes everything.",
+            "Open Billing, Reports the next day and confirm that the project shows the 1 day of spend you expect and nothing after it; the trial page says a closed trial stops resources, but a deleted project is the only state that cannot bill."
+          ],
+          "cites": [
+            "s2",
+            "s4",
+            "s5",
+            "s6",
+            "s8",
+            "s9",
+            "s10"
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "bash",
+          "code": "# Not run by the author. Commands as the ADK pages print them, read 2026-10-21.\nexport GOOGLE_CLOUD_PROJECT=my-project          # the throwaway project\nexport GOOGLE_CLOUD_LOCATION=us-central1\n\n# Agent Runtime, ADK CLI path (the SDK path is in the second subtopic)\nadk deploy agent_engine \\\n  --project=$GOOGLE_CLOUD_PROJECT \\\n  --region=$GOOGLE_CLOUD_LOCATION \\\n  --display_name=\"time-agent\" \\\n  ./time_agent\n\n# Cloud Run, private: answer N at the prompt, or pass the gcloud flag after --\nadk deploy cloud_run \\\n  --project=$GOOGLE_CLOUD_PROJECT \\\n  --region=$GOOGLE_CLOUD_LOCATION \\\n  --service_name=time-agent \\\n  ./time_agent \\\n  -- --no-allow-unauthenticated --min-instances=0\n\n# Call the private service\nexport TOKEN=$(gcloud auth print-identity-token)\nexport APP_URL=\"https://time-agent-abc123-uc.a.run.app\"   # the URL the deploy printed\ncurl -X POST -H \"Authorization: Bearer $TOKEN\" \\\n  $APP_URL/apps/time_agent/users/user_123/sessions/session_abc \\\n  -H \"Content-Type: application/json\" -d '{}'\n\n# Cost per busy hour at list, price pages read 2026-10-21 (not a command):\n#   Agent Runtime default shape, cpu 4 / 4Gi:  4 * 0.085 + 4 * 0.009 = $0.376\n#   Agent Runtime lab shape,     cpu 1 / 2Gi:  1 * 0.085 + 2 * 0.009 = $0.103\n#   Cloud Run, 1 vCPU / 512 MiB:               0.0648    + 0.0036    = $0.0684\n\n# Teardown of the throwaway project: find the repository the Cloud Run build\n# pushed to, delete it, then delete the project (GKE page cleanup section)\ngcloud artifacts repositories list --location=$GOOGLE_CLOUD_LOCATION\ngcloud artifacts repositories delete REPOSITORY_NAME --location=$GOOGLE_CLOUD_LOCATION\ngcloud projects delete $GOOGLE_CLOUD_PROJECT\n",
+          "caption": "The lab's commands. The gcloud example on the Cloud Run page carries --allow-unauthenticated; it is replaced here by the page's own private-service flag"
+        },
+        {
+          "type": "callout",
+          "kind": "pitfall",
+          "text": "The flag that makes the service public is in the docs. The Cloud Run page's gcloud example includes --allow-unauthenticated and explains it as \"Allows public access to the service. Remove this flag for private services\"; the Python CLI asks \"Allow unauthenticated invocations ... (y/N)?\" and the Go CLI defaults to --no-allow-unauthenticated. Outside a throwaway project with no secrets and a teardown date, do not use it: a public agent endpoint spends your model budget for anyone who finds the URL. If you must demo publicly, do it in this lab's project and delete the project the same day.",
+          "cites": [
+            "s5"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "What the lab teaches that the subtopics cannot is the shape of the bill. The Agent Runtime line will show Agent Compute and Agent Memory hours; the Cloud Run line will show vCPU-seconds and GiB-seconds; Artifact Registry will show a few megabytes of image storage under its own free tier; and the model calls will appear on their own line, which this lesson does not price. Seeing the four lines once is worth more than the table, and the project delete at the end is the step that makes the lesson safe to repeat.",
+          "cites": [
+            "s8",
+            "s9"
+          ]
+        }
+      ]
+    }
+  ],
+  "worked_example": {
+    "title": "Size and price one agent service for a stated month, both ways",
+    "blocks": [
+      {
+        "type": "p",
+        "text": "A team wants an internal agent that is busy during working hours and idle at night. The numbers below are list prices from the cost table, instance-based Cloud Run rates for us-central1 and the Agent Runtime Agents meters, read on the same day; the free allowances are subtracted at the end as if nothing else ran in the project that month. One number per step so each can be checked.",
+        "cites": [
+          "s8",
+          "s9",
+          "s10"
+        ]
+      },
+      {
+        "type": "steps",
+        "title": "The arithmetic",
+        "items": [
+          "Profile: the service is busy for 8 hours on each working day.",
+          "The month has 22 working days.",
+          "Peak needs 3 instances busy at once, so max_instances is set there and min_instances to zero.",
+          "Busy instance-hours for the month: 528 (hours per day, times days, times instances).",
+          "Shape per instance: 1 vCPU.",
+          "Memory per instance: 2 GiB.",
+          "Cloud Run CPU: instance-hours times the per-vCPU-hour figure of the table gives $34.21.",
+          "Cloud Run memory: instance-hours, times two GiB, times the per-GiB-hour figure gives $7.60.",
+          "Cloud Run list total before the free tier: $41.82.",
+          "Cloud Run free tier worth, CPU: the free vCPU-seconds of the pricing page are worth $4.32 at that rate.",
+          "Cloud Run free tier worth, memory: the free GiB-seconds are worth $0.90.",
+          "Cloud Run estimate for the month: $36.60.",
+          "Agent Runtime compute at the same shape: instance-hours times the per-vCPU-hour rate gives $44.88.",
+          "Agent Runtime memory: twice the instance-hours in GiB-hours, times the rate, gives $9.50.",
+          "Agent Runtime list total before the free hours: $54.38.",
+          "Agent Runtime free hours worth: the free compute hours are worth $4.25.",
+          "Agent Runtime free memory hours worth: $0.90.",
+          "Agent Runtime estimate for the month: $49.23.",
+          "At the default Agent Runtime shape instead (four vCPU, four GiB) the compute line alone would be 4 times larger; the shape, not the rate card, is the first lever."
+        ],
+        "cites": [
+          "s2",
+          "s8",
+          "s9",
+          "s10"
+        ]
+      },
+      {
+        "type": "table",
+        "caption": "The two estimates side by side; list prices read 2026-10-21, same traffic profile, free allowances subtracted",
+        "columns": [
+          "line",
+          "Cloud Run (1 vCPU, 2 GiB, instance-based)",
+          "Agent Runtime (cpu 1, memory 2Gi)",
+          "source"
+        ],
+        "rows": [
+          [
+            "CPU for the month",
+            "$34.21",
+            "$44.88",
+            "s8, s9"
+          ],
+          [
+            "memory for the month",
+            "$7.60",
+            "$9.50",
+            "s8, s9"
+          ],
+          [
+            "list total",
+            "$41.82",
+            "$54.38",
+            "s8, s9"
+          ],
+          [
+            "free allowance subtracted",
+            "$5.22",
+            "$5.15",
+            "s8, s9, s10"
+          ],
+          [
+            "estimate",
+            "$36.60",
+            "$49.23",
+            "s8, s9"
+          ],
+          [
+            "not in the estimate",
+            "requests (none in instance-based billing), Artifact Registry storage, Cloud Build, model tokens",
+            "Agent Storage for the bundle, model tokens, Sessions and Memory Bank reads and writes once their billing started on September 1, 2026",
+            "s8, s9"
+          ]
+        ],
+        "cites": [
+          "s8",
+          "s9",
+          "s10"
+        ]
+      },
+      {
+        "type": "p",
+        "text": "Read the result the right way round. On this profile, with the shape held equal, Cloud Run is cheaper by about a quarter of the Agent Runtime figure, which is the same as saying Agent Runtime costs about a third more than Cloud Run, and that gap is the difference between the two rate cards. What the arithmetic does not price is the work Agent Runtime does for that margin: the session store you would otherwise run, the build, the telemetry and the gateway wiring. If the agent sat idle between turns for most of its busy hours, Agent Runtime's rule that idle time between turns is not billed would narrow the gap, and the Preview rule on minimum instances would narrow it further; neither effect is in these numbers because neither page gives a figure to compute it from.",
+        "cites": [
+          "s2",
+          "s9"
+        ]
+      }
+    ]
+  },
+  "code": [],
+  "diagram": null,
+  "technologies": [
+    "Agent Runtime (Gemini Enterprise Agent Platform)",
+    "Cloud Run",
+    "Google Kubernetes Engine (GKE)",
+    "Agent Development Kit (ADK)",
+    "Agent Platform SDK (google-cloud-aiplatform, google-cloud-agentplatform)",
+    "Artifact Registry",
+    "Cloud Build",
+    "Developer Connect",
+    "Sessions and Memory Bank",
+    "Amazon Bedrock AgentCore Runtime",
+    "Microsoft Foundry Agent Service"
+  ],
+  "related": [
+    "cloud-deployments",
+    "containers-cicd-serverless",
+    "autoscaling-and-cost-efficiency",
+    "scaling-performance-cost",
+    "gitops-argo-cd-and-terraform"
+  ],
+  "practice": null,
+  "provenance": {
+    "generated_by": "Claude Fable 5.1 by hand, Scout learning center, format v2 agent runtime and deployment",
+    "generated_on": "2026-10-21",
+    "reviewed_by": "a second reader (a separate Claude Fable 5.1 instance, not the writer), Scout learning center, format v2 agent runtime and deployment",
+    "reviewed_on": "2026-10-21"
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-10-21",
+      "change": "First version: module gcp-ai-platform entry 3; Agent Runtime deploy methods, request path, cost knobs and list prices, decision table and tree, cross-cloud units, optional billed lab; 12 sources read 2026-10-21."
+    }
+  ],
+  "sources": [
+    {
+      "id": "s1",
+      "title": "Gemini Enterprise Agent Platform docs: Scale your agents (overview)",
+      "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "Serverless efficiency: Utilizing a fully managed Agent Runtime to deploy and scale agents efficiently"
+      }
+    },
+    {
+      "id": "s2",
+      "title": "Gemini Enterprise Agent Platform docs: Deploy an agent to Agent Runtime (five methods, resource controls)",
+      "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/runtime/deploy-an-agent",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "Configure resource controls (Preview); resource_limits default {\"cpu\": \"4\", \"memory\": \"4Gi\"}"
+      }
+    },
+    {
+      "id": "s3",
+      "title": "Gemini Enterprise Agent Platform release notes",
+      "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/release-notes",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "September 18, 2026: Agent Platform SDK for Python version 2.0.1 (google-cloud-agentplatform), Breaking"
+      }
+    },
+    {
+      "id": "s4",
+      "title": "ADK docs: Deploy to Agent Runtime, standard deployment (adk deploy agent_engine)",
+      "url": "https://adk.dev/deploy/agent-runtime/deploy/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "adk deploy agent_engine --project=$PROJECT_ID --region=$LOCATION_ID"
+      }
+    },
+    {
+      "id": "s5",
+      "title": "ADK docs: Deploy to Cloud Run (adk deploy cloud_run, gcloud run deploy)",
+      "url": "https://adk.dev/deploy/cloud-run/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "When --session_service_uri and --artifact_service_uri are not set, the deployed container falls back to the in-memory session and artifact services"
+      }
+    },
+    {
+      "id": "s6",
+      "title": "ADK docs: Deploy to Google Kubernetes Engine (GKE)",
+      "url": "https://adk.dev/deploy/gke/",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "Option 2: Automated Deployment using adk deploy gke (Python only); Cleanup"
+      }
+    },
+    {
+      "id": "s7",
+      "title": "Cloud Run docs: AI/ML orchestration on Cloud Run",
+      "url": "https://docs.cloud.google.com/run/docs/ai",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "Host AI agents; Host A2A agents; Host MCP servers; Run LLM inference on Cloud Run GPUs"
+      }
+    },
+    {
+      "id": "s8",
+      "title": "Cloud Run pricing",
+      "url": "https://cloud.google.com/run/pricing",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "Instance-based billing: CPU $0.000018 per vCPU-second, Memory $0.000002 per GiB-second (Iowa, Default)"
+      }
+    },
+    {
+      "id": "s9",
+      "title": "Gemini Enterprise Agent Platform pricing (page title: Gemini platform pricing), Agents section",
+      "url": "https://cloud.google.com/products/gemini-enterprise-agent-platform/pricing",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "Agent Compute: 0 - 50 hour Free, 50 hour and above $0.085 per hour; idle time spent waiting for the next prompt between turns is not billed"
+      }
+    },
+    {
+      "id": "s10",
+      "title": "Google Cloud Free Tier and Free Trial: free cloud features and trial offer",
+      "url": "https://docs.cloud.google.com/free/docs/free-cloud-features",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "$300 Welcome credit to spend over 90 days; Agent Runtime on Gemini Enterprise Agent Platform: First 180,000 vCPU-seconds (50 hours) per month"
+      }
+    },
+    {
+      "id": "s11",
+      "title": "Amazon Bedrock AgentCore developer guide: AgentCore Runtime, how it works (microVMs)",
+      "url": "https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-how-it-works.html",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "Runs in a dedicated microVM with completely isolated CPU, memory, and filesystem resources; Can persist for up to 8 hours of total runtime"
+      }
+    },
+    {
+      "id": "s12",
+      "title": "Microsoft Learn: What is Microsoft Foundry Agent Service? (hosted agents)",
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/agents/overview",
+      "kind": "doc",
+      "verified": {
+        "checked": "2026-10-21",
+        "http": 200,
+        "section_found": "Hosted agents: Container compute, Foundry-managed; Per-call inference + tool usage + container compute"
+      }
+    }
+  ]
+}
