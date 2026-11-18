@@ -45,6 +45,14 @@ N_OF_M = re.compile(r"(?i)\b\d+\s+of\s+\d+\s+(?:stored\s+)?postings\b")
 URL_KEYS = frozenset({"url", "href"})
 URL_OK = re.compile(r"^https://[^\s/@:]+(?::\d+)?(?:[/?#]\S*)?$")
 LOCAL_HOST = re.compile(r"(?i)^https?://(?:localhost|127\.|0\.0\.0\.0|\[::1\]|10\.|192\.168\.|169\.254\.)")
+# --- the build track: Markdown pages under content/build/tradingresearch (specs/BUILD-TRACK) -----------------------------
+# The 12 files are byte copies of the build guide (tools/import_build_track.py); they must render with tools/mdlite.py,
+# pass the text rules above, name no workstation path, no "operator", no bead id, and every relative link must resolve
+# to one of the 12 pages (with a heading id when it has a fragment).
+BUILD_TRACK_DIR = Path("build") / "tradingresearch"
+BUILD_TRACK_FILES = ("README.md", "SETUP.md", "SCHEDULE.md", *(f"week-{n}.md" for n in range(1, 10)))
+BEAD_ID = re.compile(r"\b(?:gigai-[a-z0-9]+\.\d+|csy\.\d+)\b")   # `gigai-core` has no .N and is a package name
+OPERATOR = re.compile(r"(?<![\w/-])(?<!GPU )[Oo]perators?\b")       # "NVIDIA GPU Operator" and its URL slug are a product
 
 
 def walk(obj, path="$"):
@@ -1245,6 +1253,48 @@ def scan_built(site: Path) -> list[str]:
     return problems
 
 
+def build_track_checks(content: Path) -> list[str]:
+    import mdlite  # noqa: E402  (tools/ is the script directory; stdlib only)
+    folder = content / BUILD_TRACK_DIR
+    if not folder.is_dir():
+        return [f"{BUILD_TRACK_DIR}: folder is missing"]
+    problems: list[str] = []
+    present = sorted(p.name for p in folder.iterdir() if not p.name.startswith("."))
+    problems += [f"{BUILD_TRACK_DIR}/{n}: missing" for n in BUILD_TRACK_FILES if n not in present]
+    problems += [f"{BUILD_TRACK_DIR}/{n}: not one of the 12 build-track files" for n in present if n not in BUILD_TRACK_FILES]
+    pages: dict[str, mdlite.Rendered] = {}
+    for name in BUILD_TRACK_FILES:
+        path = folder / name
+        if not path.is_file():
+            continue
+        label = f"{BUILD_TRACK_DIR}/{name}"
+        text = path.read_text(encoding="utf-8")
+        problems += public_checks(label, {"text": text})
+        for pattern, what in ((re.compile(r"/Users/"), "workstation path"), (OPERATOR, "the word 'operator'"), (BEAD_ID, "bead id")):
+            for m in pattern.finditer(text):
+                problems.append(f"{label}: line {text.count(chr(10), 0, m.start()) + 1}: {what} {m.group(0)!r}")
+        try:
+            pages[name] = mdlite.render(text, link=lambda dest: dest)
+        except mdlite.MdliteError as e:
+            problems.append(f"{label}: {e}")
+    for name, page in pages.items():
+        ids = {ident for _, ident, _ in page.headings}
+        for dest in page.links:
+            if dest.startswith("https://"):
+                continue
+            target, _, fragment = dest.partition("#")
+            if target == "":
+                target_ids = ids
+            elif target in pages:
+                target_ids = {ident for _, ident, _ in pages[target].headings}
+            else:
+                problems.append(f"{BUILD_TRACK_DIR}/{name}: link {dest!r} does not point at a build-track page")
+                continue
+            if fragment and fragment not in target_ids:
+                problems.append(f"{BUILD_TRACK_DIR}/{name}: link {dest!r}: no heading with that id")
+    return problems
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--content", type=Path, default=ROOT / "content")
@@ -1256,6 +1306,7 @@ def main() -> int:
     else:
         docs, problems = load_all(args.content)
         problems += validate(docs) if not problems else []
+        problems += build_track_checks(args.content)
         label = f"content {args.content}: {len(docs)} files"
     for p in problems[:200]:
         print("  " + p)

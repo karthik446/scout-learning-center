@@ -22,6 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import scan  # noqa: E402  (the same checks CI runs; stdlib only)
+import mdlite  # noqa: E402  (the Markdown subset of the build track; stdlib only)
 
 ROOT = Path(__file__).resolve().parent.parent
 ORIGIN = "https://scout.edgelab.one"
@@ -1817,6 +1818,7 @@ def render_home(lib: Library) -> tuple[str, str]:
         '<button type="submit">Search</button></form>',
         '<p class="muted">Search runs in your browser from a prebuilt index. Nothing you type leaves this page.</p>',
         f'<h2>{a("/learn/modules/", "Modules")}</h2>', module_cards(lib),
+        "<h2>Build track</h2>", build_track_card(),
         "<h2>How this library works</h2>",
         "<p>Lessons are keyed by concept. A module is one topic's lessons in teaching order; every lesson sits in exactly one module. "
         f"Links to outside documentation are re-checked every week. Site version {esc(lib.site['site_version'])}; see the {a('/learn/changelog/', 'changelog')}.</p>",
@@ -1828,7 +1830,8 @@ def render_modules_index(lib: Library) -> tuple[str, str]:
     n = sum(r["lessons_published"] for r in lib.module_index)
     body = ["<h1>Modules</h1>",
             f'<p class="muted">{len(lib.module_index)} topic modules, {n} lessons. A module lists one topic\'s lessons in teaching order; every lesson sits in exactly one module.</p>',
-            module_cards(lib)]
+            module_cards(lib),
+            "<h2>Build track</h2>", build_track_card()]
     return "/learn/modules/", site_page("Modules - Learning center", "\n".join(body), current="modules",
                                         crumbs=[("/learn/", "Learning center"), ("/learn/modules/", "Modules")],
                                         description="The topic modules of the learning center and their lessons.")
@@ -2111,6 +2114,185 @@ def write(site: Path, url: str, text: str, written: dict[str, int]) -> None:
     written[url] = len(data)
 
 
+# ---------------------------------------------------------------------------------------------------------------------
+# The build track: content/build/tradingresearch/*.md (byte copies of the build guide, tools/import_build_track.py)
+# rendered with tools/mdlite.py. Twelve pages under /learn/build/tradingresearch/: the overview (README.md), setup,
+# schedule and week-1 to week-9, in the two-column shell with a sidebar listing all twelve and prev/next links in
+# that order (week 9's "next" returns to the overview). Every page shows the README's disclaimer blockquote under its
+# title; a week page shows the schedule's Readings for that week before its own body under "Build steps".
+# ---------------------------------------------------------------------------------------------------------------------
+BUILD_TRACK_BASE = "/learn/build/tradingresearch/"
+BUILD_TRACK_TITLE = "Build track: tradingresearch"
+BUILD_TRACK_SLUGS = {"README.md": "", "SETUP.md": "setup/", "SCHEDULE.md": "schedule/", **{f"week-{n}.md": f"week-{n}/" for n in range(1, 10)}}
+BUILD_TRACK_SUMMARY = ("Build tradingresearch, a stock research desk that runs on your own machine, over nine weekly chapters: "
+                       "a working core to start from, build steps with written done-when checks, and the readings of each week.")
+
+
+def build_track_url(name: str) -> str:
+    return BUILD_TRACK_BASE + BUILD_TRACK_SLUGS[name]
+
+
+def build_track_href(dest: str) -> str:
+    """A relative destination of a build-track source (week-N.md, SETUP.md#x, #x) -> the page URL; anything else is an error."""
+    target, _, fragment = dest.partition("#")
+    if target and target not in BUILD_TRACK_SLUGS:
+        raise mdlite.MdliteError(f"link {dest!r} does not point at a build-track page")
+    return (build_track_url(target) if target else "") + (f"#{fragment}" if fragment else "")
+
+
+class BuildTrackPage:
+    def __init__(self, name: str, rendered: mdlite.Rendered) -> None:
+        self.name = name
+        self.url = build_track_url(name)
+        self.rendered = rendered
+        self.title: str = rendered.title or ""
+        self.label = "Overview" if name == "README.md" else self.title
+
+
+def load_build_track(content: Path) -> dict[str, BuildTrackPage]:
+    problems = scan.build_track_checks(content)
+    if problems:
+        raise BuildError("build track:\n  " + "\n  ".join(problems))
+    pages: dict[str, BuildTrackPage] = {}
+    for name in BUILD_TRACK_SLUGS:
+        text = (content / scan.BUILD_TRACK_DIR / name).read_text(encoding="utf-8")
+        try:
+            r = mdlite.render(text, link=build_track_href, code_langs=HLJS_LANGS)
+        except mdlite.MdliteError as e:
+            raise BuildError(f"{scan.BUILD_TRACK_DIR}/{name}: {e}") from None
+        if r.title is None or r.blocks[0].kind != "heading":
+            raise BuildError(f"{scan.BUILD_TRACK_DIR}/{name}: the page must start with its '# ' title")
+        pages[name] = BuildTrackPage(name, r)
+    readme = pages["README.md"].rendered.blocks
+    if len(readme) < 2 or readme[1].kind != "quote":
+        raise BuildError(f"{scan.BUILD_TRACK_DIR}/README.md: the disclaimer blockquote must follow the title")
+    return pages
+
+
+def build_track_sidebar(pages: dict[str, BuildTrackPage], current: str) -> str:
+    """The track's sidebar: the same classes as the module sidebar (course.css, SIDEBAR_CSS), all twelve pages."""
+    overview = build_track_url("README.md")
+    parts = ['<nav class="sidebar" aria-label="Build track">',
+             f'<div class="sidebar-title">{a(overview, esc(BUILD_TRACK_TITLE), "current" if current == overview else "")}</div>',
+             '<div class="sidebar-search"><input type="search" id="sidebar-search-input" placeholder="Filter pages" '
+             'autocomplete="off" aria-label="Filter the pages of this track"></div>',
+             '<ul class="sidebar-overview">',
+             f'<li>{a("/learn/", "Learning center")}</li>',
+             f'<li>{a("/learn/modules/", "All modules")}</li>',
+             f'<li>{a("/learn/search/", "Search the whole site")}</li>',
+             "</ul>",
+             '<details class="sidebar-disclosure">\n<summary>Pages of this track</summary>']
+    groups = [("Guide", ["README.md", "SETUP.md", "SCHEDULE.md"]), ("Weeks", [f"week-{n}.md" for n in range(1, 10)])]
+    for gtitle, names in groups:
+        parts.append('<details class="toc-module" open>')
+        parts.append(f'<summary data-module-title="{esc(gtitle.lower())}">{esc(gtitle)}</summary>')
+        parts.append('<ul class="module-lessons">')
+        for name in names:
+            p = pages[name]
+            cls = " current" if current == p.url else ""
+            parts.append(f'<li data-lesson-title="{esc(p.label.lower())}"><a href="{esc(p.url)}" class="lesson-link{cls}">'
+                         f'<span class="lesson-dot"></span><span>{esc(p.label)}</span></a></li>')
+        parts.append("</ul>\n</details>")
+    parts += ["</details>", "</nav>"]
+    return "\n".join(parts)
+
+
+def build_track_shell(pages: dict[str, BuildTrackPage], page: BuildTrackPage, body: str, *, description: str) -> str:
+    crumbs = [a("/learn/", "Learning center")]
+    if page.name == "README.md":
+        crumbs.append(esc(BUILD_TRACK_TITLE))
+    else:
+        crumbs += [a(build_track_url("README.md"), esc(BUILD_TRACK_TITLE)), esc(page.title)]
+    langs = page.rendered.langs
+    return (
+        head(f"{page.title} - {BUILD_TRACK_TITLE}", description, code=any(l != "mermaid" for l in langs))
+        + '<body>\n<div class="shell">\n'
+        + build_track_sidebar(pages, page.url)
+        + '\n<div class="page">\n<div class="page-top">\n'
+        + f'<nav class="breadcrumb" aria-label="Breadcrumb">{" &rsaquo; ".join(crumbs)}</nav>\n{theme_toggle()}\n</div>\n'
+        + f'<main data-pagefind-body class="build-track">\n{body}\n</main>\n'
+        + footer()
+        + "</div>\n</div>\n"
+        + tail_scripts(mermaid=page.rendered.mermaid, code=any(l != "mermaid" for l in langs))
+    )
+
+
+def build_track_pages_list(pages: dict[str, BuildTrackPage], current: str) -> str:
+    items = "".join(f'<li>{a(p.url, esc(p.label)) if p.url != current else esc(p.label) + " (this page)"}</li>' for p in pages.values())
+    return f'<h2 id="track-pages">Pages of this track</h2>\n<nav aria-label="Pages of this track"><ol class="track-pages">{items}</ol></nav>'
+
+
+def schedule_readings(schedule_text: str, week: int) -> str:
+    """The lines of SCHEDULE.md between `## Week N` > `### Readings` and the next heading, or an error."""
+    lines = schedule_text.split("\n")
+    start = next((i for i, l in enumerate(lines) if re.match(rf"^## Week {week}\b", l)), None)
+    if start is None:
+        raise BuildError(f"SCHEDULE.md: no '## Week {week}' section")
+    i = start + 1
+    while i < len(lines) and not lines[i].startswith("## "):
+        if lines[i].rstrip() == "### Readings":
+            j = i + 1
+            while j < len(lines) and not lines[j].startswith("#"):
+                j += 1
+            return "\n".join(lines[i + 1:j])
+        i += 1
+    raise BuildError(f"SCHEDULE.md: week {week} has no '### Readings' section")
+
+
+def render_build_track_page(content: Path, pages: dict[str, BuildTrackPage], page: BuildTrackPage, site: dict) -> tuple[str, str]:
+    names = list(pages)
+    k = names.index(page.name)
+    prev_page = pages[names[k - 1]] if k > 0 else None
+    next_page = pages[names[(k + 1) % len(names)]]
+    blocks = page.rendered.blocks
+    disclaimer = pages["README.md"].rendered.blocks[1].html
+    rest = blocks[1:]
+    if rest and rest[0].kind == "quote" and rest[0].html == disclaimer:
+        rest = rest[1:]   # the page carries the same disclaimer; shown once
+    body = [blocks[0].html,
+            attribution({"generated_by": "Claude through GigAI", "generated_on": site["updated"], "reviewed_by": ""}),
+            disclaimer.replace("<blockquote>", '<blockquote class="disclaimer">', 1)]
+    if page.name in ("README.md", "SCHEDULE.md"):
+        body.append(build_track_pages_list(pages, page.url))
+    m = re.match(r"^week-(\d)\.md$", page.name)
+    if m:
+        week = int(m.group(1))
+        schedule = pages["SCHEDULE.md"]
+        week_id = next((ident for level, ident, text in schedule.rendered.headings if level == 2 and text.startswith(f"Week {week} ")), None)
+        if week_id is None:
+            raise BuildError(f"SCHEDULE.md: no '## Week {week}' heading")
+        src = schedule_readings((content / scan.BUILD_TRACK_DIR / "SCHEDULE.md").read_text(encoding="utf-8"), week)
+        try:
+            readings = mdlite.render(src, link=build_track_href, code_langs=HLJS_LANGS)
+        except mdlite.MdliteError as e:
+            raise BuildError(f"SCHEDULE.md: week {week} readings: {e}") from None
+        body.append('<h2 id="readings">Readings</h2>')
+        body.append(f'<p class="muted">From the {a(schedule.url + "#" + week_id, "schedule")}, week {week}.</p>')
+        body.append(readings.html)
+        body.append('<h2 id="build-steps">Build steps</h2>')
+    body += [b.html for b in rest]
+    prev_ = a(prev_page.url, "&larr; " + esc(prev_page.label)) if prev_page else "<span></span>"
+    next_ = a(next_page.url, esc(next_page.label) + " &rarr;")
+    body.append(f'<div class="prevnext">{prev_}{next_}</div>')
+    first_p = next((b.html for b in rest if b.kind == "p"), "")
+    description = html.unescape(re.sub(r"<[^>]+>", "", first_p)).replace("\n", " ")[:200]
+    if not description or not glyphs_ok(description):   # <head> text is escaped by head(), so it must obey the glyph policy as written
+        description = BUILD_TRACK_SUMMARY
+    if not glyphs_ok(page.title):
+        raise BuildError(f"{page.name}: the title has a glyph outside the policy: {page.title!r}")
+    return page.url, build_track_shell(pages, page, "\n".join(body), description=description)
+
+
+def glyphs_ok(s: str) -> bool:
+    return all(ord(ch) < 128 or ch in ALLOWED_EXTRA or 0xA0 <= ord(ch) <= 0xFF for ch in s)
+
+
+def build_track_card() -> str:
+    return ('<ul class="cards">'
+            f'<li class="card"><h3>{a(build_track_url("README.md"), esc(BUILD_TRACK_TITLE))}</h3><p>{esc(BUILD_TRACK_SUMMARY)}</p>'
+            '<p class="muted">12 pages: overview, setup, schedule and nine weekly chapters.</p></li></ul>')
+
+
 def sitemap(lib: Library, urls: list[str]) -> str:
     last = {}
     for lid, l in lib.lessons.items():
@@ -2137,6 +2319,8 @@ def build(content: Path, out: Path) -> dict:
     pages += [render_lesson_page(lib, l) for l in lib.lessons.values()]
     pages += [render_practice(lib, p) for p in lib.practice.values()]
     pages += [render_key(lib, k) for k in lib.keys.values()]
+    track = load_build_track(content)
+    pages += [render_build_track_page(content, track, p, lib.site) for p in track.values()]
     for url, text in pages:
         write(out, url, text, written)
     # assets, once, at the root (shared by / and /learn/)
