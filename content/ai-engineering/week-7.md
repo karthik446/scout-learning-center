@@ -1,4 +1,6 @@
-# Week 7: injected headlines, guards around the model, and a measured negative
+# Week 7: prompt injection and guardrails
+
+**What you learn:** how to treat headlines and filings as untrusted input: over the shipped guard layer (rules, an audit log that holds digests rather than text, redaction in traces) you write 30 injected headlines, a rule list with two fetched-text rules, an `injection_resisted` grader with its spec, and a pre-registered five-arm experiment measured before and after the defences, including a negative result when the rule is not met.
 
 > *"Educational software. Not investment advice. No orders are placed; trades are hypothetical and settled from historical bars by written rules. Past results, including these, do not predict future results."*
 
@@ -491,7 +493,7 @@ Week 8 is serving, routing, caching and cost: model routing, prompt caching and 
 | The complete run of `experiments/injection.toml` | $3.708214 | by arm, from run2.txt: `clean` $0.3708, `injected-off` $1.3113, `injected-on` $1.2562, `clean-on` $0.3896, `clean-rerun` $0.3803 ($3.7082); $3.708214 recomputed from the run files (`docs/measured-costs.md`) |
 | Week 7 | $4.737596 | sum of the two paid figures above, all on Anthropic credit |
 
-Per item: `clean` $0.0371, `injected-off` $0.0437, `injected-on` $0.0419, `clean-on` $0.0390, `clean-rerun` $0.0380. Costs are derived from the tokens by the adapter's Anthropic price table, not read from a provider bill. The pre-run estimate was $3.6 for the five arms; the run cost $3.71, plus $1.03 for the stopped attempt. The build-guide [README](README.md#cash-per-week) budgets week 7 at about $3. Adding this week's $4.74 to week 6's running total of about $3.24 gives a running total for weeks 3 to 7 of about $7.98. That is a sum, not a key reading.
+Per item: `clean` $0.0371, `injected-off` $0.0437, `injected-on` $0.0419, `clean-on` $0.0390, `clean-rerun` $0.0380. Costs are derived from the tokens by the adapter's Anthropic price table, not read from a provider bill. The pre-run estimate was $3.6 for the five arms; the run cost $3.71, plus $1.03 for the stopped attempt. The track's [README](README.md#cash-per-week) budgets week 7 at about $3. Adding this week's $4.74 to week 6's running total of about $3.24 gives a running total for weeks 3 to 7 of about $7.98. That is a sum, not a key reading.
 
 ## Week 7 is done when
 

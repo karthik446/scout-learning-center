@@ -1,4 +1,6 @@
-# Week 6: retrieval over filings, and an eval for the citations
+# Week 6: retrieval and RAG evals
+
+**What you learn:** how to build retrieval you can measure: a scoping page for the index, 30 labelled queries with gold passages, recall@k for BM25, dense, hybrid and reranked search, a citation-accuracy grader with its spec, and a pre-registered experiment that decides whether retrieved passages go into `analyze` at all.
 
 > *"Educational software. Not investment advice. No orders are placed; trades are hypothetical and settled from historical bars by written rules. Past results, including these, do not predict future results."*
 

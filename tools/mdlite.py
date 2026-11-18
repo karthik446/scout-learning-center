@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""mdlite: the Markdown subset the build track is written in, rendered to HTML (standard library only).
+"""mdlite: the Markdown subset the AI engineering track is written in, rendered to HTML (standard library only).
 
 Supported: ATX headings (# to ######, exactly one #), paragraphs, **strong**, *emphasis*, `code spans`, [links](dest)
 whose destination is https:// or a relative target the caller resolves, `-` and `1.` lists nested by indentation (one

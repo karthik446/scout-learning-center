@@ -1,4 +1,6 @@
-# Week 3: grade the trades, watch the loop, count the cost
+# Week 3: observability and SLOs
+
+**What you learn:** how to see what a pipeline does once it runs on its own: traces (one record per model call) with cost per run from measured usage, scorecards with confidence intervals and a detectable-effect line, and SLOs you review with an injected breach. You write the P1 judge as code, ADR-004 on what never enters a trace, and a measured-cost page.
 
 > *"Educational software. Not investment advice. No orders are placed; trades are hypothetical and settled from historical bars by written rules. Past results, including these, do not predict future results."*
 

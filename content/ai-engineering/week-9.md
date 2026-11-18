@@ -1,4 +1,6 @@
-# Week 9: freeze the rules, publish the aggregates, release the repo
+# Week 9: release and self-hosting economics
+
+**What you learn:** how to release a system another engineer can run: scorecards exported as aggregates a stranger can read, one adoption decision taken by a rule written in advance, a README as a reference architecture with its licences, a release checklist as code that tests a fresh clone, and the frozen tag. The readings cover distributed inference; the self-check covers the API vs self-host break-even.
 
 > *"Educational software. Not investment advice. No orders are placed; trades are hypothetical and settled from historical bars by written rules. Past results, including these, do not predict future results."*
 

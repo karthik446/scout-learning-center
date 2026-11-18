@@ -1,4 +1,6 @@
-# Week 1: read what the model writes, then measure one change
+# Week 1: error analysis and evals
+
+**What you learn:** how to read what a model writes before you measure it: open coding of real outputs, a failure taxonomy with counts, an eval with a spec that says how you know the grader is right, and a paired experiment with a confidence interval instead of one run's score. The readings also cover when fine-tuning pays off and when it does not.
 
 > *"Educational software. Not investment advice. No orders are placed; trades are hypothetical and settled from historical bars by written rules. Past results, including these, do not predict future results."*
 

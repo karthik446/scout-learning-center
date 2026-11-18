@@ -1,4 +1,6 @@
-# Week 8: a cheaper analyze model, a prompt cache, and a pass that is not a proof
+# Week 8: routing, caching and cost
+
+**What you learn:** how to cut the cost of a pipeline without fooling yourself: a route knob that puts a cheaper model on one step with a fallback, prompt caching with its write premium, a cost table with cost per item and p50/p95 latency, a batch mode for the judge, and a pre-registered run whose pass you learn to read as a pass and not a proof.
 
 > *"Educational software. Not investment advice. No orders are placed; trades are hypothetical and settled from historical bars by written rules. Past results, including these, do not predict future results."*
 

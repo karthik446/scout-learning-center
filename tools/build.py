@@ -22,7 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import scan  # noqa: E402  (the same checks CI runs; stdlib only)
-import mdlite  # noqa: E402  (the Markdown subset of the build track; stdlib only)
+import mdlite  # noqa: E402  (the Markdown subset of the AI engineering track; stdlib only)
 
 ROOT = Path(__file__).resolve().parent.parent
 ORIGIN = "https://scout.edgelab.one"
@@ -1818,7 +1818,7 @@ def render_home(lib: Library) -> tuple[str, str]:
         '<button type="submit">Search</button></form>',
         '<p class="muted">Search runs in your browser from a prebuilt index. Nothing you type leaves this page.</p>',
         f'<h2>{a("/learn/modules/", "Modules")}</h2>', module_cards(lib),
-        "<h2>Build track</h2>", build_track_card(),
+        "<h2>Build along</h2>", build_track_card(),
         "<h2>How this library works</h2>",
         "<p>Lessons are keyed by concept. A module is one topic's lessons in teaching order; every lesson sits in exactly one module. "
         f"Links to outside documentation are re-checked every week. Site version {esc(lib.site['site_version'])}; see the {a('/learn/changelog/', 'changelog')}.</p>",
@@ -1831,7 +1831,7 @@ def render_modules_index(lib: Library) -> tuple[str, str]:
     body = ["<h1>Modules</h1>",
             f'<p class="muted">{len(lib.module_index)} topic modules, {n} lessons. A module lists one topic\'s lessons in teaching order; every lesson sits in exactly one module.</p>',
             module_cards(lib),
-            "<h2>Build track</h2>", build_track_card()]
+            "<h2>Build along</h2>", build_track_card()]
     return "/learn/modules/", site_page("Modules - Learning center", "\n".join(body), current="modules",
                                         crumbs=[("/learn/", "Learning center"), ("/learn/modules/", "Modules")],
                                         description="The topic modules of the learning center and their lessons.")
@@ -2115,17 +2115,19 @@ def write(site: Path, url: str, text: str, written: dict[str, int]) -> None:
 
 
 # ---------------------------------------------------------------------------------------------------------------------
-# The build track: content/build/tradingresearch/*.md (byte copies of the build guide, tools/import_build_track.py)
-# rendered with tools/mdlite.py. Twelve pages under /learn/build/tradingresearch/: the overview (README.md), setup,
-# schedule and week-1 to week-9, in the two-column shell with a sidebar listing all twelve and prev/next links in
-# that order (week 9's "next" returns to the overview). Every page shows the README's disclaimer blockquote under its
-# title; a week page shows the schedule's Readings for that week before its own body under "Build steps".
+# The AI engineering track: content/ai-engineering/*.md (byte copies of the build guide, tools/import_build_track.py)
+# rendered with tools/mdlite.py. Twelve pages under /learn/ai-engineering/: the overview (README.md), setup, schedule
+# and week-1 to week-9, in the two-column shell with a sidebar listing all twelve (short labels) and prev/next links in
+# that order (week 9's "next" returns to the overview). Page titles are the source H1s. The disclaimer quote sits within
+# the first three blocks of every source (scan.py): the overview renders in source order; every other page shows the
+# blocks before the quote (a week's "What you learn" paragraph), the quote, then for a week page the schedule's Readings
+# and its own body under "Build steps".
 # ---------------------------------------------------------------------------------------------------------------------
-BUILD_TRACK_BASE = "/learn/build/tradingresearch/"
-BUILD_TRACK_TITLE = "Build track: tradingresearch"
+BUILD_TRACK_BASE = "/learn/ai-engineering/"
+BUILD_TRACK_TITLE = "AI engineering track"
 BUILD_TRACK_SLUGS = {"README.md": "", "SETUP.md": "setup/", "SCHEDULE.md": "schedule/", **{f"week-{n}.md": f"week-{n}/" for n in range(1, 10)}}
-BUILD_TRACK_SUMMARY = ("Build tradingresearch, a stock research desk that runs on your own machine, over nine weekly chapters: "
-                       "a working core to start from, build steps with written done-when checks, and the readings of each week.")
+BUILD_TRACK_SUMMARY = ("For working software engineers: learn applied AI engineering end to end in nine weeks. Each week pairs readings "
+                       "with building one part of a real system, and you measure every change. The project, tradingresearch, is the vehicle.")
 
 
 def build_track_url(name: str) -> str:
@@ -2133,10 +2135,10 @@ def build_track_url(name: str) -> str:
 
 
 def build_track_href(dest: str) -> str:
-    """A relative destination of a build-track source (week-N.md, SETUP.md#x, #x) -> the page URL; anything else is an error."""
+    """A relative destination of an AI engineering track source (week-N.md, SETUP.md#x, #x) -> the page URL; anything else is an error."""
     target, _, fragment = dest.partition("#")
     if target and target not in BUILD_TRACK_SLUGS:
-        raise mdlite.MdliteError(f"link {dest!r} does not point at a build-track page")
+        raise mdlite.MdliteError(f"link {dest!r} does not point at an AI engineering track page")
     return (build_track_url(target) if target else "") + (f"#{fragment}" if fragment else "")
 
 
@@ -2146,13 +2148,14 @@ class BuildTrackPage:
         self.url = build_track_url(name)
         self.rendered = rendered
         self.title: str = rendered.title or ""
-        self.label = "Overview" if name == "README.md" else self.title
+        # the sidebar, prev/next and breadcrumb label: "Overview", or the H1 up to its colon ("Setup", "Schedule", "Week 3")
+        self.label = "Overview" if name == "README.md" else self.title.partition(":")[0].strip()
 
 
 def load_build_track(content: Path) -> dict[str, BuildTrackPage]:
     problems = scan.build_track_checks(content)
     if problems:
-        raise BuildError("build track:\n  " + "\n  ".join(problems))
+        raise BuildError("AI engineering track:\n  " + "\n  ".join(problems))
     pages: dict[str, BuildTrackPage] = {}
     for name in BUILD_TRACK_SLUGS:
         text = (content / scan.BUILD_TRACK_DIR / name).read_text(encoding="utf-8")
@@ -2163,16 +2166,13 @@ def load_build_track(content: Path) -> dict[str, BuildTrackPage]:
         if r.title is None or r.blocks[0].kind != "heading":
             raise BuildError(f"{scan.BUILD_TRACK_DIR}/{name}: the page must start with its '# ' title")
         pages[name] = BuildTrackPage(name, r)
-    readme = pages["README.md"].rendered.blocks
-    if len(readme) < 2 or readme[1].kind != "quote":
-        raise BuildError(f"{scan.BUILD_TRACK_DIR}/README.md: the disclaimer blockquote must follow the title")
     return pages
 
 
 def build_track_sidebar(pages: dict[str, BuildTrackPage], current: str) -> str:
     """The track's sidebar: the same classes as the module sidebar (course.css, SIDEBAR_CSS), all twelve pages."""
     overview = build_track_url("README.md")
-    parts = ['<nav class="sidebar" aria-label="Build track">',
+    parts = ['<nav class="sidebar" aria-label="AI engineering track">',
              f'<div class="sidebar-title">{a(overview, esc(BUILD_TRACK_TITLE), "current" if current == overview else "")}</div>',
              '<div class="sidebar-search"><input type="search" id="sidebar-search-input" placeholder="Filter pages" '
              'autocomplete="off" aria-label="Filter the pages of this track"></div>',
@@ -2218,7 +2218,10 @@ def build_track_shell(pages: dict[str, BuildTrackPage], page: BuildTrackPage, bo
 
 
 def build_track_pages_list(pages: dict[str, BuildTrackPage], current: str) -> str:
-    items = "".join(f'<li>{a(p.url, esc(p.label)) if p.url != current else esc(p.label) + " (this page)"}</li>' for p in pages.values())
+    """The contents list of the overview and schedule pages: full titles (the overview as "Overview")."""
+    def text(p: BuildTrackPage) -> str:
+        return esc(p.label if p.name == "README.md" else p.title)
+    items = "".join(f'<li>{a(p.url, text(p)) if p.url != current else text(p) + " (this page)"}</li>' for p in pages.values())
     return f'<h2 id="track-pages">Pages of this track</h2>\n<nav aria-label="Pages of this track"><ol class="track-pages">{items}</ol></nav>'
 
 
@@ -2245,36 +2248,38 @@ def render_build_track_page(content: Path, pages: dict[str, BuildTrackPage], pag
     prev_page = pages[names[k - 1]] if k > 0 else None
     next_page = pages[names[(k + 1) % len(names)]]
     blocks = page.rendered.blocks
-    disclaimer = pages["README.md"].rendered.blocks[1].html
-    rest = blocks[1:]
-    if rest and rest[0].kind == "quote" and rest[0].html == disclaimer:
-        rest = rest[1:]   # the page carries the same disclaimer; shown once
-    body = [blocks[0].html,
-            attribution({"generated_by": "Claude through GigAI", "generated_on": site["updated"], "reviewed_by": ""}),
-            disclaimer.replace("<blockquote>", '<blockquote class="disclaimer">', 1)]
-    if page.name in ("README.md", "SCHEDULE.md"):
-        body.append(build_track_pages_list(pages, page.url))
-    m = re.match(r"^week-(\d)\.md$", page.name)
-    if m:
-        week = int(m.group(1))
-        schedule = pages["SCHEDULE.md"]
-        week_id = next((ident for level, ident, text in schedule.rendered.headings if level == 2 and text.startswith(f"Week {week} ")), None)
-        if week_id is None:
-            raise BuildError(f"SCHEDULE.md: no '## Week {week}' heading")
-        src = schedule_readings((content / scan.BUILD_TRACK_DIR / "SCHEDULE.md").read_text(encoding="utf-8"), week)
-        try:
-            readings = mdlite.render(src, link=build_track_href, code_langs=HLJS_LANGS)
-        except mdlite.MdliteError as e:
-            raise BuildError(f"SCHEDULE.md: week {week} readings: {e}") from None
-        body.append('<h2 id="readings">Readings</h2>')
-        body.append(f'<p class="muted">From the {a(schedule.url + "#" + week_id, "schedule")}, week {week}.</p>')
-        body.append(readings.html)
-        body.append('<h2 id="build-steps">Build steps</h2>')
-    body += [b.html for b in rest]
+    d = scan.disclaimer_index(blocks)   # scan.build_track_checks (load_build_track) proved it is within the first three
+    styled = blocks[d].html.replace("<blockquote>", '<blockquote class="disclaimer">', 1)
+    lead = [b.html for b in blocks[1:d]]   # a week's "What you learn" paragraph; nothing on setup and schedule
+    rest = blocks[d + 1:]
+    body = [blocks[0].html, attribution({"generated_by": "Claude through GigAI", "generated_on": site["updated"], "reviewed_by": ""})]
+    if page.name == "README.md":   # source order, the contents list at the end
+        body += lead + [styled] + [b.html for b in rest] + [build_track_pages_list(pages, page.url)]
+    else:
+        body += lead + [styled]
+        if page.name == "SCHEDULE.md":
+            body.append(build_track_pages_list(pages, page.url))
+        m = re.match(r"^week-(\d)\.md$", page.name)
+        if m:
+            week = int(m.group(1))
+            schedule = pages["SCHEDULE.md"]
+            week_id = next((ident for level, ident, text in schedule.rendered.headings if level == 2 and text.startswith(f"Week {week} ")), None)
+            if week_id is None:
+                raise BuildError(f"SCHEDULE.md: no '## Week {week}' heading")
+            src = schedule_readings((content / scan.BUILD_TRACK_DIR / "SCHEDULE.md").read_text(encoding="utf-8"), week)
+            try:
+                readings = mdlite.render(src, link=build_track_href, code_langs=HLJS_LANGS)
+            except mdlite.MdliteError as e:
+                raise BuildError(f"SCHEDULE.md: week {week} readings: {e}") from None
+            body.append('<h2 id="readings">Readings</h2>')
+            body.append(f'<p class="muted">From the {a(schedule.url + "#" + week_id, "schedule")}, week {week}.</p>')
+            body.append(readings.html)
+            body.append('<h2 id="build-steps">Build steps</h2>')
+        body += [b.html for b in rest]
     prev_ = a(prev_page.url, "&larr; " + esc(prev_page.label)) if prev_page else "<span></span>"
     next_ = a(next_page.url, esc(next_page.label) + " &rarr;")
     body.append(f'<div class="prevnext">{prev_}{next_}</div>')
-    first_p = next((b.html for b in rest if b.kind == "p"), "")
+    first_p = next((b.html for b in blocks[1:] if b.kind == "p"), "")   # the intro or "What you learn" paragraph
     description = html.unescape(re.sub(r"<[^>]+>", "", first_p)).replace("\n", " ")[:200]
     if not description or not glyphs_ok(description):   # <head> text is escaped by head(), so it must obey the glyph policy as written
         description = BUILD_TRACK_SUMMARY

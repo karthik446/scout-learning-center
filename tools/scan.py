@@ -13,6 +13,7 @@ pattern, https-only addresses (no localhost). The full shingle scan stays on the
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import json
 import re
@@ -45,12 +46,14 @@ N_OF_M = re.compile(r"(?i)\b\d+\s+of\s+\d+\s+(?:stored\s+)?postings\b")
 URL_KEYS = frozenset({"url", "href"})
 URL_OK = re.compile(r"^https://[^\s/@:]+(?::\d+)?(?:[/?#]\S*)?$")
 LOCAL_HOST = re.compile(r"(?i)^https?://(?:localhost|127\.|0\.0\.0\.0|\[::1\]|10\.|192\.168\.|169\.254\.)")
-# --- the build track: Markdown pages under content/build/tradingresearch (specs/BUILD-TRACK) -----------------------------
+# --- the AI engineering track: Markdown pages under content/ai-engineering (specs/BUILD-TRACK, BUILD-TRACK-D) ------------
 # The 12 files are byte copies of the build guide (tools/import_build_track.py); they must render with tools/mdlite.py,
-# pass the text rules above, name no workstation path, no "operator", no bead id, and every relative link must resolve
-# to one of the 12 pages (with a heading id when it has a fragment).
-BUILD_TRACK_DIR = Path("build") / "tradingresearch"
+# pass the text rules above, name no workstation path, no "operator", no bead id, carry the disclaimer quote within their
+# first three blocks, and every relative link must resolve to one of the 12 pages (with a heading id when it has a fragment).
+BUILD_TRACK_DIR = Path("ai-engineering")
 BUILD_TRACK_FILES = ("README.md", "SETUP.md", "SCHEDULE.md", *(f"week-{n}.md" for n in range(1, 10)))
+DISCLAIMER = ('> *"Educational software. Not investment advice. No orders are placed; trades are hypothetical and settled from '
+              'historical bars by written rules. Past results, including these, do not predict future results."*')
 BEAD_ID = re.compile(r"\b(?:gigai-[a-z0-9]+\.\d+|csy\.\d+)\b")   # `gigai-core` has no .N and is a package name
 OPERATOR = re.compile(r"(?<![\w/-])(?<!GPU )[Oo]perators?\b")       # "NVIDIA GPU Operator" and its URL slug are a product
 
@@ -1261,7 +1264,7 @@ def build_track_checks(content: Path) -> list[str]:
     problems: list[str] = []
     present = sorted(p.name for p in folder.iterdir() if not p.name.startswith("."))
     problems += [f"{BUILD_TRACK_DIR}/{n}: missing" for n in BUILD_TRACK_FILES if n not in present]
-    problems += [f"{BUILD_TRACK_DIR}/{n}: not one of the 12 build-track files" for n in present if n not in BUILD_TRACK_FILES]
+    problems += [f"{BUILD_TRACK_DIR}/{n}: not one of the 12 AI engineering track files" for n in present if n not in BUILD_TRACK_FILES]
     pages: dict[str, mdlite.Rendered] = {}
     for name in BUILD_TRACK_FILES:
         path = folder / name
@@ -1277,6 +1280,9 @@ def build_track_checks(content: Path) -> list[str]:
             pages[name] = mdlite.render(text, link=lambda dest: dest)
         except mdlite.MdliteError as e:
             problems.append(f"{label}: {e}")
+            continue
+        if disclaimer_index(pages[name].blocks) is None:
+            problems.append(f"{label}: the disclaimer quote is not within the first three blocks")
     for name, page in pages.items():
         ids = {ident for _, ident, _ in page.headings}
         for dest in page.links:
@@ -1288,11 +1294,25 @@ def build_track_checks(content: Path) -> list[str]:
             elif target in pages:
                 target_ids = {ident for _, ident, _ in pages[target].headings}
             else:
-                problems.append(f"{BUILD_TRACK_DIR}/{name}: link {dest!r} does not point at a build-track page")
+                problems.append(f"{BUILD_TRACK_DIR}/{name}: link {dest!r} does not point at an AI engineering track page")
                 continue
             if fragment and fragment not in target_ids:
                 problems.append(f"{BUILD_TRACK_DIR}/{name}: link {dest!r}: no heading with that id")
     return problems
+
+
+def disclaimer_index(blocks) -> int | None:
+    """The index of the disclaimer quote among a page's first three blocks (mdlite Block list), or None."""
+    for i, b in enumerate(blocks[:3]):
+        if b.kind == "quote" and b.html == disclaimer_html():
+            return i
+    return None
+
+
+@functools.cache
+def disclaimer_html() -> str:
+    import mdlite  # noqa: E402
+    return mdlite.render("# x\n\n" + DISCLAIMER + "\n", link=lambda dest: dest).blocks[1].html
 
 
 def main() -> int:

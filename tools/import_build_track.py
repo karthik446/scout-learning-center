@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Copy the tradingresearch build guide into content/build/tradingresearch, byte for byte.
+"""Copy the build guide of the AI engineering track into content/ai-engineering, byte for byte.
 
     python3 tools/import_build_track.py --from <build-guide dir>     copy the 12 files in
     python3 tools/import_build_track.py --check <build-guide dir>    exit 1 when any copy differs from its source
@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DEST = ROOT / "content" / "build" / "tradingresearch"
+DEST = ROOT / "content" / "ai-engineering"
 FILES = ["README.md", "SETUP.md", "SCHEDULE.md"] + [f"week-{n}.md" for n in range(1, 10)]
 
 

@@ -1,4 +1,6 @@
-# Week 4: give analyze tools, measure it, start the challenger
+# Week 4: agents, tools and MCP
+
+**What you learn:** how to give a model tools and measure whether they help: a tool loop beside the fixed-context version, compared on the same inputs in a paid run that an ADR decides from; when judge agreement (Cohen's kappa) can be measured; a champion/challenger rule change pre-registered before it runs; and, as a stretch, a read-only MCP server over the journal. The readings cover retries with backoff and jitter.
 
 > *"Educational software. Not investment advice. No orders are placed; trades are hypothetical and settled from historical bars by written rules. Past results, including these, do not predict future results."*
 

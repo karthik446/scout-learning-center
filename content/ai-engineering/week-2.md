@@ -1,4 +1,6 @@
-# Week 2: grade the process, not the P&L, and start the live stream
+# Week 2: LLM judges and CI gates
+
+**What you learn:** how to grade a process rather than its P&L: code checks where a rule can be written, an LLM judge with a rubric where reading is needed, the judge validated against your own labels, and a CI gate so that no prompt or rule change ships without a test. The live after-close stream starts this week and runs every trading day from here on.
 
 > *"Educational software. Not investment advice. No orders are placed; trades are hypothetical and settled from historical bars by written rules. Past results, including these, do not predict future results."*
 

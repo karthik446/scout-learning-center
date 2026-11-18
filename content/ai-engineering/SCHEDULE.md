@@ -2,7 +2,7 @@
 
 > *"Educational software. Not investment advice. No orders are placed; trades are hypothetical and settled from historical bars by written rules. Past results, including these, do not predict future results."*
 
-The guide is paced as a 60-day plan: eight weeks of seven days and a ninth of four. Each week has one build chapter (`week-N.md`) and a reading list. This page is the pace and the readings; the chapters are the work.
+The track is paced as a 60-day plan: eight weeks of seven days and a ninth of four. Each week has one build chapter (`week-N.md`) and a reading list. This page is the pace and the readings; the chapters are the work.
 
 **How a day goes**
 

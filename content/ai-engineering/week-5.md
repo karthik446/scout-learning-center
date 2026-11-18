@@ -1,4 +1,6 @@
-# Week 5: context engineering, one section at a time
+# Week 5: context engineering
+
+**What you learn:** how to find out what each block of a prompt's context is worth: over the shipped playbook and headline context you write per-section grounding graders, a pre-registered three-arm ablation that drops headlines and EDGAR facts, and a paired interval per variant that an ADR decides from. You also design, on paper, an MCP gateway and registry for many teams.
 
 > *"Educational software. Not investment advice. No orders are placed; trades are hypothetical and settled from historical bars by written rules. Past results, including these, do not predict future results."*
 

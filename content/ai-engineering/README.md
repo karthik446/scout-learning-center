@@ -1,14 +1,30 @@
-# Build tradingresearch: a guide in weekly chapters
+# Learn AI engineering end to end: a 60-day track
+
+This track is for a working software engineer who wants to do applied-AI work: put a language model inside a real system and know, with numbers, whether each change helped. At the end you can read model output and turn it into failure classes, write evals, an LLM judge and the check that validates it, trace and cost a pipeline, give a model tools, retrieval and guardrails, route between models and release the result. Each week pairs readings with building one part of a real system, and you measure every change in a paired experiment before you keep it.
 
 > *"Educational software. Not investment advice. No orders are placed; trades are hypothetical and settled from historical bars by written rules. Past results, including these, do not predict future results."*
 
+## What you learn, week by week
+
+| Week | Skill | What you build that week |
+|---|---|---|
+| [Week 1](week-1.md) | Error analysis and evals | The first evals on `tr analyze`: 20 analyses read and labelled, a failure taxonomy with counts, one eval with a spec and tests, and a prompt variant measured in a paired experiment |
+| [Week 2](week-2.md) | LLM judges and CI gates | Starting from a shipped `tr thesis`, `tr reconcile`, screen and CI gate: the P2-P4 process checks as code with tests, the P1 rubric and a draft judge (ADR-003), a review of the thesis prompt on real output, a pre-registered teacher bake-off, and the runbook that starts the live after-close stream |
+| [Week 3](week-3.md) | Observability and SLOs | The P1 judge as code and `tr grade --judge`, ADR-004 on what never enters a trace, an SLO review with an injected breach, and a measured-cost page, operating the shipped traces, `tr grade`, `tr report`, `tr slo` and `tr label` |
+| [Week 4](week-4.md) | Agents, tools and MCP | `analyze` as a tool-using agent compared with the fixed-context version on the same tickers in one paid run (ADR-005), the first pre-registered rule change with its challenger arm, and an optional MCP server over the journal |
+| [Week 5](week-5.md) | Context engineering | Over the shipped playbook and headline context: per-section grounding graders and a pre-registered three-arm ablation that drops headlines and EDGAR facts on the same ticker-days, with a paired interval per variant (ADR-007) |
+| [Week 6](week-6.md) | Retrieval and RAG evals | Retrieval over filings and headlines (BM25, dense, hybrid, reranked) with recall@k on 30 hand-labelled queries, and a citation-accuracy eval |
+| [Week 7](week-7.md) | Prompt injection and guardrails | Over the shipped guard layer: 30 injected headlines, a rule list with two fetched-text rules, an `injection_resisted` grader with its spec, and a pre-registered five-arm run measured before and after the defences (ADR-010) |
+| [Week 8](week-8.md) | Routing, caching and cost | Model routing, prompt caching and the cost table, compared on $ per ticker-day, latency and quality |
+| [Week 9](week-9.md) | Release and self-hosting economics | The frozen rules, the scorecards exported as aggregates, the release checklist as code and the README as a reference architecture; the self-check covers the API vs self-host break-even |
+
+## The project
+
+`tradingresearch` (repo `tradingresearch`, command `tr`) is a stock research desk that runs on your own machine. After the US close, code computes every number about a stock (indicators, price levels and the market regime from Alpaca bars, fundamentals from SEC EDGAR), and a language model writes short claims about it. Each claim is tagged fact, inference or opinion, must cite the numbers it rests on, and is checked by code before it is stored. Later weeks turn analyses into theses with an entry, a stop, a target and a holding period; written rules settle each thesis from real bars, and each is graded on the outcome (R after costs) and on the process (did the stated reason play out).
+
+The project is the vehicle, not the point. Prices settle claims within days, so you cannot fool yourself for long: "No edge detected, with its [confidence interval](https://en.wikipedia.org/wiki/Confidence_interval)" (the range of differences the data are consistent with; see *The loop* below) is a valid result, and the likely one. The pace and the readings are in [SCHEDULE.md](SCHEDULE.md); the design decisions behind the project (records, rules, sources and costs) are recorded in the repo's ADRs, `docs/adr/`, as each chapter writes them.
+
 **Code:** [github.com/karthik446/tradingresearch](https://github.com/karthik446/tradingresearch) (public; MIT licence). Each chapter links its start tag, its reference tag and the chapter diff.
-
-## What you build
-
-`tradingresearch` (repo `tradingresearch`, command `tr`) is a stock research desk that runs on your own machine. After the US close, code computes every number about a stock: indicators, price levels and the market regime from Alpaca bars, plus fundamentals from SEC EDGAR. A language model then writes short claims about the stock. Each claim is tagged fact, inference or opinion and must cite the numbers it rests on, and code checks every claim before it is stored. In later weeks the model turns analyses into theses with an entry, a stop, a target and a holding period. Written rules settle each thesis from real bars, and each thesis is graded on the outcome (R after costs) and on the process (did the stated reason play out).
-
-The point is to learn applied-AI engineering on a problem whose answers arrive by themselves, not to beat the market. Prices settle claims within days, so you cannot fool yourself for long. "No edge detected, with its [confidence interval](https://en.wikipedia.org/wiki/Confidence_interval)" (the range of differences the data are consistent with; see *The loop* below) is a valid result, and the likely one. The guide follows a 60-day schedule ([SCHEDULE.md](SCHEDULE.md): readings and pace) in nine weekly chapters. The design decisions behind it (records, rules, sources and costs) are recorded in the repo's ADRs, `docs/adr/`, as each chapter writes them.
 
 ## You start from a working core
 
@@ -91,7 +107,7 @@ tradingresearch/
 
 ## Cash per week
 
-All amounts are model-API spend; market data (Alpaca Basic) and filings (SEC EDGAR) cost $0. Weeks 1 to 5 run through OpenRouter; from week 6 on the provider is your choice (teachers and the judge stay on OpenRouter), see [SETUP.md](SETUP.md#which-provider-runs-which-week). The guide's budget is about **$61 in total** (including +50% for development and reruns) with a **$10 cap per session**. The budget prices items one at a time; the "one-off" column is the sum of those item estimates (the author's arithmetic).
+All amounts are model-API spend; market data (Alpaca Basic) and filings (SEC EDGAR) cost $0. Weeks 1 to 5 run through OpenRouter; from week 6 on the provider is your choice (teachers and the judge stay on OpenRouter), see [SETUP.md](SETUP.md#which-provider-runs-which-week). The track's budget is about **$61 in total** (including +50% for development and reruns) with a **$10 cap per session**. The budget prices items one at a time; the "one-off" column is the sum of those item estimates (the author's arithmetic).
 
 | Week | One-off build items (budget estimates) | One-off sum | Running from this week on |
 |---|---|---|---|
