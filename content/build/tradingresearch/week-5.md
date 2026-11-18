@@ -2,6 +2,8 @@
 
 > *"Educational software. Not investment advice. No orders are placed; trades are hypothetical and settled from historical bars by written rules. Past results, including these, do not predict future results."*
 
+**Code:** start [`week-5-start`](https://github.com/karthik446/tradingresearch/tree/week-5-start) · reference answer [`week-5-end`](https://github.com/karthik446/tradingresearch/tree/week-5-end) · [the chapter diff](https://github.com/karthik446/tradingresearch/compare/week-5-start...week-5-end) (repo: [karthik446/tradingresearch](https://github.com/karthik446/tradingresearch)).
+
 **You start at** `week-5-start`: week-4-end plus shipped code for this week's plumbing. An experiment arm can now `drop` named SOURCES sections, `analyze-3` puts the day's headlines in the prompt as untrusted text, `thesis-2` puts the playbook in the thesis prompt, and `tests/fixtures/week5/` holds one real analyze-3 exchange. `tests/test_week5.py` fails by design (15 cases).
 **You end at** `week-5-end`: four per-section grounding graders, a pre-registered three-arm context ablation, one paid run of it with ADR-007 deciding from it, a `tr exp compare` command that the run showed was missing, ADR-008 (an MCP gateway and registry, design only), and a training split and claim labels for the fine-tuning lane.
 **Cash:** the code costs $0, because the tests replay the recording. The one paid step is the ablation: the author's run cost $0.989286. **Time:** about 11 hours, the sum of the section guides below.

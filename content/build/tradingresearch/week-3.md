@@ -2,6 +2,8 @@
 
 > *"Educational software. Not investment advice. No orders are placed; trades are hypothetical and settled from historical bars by written rules. Past results, including these, do not predict future results."*
 
+**Code:** start [`week-3-start`](https://github.com/karthik446/tradingresearch/tree/week-3-start) · reference answer [`week-3-end`](https://github.com/karthik446/tradingresearch/tree/week-3-end) · [the chapter diff](https://github.com/karthik446/tradingresearch/compare/week-3-start...week-3-end) (repo: [karthik446/tradingresearch](https://github.com/karthik446/tradingresearch)).
+
 **You start at** `week-3-start`: week-2-end plus shipped code for this week's plumbing. `tr grade` writes a shadow baseline and an outcome grade with P2-P4 for every closed trade, `tr report` prints per-horizon scorecards, `tr slo` checks the evening run, `tr label` stores blind P1 labels, and one retry policy covers every HTTP source. `tests/test_week3.py` fails by design (19 cases).
 **You end at** `week-3-end`: the P1 judge as code and `tr grade --judge`, ADR-004 on what never enters a trace, an SLO review and a measured-cost page, each checked against the live journal on the morning of its first live session.
 **Cash:** the work costs $0, because the judge tests replay one recorded reply. The one optional paid step is `tr grade --judge` once a trade has closed: the author's single recorded judge call cost $0.005163. **Time:** about 9 hours, the sum of the section guides below.

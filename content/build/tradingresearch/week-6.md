@@ -2,6 +2,8 @@
 
 > *"Educational software. Not investment advice. No orders are placed; trades are hypothetical and settled from historical bars by written rules. Past results, including these, do not predict future results."*
 
+**Code:** start [`week-6-start`](https://github.com/karthik446/tradingresearch/tree/week-6-start) · reference answer [`week-6-end`](https://github.com/karthik446/tradingresearch/tree/week-6-end) · [the chapter diff](https://github.com/karthik446/tradingresearch/compare/week-6-start...week-6-end) (repo: [karthik446/tradingresearch](https://github.com/karthik446/tradingresearch)).
+
 **You start at** `week-6-start`: week-5-end, plus the plumbing for this week. That means filing text from SEC Archives, a chunker, four retrievers (BM25, dense, hybrid, hybrid+rerank), a look-ahead mask, `tr retrieval build|query|eval`, a `retrieval` arm knob that adds a block of passages to analyze-3, and a `retrieval` journal table. `tests/test_week6.py` fails by design (26 of its 29 cases).
 **You end at** `week-6-end`: a scoping page for the index, 30 labelled queries, recall@k for the four retrievers, a `citation_accuracy` grader with its spec, and a pre-registered experiment comparing no passages with hybrid k 5. ADR-009 records the retriever choice and, after one valid run, the experiment's decision: the retrieval default stays `none` (§8). The reference answers are at the tag `week-6-end` (`e733de4`).
 **Cash:** the code costs $0. The tests replay a recording, and the index and the recall eval run locally. The one paid step is the none-vs-hybrid run: the author's first attempt cost $0.431828 and was voided, and the valid rerun cost $0.839758 (§8). **Time:** about 12 hours, the sum of the section guides below.

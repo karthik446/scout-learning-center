@@ -2,6 +2,8 @@
 
 > *"Educational software. Not investment advice. No orders are placed; trades are hypothetical and settled from historical bars by written rules. Past results, including these, do not predict future results."*
 
+**Code:** start [`week-1-start`](https://github.com/karthik446/tradingresearch/tree/week-1-start) · reference answer [`week-1-end`](https://github.com/karthik446/tradingresearch/tree/week-1-end) · [the chapter diff](https://github.com/karthik446/tradingresearch/compare/week-1-start...week-1-end) (repo: [karthik446/tradingresearch](https://github.com/karthik446/tradingresearch)).
+
 **You start at** `week-1-start`: a working `tr` that fetches bars and filings, computes a snapshot, asks a model for claims, checks them, shows them beside their sources, and runs experiments from config files.
 **You end at** `week-1-end`: 20 labelled analyses, a failure taxonomy with counts, a new eval with a spec and tests, a prompt variant, one experiment with a paired interval, and two ADRs, a scope page and a fine-tuning note.
 **Cash:** about $1.00 of model-API spend, through OpenRouter (the author's week: $1.12, including $0.07 of earlier pilot calls). **Time:** about 8 hours, most of it reading outputs.

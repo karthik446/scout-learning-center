@@ -25,6 +25,8 @@ Do this once, before [week 1](week-1.md). Every chapter assumes the clone, the `
 
 ## Clone, settings file, first checkout
 
+**The code:** [github.com/karthik446/tradingresearch](https://github.com/karthik446/tradingresearch) (public; MIT licence). Tags `week-1-start` … `week-9-end` mark where each chapter starts and ends.
+
 ```bash
 git clone https://github.com/karthik446/tradingresearch.git tradingresearch
 cd tradingresearch

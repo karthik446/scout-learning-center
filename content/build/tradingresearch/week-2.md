@@ -2,6 +2,8 @@
 
 > *"Educational software. Not investment advice. No orders are placed; trades are hypothetical and settled from historical bars by written rules. Past results, including these, do not predict future results."*
 
+**Code:** start [`week-2-start`](https://github.com/karthik446/tradingresearch/tree/week-2-start) · reference answer [`week-2-end`](https://github.com/karthik446/tradingresearch/tree/week-2-end) · [the chapter diff](https://github.com/karthik446/tradingresearch/compare/week-2-start...week-2-end) (repo: [karthik446/tradingresearch](https://github.com/karthik446/tradingresearch)).
+
 **You start at** `week-2-start`: the daily loop runs end to end. `tr screen` picks a shortlist, `tr analyze` writes checked claims, `tr thesis` turns them into 0-3 theses or a no-trade, `tr reconcile` settles them from raw bars and `tr daily` runs all four. Teacher models can write the same analyses, a free CI gate guards the reconcile rules and the prompts, and `tests/test_week2.py` fails by design.
 **You end at** `week-2-end`: three code checks of a thesis's process (P2-P4) with graders and tests, a rubric and a draft judge for the one check that needs reading (P1), ADR-003 on the judge, a review of the thesis prompt on real output, a pre-registered teacher bake-off and a runbook for the live stream.
 **Cash:** the code work costs $0. The paid step is one `tr daily` on a completed session, which cost $0.1893 in the author's run, plus an optional teacher call ($0.004119). **Time:** about 7.5 hours, the sum of the section guides below.

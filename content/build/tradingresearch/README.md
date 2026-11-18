@@ -2,6 +2,8 @@
 
 > *"Educational software. Not investment advice. No orders are placed; trades are hypothetical and settled from historical bars by written rules. Past results, including these, do not predict future results."*
 
+**Code:** [github.com/karthik446/tradingresearch](https://github.com/karthik446/tradingresearch) (public; MIT licence). Each chapter links its start tag, its reference tag and the chapter diff.
+
 ## What you build
 
 `tradingresearch` (repo `tradingresearch`, command `tr`) is a stock research desk that runs on your own machine. After the US close, code computes every number about a stock: indicators, price levels and the market regime from Alpaca bars, plus fundamentals from SEC EDGAR. A language model then writes short claims about the stock. Each claim is tagged fact, inference or opinion and must cite the numbers it rests on, and code checks every claim before it is stored. In later weeks the model turns analyses into theses with an entry, a stop, a target and a holding period. Written rules settle each thesis from real bars, and each thesis is graded on the outcome (R after costs) and on the process (did the stated reason play out).

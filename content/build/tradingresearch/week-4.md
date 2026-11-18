@@ -2,6 +2,8 @@
 
 > *"Educational software. Not investment advice. No orders are placed; trades are hypothetical and settled from historical bars by written rules. Past results, including these, do not predict future results."*
 
+**Code:** start [`week-4-start`](https://github.com/karthik446/tradingresearch/tree/week-4-start) · reference answer [`week-4-end`](https://github.com/karthik446/tradingresearch/tree/week-4-end) · [the chapter diff](https://github.com/karthik446/tradingresearch/compare/week-4-start...week-4-end) (repo: [karthik446/tradingresearch](https://github.com/karthik446/tradingresearch)).
+
 **You start at** `week-4-start`: week-3-end plus shipped code for this week's plumbing. `tr learn` prints the playbook and the rule-change status, `rules.register` stores a pre-registered RuleChange, `tr daily` runs a challenger arm while one is pending, and `tests/fixtures/week4/` holds one real two-turn tool exchange. `tests/test_week4.py` fails by design (23 cases).
 **You end at** `week-4-end`: three analyze tools and the tool loop, a `mode = "tools"` experiment arm, the `tool_calls_ok` grader, one paid run of tools against fixed context with ADR-005 deciding from it, a route-provenance fix the recorded exchange exposed, and the first real rule change, pre-registered and stored in the live journal.
 **Cash:** the code costs $0, because the loop tests replay the recording. The one paid step is the experiment: the author's run cost $0.877992. **Time:** about 10 hours, the sum of the section guides below.
