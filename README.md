@@ -29,7 +29,7 @@ tools/        import_course.py  --module ID --export DIR: import a pipeline cour
               test_sim_pages.py the simulator's scan rules (negative tests for the digit rule) and page rendering
               mdlite.py         the Markdown subset of the AI engineering track -> HTML (refuses anything outside the subset)
               import_build_track.py  --from DIR / --check DIR: copy the build guide into content/ai-engineering, byte for byte
-              import_labs.py         --from REPO / --check REPO --week N: the labs data of a week -> content/ai-engineering/labs/week-N.json
+              import_labs.py         --from REPO / --check REPO --week N: the labs data of a week -> content/ai-engineering/labs/week-N.json (--only-lab ID --out FILE: debugging)
               test_build_track.py    the renderer, its refusals, the track's scan rules (negative tests), the page order and the labs pages
 verify/       screenshots, logs and summaries of the last browser verification
 site/         build output, git-ignored
@@ -210,12 +210,20 @@ also carries the contents list). The card on `/learn/` and `/learn/modules/` sit
   `python3 tools/test_build_track.py` proves the refusals, the page order and the labs pages.
 - **Labs**: optional exercises in a clone of tradingresearch (the `labs` branch, run with `.venv/bin/tr lab ...`). Their data is
   `content/ai-engineering/labs/week-N.json`, written by `python3 tools/import_labs.py --from <labs repo> --week N` from
-  `labs/wN/lab.toml`, every `labs/wN/exercises/*/exercise.toml` and `labs/wN/pages/concepts.md` (`--check` fails on any
-  difference; a concept id maps to a learning-center lesson only through the importer's `CONCEPT_LESSONS` dict). The JSON carries no hint,
-  solution, stub or test text; `scan.labs_checks` refuses unknown or solution-looking fields, unknown concept ids, unmapped or
-  missing lessons, links outside the tradingresearch repo and text breaking the track's rules. For each week with a JSON, `build.py`
-  writes the labs index (`/learn/ai-engineering/week-N/labs/`: setup, the `tr lab` commands, the unlock rules from the data, the
-  labs), one page per lab (`.../labs/wNlM/`: goal, exercises, concepts, commands, files on the labs branch, chapter sections),
+  `labs/wN/lab.toml`, every `labs/wN/exercises/*/exercise.toml` (with its site keys `goal`, `what_tested`, `writes`,
+  `show_tests`, `show_data`; a missing key fails with the list), the `TODO(<id>)` excerpt of each exercise's stub, its named
+  test functions, its captured `expected_output/fail.txt` and `pass.txt`, the week's walk-through `labs/wN/session/` and
+  `labs/wN/pages/concepts.md` (`--check` fails on any difference; `--only-lab wNlM --out FILE` is a debugging run that never
+  writes content/; a concept id maps to a learning-center lesson only through the importer's `CONCEPT_LESSONS` dict).
+  `solution.diff` and `hints.md` are read only for `hidden`: the 12-hex sha256 prefixes of every solution line the stub and
+  shown tests lack, every hint line from hint 2 on and every hint-1 line the session does not print. The importer, the scan
+  (on every JSON text) and the build (on every generated labs page's Markdown) fail when a shown line hashes into it;
+  `scan.labs_checks` also refuses unknown or solution-looking fields, unknown concept ids, unmapped or missing lessons,
+  links outside the tradingresearch repo and text breaking the track's rules. For each week with a JSON, `build.py` writes
+  the labs index (`/learn/ai-engineering/week-N/labs/`: setup, the `tr lab` commands, "How a lab session works" with the
+  captured session step by step, the unlock rules from the data, the labs), one page per lab (`.../labs/wNlM/`: goal, then
+  per exercise its goal, starting code, what the check tests with the test code, a real FAIL, what you write and the PASS
+  run; concepts, commands, files on the labs branch, chapter sections),
   a "Labs for this week" table on the week page after the disclaimer, a "Labs: optional, $0." line on the overview and a nested
   Labs entry under the week in the sidebar. A lab's `section` numbers resolve to the week page's `## N. ` headings; one with no
   heading fails the build. A new week needs only its JSON.

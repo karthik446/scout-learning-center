@@ -1305,20 +1305,57 @@ def build_track_checks(content: Path) -> list[str]:
 
 
 # --- the labs of the track: content/ai-engineering/labs/week-N.json (tools/import_labs.py; build.py renders the pages) ----
-# Extracted data only: the keys below and nothing else, so no hint, solution, stub or check text can reach a page.
+# Extracted data only: the keys below and nothing else. What a page shows of an exercise is its stub excerpt, chosen
+# tests, captured FAIL/PASS output and authored words; `hidden` holds the sha256 prefixes of every solution and
+# unshown hint line, and no shown line may hash into it (labs_leaks, here and in build.py on the generated Markdown).
 LABS_DIR = "labs"
 LABS_FILE = re.compile(r"^week-([1-9])\.json$")
 LABS_REPO = "https://github.com/karthik446/tradingresearch/"
 LABS_KEYS = {
-    "week": {"week", "readme_url", "labs", "concepts", "lessons_mapped"},
+    "week": {"week", "readme_url", "labs", "concepts", "lessons_mapped", "session", "hidden"},
     "lab": {"id", "title", "goal", "section", "unlock", "base", "page_url", "exercises"},
     "unlock": {"hints", "solution"},
-    "exercise": {"id", "title", "effect", "concepts", "touches", "folder", "folder_url", "test_file", "test_url"},
+    "exercise": {"id", "title", "effect", "concepts", "touches", "folder", "folder_url", "test_file", "test_url",
+                 "goal", "what_tested", "writes", "start_code", "tests", "data", "fail", "pass"},
     "touch": {"path", "url"},
     "concept": {"id", "term", "meaning", "url", "lesson"},
+    "start_code": {"path", "url", "lines", "code", "lang"},
+    "test": {"name", "code"},
+    "data": {"path", "header_and_row"},
+    "session": {"diagram", "parts"},
+    "part": {"id", "title", "intro", "steps"},
+    "step": {"title", "shown", "output", "explain"},
 }
 LABS_HIDDEN_KEY = re.compile(r"(?i)solution|hint|stub|wrong|red_expect|check|observe|diff|fixture|origin")
-LABS_HIDDEN_TEXT = re.compile(r"solution\.diff|hints\.md|/stub/|/wrong/|\bFAIL\b")
+LABS_HIDDEN_TEXT = re.compile(r"solution\.diff|hints\.md|/stub/|/wrong/")   # the captured FAIL block is page content
+LABS_HASH = re.compile(r"^[0-9a-f]{12}$")
+LABS_LINE_MIN = 12   # shorter normalised lines are too common to hide
+LABS_MD_PREFIX = re.compile(r"^(?:#{1,6} +|- +|\d{1,3}\. +|> *)+")
+LABS_MD_ESCAPE = re.compile(r"\\([!\"#$%&'()*+,\-./:;<=>?@\[\\\]^_`{|}~])")
+
+
+def labs_line_hash(line: str) -> str | None:
+    """The leak guard's hash of one line: the stripped, whitespace-collapsed text's sha256, first 12 hex; None if short."""
+    norm = " ".join(line.split())
+    return hashlib.sha256(norm.encode("utf-8")).hexdigest()[:12] if len(norm) >= LABS_LINE_MIN else None
+
+
+def labs_forms(line: str) -> set[str]:
+    """A line of generated Markdown and the forms data text may hide in: backslash escapes and code-span backticks
+    removed, a list, heading or quote prefix dropped (build.py's md_plain/md_prose)."""
+    unescaped = LABS_MD_ESCAPE.sub(r"\1", line)
+    forms: set[str] = set()
+    for f in (line, unescaped, unescaped.replace("`", "")):
+        forms |= {f, LABS_MD_PREFIX.sub("", f)}
+    return forms
+
+
+def labs_leaks(text: str, hidden: set[str], *, markdown: bool = False) -> list[str]:
+    """The lines of `text` that hash into `hidden`; with `markdown`, in any of their labs_forms."""
+    return [line for line in text.split("\n")
+            if any(labs_line_hash(f) in hidden for f in (labs_forms(line) if markdown else (line,)))]
+
+
 TRACK_GLYPHS_EXTRA = frozenset("\u2018\u2019\u201c\u201d\u2013\u2014\u2026")   # build.py ALLOWED_EXTRA
 
 
@@ -1372,9 +1409,9 @@ def labs_doc_problems(label: str, week: int, doc, content: Path, mdlite) -> list
     def no_relative(dest: str) -> str:
         raise mdlite.MdliteError(f"relative link {dest!r}")
 
-    def text(obj: dict, key: str, where: str, *, markdown: bool = False) -> None:
+    def text(obj, key, where: str, *, markdown: bool = False) -> None:
         """A one-line field; plain text (build.py escapes it) unless `markdown` (a cell of concepts.md, the track's subset)."""
-        v = obj.get(key)
+        v = obj[key] if isinstance(obj, list) else obj.get(key)
         if not isinstance(v, str) or not v.strip():
             problems.append(f"{label}: {where}: missing {key}")
             return
@@ -1385,6 +1422,15 @@ def labs_doc_problems(label: str, week: int, doc, content: Path, mdlite) -> list
                 mdlite.render("# x\n\n" + v + "\n", link=no_relative)
             except mdlite.MdliteError as e:
                 problems.append(f"{label}: {where}.{key}: {e}")
+
+    def block(v, where: str, nullable: bool = False) -> None:
+        """A verbatim block (code or captured output): build.py fences it, so no line may close the fence."""
+        if v is None and nullable:
+            return
+        if not isinstance(v, str) or not v.strip():
+            problems.append(f"{label}: {where}: missing or empty")
+        elif any(mdlite.FENCE_CLOSE.match(line) for line in v.split("\n")):
+            problems.append(f"{label}: {where}: a line would close the code fence")
 
     def url(v, where: str, nullable: bool = False) -> None:
         if v is None and nullable:
@@ -1465,6 +1511,59 @@ def labs_doc_problems(label: str, week: int, doc, content: Path, mdlite) -> list
                 problems.append(f"{label}: {ew}: test_file {ex.get('test_file')!r}")
             url(ex.get("folder_url"), f"{ew}.folder_url")
             url(ex.get("test_url"), f"{ew}.test_url")
+            text(ex, "goal", ew)
+            text(ex, "what_tested", ew)
+            writes = ex.get("writes")
+            if not isinstance(writes, list) or not 2 <= len(writes) <= 5:
+                problems.append(f"{label}: {ew}: writes must list 2 to 5 texts")
+            else:
+                for k in range(len(writes)):
+                    text(writes, k, f"{ew}.writes")
+            for key in ("fail", "pass"):
+                block(ex.get(key), f"{ew}.{key}")
+            starts = ex.get("start_code")
+            if not isinstance(starts, list) or not starts:
+                problems.append(f"{label}: {ew}: no start_code")
+                starts = []
+            paths = {t.get("path") for t in ex.get("touches") or [] if isinstance(t, dict)}
+            for k, s in enumerate(starts):
+                sw = f"{ew}.start_code[{k}]"
+                if not shape(s, "start_code", sw):
+                    continue
+                if s.get("path") not in paths:
+                    problems.append(f"{label}: {sw}: path {s.get('path')!r} is not a touched file")
+                url(s.get("url"), f"{sw}.url", nullable=True)
+                ln = s.get("lines")
+                code = s.get("code")
+                if not (isinstance(ln, list) and len(ln) == 2 and all(isinstance(n, int) and not isinstance(n, bool) and n > 0 for n in ln)
+                        and ln[0] <= ln[1] <= ln[0] + 39 and isinstance(code, str) and code.count("\n") == ln[1] - ln[0]):
+                    problems.append(f"{label}: {sw}: lines must be [first, last] of at most 40 lines matching the code")
+                if not isinstance(code, str) or f"TODO({eid})" not in code:
+                    problems.append(f"{label}: {sw}: code does not hold the TODO({eid}) marker")
+                block(code, f"{sw}.code")
+                if not isinstance(s.get("lang"), str) or not re.fullmatch(r"[a-z]+", s["lang"]):
+                    problems.append(f"{label}: {sw}: lang {s.get('lang')!r}")
+            tests = ex.get("tests")
+            if not isinstance(tests, list) or not 1 <= len(tests) <= 2:
+                problems.append(f"{label}: {ew}: tests must hold 1 or 2 test functions")
+                tests = []
+            for k, t in enumerate(tests):
+                if shape(t, "test", f"{ew}.tests[{k}]"):
+                    if not isinstance(t.get("name"), str) or not re.fullmatch(r"test_\w+", t["name"]) \
+                            or not isinstance(t.get("code"), str) or f"def {t['name']}(" not in t["code"] or t["code"].count("\n") >= 30:
+                        problems.append(f"{label}: {ew}.tests[{k}]: not a test function of at most 30 lines")
+                    block(t.get("code"), f"{ew}.tests[{k}].code")
+            data = ex.get("data")
+            if not isinstance(data, list):
+                problems.append(f"{label}: {ew}: data is not a list")
+                data = []
+            for k, d in enumerate(data):
+                if shape(d, "data", f"{ew}.data[{k}]"):
+                    if not isinstance(d.get("path"), str) or d["path"] not in paths:
+                        problems.append(f"{label}: {ew}.data[{k}]: path {d.get('path')!r} is not a touched file")
+                    if not isinstance(d.get("header_and_row"), str) or d["header_and_row"].count("\n") > 1:
+                        problems.append(f"{label}: {ew}.data[{k}]: header_and_row is not at most two lines")
+                    block(d.get("header_and_row"), f"{ew}.data[{k}].header_and_row")
             touches = ex.get("touches")
             if not isinstance(touches, list) or not touches:
                 problems.append(f"{label}: {ew}: no touched files")
@@ -1474,12 +1573,53 @@ def labs_doc_problems(label: str, week: int, doc, content: Path, mdlite) -> list
                     if not isinstance(t.get("path"), str) or not re.fullmatch(r"[\w./-]+", t["path"]) or ".." in t["path"]:
                         problems.append(f"{label}: {ew}.touches[{k}]: path {t.get('path')!r}")
                     url(t.get("url"), f"{ew}.touches[{k}].url", nullable=True)
+    session = doc.get("session")
+    if shape(session, "session", "session"):
+        block(session.get("diagram"), "session.diagram")
+        parts = session.get("parts")
+        if not isinstance(parts, list) or not parts:
+            problems.append(f"{label}: session: no parts")
+            parts = []
+        for i, part in enumerate(parts):
+            pw = f"session.parts[{i}]"
+            if not shape(part, "part", pw):
+                continue
+            if not isinstance(part.get("id"), str) or not re.fullmatch(r"[a-z0-9-]+", part["id"]):
+                problems.append(f"{label}: {pw}: id {part.get('id')!r}")
+            text(part, "title", pw)
+            if part.get("intro") is not None and not (isinstance(part["intro"], str) and part["intro"].strip()):
+                problems.append(f"{label}: {pw}: intro is neither text nor null")
+            steps = part.get("steps")
+            if not isinstance(steps, list) or not steps:
+                problems.append(f"{label}: {pw}: no steps")
+                steps = []
+            for j, st in enumerate(steps):
+                sw = f"{pw}.steps[{j}]"
+                if not shape(st, "step", sw):
+                    continue
+                text(st, "title", sw)
+                block(st.get("shown"), f"{sw}.shown", nullable=True)
+                block(st.get("output"), f"{sw}.output", nullable=True)
+                if st.get("shown") is None and st.get("output") is not None:
+                    problems.append(f"{label}: {sw}: an applied step (no command shown) has output")
+                ex_text = st.get("explain")
+                if not isinstance(ex_text, str) or (st.get("shown") is not None and not ex_text.strip()):
+                    problems.append(f"{label}: {sw}: missing explain")
+    hidden = doc.get("hidden")
+    if not isinstance(hidden, list) or not hidden or not all(isinstance(h, str) and LABS_HASH.match(h) for h in hidden) \
+            or hidden != sorted(set(hidden)):
+        problems.append(f"{label}: hidden must be a sorted list of distinct 12-hex hashes")
+        hidden = []
+    hidden_set = set(hidden)
     problems += public_checks(label, doc)
-    for where, _, v in walk(doc):
+    for where, key, v in walk(doc):
         if isinstance(v, str):
             problems += track_text_problems(f"{label}: {where}", v)
             if LABS_HIDDEN_TEXT.search(v):
-                problems.append(f"{label}: {where}: hint, solution, stub or FAIL text {LABS_HIDDEN_TEXT.search(v).group(0)!r}")
+                problems.append(f"{label}: {where}: hint, solution or stub text {LABS_HIDDEN_TEXT.search(v).group(0)!r}")
+            if not where.startswith("$.hidden") and key not in URL_KEYS:
+                problems += [f"{label}: {where}: a solution or hint line {line.strip()[:60]!r}"
+                             for line in labs_leaks(v, hidden_set, markdown=True)]
     return problems
 
 

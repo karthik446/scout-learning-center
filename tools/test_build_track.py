@@ -4,11 +4,15 @@
     python3 tools/test_build_track.py
 
 Positive: the Markdown subset renders the constructs the guide uses, escapes HTML, writes external links with
-target/rel, and resolves relative links the way build.py does; the labs pages (labs index, one page per lab, the week
-page's "Labs for this week" table, the overview line, the sidebar entries) render from content/ai-engineering/labs.
+target/rel, and resolves relative links the way build.py does; the labs pages (labs index with the captured session,
+one page per lab with each exercise's starting code, test, real FAIL, what you write and PASS, the week page's "Labs
+for this week" table, the overview line, the sidebar entries) render from content/ai-engineering/labs; the importer
+extracts that data and `hidden` from a fixture labs checkout.
 Negative: a workstation path, an unknown relative link and raw HTML each fail the content scan or the renderer; so do
-the other constructs mdlite refuses; and a labs JSON with a workstation path in a goal, a missing goal, an unknown
-concept id, a solution-looking field or a section number with no chapter heading fails the scan or the build.
+the other constructs mdlite refuses; a labs JSON with a workstation path in a goal, a missing goal, an unknown concept
+id, a solution-looking field or a section number with no chapter heading fails the scan or the build; a solution line,
+a hint-2 line or an unlisted hint-1 line fails the importer (fixture), and, planted with its hash in `hidden`, the
+scan and the build (copy of the real JSON); an exercise without its site keys fails the importer.
 """
 
 from __future__ import annotations
@@ -203,7 +207,7 @@ def test_labs_pages() -> None:
         check(f'<a href="{base}w1l1/" class="lesson-link' in html_text, f"{url}: the sidebar lists w1l1")
         check('<a href="/learn/ai-engineering/week-1/">Week 1</a>' in html_text.split('<nav class="breadcrumb"', 1)[1].split("</nav>", 1)[0],
               f"{url}: breadcrumb lacks the week")
-        for leak in ("solution.diff", "hints.md", "/stub/", "/wrong/", "red_expect", "FAIL"):
+        for leak in ("solution.diff", "hints.md", "/stub/", "/wrong/", "red_expect"):
             check(leak not in main_html, f"{url}: {leak!r} on the page")
     index, w1l1, w1l4 = rendered[base], rendered[f"{base}w1l1/"], rendered[f"{base}w1l4/"]
     check("&larr; Week 1</a>" in index and "Lab w1l1 &rarr;</a>" in index, "labs index prev/next")
@@ -223,6 +227,22 @@ def test_labs_pages() -> None:
     overview = build.render_build_track_page(content, track, track["README.md"], site)[1].split("<main", 1)[1]
     check(f'<p><strong>Labs: optional, $0.</strong> <a href="{base}">Week 1</a></p>' in overview, "overview lacks the labs line")
     check(overview.find("Labs: optional") > overview.find('<blockquote class="disclaimer">'), "overview labs line before the disclaimer")
+    w1l2 = rendered[f"{base}w1l2/"].split("<main data-pagefind-body", 1)[1]
+    check('<h2 id="exercises">' not in w1l2 and "What you observe when green</th>" not in w1l2, "w1l2 still has the thin exercises table")
+    marks = [w1l2.find(s) for s in ("w1l2.1: ", "<strong>Goal</strong>", "<strong>Starting code</strong>", "TODO(w1l2.1)",
+                                     "<strong>What the check tests</strong>", "def test_", "<strong>A real FAIL</strong>",
+                                     "<strong>What you write</strong>", "<strong>When green</strong>")]
+    check(all(m >= 0 for m in marks) and marks == sorted(marks), f"w1l2 exercise section out of order {marks}")
+    check("FAIL" in w1l2.split("A real FAIL", 1)[1] and "PASS" in w1l2.split("When green", 1)[1], "w1l2 lacks its captured FAIL or PASS")
+    for ex in doc["labs"][1]["exercises"]:
+        check(build.esc(ex["start_code"][0]["code"].split("\n")[0]) in w1l2, f"{ex['id']}: starting code not on the page")
+        check(build.esc(ex["fail"].strip().split("\n")[0]) in w1l2, f"{ex['id']}: FAIL output not on the page")
+    session = index.split("How a lab session works</h2>", 1)[-1]
+    check("How a lab session works</h2>" in index and session.find("<h3") >= 0 and session.find("<h4") >= 0, "labs index lacks the session")
+    outputs = [st["output"] for p in doc["session"]["parts"] for st in p["steps"] if st["output"]]
+    check(bool(outputs) and all(build.esc(o.strip().split("\n")[0]) in index for o in outputs), "labs index lacks a captured session output")
+    if any(st["shown"] is None for p in doc["session"]["parts"] for st in p["steps"]):
+        check("applies the reference solution where you would write your own code" in index, "apply step lacks its sentence")
 
 
 def test_labs_refusals(tmp: Path) -> None:
@@ -267,6 +287,145 @@ def test_labs_refusals(tmp: Path) -> None:
     path.write_text(json.dumps(good), encoding="utf-8")
 
 
+FIXTURE = {   # a one-lab, two-exercise labs checkout for the importer (paths under its root)
+    "labs/w1/lab.toml": 'base = "week-1-start"\n[unlock]\nhints = [2, 5]\nsolution = 10\n[labs.w1l1]\ntitle = "Fixture lab"\n'
+                        'page = "pages/w1l1.md"\ngoal = "Practise the fixture loop."\nsection = [1]\n',
+    "labs/w1/pages/concepts.md": "| Term | Means |\n|---|---|\n| [Error analysis](#error-analysis) | reading failures by hand |\n",
+    "labs/w1/pages/w1l1.md": "# Lab w1l1\n",
+    "labs/w1/exercises/w1l1.1-count/exercise.toml":
+        'id = "w1l1.1"\ntitle = "Count the labels"\neffect = "The counts print."\nlab = "w1l1"\nconcepts = ["error-analysis"]\n'
+        'touches = ["src/app.py", "data/rows.csv"]\ngoal = "Count how many rows carry each label."\n'
+        'what_tested = "The check feeds three rows and expects the per-label totals."\n'
+        'writes = ["The body of `count`: a total per label.", "A dict as the return value."]\n'
+        'show_tests = ["test_counts"]\nshow_data = ["data/rows.csv"]\n',
+    "labs/w1/exercises/w1l1.1-count/stub/src/app.py":
+        'import csv\n\n\ndef load(path):\n    return list(csv.DictReader(open(path)))\n\n\ndef count(rows):\n'
+        '    # TODO(w1l1.1): count the rows per label\n    return {}\n',
+    "labs/w1/exercises/w1l1.1-count/stub/data/rows.csv": "label,text\nok,first row\nbad,second row\n",
+    "labs/w1/exercises/w1l1.1-count/test_count.py":
+        'from app import count\n\n\ndef test_counts():\n    rows = [{"label": "ok"}, {"label": "ok"}, {"label": "bad"}]\n'
+        '    assert count(rows) == {"ok": 2, "bad": 1}\n\n\ndef test_empty():\n    assert count([]) == {}\n',
+    "labs/w1/exercises/w1l1.1-count/solution.diff":
+        '--- a/src/app.py\n+++ b/src/app.py\n@@ -8,3 +8,3 @@\n def count(rows):\n-    # TODO(w1l1.1): count the rows per label\n'
+        '-    return {}\n+    totals = collections.Counter(r["label"] for r in rows)\n+    return dict(totals)\n',
+    "labs/w1/exercises/w1l1.1-count/hints.md":
+        "## Hint 1\nThink about grouping rows by their label value.\nEach label maps to how many rows carry it.\n"
+        "## Hint 2\nA collections.Counter over the label column does it.\n",
+    "labs/w1/exercises/w1l1.1-count/expected_output/fail.txt": "FAIL w1l1.1 test_counts\nassert {} == {'ok': 2, 'bad': 1}\n",
+    "labs/w1/exercises/w1l1.1-count/expected_output/pass.txt": "PASS w1l1.1 (2 tests)\n",
+    "labs/w1/exercises/w1l1.2-report/exercise.toml":
+        'id = "w1l1.2"\ntitle = "Report the counts"\neffect = "One line per label prints."\nlab = "w1l1"\nconcepts = ["error-analysis"]\n'
+        'touches = ["src/app.py"]\ngoal = "Print one line per label."\nwhat_tested = "The check captures the printed report."\n'
+        'writes = ["A loop over the totals.", "One print per label."]\nshow_tests = ["test_report"]\n',
+    "labs/w1/exercises/w1l1.2-report/stub/src/app.py":
+        'import collections\n\n\ndef count(rows):\n    totals = collections.Counter(r["label"] for r in rows)\n    return dict(totals)\n\n\n'
+        'def report(rows):\n    totals = collections.Counter(r["label"] for r in rows)\n    # TODO(w1l1.2): print one line per label\n    pass\n',
+    "labs/w1/exercises/w1l1.2-report/test_report.py":
+        'from app import report\n\n\ndef test_report(capsys):\n    report([{"label": "ok"}])\n    assert capsys.readouterr().out == "ok 1\\n"\n',
+    "labs/w1/exercises/w1l1.2-report/solution.diff":
+        '--- a/src/app.py\n+++ b/src/app.py\n@@ -11,2 +11,3 @@\n-    pass\n+    for label, n in sorted(totals.items()):\n'
+        '+        print(label, n)\n',
+    "labs/w1/exercises/w1l1.2-report/hints.md": "## Hint 1\nLoop over the totals you already have.\n## Hint 2\nsorted(totals.items()) gives a stable order.\n",
+    "labs/w1/exercises/w1l1.2-report/expected_output/fail.txt": "FAIL w1l1.2 test_report\nassert '' == 'ok 1'\n",
+    "labs/w1/exercises/w1l1.2-report/expected_output/pass.txt": "PASS w1l1.2 (1 test)\n",
+    "labs/w1/session/session.toml":
+        'diagram = """\nstart -> verify (FAIL) -> write -> verify (PASS) -> next\n"""\n[[part]]\nid = "start"\ntitle = "Start the lab"\n'
+        'intro = "Begin from a clean clone."\n[[part.step]]\ntitle = "Start"\nrun = ".venv/bin/tr lab start w1l1"\noutput = "01-start.txt"\n'
+        'explain = "The runner installs the stub."\n[[part.step]]\ntitle = "Read hint 1"\nrun = ".venv/bin/tr lab hint"\n'
+        'output = "02-hint.txt"\nexplain = "Hint 1 is an idea, not code."\n[[part.step]]\ntitle = "Write the code"\napply = "solution"\n'
+        '[[part.step]]\ntitle = "Look at the tree"\nrun = "git status --short"\nexplain = "Nothing printed: the tree is clean."\n',
+    "labs/w1/session/01-start.txt": "Installed w1l1.1: Count the labels\n",
+    "labs/w1/session/02-hint.txt": "Hint 1 of 2:\nThink about grouping rows by their label value.\n",
+}
+
+
+def test_import_labs(tmp: Path) -> None:
+    """The importer on a fixture checkout: the page data it extracts, `hidden`, and the leaks and gaps it refuses."""
+    import import_labs
+    for rel, text in FIXTURE.items():
+        (tmp / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp / rel).write_text(text, encoding="utf-8")
+    h = scan.labs_line_hash
+    doc = import_labs.extract(tmp, 1)
+    ex1, ex2 = doc["labs"][0]["exercises"]
+    check(ex1["start_code"] == [{"path": "src/app.py", "url": None, "lines": [8, 10], "lang": "python",
+                                 "code": "def count(rows):\n    # TODO(w1l1.1): count the rows per label\n    return {}"}],
+          f"w1l1.1 start_code {ex1['start_code']}")
+    check(ex1["data"] == [{"path": "data/rows.csv", "header_and_row": "label,text\nok,first row"}], f"w1l1.1 data {ex1['data']}")
+    check([t["name"] for t in ex1["tests"]] == ["test_counts"] and ex1["tests"][0]["code"].startswith("def test_counts():"), "w1l1.1 tests")
+    check(ex1["fail"].startswith("FAIL w1l1.1") and ex1["pass"].startswith("PASS w1l1.1"), "w1l1.1 captures")
+    check(ex2["start_code"][0]["lines"] == [11, 12] and "Counter" not in ex2["start_code"][0]["code"],
+          f"w1l1.2 start_code keeps w1l1.1's answer: {ex2['start_code']}")
+    steps = doc["session"]["parts"][0]["steps"]
+    check([(s["shown"] is None, s["output"] is None) for s in steps] == [(False, False), (False, False), (True, True), (False, True)],
+          "session: apply step without command and output, silent run without output")
+    hidden = set(doc["hidden"])
+    for line, want in (('totals = collections.Counter(r["label"] for r in rows)', True), ("print(label, n)", True),
+                       ("A collections.Counter over the label column does it.", True),
+                       ("Each label maps to how many rows carry it.", True),
+                       ("Think about grouping rows by their label value.", False), ("return dict(totals)", True)):
+        check((h(line) in hidden) == want, f"hidden {'lacks' if want else 'holds'} {line!r}")
+    toml = tmp / "labs/w1/exercises/w1l1.1-count/exercise.toml"
+    good = toml.read_text(encoding="utf-8")
+    for what, old, new in (("a solution line in writes", '"A dict as the return value."', '"return dict(totals)"'),
+                           ("a hint-2 line in what_tested", "The check feeds three rows and expects the per-label totals.",
+                            "A collections.Counter over the label column does it."),
+                           ("an unlisted hint-1 line in goal", "Count how many rows carry each label.",
+                            "Each label maps to how many rows carry it.")):
+        toml.write_text(good.replace(old, new), encoding="utf-8")
+        try:
+            import_labs.extract(tmp, 1)
+            FAILURES.append(f"importer accepted {what}")
+        except import_labs.LabsError as e:
+            check("would reach a page" in str(e), f"{what}: wrong error {e}")
+    toml.write_text(good.replace('goal = "Count how many rows carry each label."\n', ""), encoding="utf-8")
+    try:
+        import_labs.extract(tmp, 1)
+        FAILURES.append("importer accepted an exercise without goal")
+    except import_labs.LabsError as e:
+        check("w1l1.1 (goal)" in str(e), f"missing-key error does not list the key: {e}")
+    toml.write_text(good, encoding="utf-8")
+    only = import_labs.extract(tmp, 1, only_lab="w1l1")
+    check([lab["id"] for lab in only["labs"]] == ["w1l1"], "--only-lab")
+
+
+def test_labs_leaks(tmp: Path) -> None:
+    """A copy of the real week-1 JSON: a solution line, a hint-2 line and an unlisted hint-1 line planted (text on a page,
+    its hash in `hidden`) each fail the scan and the build; the build's own guard catches them in escaped Markdown."""
+    import json
+    import build
+    shutil.copytree(ROOT / "content" / scan.BUILD_TRACK_DIR, tmp / scan.BUILD_TRACK_DIR)
+    (tmp / "lessons").symlink_to(ROOT / "content" / "lessons", target_is_directory=True)
+    path = tmp / scan.BUILD_TRACK_DIR / scan.LABS_DIR / "week-1.json"
+    good = json.loads(path.read_text(encoding="utf-8"))
+    plants = {
+        "solution line in a goal": ("    totals = collections.Counter(r['label'] for r in rows)",
+                                    lambda d, t: d["labs"][0]["exercises"][0].update(goal=t.strip())),
+        "hint-2 line in a session explain": ("Use a Counter over the label column of each row.",
+                                             lambda d, t: d["session"]["parts"][0]["steps"][0].update(explain=t)),
+        "unlisted hint-1 line in a FAIL block": ("Think about which rows share one label value.",
+                                                 lambda d, t: d["labs"][1]["exercises"][0].update(fail=d["labs"][1]["exercises"][0]["fail"] + t + "\n")),
+    }
+    for what, (text, change) in plants.items():
+        doc = json.loads(json.dumps(good))
+        change(doc, text)
+        doc["hidden"] = sorted(set(doc["hidden"]) | {scan.labs_line_hash(text)})
+        path.write_text(json.dumps(doc), encoding="utf-8")
+        problems = scan.labs_checks(tmp)
+        check(any("a solution or hint line" in p for p in problems), f"labs scan passed with a planted {what}: {problems[:2]}")
+        try:
+            build.load_build_track(tmp)
+            FAILURES.append(f"build loaded labs with a planted {what}")
+        except build.BuildError:
+            pass
+        try:
+            build.render_labs_md("leak", f"# x\n\n- {build.md_prose(text.strip())}\n", {}, {scan.labs_line_hash(text)})
+            FAILURES.append(f"build rendered a page with a planted {what}")
+        except build.BuildError as e:
+            check("a solution or hint line" in str(e), f"build leak error: {e}")
+    path.write_text(json.dumps(good), encoding="utf-8")
+
+
 def main() -> int:
     test_renderer()
     test_refusals()
@@ -276,6 +435,8 @@ def main() -> int:
     try:
         test_scan(tmp / "scan")
         test_labs_refusals(tmp / "labs")
+        test_import_labs(tmp / "import")
+        test_labs_leaks(tmp / "leaks")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     for f in FAILURES:

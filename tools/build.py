@@ -2312,6 +2312,7 @@ def render_build_track_page(content: Path, pages: dict[str, BuildTrackPage], pag
 # page: they come only from `tr lab hint` and `tr lab solution` in a clone.
 # ---------------------------------------------------------------------------------------------------------------------
 LABS_PUNCT = re.compile(r"([!\"#$%&'()*+,\-./:;<=>?@\[\\\]^_`{|}~])")
+LABS_CODE_SPAN = re.compile(r"(`[^`\n]+`)")
 LABS_TR = ".venv/bin/tr"
 LABS_COMMANDS = (   # the command table of labs/README.md on the labs branch, in the site's words
     ("start <lab>", "Switch to the branch `lab` and install the lab's first exercise."),
@@ -2338,6 +2339,33 @@ class LabsPage:
 def md_plain(s: str) -> str:
     """Data text as literal Markdown: every ASCII punctuation mark backslash-escaped, so mdlite renders it as written."""
     return LABS_PUNCT.sub(r"\\\1", s)
+
+
+def md_prose(s: str) -> str:
+    """Authored labs text (goal, what is tested, what you write, a session step): literal like md_plain, except that
+    `code spans` stay code spans."""
+    return "".join(part if part.startswith("`") else md_plain(part) for part in LABS_CODE_SPAN.split(s))
+
+
+def md_paragraphs(s: str) -> list[str]:
+    """Authored multi-line text -> Markdown paragraphs (blank lines split them; a paragraph's lines are joined)."""
+    out: list[str] = []
+    for para in re.split(r"\n\s*\n", s.strip()) if s.strip() else []:
+        out += [md_prose(" ".join(para.split())), ""]
+    return out
+
+
+def labs_fence(lang: str, text: str, where: str) -> list[str]:
+    """A verbatim block (stub code, a test, captured output) as a fenced code block; tabs expanded (mdlite refuses them)."""
+    body = text.expandtabs(8).rstrip("\n").split("\n")
+    if any(mdlite.FENCE_CLOSE.match(line) for line in body):
+        raise BuildError(f"{where}: a line would close the code fence")
+    return [f"```{lang}", *body, "```", ""]
+
+
+def labs_anchor(heading: str) -> str:
+    """The id mdlite gives a heading of plain text (mdlite.heading)."""
+    return mdlite.SLUG_DROP.sub("", heading.lower()).replace(" ", "-")
 
 
 def labs_index_url(week: int) -> str:
@@ -2397,9 +2425,11 @@ def labs_link(pages: dict[str, BuildTrackPage]):
     return href
 
 
-def render_labs_md(label: str, text: str, pages: dict[str, BuildTrackPage]) -> mdlite.Rendered:
-    """Generated labs Markdown -> mdlite, after the track's public-text rules (scan.track_text_problems)."""
+def render_labs_md(label: str, text: str, pages: dict[str, BuildTrackPage], hidden: set[str] = frozenset()) -> mdlite.Rendered:
+    """Generated labs Markdown -> mdlite, after the track's public-text rules (scan.track_text_problems) and the leak
+    guard: no line may hash into the week's `hidden` (a solution or unshown hint line)."""
     problems = scan.track_text_problems(label, text)
+    problems += [f"{label}: a solution or hint line {line.strip()[:60]!r}" for line in scan.labs_leaks(text, hidden, markdown=True)]
     if problems:
         raise BuildError("\n  ".join(problems))
     try:
@@ -2469,8 +2499,8 @@ def labs_index_md(pages: dict[str, BuildTrackPage], doc: dict) -> str:
     lines = [
         f"# Week {w} labs", "", scan.DISCLAIMER, "",
         f"The labs are optional practice for [{md_plain(chapter.title)}](week-{w}.md): {n_ex} exercises in {len(labs)} labs that "
-        "rebuild the chapter's code one small change at a time. Each exercise names the files you change and the test that checks "
-        "them, and says what you observe when the test passes. They run on your machine and cost $0.",
+        "rebuild the chapter's code one small change at a time. Each lab page shows, per exercise, the code you start from, the "
+        "test that checks it, what the runner prints before and after, and what you write. They run on your machine and cost $0.",
     ]
     if base:
         lines += ["", f"Week {w} starts from the author's code at the tag `{base}`: the first `{tr} lab start` of the week makes "
@@ -2481,6 +2511,7 @@ def labs_index_md(pages: dict[str, BuildTrackPage], doc: dict) -> str:
               f"The full guide is the [labs README]({doc['readme_url']}) on GitHub.",
               "", "## The commands", "", "| Command | What it does |", "|---|---|"]
     lines += [f"| `{tr} lab {cmd}` | {what} |" for cmd, what in LABS_COMMANDS]
+    lines += ["", *session_md(doc)]
     lines += ["", "## When hints and the solution unlock", "",
               f"A failed run is a run of `{tr} lab verify` whose check fails; `{tr} lab reset` sets the count back to zero.", ""]
     lines += unlock
@@ -2495,11 +2526,13 @@ def labs_index_md(pages: dict[str, BuildTrackPage], doc: dict) -> str:
 def lab_md(content: Path, pages: dict[str, BuildTrackPage], doc: dict, lab: dict) -> str:
     w, lid = doc["week"], lab["id"]
     lines = [f"# Lab {lid}: {md_plain(lab['title'])}", "", scan.DISCLAIMER, "", md_plain(lab["goal"]), "",
-             "## Exercises", "", "| Exercise | What you change | Files | What you observe when green |", "|---|---|---|---|"]
+             "| Exercise | What you change |", "|---|---|"]
     for ex in lab["exercises"]:
-        files = ", ".join(f"[`{t['path']}`]({t['url']})" if t["url"] else f"`{t['path']}`" for t in ex["touches"])
-        lines.append(f"| {ex['id']} | {md_plain(ex['title'])} | {files} | {md_plain(ex['effect'])} |")
-    lines += ["", "## Concepts this lab practises", ""]
+        lines.append(f"| [{ex['id']}](#{labs_anchor(ex['id'] + ': ' + ex['title'])}) | {md_plain(ex['title'])} |")
+    lines.append("")
+    for ex in lab["exercises"]:
+        lines += exercise_md(ex)
+    lines += ["## Concepts this lab practises", ""]
     seen: list[str] = []
     for ex in lab["exercises"]:
         seen += [cid for cid in ex["concepts"] if cid not in seen]
@@ -2523,6 +2556,54 @@ def lab_md(content: Path, pages: dict[str, BuildTrackPage], doc: dict, lab: dict
     return "\n".join(lines) + "\n"
 
 
+def session_md(doc: dict) -> list[str]:
+    """'How a lab session works': the week's captured walk-through (session.toml on the labs branch), step by step."""
+    s, tr = doc["session"], LABS_TR
+    lines = ["## How a lab session works", "",
+             "One real session with these labs, captured by running the commands below in a fresh clone: every output is what "
+             "the runner printed. The shape of the session:", "", *labs_fence("text", s["diagram"], "session.diagram")]
+    for i, part in enumerate(s["parts"], 1):
+        lines += [f"### Part {i}: {md_plain(part['title'])}", ""]
+        lines += md_paragraphs(part["intro"] or "")
+        for j, st in enumerate(part["steps"], 1):
+            lines += [f"#### {i}.{j} {md_plain(st['title'])}", ""]
+            where = f"session.parts[{i - 1}].steps[{j - 1}]"
+            if st["shown"] is None:
+                lines += ["Here the capture applies the reference solution where you would write your own code.", ""]
+            else:
+                lines += labs_fence("bash", st["shown"], where + ".shown")
+                if st["output"] is not None:
+                    lines += labs_fence("text", st["output"], where + ".output")
+            lines += md_paragraphs(st["explain"])
+    return lines
+
+
+def exercise_md(ex: dict) -> list[str]:
+    """One exercise of a lab page: goal, the code it starts from, its test, a real FAIL, what you write, the green run."""
+    eid = ex["id"]
+    lines = [f"## {eid}: {md_plain(ex['title'])}", "", "**Goal**", "", md_prose(ex["goal"]), "", "**Starting code**", ""]
+    for d in ex["data"]:
+        lines += [f"The first two lines of `{d['path']}`, as the exercise installs it:", ""]
+        lines += labs_fence("csv" if d["path"].endswith(".csv") else "text", d["header_and_row"], f"{eid}.data")
+    for s in ex["start_code"]:
+        path = f"[`{s['path']}`]({s['url']})" if s["url"] else f"`{s['path']}`"
+        first, last = s["lines"]
+        lines += [f"{path}, lines {first} to {last}, as `{LABS_TR} lab start` installs it:", ""]
+        lines += labs_fence(s["lang"], s["code"], f"{eid}.start_code")
+    lines += ["**What the check tests**", "", md_prose(ex["what_tested"]), "",
+              f"From [`{ex['test_file']}`]({ex['test_url']}):", ""]
+    for t in ex["tests"]:
+        lines += labs_fence("python", t["code"], f"{eid}.tests")
+    lines += ["**A real FAIL**", "", f"What the runner prints on your first `{LABS_TR} lab verify`, before you change anything:", ""]
+    lines += labs_fence("text", ex["fail"], f"{eid}.fail")
+    lines += ["**What you write**", ""]
+    lines += [f"- {md_prose(item)}" for item in ex["writes"]]
+    lines += ["", "**When green**", "", f"What `{LABS_TR} lab verify` prints once your code passes:", ""]
+    lines += labs_fence("text", ex["pass"], f"{eid}.pass")
+    lines += [md_plain(ex["effect"]), ""]
+    return lines
+
+
 def labs_pages(content: Path, pages: dict[str, BuildTrackPage]) -> list[LabsPage]:
     """Every week's labs index and lab pages, in week order, with prev/next within the week (the index goes back to the
     chapter; the last lab returns to the index)."""
@@ -2535,11 +2616,12 @@ def labs_pages(content: Path, pages: dict[str, BuildTrackPage]) -> list[LabsPage
         w = doc["week"]
         index_url, week_crumbs = labs_index_url(w), top + [a(p.url, esc(p.label))]
         name = f"labs/week-{w}/index"
-        group = [LabsPage(name, index_url, render_labs_md(f"{scan.BUILD_TRACK_DIR}/{name}", labs_index_md(pages, doc), pages),
+        hidden = set(doc["hidden"])
+        group = [LabsPage(name, index_url, render_labs_md(f"{scan.BUILD_TRACK_DIR}/{name}", labs_index_md(pages, doc), pages, hidden),
                           week_crumbs + ["Labs"])]
         for lab in doc["labs"]:
             name = f"labs/week-{w}/{lab['id']}"
-            group.append(LabsPage(name, lab_url(w, lab["id"]), render_labs_md(f"{scan.BUILD_TRACK_DIR}/{name}", lab_md(content, pages, doc, lab), pages),
+            group.append(LabsPage(name, lab_url(w, lab["id"]), render_labs_md(f"{scan.BUILD_TRACK_DIR}/{name}", lab_md(content, pages, doc, lab), pages, hidden),
                                   week_crumbs + [a(index_url, "Labs"), esc(lab["id"])]))
         for i, lp in enumerate(group):
             lp.prev = group[i - 1] if i > 0 else p
