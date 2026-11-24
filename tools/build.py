@@ -2383,7 +2383,7 @@ def labs_link(pages: dict[str, BuildTrackPage]):
             w = p.labs["week"]
             known[f"labs/week-{w}/"] = labs_index_url(w)
             known.update({f"labs/week-{w}/{lab['id']}": lab_url(w, lab["id"]) for lab in p.labs["labs"]})
-            lessons.update(c["lesson"] for c in p.labs["concepts"].values() if c["lesson"])
+            lessons.update(c["lesson"] for c in p.labs["concepts"] if c["lesson"])
 
     def href(dest: str) -> str:
         target, _, fragment = dest.partition("#")
@@ -2504,7 +2504,7 @@ def lab_md(content: Path, pages: dict[str, BuildTrackPage], doc: dict, lab: dict
     for ex in lab["exercises"]:
         seen += [cid for cid in ex["concepts"] if cid not in seen]
     for cid in seen:
-        c = doc["concepts"][cid]
+        c = next(c for c in doc["concepts"] if c["id"] == cid)
         item = f"- [{md_plain(c['term'])}]({c['url']}): {c['meaning']}"
         if c["lesson"]:
             title = json.loads((content / "lessons" / f"{c['lesson']}.json").read_text(encoding="utf-8"))["title"]

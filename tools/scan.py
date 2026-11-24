@@ -1315,7 +1315,7 @@ LABS_KEYS = {
     "unlock": {"hints", "solution"},
     "exercise": {"id", "title", "effect", "concepts", "touches", "folder", "folder_url", "test_file", "test_url"},
     "touch": {"path", "url"},
-    "concept": {"term", "meaning", "url", "lesson"},
+    "concept": {"id", "term", "meaning", "url", "lesson"},
 }
 LABS_HIDDEN_KEY = re.compile(r"(?i)solution|hint|stub|wrong|red_expect|check|observe|diff|fixture|origin")
 LABS_HIDDEN_TEXT = re.compile(r"solution\.diff|hints\.md|/stub/|/wrong/|\bFAIL\b")
@@ -1397,7 +1397,8 @@ def labs_doc_problems(label: str, week: int, doc, content: Path, mdlite) -> list
     if doc.get("week") != week:
         problems.append(f"{label}: week {doc.get('week')!r} does not match the file name")
     url(doc.get("readme_url"), "readme_url")
-    concepts = doc.get("concepts") if isinstance(doc.get("concepts"), dict) else {}
+    concepts = {c["id"]: c for c in doc["concepts"] if isinstance(c, dict) and isinstance(c.get("id"), str)} \
+        if isinstance(doc.get("concepts"), list) else {}
     for cid, c in concepts.items():
         where = f"concepts.{cid}"
         if not re.fullmatch(r"[a-z0-9_-]+", cid):

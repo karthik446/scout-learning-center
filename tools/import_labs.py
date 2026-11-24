@@ -167,8 +167,8 @@ def extract(repo: Path, week: int) -> dict:
     for cid, lesson in CONCEPT_LESSONS.items():
         if not (LESSONS / f"{lesson}.json").is_file():
             raise LabsError(f"CONCEPT_LESSONS: {cid} -> {lesson}: no content/lessons/{lesson}.json")
-    out_concepts = {cid: {**c, "url": f"{blob}/pages/concepts.md#{cid}", "lesson": CONCEPT_LESSONS.get(cid)}
-                    for cid, c in concepts.items()}
+    out_concepts = [{"id": cid, **c, "url": f"{blob}/pages/concepts.md#{cid}", "lesson": CONCEPT_LESSONS.get(cid)}
+                    for cid, c in concepts.items()]
     return {
         "week": week,
         "readme_url": f"{REPO}/blob/{REF}/labs/README.md",
