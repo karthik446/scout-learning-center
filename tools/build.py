@@ -93,6 +93,8 @@ class Library:
         self.modules = {d["id"]: d for r, d in docs.items() if r.startswith("modules/") and r != "modules/index.json"}
         self.module_index = docs["modules/index.json"]["modules"]
         self.changelog = docs["changelog.json"]["entries"]
+        labs = content / scan.BUILD_TRACK_DIR / scan.LABS_DIR   # the weeks of the track with labs pages (load_labs checks them)
+        self.labs_weeks = sorted(int(m.group(1)) for p in labs.glob("*.json") if (m := scan.LABS_FILE.match(p.name))) if labs.is_dir() else []
         self._check_provenance()
         # lesson -> (module id, position among the module's published lessons, entry); every published lesson has exactly one (scan.py)
         self.home_of: dict[str, tuple[str, int, dict]] = {}
@@ -1818,7 +1820,7 @@ def render_home(lib: Library) -> tuple[str, str]:
         '<button type="submit">Search</button></form>',
         '<p class="muted">Search runs in your browser from a prebuilt index. Nothing you type leaves this page.</p>',
         f'<h2>{a("/learn/modules/", "Modules")}</h2>', module_cards(lib),
-        "<h2>Build along</h2>", build_track_card(),
+        "<h2>Build along</h2>", build_track_card(lib.labs_weeks),
         "<h2>How this library works</h2>",
         "<p>Lessons are keyed by concept. A module is one topic's lessons in teaching order; every lesson sits in exactly one module. "
         f"Links to outside documentation are re-checked every week. Site version {esc(lib.site['site_version'])}; see the {a('/learn/changelog/', 'changelog')}.</p>",
@@ -1831,7 +1833,7 @@ def render_modules_index(lib: Library) -> tuple[str, str]:
     body = ["<h1>Modules</h1>",
             f'<p class="muted">{len(lib.module_index)} topic modules, {n} lessons. A module lists one topic\'s lessons in teaching order; every lesson sits in exactly one module.</p>',
             module_cards(lib),
-            "<h2>Build along</h2>", build_track_card()]
+            "<h2>Build along</h2>", build_track_card(lib.labs_weeks)]
     return "/learn/modules/", site_page("Modules - Learning center", "\n".join(body), current="modules",
                                         crumbs=[("/learn/", "Learning center"), ("/learn/modules/", "Modules")],
                                         description="The topic modules of the learning center and their lessons.")
@@ -2121,7 +2123,8 @@ def write(site: Path, url: str, text: str, written: dict[str, int]) -> None:
 # that order (week 9's "next" returns to the overview). Page titles are the source H1s. The disclaimer quote sits within
 # the first three blocks of every source (scan.py): the overview renders in source order; every other page shows the
 # blocks before the quote (a week's "What you learn" paragraph), the quote, then for a week page the schedule's Readings
-# and its own body under "Build steps".
+# and its own body under "Build steps". A week with labs (content/ai-engineering/labs/week-N.json, tools/import_labs.py)
+# also gets a "Labs for this week" table, a labs index page and one page per lab (see "The labs of the track" below).
 # ---------------------------------------------------------------------------------------------------------------------
 BUILD_TRACK_BASE = "/learn/ai-engineering/"
 BUILD_TRACK_TITLE = "AI engineering track"
@@ -2150,6 +2153,7 @@ class BuildTrackPage:
         self.title: str = rendered.title or ""
         # the sidebar, prev/next and breadcrumb label: "Overview", or the H1 up to its colon ("Setup", "Schedule", "Week 3")
         self.label = "Overview" if name == "README.md" else self.title.partition(":")[0].strip()
+        self.labs: dict | None = None   # a week's labs JSON (load_labs)
 
 
 def load_build_track(content: Path) -> dict[str, BuildTrackPage]:
@@ -2166,6 +2170,7 @@ def load_build_track(content: Path) -> dict[str, BuildTrackPage]:
         if r.title is None or r.blocks[0].kind != "heading":
             raise BuildError(f"{scan.BUILD_TRACK_DIR}/{name}: the page must start with its '# ' title")
         pages[name] = BuildTrackPage(name, r)
+    load_labs(content, pages)
     return pages
 
 
@@ -2190,19 +2195,26 @@ def build_track_sidebar(pages: dict[str, BuildTrackPage], current: str) -> str:
         for name in names:
             p = pages[name]
             cls = " current" if current == p.url else ""
-            parts.append(f'<li data-lesson-title="{esc(p.label.lower())}"><a href="{esc(p.url)}" class="lesson-link{cls}">'
-                         f'<span class="lesson-dot"></span><span>{esc(p.label)}</span></a></li>')
+            link = (f'<a href="{esc(p.url)}" class="lesson-link{cls}">'
+                    f'<span class="lesson-dot"></span><span>{esc(p.label)}</span></a>')
+            if p.labs is None:
+                parts.append(f'<li data-lesson-title="{esc(p.label.lower())}">{link}</li>')
+            else:   # the week's labs nested beneath it; the filter words cover them so a match keeps the week visible
+                nested, words = labs_sidebar(p.labs, current)
+                parts.append(f'<li data-lesson-title="{esc(p.label.lower() + " " + words)}">{link}\n{nested}</li>')
         parts.append("</ul>\n</details>")
     parts += ["</details>", "</nav>"]
     return "\n".join(parts)
 
 
-def build_track_shell(pages: dict[str, BuildTrackPage], page: BuildTrackPage, body: str, *, description: str) -> str:
-    crumbs = [a("/learn/", "Learning center")]
-    if page.name == "README.md":
-        crumbs.append(esc(BUILD_TRACK_TITLE))
-    else:
-        crumbs += [a(build_track_url("README.md"), esc(BUILD_TRACK_TITLE)), esc(page.title)]
+def build_track_shell(pages: dict[str, BuildTrackPage], page, body: str, *, description: str, crumbs: list[str] | None = None) -> str:
+    """`page` is a BuildTrackPage or a LabsPage; `crumbs` replaces the breadcrumb (the labs pages sit below a week)."""
+    if crumbs is None:
+        crumbs = [a("/learn/", "Learning center")]
+        if page.name == "README.md":
+            crumbs.append(esc(BUILD_TRACK_TITLE))
+        else:
+            crumbs += [a(build_track_url("README.md"), esc(BUILD_TRACK_TITLE)), esc(page.title)]
     langs = page.rendered.langs
     return (
         head(f"{page.title} - {BUILD_TRACK_TITLE}", description, code=any(l != "mermaid" for l in langs))
@@ -2254,7 +2266,7 @@ def render_build_track_page(content: Path, pages: dict[str, BuildTrackPage], pag
     rest = blocks[d + 1:]
     body = [blocks[0].html, attribution({"generated_by": "Claude through GigAI", "generated_on": site["updated"], "reviewed_by": ""})]
     if page.name == "README.md":   # source order, the contents list at the end
-        body += lead + [styled] + [b.html for b in rest] + [build_track_pages_list(pages, page.url)]
+        body += lead + [styled] + labs_overview(pages) + [b.html for b in rest] + [build_track_pages_list(pages, page.url)]
     else:
         body += lead + [styled]
         if page.name == "SCHEDULE.md":
@@ -2262,6 +2274,8 @@ def render_build_track_page(content: Path, pages: dict[str, BuildTrackPage], pag
         m = re.match(r"^week-(\d)\.md$", page.name)
         if m:
             week = int(m.group(1))
+            if page.labs is not None:
+                body.append(labs_week_section(pages, page.labs))
             schedule = pages["SCHEDULE.md"]
             week_id = next((ident for level, ident, text in schedule.rendered.headings if level == 2 and text.startswith(f"Week {week} ")), None)
             if week_id is None:
@@ -2288,14 +2302,280 @@ def render_build_track_page(content: Path, pages: dict[str, BuildTrackPage], pag
     return page.url, build_track_shell(pages, page, "\n".join(body), description=description)
 
 
+# ---------------------------------------------------------------------------------------------------------------------
+# The labs of the track: content/ai-engineering/labs/week-N.json (tools/import_labs.py, checked by scan.labs_checks).
+# Per week with labs: a "Labs for this week" table on the week page, a labs index (/learn/ai-engineering/week-N/labs/:
+# setup, the commands, the unlock rules, the labs) and one page per lab (.../labs/wNlM/: the goal, the exercises, the
+# concepts, the commands, the files on the labs branch, the chapter sections), with the overview's "Labs" line and the
+# sidebar entries. The pages are Markdown written here from the JSON and rendered with mdlite; data text is escaped
+# (md_plain) except a concept's meaning, a cell of concepts.md. Hints and solutions are not in the JSON and never on a
+# page: they come only from `tr lab hint` and `tr lab solution` in a clone.
+# ---------------------------------------------------------------------------------------------------------------------
+LABS_PUNCT = re.compile(r"([!\"#$%&'()*+,\-./:;<=>?@\[\\\]^_`{|}~])")
+LABS_TR = ".venv/bin/tr"
+LABS_COMMANDS = (   # the command table of labs/README.md on the labs branch, in the site's words
+    ("start <lab>", "Switch to the branch `lab` and install the lab's first exercise."),
+    ("verify", "Run the current exercise's check; a run where the check fails counts as a failed run."),
+    ("next", "Run the check again; when it is green, commit your work as `lab <id>: green` and install the next exercise "
+             "(after a lab's last exercise, run the repo's test suite)."),
+    ("hint", "Print the hints unlocked so far."),
+    ("solution", "Print the reference solution once it is unlocked."),
+    ("status", "Print the current state as one JSON line."),
+    ("reset", "Put the current exercise's starting file back and set its failed runs to zero."),
+    ("list", "Show every lab and exercise and its state."),
+)
+
+
+class LabsPage:
+    """A generated labs page (a week's labs index or one lab) with the attributes build_track_shell reads."""
+    def __init__(self, name: str, url: str, rendered: mdlite.Rendered, crumbs: list[str]) -> None:
+        self.name, self.url, self.rendered, self.crumbs = name, url, rendered, crumbs
+        self.title: str = rendered.title or ""
+        self.label = self.title.partition(":")[0]   # "Week 1 labs", "Lab w1l1"
+        self.prev = self.next = None   # neighbours within the week (labs_pages)
+
+
+def md_plain(s: str) -> str:
+    """Data text as literal Markdown: every ASCII punctuation mark backslash-escaped, so mdlite renders it as written."""
+    return LABS_PUNCT.sub(r"\\\1", s)
+
+
+def labs_index_url(week: int) -> str:
+    return build_track_url(f"week-{week}.md") + "labs/"
+
+
+def lab_url(week: int, lab: str) -> str:
+    return labs_index_url(week) + f"{lab}/"
+
+
+def load_labs(content: Path, pages: dict[str, BuildTrackPage]) -> None:
+    """Attach each week's labs JSON to its week page; the JSON must pass scan.labs_checks and name real chapter sections."""
+    problems = scan.labs_checks(content)
+    if problems:
+        raise BuildError("AI engineering track labs:\n  " + "\n  ".join(problems[:30]))
+    folder = content / scan.BUILD_TRACK_DIR / scan.LABS_DIR
+    for path in sorted(folder.glob("*.json")) if folder.is_dir() else []:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        pages[f"week-{doc['week']}.md"].labs = doc
+        for lab in doc["labs"]:
+            labs_sections(pages, doc["week"], lab["section"])
+
+
+def labs_sections(pages: dict[str, BuildTrackPage], week: int, nums: list[int]) -> list[tuple[int, str, str]]:
+    """Chapter section numbers -> (number, heading id, heading text without its trailing "(time, cost)") of week-N.md."""
+    heads = [(ident, text) for level, ident, text in pages[f"week-{week}.md"].rendered.headings if level == 2]
+    out = []
+    for n in nums:
+        hit = next(((ident, text) for ident, text in heads if text.startswith(f"{n}. ")), None)
+        if hit is None:
+            raise BuildError(f"{scan.BUILD_TRACK_DIR}/{scan.LABS_DIR}/week-{week}.json: section {n} matches no '## {n}. ' heading of week-{week}.md")
+        out.append((n, hit[0], re.sub(r"\s*\([^()]*\)$", "", hit[1])))
+    return out
+
+
+def labs_link(pages: dict[str, BuildTrackPage]):
+    """The link resolver of the labs Markdown: labs/week-N/ and labs/week-N/<lab> (a labs page), lesson/<id> (a lesson the
+    labs JSON maps), else a track source (build_track_href); anything unknown is an error."""
+    known: dict[str, str] = {}
+    lessons: set[str] = set()
+    for p in pages.values():
+        if p.labs is not None:
+            w = p.labs["week"]
+            known[f"labs/week-{w}/"] = labs_index_url(w)
+            known.update({f"labs/week-{w}/{lab['id']}": lab_url(w, lab["id"]) for lab in p.labs["labs"]})
+            lessons.update(c["lesson"] for c in p.labs["concepts"].values() if c["lesson"])
+
+    def href(dest: str) -> str:
+        target, _, fragment = dest.partition("#")
+        if target in known:
+            url = known[target]
+        elif target.startswith("lesson/") and target[len("lesson/"):] in lessons:
+            url = f"/learn/lessons/{target[len('lesson/'):]}/"
+        else:
+            return build_track_href(dest)
+        return url + (f"#{fragment}" if fragment else "")
+    return href
+
+
+def render_labs_md(label: str, text: str, pages: dict[str, BuildTrackPage]) -> mdlite.Rendered:
+    """Generated labs Markdown -> mdlite, after the track's public-text rules (scan.track_text_problems)."""
+    problems = scan.track_text_problems(label, text)
+    if problems:
+        raise BuildError("\n  ".join(problems))
+    try:
+        return mdlite.render(text, link=labs_link(pages), code_langs=HLJS_LANGS)
+    except mdlite.MdliteError as e:
+        raise BuildError(f"{label}: {e}") from None
+
+
+def labs_table_md(pages: dict[str, BuildTrackPage], doc: dict) -> str:
+    w = doc["week"]
+    rows = ["| Lab | What you build | Exercises | Chapter section |", "|---|---|---|---|"]
+    for lab in doc["labs"]:
+        secs = ", ".join(f"[§{n}](week-{w}.md#{ident})" for n, ident, _ in labs_sections(pages, w, lab["section"]))
+        rows.append(f"| [{lab['id']}: {md_plain(lab['title'])}](labs/week-{w}/{lab['id']}) | {md_plain(first_sentence(lab['goal']))} "
+                    f"| {len(lab['exercises'])} | {secs} |")
+    return "\n".join(rows)
+
+
+def labs_week_section(pages: dict[str, BuildTrackPage], doc: dict) -> str:
+    """The week page's "Labs for this week": the labs table and the link to the labs index."""
+    w = doc["week"]
+    text = (f"## Labs for this week\n\n{labs_table_md(pages, doc)}\n\n"
+            f"All labs for this week, setup and the commands: [Week {w} labs](labs/week-{w}/).\n")
+    return render_labs_md(f"week-{w}.md labs", text, pages).html
+
+
+def labs_overview(pages: dict[str, BuildTrackPage]) -> list[str]:
+    """The overview's one line under the disclaimer: the weeks with labs."""
+    weeks = [p.labs["week"] for p in pages.values() if p.labs is not None]
+    if not weeks:
+        return []
+    links = ", ".join(f"[Week {w}](labs/week-{w}/)" for w in weeks)
+    return [render_labs_md("README.md labs", f"**Labs: optional, $0.** {links}\n", pages).html]
+
+
+def labs_sidebar(doc: dict, current: str) -> tuple[str, str]:
+    """The week's labs beneath it in the sidebar: a Labs entry (the index) with the lab pages under it; and the filter words."""
+    w = doc["week"]
+
+    def item(url: str, label: str, words: str, inner: str = "") -> str:
+        cls = " current" if current == url else ""
+        return (f'<li data-lesson-title="{esc(words)}"><a href="{esc(url)}" class="lesson-link{cls}"><span class="lesson-dot"></span>'
+                f'<span>{esc(label)}</span></a>{inner}</li>')
+    labs = [(lab["id"], f"{lab['id']} {lab['title'].lower()}") for lab in doc["labs"]]
+    words = "labs " + " ".join(t for _, t in labs)
+    inner = '\n<ul class="module-lessons">' + "".join(item(lab_url(w, lid), lid, t) for lid, t in labs) + "</ul>"
+    return f'<ul class="module-lessons">{item(labs_index_url(w), "Labs", words, inner)}</ul>', words
+
+
+def unlock_md(u: dict) -> str:
+    hints = [f"hint {i} after {n} failed run{'' if n == 1 else 's'}" if i == 1 else f"hint {i} after {n}" for i, n in enumerate(u["hints"], 1)]
+    return ", ".join(hints) + f", and the solution after {u['solution']}, or as soon as the check is green"
+
+
+def labs_index_md(pages: dict[str, BuildTrackPage], doc: dict) -> str:
+    w, labs, tr = doc["week"], doc["labs"], LABS_TR
+    chapter = pages[f"week-{w}.md"]
+    n_ex = sum(len(lab["exercises"]) for lab in labs)
+    base = next((lab["base"] for lab in labs if lab["base"]), None)
+    unlocks: dict[str, list[str]] = {}
+    for lab in labs:
+        unlocks.setdefault(unlock_md(lab["unlock"]), []).append(lab["id"])
+    if len(unlocks) == 1:
+        unlock = [f"In every lab: {next(iter(unlocks))}."]
+    else:
+        unlock = [f"- {', '.join(ids)}: {u}." for u, ids in unlocks.items()]
+    lines = [
+        f"# Week {w} labs", "", scan.DISCLAIMER, "",
+        f"The labs are optional practice for [{md_plain(chapter.title)}](week-{w}.md): {n_ex} exercises in {len(labs)} labs that "
+        "rebuild the chapter's code one small change at a time. Each exercise names the files you change and the test that checks "
+        "them, and says what you observe when the test passes. They run on your machine and cost $0.",
+    ]
+    if base:
+        lines += ["", f"Week {w} starts from the author's code at the tag `{base}`: the first `{tr} lab start` of the week makes "
+                  "your files equal to that tag's."]
+    lines += ["", "## Setup, once", "", "```bash", f"git clone {scan.LABS_REPO.rstrip('/')}.git", "cd tradingresearch",
+              "git checkout labs", "uv sync", "```", "",
+              f"Run every command from the root of the clone as `{tr}`: on some systems a bare `tr` is another program. "
+              f"The full guide is the [labs README]({doc['readme_url']}) on GitHub.",
+              "", "## The commands", "", "| Command | What it does |", "|---|---|"]
+    lines += [f"| `{tr} lab {cmd}` | {what} |" for cmd, what in LABS_COMMANDS]
+    lines += ["", "## When hints and the solution unlock", "",
+              f"A failed run is a run of `{tr} lab verify` whose check fails; `{tr} lab reset` sets the count back to zero.", ""]
+    lines += unlock
+    lines += ["", f"Hints and the solution come only from `{tr} lab hint` and `{tr} lab solution` on your machine; they never "
+              "appear on this site.", "", "## The honor system", "",
+              "The checks live in your clone, so nothing stops you rewriting a test, and nothing is gained by it. The labs do "
+              "not replace the chapter: its reading, your own labels and its paid run are still the week.",
+              "", f"## The labs of week {w}", "", labs_table_md(pages, doc), ""]
+    return "\n".join(lines)
+
+
+def lab_md(content: Path, pages: dict[str, BuildTrackPage], doc: dict, lab: dict) -> str:
+    w, lid = doc["week"], lab["id"]
+    lines = [f"# Lab {lid}: {md_plain(lab['title'])}", "", scan.DISCLAIMER, "", md_plain(lab["goal"]), "",
+             "## Exercises", "", "| Exercise | What you change | Files | What you observe when green |", "|---|---|---|---|"]
+    for ex in lab["exercises"]:
+        files = ", ".join(f"[`{t['path']}`]({t['url']})" if t["url"] else f"`{t['path']}`" for t in ex["touches"])
+        lines.append(f"| {ex['id']} | {md_plain(ex['title'])} | {files} | {md_plain(ex['effect'])} |")
+    lines += ["", "## Concepts this lab practises", ""]
+    seen: list[str] = []
+    for ex in lab["exercises"]:
+        seen += [cid for cid in ex["concepts"] if cid not in seen]
+    for cid in seen:
+        c = doc["concepts"][cid]
+        item = f"- [{md_plain(c['term'])}]({c['url']}): {c['meaning']}"
+        if c["lesson"]:
+            title = json.loads((content / "lessons" / f"{c['lesson']}.json").read_text(encoding="utf-8"))["title"]
+            item += f" (lesson: [{md_plain(title)}](lesson/{c['lesson']}))"
+        lines.append(item)
+    lines += ["", "## Commands", "", "```bash", f"{LABS_TR} lab start {lid}", f"{LABS_TR} lab verify", f"{LABS_TR} lab next", "```", "",
+              "`start` installs the lab's first exercise, `verify` runs its check, and `next` commits a green exercise and installs "
+              f"the next one. Hints and the solution come only from `{LABS_TR} lab hint` and `{LABS_TR} lab solution` on your "
+              f"machine; they never appear on this site. Setup and every command: [Week {w} labs](labs/week-{w}/).",
+              "", "## Files on the labs branch", ""]
+    for ex in lab["exercises"]:
+        lines.append(f"- {ex['id']}: the folder [`{ex['folder']}`]({ex['folder_url']}) and its test [`{ex['test_file']}`]({ex['test_url']})")
+    page_path = lab["page_url"].split("/blob/", 1)[1].partition("/")[2]
+    lines += [f"- This lab's page in the repo: [`{page_path}`]({lab['page_url']})", "", "## In the chapter", ""]
+    lines += [f"- [§{md_plain(text)}](week-{w}.md#{ident})" for _, ident, text in labs_sections(pages, w, lab["section"])]
+    return "\n".join(lines) + "\n"
+
+
+def labs_pages(content: Path, pages: dict[str, BuildTrackPage]) -> list[LabsPage]:
+    """Every week's labs index and lab pages, in week order, with prev/next within the week (the index goes back to the
+    chapter; the last lab returns to the index)."""
+    out: list[LabsPage] = []
+    top = [a("/learn/", "Learning center"), a(build_track_url("README.md"), esc(BUILD_TRACK_TITLE))]
+    for p in pages.values():
+        doc = p.labs
+        if doc is None:
+            continue
+        w = doc["week"]
+        index_url, week_crumbs = labs_index_url(w), top + [a(p.url, esc(p.label))]
+        name = f"labs/week-{w}/index"
+        group = [LabsPage(name, index_url, render_labs_md(f"{scan.BUILD_TRACK_DIR}/{name}", labs_index_md(pages, doc), pages),
+                          week_crumbs + ["Labs"])]
+        for lab in doc["labs"]:
+            name = f"labs/week-{w}/{lab['id']}"
+            group.append(LabsPage(name, lab_url(w, lab["id"]), render_labs_md(f"{scan.BUILD_TRACK_DIR}/{name}", lab_md(content, pages, doc, lab), pages),
+                                  week_crumbs + [a(index_url, "Labs"), esc(lab["id"])]))
+        for i, lp in enumerate(group):
+            lp.prev = group[i - 1] if i > 0 else p
+            lp.next = group[(i + 1) % len(group)]
+        out += group
+    return out
+
+
+def render_labs_page(pages: dict[str, BuildTrackPage], lp: LabsPage, site: dict) -> tuple[str, str]:
+    blocks = lp.rendered.blocks
+    d = scan.disclaimer_index(blocks)
+    if d is None or blocks[0].kind != "heading" or not glyphs_ok(lp.title):
+        raise BuildError(f"{lp.name}: the page must start with its title (glyph policy) and the disclaimer")
+    styled = blocks[d].html.replace("<blockquote>", '<blockquote class="disclaimer">', 1)
+    body = [blocks[0].html, attribution({"generated_by": "Claude through GigAI", "generated_on": site["updated"], "reviewed_by": ""})]
+    body += [b.html for b in blocks[1:d]] + [styled] + [b.html for b in blocks[d + 1:]]
+    body.append(f'<div class="prevnext">{a(lp.prev.url, "&larr; " + esc(lp.prev.label))}{a(lp.next.url, esc(lp.next.label) + " &rarr;")}</div>')
+    first_p = next((b.html for b in blocks[d + 1:] if b.kind == "p"), "")   # the goal, or what the labs are
+    description = html.unescape(re.sub(r"<[^>]+>", "", first_p)).replace("\n", " ")[:200]
+    if not description or not glyphs_ok(description):
+        description = BUILD_TRACK_SUMMARY
+    return lp.url, build_track_shell(pages, lp, "\n".join(body), description=description, crumbs=lp.crumbs)
+
+
 def glyphs_ok(s: str) -> bool:
     return all(ord(ch) < 128 or ch in ALLOWED_EXTRA or 0xA0 <= ord(ch) <= 0xFF for ch in s)
 
 
-def build_track_card() -> str:
+def build_track_card(labs_weeks: list[int]) -> str:
+    labs = ""
+    if labs_weeks:
+        nums = [str(n) for n in labs_weeks]
+        labs = f", plus optional labs for week{'s' if len(nums) > 1 else ''} " + (" and ".join([", ".join(nums[:-1]), nums[-1]]) if len(nums) > 1 else nums[0])
     return ('<ul class="cards">'
             f'<li class="card"><h3>{a(build_track_url("README.md"), esc(BUILD_TRACK_TITLE))}</h3><p>{esc(BUILD_TRACK_SUMMARY)}</p>'
-            '<p class="muted">12 pages: overview, setup, schedule and nine weekly chapters.</p></li></ul>')
+            f'<p class="muted">12 pages: overview, setup, schedule and nine weekly chapters{labs}.</p></li></ul>')
 
 
 def sitemap(lib: Library, urls: list[str]) -> str:
@@ -2326,6 +2606,7 @@ def build(content: Path, out: Path) -> dict:
     pages += [render_key(lib, k) for k in lib.keys.values()]
     track = load_build_track(content)
     pages += [render_build_track_page(content, track, p, lib.site) for p in track.values()]
+    pages += [render_labs_page(track, lp, lib.site) for lp in labs_pages(content, track)]
     for url, text in pages:
         write(out, url, text, written)
     # assets, once, at the root (shared by / and /learn/)

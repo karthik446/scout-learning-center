@@ -5,7 +5,8 @@
     python3 tools/import_build_track.py --check <build-guide dir>    exit 1 when any copy differs from its source
 
 The 12 files are README.md, SETUP.md, SCHEDULE.md and week-1.md to week-9.md; nothing else in the source directory is
-read, and the copies are never edited here (build.py renders them, scan.py checks them).
+read, and the copies are never edited here (build.py renders them, scan.py checks them). The `labs/` folder beside them
+holds the generated labs JSON (tools/import_labs.py) and is not part of this copy.
 """
 
 from __future__ import annotations
@@ -48,7 +49,7 @@ def main() -> int:
                 problems.append(f"missing copy: {d.relative_to(ROOT)}")
             elif s.read_bytes() != d.read_bytes():
                 problems.append(f"differs from source: {name}")
-        extra = sorted(p.name for p in DEST.glob("*") if p.name not in FILES) if DEST.is_dir() else []
+        extra = sorted(p.name for p in DEST.glob("*") if p.name not in FILES and not (p.name == "labs" and p.is_dir())) if DEST.is_dir() else []
         problems += [f"unexpected file in {DEST.relative_to(ROOT)}: {n}" for n in extra]
     for p in problems:
         print(p, file=sys.stderr)

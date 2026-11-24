@@ -4,8 +4,11 @@
     python3 tools/test_build_track.py
 
 Positive: the Markdown subset renders the constructs the guide uses, escapes HTML, writes external links with
-target/rel, and resolves relative links the way build.py does. Negative: a workstation path, an unknown relative link
-and raw HTML each fail the content scan or the renderer; so do the other constructs mdlite refuses.
+target/rel, and resolves relative links the way build.py does; the labs pages (labs index, one page per lab, the week
+page's "Labs for this week" table, the overview line, the sidebar entries) render from content/ai-engineering/labs.
+Negative: a workstation path, an unknown relative link and raw HTML each fail the content scan or the renderer; so do
+the other constructs mdlite refuses; and a labs JSON with a workstation path in a goal, a missing goal, an unknown
+concept id, a solution-looking field or a section number with no chapter heading fails the scan or the build.
 """
 
 from __future__ import annotations
@@ -168,20 +171,111 @@ def test_pages() -> None:
         if name == "README.md":
             check(main_html.rfind("<h2") == main_html.find('<h2 id="track-pages">'), "overview: the contents list is not the last section")
             check(main_html.find('<div class="prevnext">') > main_html.find('<h2 id="track-pages">'), "overview: contents list is not before prev/next")
-        check(f'<span>{build.esc(page.label)}</span></a></li>' in html_text, f"{name}: sidebar label {page.label!r}")
+        check(f'<span>{build.esc(page.label)}</span></a>' in html_text, f"{name}: sidebar label {page.label!r}")
         check(len(page.label) <= 12, f"{name}: sidebar label not short: {page.label!r}")
     week1 = build.render_build_track_page(content, track, track["week-1.md"], site)[1]
     check('<td data-col="tag">week-1-start</td>' in week1, "week-1 tag column cells carry data-col=tag")
     check(">Week 2 &rarr;</a>" in week1 and "&larr; Schedule</a>" in week1, "week-1 prev/next use the short labels")
 
 
+def test_labs_pages() -> None:
+    """The labs pages of week 1 as build.py renders them from content/: URLs, the shell, prev/next, the week table, the
+    overview line, the sidebar, and no hint or solution text."""
+    import json
+    import build
+    content = ROOT / "content"
+    site = json.loads((content / "site.json").read_text(encoding="utf-8"))
+    track = build.load_build_track(content)
+    doc = track["week-1.md"].labs
+    check(doc is not None and [lab["id"] for lab in doc["labs"]] == ["w1l1", "w1l2", "w1l3", "w1l4"], "week 1 labs not loaded")
+    check(all(p.labs is None for n, p in track.items() if n != "week-1.md"), "labs attached to a page other than week 1")
+    pages = build.labs_pages(content, track)
+    base = "/learn/ai-engineering/week-1/labs/"
+    check([p.url for p in pages] == [base] + [f"{base}w1l{n}/" for n in range(1, 5)], f"labs urls {[p.url for p in pages]}")
+    rendered = {}
+    for p in pages:
+        url, html_text = build.render_labs_page(track, p, site)
+        rendered[url] = html_text
+        main_html = html_text.split("<main data-pagefind-body", 1)[1]
+        check(f"<title>{build.esc(p.title)} - AI engineering track</title>" in html_text, f"{url}: <title>")
+        check(html_text.count('<blockquote class="disclaimer">') == 1, f"{url}: disclaimer count")
+        check(html_text.count('class="attribution"') == 1, f"{url}: attribution count")
+        check(f'<a href="{base}w1l1/" class="lesson-link' in html_text, f"{url}: the sidebar lists w1l1")
+        check('<a href="/learn/ai-engineering/week-1/">Week 1</a>' in html_text.split('<nav class="breadcrumb"', 1)[1].split("</nav>", 1)[0],
+              f"{url}: breadcrumb lacks the week")
+        for leak in ("solution.diff", "hints.md", "/stub/", "/wrong/", "red_expect", "FAIL"):
+            check(leak not in main_html, f"{url}: {leak!r} on the page")
+    index, w1l1, w1l4 = rendered[base], rendered[f"{base}w1l1/"], rendered[f"{base}w1l4/"]
+    check("&larr; Week 1</a>" in index and "Lab w1l1 &rarr;</a>" in index, "labs index prev/next")
+    check("&larr; Week 1 labs</a>" in w1l1 and "Week 1 labs &rarr;</a>" in w1l4, "labs prev/next do not wrap to the index")
+    check(f'href="{base}w1l1/" class="lesson-link current"' in w1l1, "w1l1 is not current in its sidebar")
+    check(".venv/bin/tr lab start" in index and "git checkout labs" in index, "labs index lacks the setup or commands")
+    check('href="/learn/lessons/llm-agent-evaluation/"' in rendered[f"{base}w1l3/"], "w1l3 does not link its mapped lesson")
+    check("tr lab hint" in w1l1 and "never appear on this site" in w1l1, "lab page lacks the hint/solution line")
+    check('href="/learn/ai-engineering/week-1/#1-setup-and-a-tour-of-the-core' in w1l1, "w1l1 does not link its chapter section")
+    week1 = build.render_build_track_page(content, track, track["week-1.md"], site)[1].split("<main", 1)[1]
+    week2 = build.render_build_track_page(content, track, track["week-2.md"], site)[1].split("<main", 1)[1]
+    check(week1.count("Labs for this week</h2>") == 1, "week 1 has no single 'Labs for this week'")
+    marks = [week1.find('<blockquote class="disclaimer">'), week1.find("Labs for this week</h2>"), week1.find('<h2 id="readings">')]
+    check(all(m >= 0 for m in marks) and marks == sorted(marks), f"week 1 labs table not between disclaimer and readings {marks}")
+    check(f'href="{base}"' in week1 and f'href="{base}w1l3/"' in week1, "week 1 table lacks its links")
+    check("Labs for this week" not in week2, "week 2 has a labs table without labs JSON")
+    overview = build.render_build_track_page(content, track, track["README.md"], site)[1].split("<main", 1)[1]
+    check(f'<p><strong>Labs: optional, $0.</strong> <a href="{base}">Week 1</a></p>' in overview, "overview lacks the labs line")
+    check(overview.find("Labs: optional") > overview.find('<blockquote class="disclaimer">'), "overview labs line before the disclaimer")
+
+
+def test_labs_refusals(tmp: Path) -> None:
+    """A copy of the track with the real labs JSON: clean, then each planted defect fails the scan or the build."""
+    import json
+    import build
+    shutil.copytree(ROOT / "content" / scan.BUILD_TRACK_DIR, tmp / scan.BUILD_TRACK_DIR)
+    (tmp / "lessons").symlink_to(ROOT / "content" / "lessons", target_is_directory=True)
+    path = tmp / scan.BUILD_TRACK_DIR / scan.LABS_DIR / "week-1.json"
+    good = json.loads(path.read_text(encoding="utf-8"))
+    check(not scan.labs_checks(tmp) and not scan.build_track_checks(tmp), f"baseline labs scan: {scan.labs_checks(tmp)[:3]}")
+
+    def planted(change) -> dict:
+        doc = json.loads(json.dumps(good))
+        change(doc)
+        path.write_text(json.dumps(doc), encoding="utf-8")
+        return doc
+
+    scan_plants = {
+        "workstation path in a goal": (lambda d: d["labs"][0].update(goal="Clone into /Users/someone/code first."), "workstation path"),
+        "missing goal": (lambda d: d["labs"][1].pop("goal"), "missing goal"),
+        "unknown concept id": (lambda d: d["labs"][0]["exercises"][0]["concepts"].append("no-such-concept"), "unknown concept id"),
+        "solution-looking field": (lambda d: d["labs"][0]["exercises"][0].update(solution="--- a/x\n+++ b/x"), "solution- or hint-looking"),
+        "hints on a lab": (lambda d: d["labs"][2].update(hints=["look at the parser"]), "solution- or hint-looking"),
+    }
+    for what, (change, expect) in scan_plants.items():
+        planted(change)
+        problems = scan.labs_checks(tmp)
+        check(any(expect in p for p in problems), f"labs scan passed with a planted {what}: {problems[:2]}")
+        try:
+            build.load_build_track(tmp)
+            FAILURES.append(f"build loaded labs with a planted {what}")
+        except build.BuildError:
+            pass
+    planted(lambda d: d["labs"][3].update(section=[6, 99]))
+    check(not scan.labs_checks(tmp), "the section plant should pass the scan (only the build knows the chapter headings)")
+    try:
+        build.load_build_track(tmp)
+        FAILURES.append("build loaded labs whose section 99 matches no chapter heading")
+    except build.BuildError as e:
+        check("section 99" in str(e), f"section error does not name the section: {e}")
+    path.write_text(json.dumps(good), encoding="utf-8")
+
+
 def main() -> int:
     test_renderer()
     test_refusals()
     test_pages()
+    test_labs_pages()
     tmp = Path(tempfile.mkdtemp(prefix="btc-test-"))
     try:
-        test_scan(tmp)
+        test_scan(tmp / "scan")
+        test_labs_refusals(tmp / "labs")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     for f in FAILURES:

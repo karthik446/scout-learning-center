@@ -722,6 +722,8 @@ def module_checks(docs: dict, lessons: dict, modules: dict) -> list[str]:
 def validate(docs: dict) -> list[str]:
     out: list[str] = []
     for rel, doc in docs.items():
+        if rel.startswith(f"{BUILD_TRACK_DIR.as_posix()}/{LABS_DIR}/"):   # the track's labs JSON: labs_checks
+            continue
         kind = kind_of(rel)
         if kind is None:
             out.append(f"{rel}: not a known content file")
@@ -1262,7 +1264,8 @@ def build_track_checks(content: Path) -> list[str]:
     if not folder.is_dir():
         return [f"{BUILD_TRACK_DIR}: folder is missing"]
     problems: list[str] = []
-    present = sorted(p.name for p in folder.iterdir() if not p.name.startswith("."))
+    # labs/ holds the generated labs JSON (labs_checks); everything else must be one of the 12 copies
+    present = sorted(p.name for p in folder.iterdir() if not p.name.startswith(".") and not (p.name == LABS_DIR and p.is_dir()))
     problems += [f"{BUILD_TRACK_DIR}/{n}: missing" for n in BUILD_TRACK_FILES if n not in present]
     problems += [f"{BUILD_TRACK_DIR}/{n}: not one of the 12 AI engineering track files" for n in present if n not in BUILD_TRACK_FILES]
     pages: dict[str, mdlite.Rendered] = {}
@@ -1301,6 +1304,184 @@ def build_track_checks(content: Path) -> list[str]:
     return problems
 
 
+# --- the labs of the track: content/ai-engineering/labs/week-N.json (tools/import_labs.py; build.py renders the pages) ----
+# Extracted data only: the keys below and nothing else, so no hint, solution, stub or check text can reach a page.
+LABS_DIR = "labs"
+LABS_FILE = re.compile(r"^week-([1-9])\.json$")
+LABS_REPO = "https://github.com/karthik446/tradingresearch/"
+LABS_KEYS = {
+    "week": {"week", "readme_url", "labs", "concepts", "lessons_mapped"},
+    "lab": {"id", "title", "goal", "section", "unlock", "base", "page_url", "exercises"},
+    "unlock": {"hints", "solution"},
+    "exercise": {"id", "title", "effect", "concepts", "touches", "folder", "folder_url", "test_file", "test_url"},
+    "touch": {"path", "url"},
+    "concept": {"term", "meaning", "url", "lesson"},
+}
+LABS_HIDDEN_KEY = re.compile(r"(?i)solution|hint|stub|wrong|red_expect|check|observe|diff|fixture|origin")
+LABS_HIDDEN_TEXT = re.compile(r"solution\.diff|hints\.md|/stub/|/wrong/|\bFAIL\b")
+TRACK_GLYPHS_EXTRA = frozenset("\u2018\u2019\u201c\u201d\u2013\u2014\u2026")   # build.py ALLOWED_EXTRA
+
+
+def track_text_problems(label: str, text: str) -> list[str]:
+    """The public-text rules of the track for generated text: no workstation path, no 'operator', no bead id, the glyph policy."""
+    problems = []
+    for pattern, what in ((re.compile(r"/Users/"), "workstation path"), (OPERATOR, "the word 'operator'"), (BEAD_ID, "bead id")):
+        problems += [f"{label}: {what} {m.group(0)!r}" for m in pattern.finditer(text)]
+    bad = sorted({ch for ch in text if ord(ch) >= 128 and ch not in TRACK_GLYPHS_EXTRA and not 0xA0 <= ord(ch) <= 0xFF})
+    if bad:
+        problems.append(f"{label}: glyph(s) outside the policy {', '.join(f'U+{ord(c):04X}' for c in bad)}")
+    return problems
+
+
+def labs_checks(content: Path) -> list[str]:
+    """Every content/ai-engineering/labs/week-N.json: its shape, ids, links, concept ids, lessons and public text."""
+    import mdlite  # noqa: E402
+    folder = content / BUILD_TRACK_DIR / LABS_DIR
+    if not folder.is_dir():
+        return []
+    problems: list[str] = []
+    for path in sorted(folder.iterdir()):
+        label = f"{BUILD_TRACK_DIR}/{LABS_DIR}/{path.name}"
+        m = LABS_FILE.match(path.name)
+        if not m or not path.is_file():
+            problems.append(f"{label}: not a week-N.json")
+            continue
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            problems.append(f"{label}: unreadable: {e}")
+            continue
+        problems += labs_doc_problems(label, int(m.group(1)), doc, content, mdlite)
+    return problems
+
+
+def labs_doc_problems(label: str, week: int, doc, content: Path, mdlite) -> list[str]:
+    problems: list[str] = []
+
+    def shape(obj, kind: str, where: str) -> bool:
+        if not isinstance(obj, dict):
+            problems.append(f"{label}: {where}: not an object")
+            return False
+        for k in sorted(set(obj) - LABS_KEYS[kind]):
+            what = "a solution- or hint-looking field" if LABS_HIDDEN_KEY.search(k) else "an unexpected field"
+            problems.append(f"{label}: {where}: {what} {k!r}")
+        for k in sorted(LABS_KEYS[kind] - set(obj)):
+            problems.append(f"{label}: {where}: missing {k}")
+        return True
+
+    def no_relative(dest: str) -> str:
+        raise mdlite.MdliteError(f"relative link {dest!r}")
+
+    def text(obj: dict, key: str, where: str, *, markdown: bool = False) -> None:
+        """A one-line field; plain text (build.py escapes it) unless `markdown` (a cell of concepts.md, the track's subset)."""
+        v = obj.get(key)
+        if not isinstance(v, str) or not v.strip():
+            problems.append(f"{label}: {where}: missing {key}")
+            return
+        if "\n" in v:
+            problems.append(f"{label}: {where}.{key}: more than one line")
+        if markdown:
+            try:
+                mdlite.render("# x\n\n" + v + "\n", link=no_relative)
+            except mdlite.MdliteError as e:
+                problems.append(f"{label}: {where}.{key}: {e}")
+
+    def url(v, where: str, nullable: bool = False) -> None:
+        if v is None and nullable:
+            return
+        if not isinstance(v, str) or not v.startswith(LABS_REPO) or not URL_OK.match(v):
+            problems.append(f"{label}: {where}: not a link into {LABS_REPO}: {v!r}")
+
+    if not shape(doc, "week", "$"):
+        return problems
+    if doc.get("week") != week:
+        problems.append(f"{label}: week {doc.get('week')!r} does not match the file name")
+    url(doc.get("readme_url"), "readme_url")
+    concepts = doc.get("concepts") if isinstance(doc.get("concepts"), dict) else {}
+    for cid, c in concepts.items():
+        where = f"concepts.{cid}"
+        if not re.fullmatch(r"[a-z0-9_-]+", cid):
+            problems.append(f"{label}: {where}: concept id is not an anchor")
+        if not shape(c, "concept", where):
+            continue
+        text(c, "term", where)
+        text(c, "meaning", where, markdown=True)
+        url(c.get("url"), f"{where}.url")
+        lesson = c.get("lesson")
+        if lesson is not None and not (isinstance(lesson, str) and (content / "lessons" / f"{lesson}.json").is_file()):
+            problems.append(f"{label}: {where}: lesson {lesson!r} does not exist under content/lessons/")
+    if doc.get("lessons_mapped") != sorted(cid for cid, c in concepts.items() if isinstance(c, dict) and c.get("lesson")):
+        problems.append(f"{label}: lessons_mapped does not list exactly the concepts with a lesson")
+    labs = doc.get("labs")
+    if not isinstance(labs, list) or not labs:
+        problems.append(f"{label}: no labs")
+        labs = []
+    lab_ids: set[str] = set()
+    ex_ids: set[str] = set()
+    for i, lab in enumerate(labs):
+        where = f"labs[{i}]"
+        if not shape(lab, "lab", where):
+            continue
+        lid = lab.get("id")
+        if not isinstance(lid, str) or not re.fullmatch(rf"w{week}l\d+", lid) or lid in lab_ids:
+            problems.append(f"{label}: {where}: id {lid!r} is not a new w{week}lM")
+            lid = f"w{week}l?"
+        lab_ids.add(lid)
+        where = f"labs.{lid}"
+        text(lab, "title", where)
+        text(lab, "goal", where)
+        sec = lab.get("section")
+        if not isinstance(sec, list) or not sec or not all(isinstance(n, int) and not isinstance(n, bool) and n > 0 for n in sec):
+            problems.append(f"{label}: {where}: section must list chapter section numbers")
+        un = lab.get("unlock")
+        if shape(un, "unlock", f"{where}.unlock"):
+            h, s = un.get("hints"), un.get("solution")
+            if not (isinstance(h, list) and h and all(isinstance(n, int) and n > 0 for n in h) and h == sorted(h) and isinstance(s, int) and s > 0):
+                problems.append(f"{label}: {where}.unlock: hints must be rising positive numbers and solution a positive number")
+        if lab.get("base") is not None and not (isinstance(lab["base"], str) and re.fullmatch(r"week-\d+-start", lab["base"])):
+            problems.append(f"{label}: {where}: base {lab['base']!r} is not a week-N-start tag")
+        url(lab.get("page_url"), f"{where}.page_url")
+        exercises = lab.get("exercises")
+        if not isinstance(exercises, list) or not exercises:
+            problems.append(f"{label}: {where}: no exercises")
+            continue
+        for j, ex in enumerate(exercises):
+            ew = f"{where}.exercises[{j}]"
+            if not shape(ex, "exercise", ew):
+                continue
+            eid = ex.get("id")
+            if not isinstance(eid, str) or not re.fullmatch(rf"{re.escape(lid)}\.\d+", eid) or eid in ex_ids:
+                problems.append(f"{label}: {ew}: id {eid!r} is not a new {lid}.N")
+            ex_ids.add(str(eid))
+            text(ex, "title", ew)
+            text(ex, "effect", ew)
+            for cid in ex.get("concepts") if isinstance(ex.get("concepts"), list) else []:
+                if cid not in concepts:
+                    problems.append(f"{label}: {ew}: unknown concept id {cid!r}")
+            if not isinstance(ex.get("folder"), str) or not ex["folder"].startswith(f"{eid}-"):
+                problems.append(f"{label}: {ew}: folder {ex.get('folder')!r} does not start with the id")
+            if not isinstance(ex.get("test_file"), str) or not re.fullmatch(r"test_\w+\.py", ex["test_file"]):
+                problems.append(f"{label}: {ew}: test_file {ex.get('test_file')!r}")
+            url(ex.get("folder_url"), f"{ew}.folder_url")
+            url(ex.get("test_url"), f"{ew}.test_url")
+            touches = ex.get("touches")
+            if not isinstance(touches, list) or not touches:
+                problems.append(f"{label}: {ew}: no touched files")
+                continue
+            for k, t in enumerate(touches):
+                if shape(t, "touch", f"{ew}.touches[{k}]"):
+                    if not isinstance(t.get("path"), str) or not re.fullmatch(r"[\w./-]+", t["path"]) or ".." in t["path"]:
+                        problems.append(f"{label}: {ew}.touches[{k}]: path {t.get('path')!r}")
+                    url(t.get("url"), f"{ew}.touches[{k}].url", nullable=True)
+    problems += public_checks(label, doc)
+    for where, _, v in walk(doc):
+        if isinstance(v, str):
+            problems += track_text_problems(f"{label}: {where}", v)
+            if LABS_HIDDEN_TEXT.search(v):
+                problems.append(f"{label}: {where}: hint, solution, stub or FAIL text {LABS_HIDDEN_TEXT.search(v).group(0)!r}")
+    return problems
+
+
 def disclaimer_index(blocks) -> int | None:
     """The index of the disclaimer quote among a page's first three blocks (mdlite Block list), or None."""
     for i, b in enumerate(blocks[:3]):
@@ -1326,7 +1507,7 @@ def main() -> int:
     else:
         docs, problems = load_all(args.content)
         problems += validate(docs) if not problems else []
-        problems += build_track_checks(args.content)
+        problems += build_track_checks(args.content) + labs_checks(args.content)
         label = f"content {args.content}: {len(docs)} files"
     for p in problems[:200]:
         print("  " + p)

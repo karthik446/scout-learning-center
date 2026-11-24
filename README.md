@@ -8,7 +8,8 @@ framework, no tracking, hosted on Cloudflare Pages. The design is in the orchest
 
 ```
 content/      the library, the only input: keys/, lessons/, practice/, modules/ (13 topic modules and index.json), scenarios/ (simulator),
-              sim-staging/ (sim fields of lessons not in this tree yet), ai-engineering/ (the AI engineering track, 12 Markdown pages),
+              sim-staging/ (sim fields of lessons not in this tree yet), ai-engineering/ (the AI engineering track, 12 Markdown pages,
+              and labs/week-N.json, the labs data of a week),
               redirects.json (empty), changelog.json, site.json, merge-candidates.json
 assets/       the shipped course assets (course.css, course.js, theme-init.js, mermaid/, hljs/), site-extra.css, search.js, favicon.svg,
               sim/ (the built simulator: sim.js, engine.js, sim.css, LICENSE.txt, UPSTREAM.txt; committed)
@@ -28,7 +29,8 @@ tools/        import_course.py  --module ID --export DIR: import a pipeline cour
               test_sim_pages.py the simulator's scan rules (negative tests for the digit rule) and page rendering
               mdlite.py         the Markdown subset of the AI engineering track -> HTML (refuses anything outside the subset)
               import_build_track.py  --from DIR / --check DIR: copy the build guide into content/ai-engineering, byte for byte
-              test_build_track.py    the renderer, its refusals, the track's scan rules (negative tests) and the page order
+              import_labs.py         --from REPO / --check REPO --week N: the labs data of a week -> content/ai-engineering/labs/week-N.json
+              test_build_track.py    the renderer, its refusals, the track's scan rules (negative tests), the page order and the labs pages
 verify/       screenshots, logs and summaries of the last browser verification
 site/         build output, git-ignored
 ```
@@ -205,6 +207,17 @@ also carries the contents list). The card on `/learn/` and `/learn/modules/` sit
 - **Scan**: `tools/scan.py` checks the folder holds exactly the twelve files, runs the text rules of the public-material scan on each,
   refuses `/Users/` paths, the word "operator" and bead ids, requires the disclaimer quote (its exact text is `scan.DISCLAIMER`)
   within the first three blocks, renders every file and resolves every relative link and fragment.
-  `python3 tools/test_build_track.py` proves the refusals and the page order.
+  `python3 tools/test_build_track.py` proves the refusals, the page order and the labs pages.
+- **Labs**: optional exercises in a clone of tradingresearch (the `labs` branch, run with `.venv/bin/tr lab ...`). Their data is
+  `content/ai-engineering/labs/week-N.json`, written by `python3 tools/import_labs.py --from <labs repo> --week N` from
+  `labs/wN/lab.toml`, every `labs/wN/exercises/*/exercise.toml` and `labs/wN/pages/concepts.md` (`--check` fails on any
+  difference; a concept id maps to a learning-center lesson only through the importer's `CONCEPT_LESSONS` dict). The JSON carries no hint,
+  solution, stub or test text; `scan.labs_checks` refuses unknown or solution-looking fields, unknown concept ids, unmapped or
+  missing lessons, links outside the tradingresearch repo and text breaking the track's rules. For each week with a JSON, `build.py`
+  writes the labs index (`/learn/ai-engineering/week-N/labs/`: setup, the `tr lab` commands, the unlock rules from the data, the
+  labs), one page per lab (`.../labs/wNlM/`: goal, exercises, concepts, commands, files on the labs branch, chapter sections),
+  a "Labs for this week" table on the week page after the disclaimer, a "Labs: optional, $0." line on the overview and a nested
+  Labs entry under the week in the sidebar. A lab's `section` numbers resolve to the week page's `## N. ` headings; one with no
+  heading fails the build. A new week needs only its JSON.
 
 Deploying: see `OPERATOR.md`.

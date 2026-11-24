@@ -43,19 +43,6 @@ You read the core through the tool, not through a code listing: `tr --help`, `tr
 
 Each chapter opens with a table, *Where everything is*: every file the chapter names, its path, the tag it first appears at, and the command to see it.
 
-## Labs: optional practice in small steps
-
-Alongside each chapter the public repo's `labs` branch has short exercises that build the chapter's code one checked step at a time: a stub to fill in, a pytest check with a message that teaches, hints that unlock after failed runs, and a solution that unlocks after ten. They cost nothing: no key and no model call, because the exercises regrade recordings of the author's runs. Week 1 has 19 exercises in four labs; the labs for later weeks are added week by week. Start with the `labs` branch and `tr lab`:
-
-```bash
-git clone https://github.com/karthik446/tradingresearch.git && cd tradingresearch
-git checkout labs
-uv sync
-.venv/bin/tr lab start w1l1
-```
-
-The chapters stand on their own, so the labs are optional. [Week 1](week-1.md) has its lab table; the commands are in the [labs README](https://github.com/karthik446/tradingresearch/blob/labs/labs/README.md).
-
 ## The loop
 
 Every chapter runs the same loop, on a different part of the system:
