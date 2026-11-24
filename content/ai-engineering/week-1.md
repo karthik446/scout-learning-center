@@ -12,6 +12,27 @@
 
 Concepts this week, each explained in one or two lines with a link where it is first used: traces (§2), open and axial coding (§3, §4), code checks versus judges (§5), paired comparison with a clustered interval (§6), scope and the build-versus-tune question (§7). The main reading is Shankar & Husain, [*Evals for AI Engineers*](https://www.oreilly.com/library/view/evals-for-ai/9798341660717/), on error analysis and on evaluators. **Error analysis** means reading many real outputs, writing down what goes wrong and counting it before writing any eval, so the evals measure the failures you actually have; the free companion is Husain & Shankar, [*AI Evals: Everything You Need to Know*](https://hamel.dev/blog/posts/evals-faq/) (the "evals FAQ" below).
 
+## Labs: build the code in small steps (optional, $0)
+
+The chapter has you do the work in one piece. If you would rather practise the code half of this week in small, checked steps first, the public repo has a `labs` branch: 19 short exercises in four labs. Each is a change to one or two files, checked by pytest on your machine. A failing check prints a message that teaches (what the code returned, and a case it must handle); hints unlock after failed runs and the solution after ten. No key and no model call: the exercises regrade recordings of the author's runs, so a number moves on your machine when your code is right.
+
+```bash
+git clone https://github.com/karthik446/tradingresearch.git && cd tradingresearch
+git checkout labs
+uv sync
+.venv/bin/tr lab list
+.venv/bin/tr lab start w1l1
+```
+
+| Lab | You build | Chapter section |
+|---|---|---|
+| w1l1 claim checks (4 exercises) | `check_one` in `analyze.py`, the code that rejects a bad claim | §1 |
+| w1l2 open and axial coding (4) | `evals/labels.csv`, `evals/taxonomy.md` and the code that reads them | §3, §4 |
+| w1l3 a code grader (6) | `InferencesGrounded` in `evals.py` | §5 |
+| w1l4 a paired experiment (5) | the variant prompt, the experiment config, the replay and the paired interval | §6 |
+
+Use `.venv/bin/tr`: on some systems a bare `tr` is another program. The exercises are checked by tests that live in the repo, so they are for you: nothing stops you rewriting a test, and nothing is gained by it. The labs do not replace §2 (reading real runs), your own labels in §3 or the paid run in §6. The commands and the lab index are in the [labs README](https://github.com/karthik446/tradingresearch/blob/labs/labs/README.md) and the [week 1 labs page](https://github.com/karthik446/tradingresearch/blob/labs/labs/w1/pages/index.md).
+
 ## Where everything is
 
 Every file this chapter names, the tag it first appears at, and how to look at it without leaving your branch. `git show <tag>:<path>` prints a file as it is at a tag; `git diff week-1-start week-1-end --stat` lists everything week 1 adds.
