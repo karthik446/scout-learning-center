@@ -192,10 +192,16 @@ def test_labs_pages() -> None:
     track = build.load_build_track(content)
     doc = track["week-1.md"].labs
     check(doc is not None and [lab["id"] for lab in doc["labs"]] == ["w1l1", "w1l2", "w1l3", "w1l4"], "week 1 labs not loaded")
-    check(all(p.labs is None for n, p in track.items() if n != "week-1.md"), "labs attached to a page other than week 1")
-    pages = build.labs_pages(content, track)
+    check(all(p.labs is None for n, p in track.items() if n not in ("week-1.md", "week-2.md")), "labs attached to a page other than weeks 1 and 2")
+    doc2 = track["week-2.md"].labs
+    check(doc2 is not None and [lab["id"] for lab in doc2["labs"]] == ["w2l1", "w2l2", "w2l3", "w2l4"], "week 2 labs not loaded")
+    all_pages = build.labs_pages(content, track)
+    base2 = "/learn/ai-engineering/week-2/labs/"
+    pages = [p for p in all_pages if "/week-1/" in p.url]
+    pages2 = [p for p in all_pages if "/week-2/" in p.url]
     base = "/learn/ai-engineering/week-1/labs/"
     check([p.url for p in pages] == [base] + [f"{base}w1l{n}/" for n in range(1, 5)], f"labs urls {[p.url for p in pages]}")
+    check([p.url for p in pages2] == [base2] + [f"{base2}w2l{n}/" for n in range(1, 5)], f"week 2 labs urls {[p.url for p in pages2]}")
     rendered = {}
     for p in pages:
         url, html_text = build.render_labs_page(track, p, site)
@@ -223,9 +229,9 @@ def test_labs_pages() -> None:
     marks = [week1.find('<blockquote class="disclaimer">'), week1.find("Labs for this week</h2>"), week1.find('<h2 id="readings">')]
     check(all(m >= 0 for m in marks) and marks == sorted(marks), f"week 1 labs table not between disclaimer and readings {marks}")
     check(f'href="{base}"' in week1 and f'href="{base}w1l3/"' in week1, "week 1 table lacks its links")
-    check("Labs for this week" not in week2, "week 2 has a labs table without labs JSON")
+    check(week2.count("Labs for this week</h2>") == 1 and f'href="{base2}w2l4/"' in week2, "week 2 has no labs table with its links")
     overview = build.render_build_track_page(content, track, track["README.md"], site)[1].split("<main", 1)[1]
-    check(f'<p><strong>Labs: optional, $0.</strong> <a href="{base}">Week 1</a></p>' in overview, "overview lacks the labs line")
+    check(f'<p><strong>Labs: optional, $0.</strong> <a href="{base}">Week 1</a>, <a href="{base2}">Week 2</a></p>' in overview, "overview lacks the labs line")
     check(overview.find("Labs: optional") > overview.find('<blockquote class="disclaimer">'), "overview labs line before the disclaimer")
     w1l2 = rendered[f"{base}w1l2/"].split("<main data-pagefind-body", 1)[1]
     check('<h2 id="exercises">' not in w1l2 and "What you observe when green</th>" not in w1l2, "w1l2 still has the thin exercises table")
