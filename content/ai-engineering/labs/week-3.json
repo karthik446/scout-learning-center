@@ -1,0 +1,998 @@
+{
+  "concepts": [
+    {
+      "id": "llm-judge",
+      "lesson": "llm-agent-evaluation",
+      "meaning": "a model that grades a text against a written rubric, used where no code can decide",
+      "term": "LLM judge",
+      "url": "https://github.com/karthik446/tradingresearch/blob/labs/labs/w3/pages/concepts.md#llm-judge"
+    },
+    {
+      "id": "verdict-format",
+      "lesson": null,
+      "meaning": "the rubric's rule for the reply: reasoning first, then one JSON object, the last in the reply",
+      "term": "Verdict format",
+      "url": "https://github.com/karthik446/tradingresearch/blob/labs/labs/w3/pages/concepts.md#verdict-format"
+    },
+    {
+      "id": "abstain",
+      "lesson": null,
+      "meaning": "the judge's \"unknown\": stored as `fail` with a reason that starts `unknown:`, left out of Cohen's kappa and counted",
+      "term": "Abstain",
+      "url": "https://github.com/karthik446/tradingresearch/blob/labs/labs/w3/pages/concepts.md#abstain"
+    },
+    {
+      "id": "cannotgrade",
+      "lesson": null,
+      "meaning": "gigai-core's exception for \"no verdict to store\": not a fail, not an abstain",
+      "term": "CannotGrade",
+      "url": "https://github.com/karthik446/tradingresearch/blob/labs/labs/w3/pages/concepts.md#cannotgrade"
+    },
+    {
+      "id": "judge-prompt",
+      "lesson": null,
+      "meaning": "the frame file with the rubric in it, the thesis as OUTPUT and the evidence as INPUT",
+      "term": "Judge prompt",
+      "url": "https://github.com/karthik446/tradingresearch/blob/labs/labs/w3/pages/concepts.md#judge-prompt"
+    },
+    {
+      "id": "evidence-not-bars",
+      "lesson": null,
+      "meaning": "the judge sees the cited claims and the code-written summary, never the price path",
+      "term": "Evidence, not bars",
+      "url": "https://github.com/karthik446/tradingresearch/blob/labs/labs/w3/pages/concepts.md#evidence-not-bars"
+    },
+    {
+      "id": "call-budget",
+      "lesson": null,
+      "meaning": "the two bounds on the one call: output tokens, and dollars checked before sending",
+      "term": "Call budget",
+      "url": "https://github.com/karthik446/tradingresearch/blob/labs/labs/w3/pages/concepts.md#call-budget"
+    },
+    {
+      "id": "replayed-reply",
+      "lesson": null,
+      "meaning": "a recorded model reply served back for $0; evidence only for the request that produced it",
+      "term": "Replayed reply",
+      "url": "https://github.com/karthik446/tradingresearch/blob/labs/labs/w3/pages/concepts.md#replayed-reply"
+    },
+    {
+      "id": "run-file",
+      "lesson": null,
+      "meaning": "the file under `data_dir/runs` that keeps one judge call and what it cost, failed calls included",
+      "term": "Run file",
+      "url": "https://github.com/karthik446/tradingresearch/blob/labs/labs/w3/pages/concepts.md#run-file"
+    },
+    {
+      "id": "score-record",
+      "lesson": null,
+      "meaning": "the stored Score: which grader, which judge and prompt, which trace; written with its verdict row or not at all",
+      "term": "Score record",
+      "url": "https://github.com/karthik446/tradingresearch/blob/labs/labs/w3/pages/concepts.md#score-record"
+    },
+    {
+      "id": "refusal",
+      "lesson": null,
+      "meaning": "a thesis the judge may not take (teacher, or no Grade) is `CannotGrade` before any call, at $0",
+      "term": "Refusal",
+      "url": "https://github.com/karthik446/tradingresearch/blob/labs/labs/w3/pages/concepts.md#refusal"
+    },
+    {
+      "id": "judge-queue",
+      "lesson": null,
+      "meaning": "the theses waiting for the judge: graded champion and challenger theses with no verdict, oldest first",
+      "term": "Judge queue",
+      "url": "https://github.com/karthik446/tradingresearch/blob/labs/labs/w3/pages/concepts.md#judge-queue"
+    },
+    {
+      "id": "run-cap",
+      "lesson": null,
+      "meaning": "one dollar cap for a whole `tr grade --judge` run; what does not fit waits for the next run",
+      "term": "Run cap",
+      "url": "https://github.com/karthik446/tradingresearch/blob/labs/labs/w3/pages/concepts.md#run-cap"
+    },
+    {
+      "id": "off-by-default",
+      "lesson": null,
+      "meaning": "the one paid step of `tr grade` runs only with `--judge`, and says what it cost",
+      "term": "Off by default",
+      "url": "https://github.com/karthik446/tradingresearch/blob/labs/labs/w3/pages/concepts.md#off-by-default"
+    }
+  ],
+  "hidden": [
+    "028e4a109003",
+    "04766928307b",
+    "0512a8deacd6",
+    "08593886add0",
+    "0899bb132572",
+    "08fa1cf11463",
+    "0b9086c940f0",
+    "0d5aaa6f018a",
+    "126daf7bada7",
+    "1521299267ca",
+    "157858ac548d",
+    "19301773e57f",
+    "1b29e261d592",
+    "1c3a88b7503f",
+    "1d543d87cfdf",
+    "1f3eff20585f",
+    "216d149bc362",
+    "2254de210009",
+    "23665401fbe5",
+    "28c597505175",
+    "29a903b0441b",
+    "304c256b065e",
+    "30d8ac73a4bc",
+    "31c5ad51090b",
+    "34169e7b17b5",
+    "3442c62f94a8",
+    "353d1b48de16",
+    "3a146ae7f98b",
+    "3a605c4f410d",
+    "3bf75dc1908f",
+    "44806fcc1c2e",
+    "460a356cb63e",
+    "489ec4c604e4",
+    "49049de3cda2",
+    "4a456efa629a",
+    "4c749c289ede",
+    "4c8434693a67",
+    "4eebddff2238",
+    "4fb971db8dda",
+    "502eaf1981e0",
+    "550e887e1ef3",
+    "566f45726654",
+    "5968d8f2d044",
+    "597db498bccd",
+    "5a9e7c04094d",
+    "5fa79e2ef066",
+    "601ecccd1110",
+    "60c3f1dd80c3",
+    "62f240b2ba35",
+    "63deb795e17f",
+    "646eb8fad656",
+    "64ec644c3bc4",
+    "663c584f3bb9",
+    "6b314ba48296",
+    "6e5af4747814",
+    "6e97e7876edf",
+    "75319415df9e",
+    "75983edcd983",
+    "7665fc1b2a63",
+    "7722a7f538a3",
+    "78b81319beb9",
+    "7a6690b92cf5",
+    "7b20c43a8cd1",
+    "7cc0ab51933f",
+    "7cc632809e2b",
+    "7e263f8dd68b",
+    "7e401e19856b",
+    "7f82a9e56e84",
+    "80be82c43508",
+    "81ecdaaa20ee",
+    "84841f62304b",
+    "8493b6dd370b",
+    "8562f6860387",
+    "8609d94ed3c1",
+    "869e7a1bc033",
+    "86ae10c9285e",
+    "88d31bc56bec",
+    "8a536efcd628",
+    "8ba9037cbab8",
+    "92f1ce2e448e",
+    "97f5d1b49733",
+    "9c1e881579a2",
+    "9d260ef85b2d",
+    "9d8d0a3e7672",
+    "9f73127df420",
+    "a127823e6551",
+    "a1847f96cfe2",
+    "a1afbca0676e",
+    "a7f91b7d063f",
+    "a9e038093249",
+    "ab9abc1c06a0",
+    "ac5c7f8246b9",
+    "afdb1e2d47ba",
+    "b195f26369b4",
+    "b2348906be7d",
+    "b913f2a91ff6",
+    "b92f4fc7d65c",
+    "bc9b8edce63b",
+    "bdd93bbb5c3c",
+    "c3b8e6fc45cf",
+    "c3c3d5b95f6f",
+    "c5061eb13d5c",
+    "c675d2069f51",
+    "ca608f26ca9d",
+    "caf52621c7b9",
+    "cbada315af66",
+    "cc8cf433c83e",
+    "cdac146b1121",
+    "cfcb1c293839",
+    "d019cd1a3ed2",
+    "d058e9c6e048",
+    "d23f3d057efa",
+    "d2cd4aaacd80",
+    "d3fa46d84807",
+    "d481bb351ba3",
+    "db9b64e82c7a",
+    "dd2d99f228ab",
+    "de4c94686015",
+    "ded7818c0127",
+    "e0743c4e48d6",
+    "e3ce768b4250",
+    "e3fd0148e25f",
+    "e56dee383260",
+    "ea3f355608a1",
+    "ea91c5cecbf6",
+    "f1e8a81a7831",
+    "f2c3b22f4eef",
+    "f2de19fb16df",
+    "f35bdf9712ca",
+    "f42928daa096",
+    "f672279ac75b",
+    "f70050405321",
+    "f7e7685b5562"
+  ],
+  "labs": [
+    {
+      "base": "week-3-start",
+      "exercises": [
+        {
+          "concepts": [
+            "llm-judge",
+            "verdict-format"
+          ],
+          "data": [],
+          "effect": "Observe's w3l1.1 matches go from 1 of 9 replies to 9 of 9: the recorded reply reads pass with its explanation, and so do the replies that quote the format example or a draft verdict first.",
+          "fail": "FAIL w3l1.1 (try 1): Read the verdict from the last JSON object in the reply\n  The one recorded judge reply (run_54953ec7ce484649) thinks aloud, then ends with\n  '{\"verdict\":\"pass\",\"explanation\":\"Both reported closes stayed above the 100.5 congestion to'...;\n  p1_verdict returned ('fail', ''). The verdict is that object's \"verdict\", the reason its\n  \"explanation\".\n  hint 1 unlocks after 2 failed runs; hint 2 unlocks after 5 failed runs; the solution unlocks after\n  10 failed runs or when the check is green\n",
+          "folder": "w3l1.1-the-last-json-object",
+          "folder_url": "https://github.com/karthik446/tradingresearch/tree/labs/labs/w3/exercises/w3l1.1-the-last-json-object",
+          "goal": "Start p1_verdict, the reader of the P1 judge's reply, with the rubric's Verdict format: the reply ends with one JSON object, and the last JSON object is the answer, whatever the reasoning above it quotes.",
+          "id": "w3l1.1",
+          "pass": "PASS w3l1.1: Read the verdict from the last JSON object in the reply\nobserve: python labs/w3/tools/observe.py verdicts\n  |   reply                   ex      ok  yours -> the rubric's reading\n  |   recorded                w3l1.1  1   ('pass', 'Both reported closes stayed above the 100.5\n  | congestion top …\n  |   pass                    w3l1.1  1   ('pass', 'the level held on every close')\n  |   last_json_wins          w3l1.1  1   ('fail', 'closes fell back below the level')\n  |   nested_object           w3l1.1  1   ('pass', 'both closes held above 100.5')\n  |   quoted_words            w3l1.1  1   ('pass', 'the \"break above 100.5\" held on 2 of 2 closes')\n  |   fenced_block            w3l1.1  1   ('fail', 'a close fell back below 100.5')\n  |   no_explanation          w3l1.1  1   ('fail', '')\n  |   null_explanation        w3l1.1  1   ('pass', '')\n  |   list_explanation        w3l1.1  1   ('pass', '')\n  |   fail_unknown_kept       w3l1.2  1   ('fail', 'unknown: short covering is not measured')\n  |   unknown_becomes_fail    w3l1.2  0   ('unknown', 'the summary does not measure sector\n  | rotation')\n  |                                        the rubric: ('fail', 'unknown: the summary does not\n  | measure sector rotation')\n  |   unknown_prefixed        w3l1.2  0   ('unknown', 'unknown: the summary does not measure the CPI\n  | reaction')\n  |                                        the rubric: ('fail', 'unknown: the summary does not\n  | measure the CPI reaction')\n  |   unknown_bare            w3l1.2  0   ('unknown', '')\n  |                                        the rubric: ('fail', 'unknown: ')\n  |   unknown_tight_prefix    w3l1.2  0   ('unknown', 'unknown:the summary has no volume')\n  |                                        the rubric: ('fail', 'unknown:the summary has no volume')\n  |   unknown_capital_prefix  w3l1.2  0   ('unknown', 'Unknown: the summary does not measure the gap\n  | fill')\n  |                                        the rubric: ('fail', 'unknown: Unknown: the summary does\n  | not measure the gap fill…\n[... 25 more lines not shown]\n",
+          "start_code": [
+            {
+              "code": "def p1_verdict(reply: str) -> tuple[str, str]:\n    \"\"\"(verdict, reason) by the rubric's \"Verdict format\": the last JSON object wins, `unknown` becomes `fail` with\n    `unknown: ` (ADR-003). A reply with no verdict is CannotGrade, not an abstain.\"\"\"\n    # TODO(w3l1.1) the verdict and the explanation of the LAST JSON object in the reply (gigai-core's\n    #   last_json_object reads one key of it); an explanation that is missing or not a string reads \"\".\n    # TODO(w3l1.3) a reply with no pass, fail or unknown verdict cannot be graded: raise CannotGrade, quoting the reply.\n    # TODO(w3l1.2) a verdict of unknown is an abstain: fail, with \"unknown: \" before its explanation (ADR-003).\n    return \"fail\", \"\"",
+              "lang": "python",
+              "lines": [
+                207,
+                214
+              ],
+              "path": "src/tradingresearch/evals.py",
+              "url": "https://github.com/karthik446/tradingresearch/blob/labs/src/tradingresearch/evals.py"
+            }
+          ],
+          "test_file": "test_w3l1_1.py",
+          "test_url": "https://github.com/karthik446/tradingresearch/blob/labs/labs/w3/exercises/w3l1.1-the-last-json-object/test_w3l1_1.py",
+          "tests": [
+            {
+              "code": "def test_the_last_object_wins_over_one_quoted_earlier():\n    for rid, earlier in ((\"last_json_wins\", \"quotes the rubric's format example\"),\n                         (\"nested_object\", \"shows a draft verdict, and the answer nests an object of its own\")):\n        r = row(rid)\n        got = read(r[\"reply\"])\n        assert got == tuple(r[\"expect\"]), (\n            f\"{rid}: the reply {earlier}: {r['reply'][:110]!r}...; p1_verdict returned {got!r}, the answer is \"\n            f\"{tuple(r['expect'])!r}. The rubric's Verdict format: the answer is the last JSON object in the reply; \"\n            f\"an object nested inside it is part of it, not a later one.\"\n        )",
+              "name": "test_the_last_object_wins_over_one_quoted_earlier"
+            },
+            {
+              "code": "def test_a_missing_null_or_non_text_explanation_reads_empty():\n    for rid in (\"no_explanation\", \"null_explanation\", \"list_explanation\"):\n        r = row(rid)\n        got = read(r[\"reply\"])\n        assert got == tuple(r[\"expect\"]), (\n            f\"{rid}: {r['reply']!r} has a verdict and no usable explanation; p1_verdict returned {got!r}, expected \"\n            f\"{tuple(r['expect'])!r}. The reason is stored as text in judge_verdict.reason (NOT NULL): an explanation \"\n            f\"that is missing, null or not a string is \\\"\\\", not None, not the string 'None' and not a list.\"\n        )",
+              "name": "test_a_missing_null_or_non_text_explanation_reads_empty"
+            }
+          ],
+          "title": "Read the verdict from the last JSON object in the reply",
+          "touches": [
+            {
+              "path": "src/tradingresearch/evals.py",
+              "url": "https://github.com/karthik446/tradingresearch/blob/labs/src/tradingresearch/evals.py"
+            }
+          ],
+          "what_tested": "p1_verdict on the one recorded judge reply and on reply shapes in labs/w3/data/replies.json: the recorded reply reads ('pass', its explanation), the last object wins over a format example or a draft verdict quoted earlier, a fenced or nested object still reads, and a missing, null or non-text explanation reads as \"\"; replies the check builds itself, in no data row, read by the same rule.",
+          "writes": [
+            "p1_verdict in src/tradingresearch/evals.py: read the verdict and the explanation from the last JSON object in the reply, with the parser the judge library already has for that.",
+            "The reason is text: an explanation that is missing, null or not a string becomes \"\"."
+          ]
+        },
+        {
+          "concepts": [
+            "llm-judge",
+            "abstain",
+            "verdict-format"
+          ],
+          "data": [],
+          "effect": "Observe's w3l1.2 matches go from 2 of 7 replies to 7 of 7: every unknown verdict now reads fail with one unknown: prefix, which journal.abstained counts as an abstain.",
+          "fail": "FAIL w3l1.2 (try 1): Store unknown as an abstain: fail with unknown:\n  The judge answered '{\"verdict\": \"unknown\", \"explanation\": \"the summary does not measure sector\n  rotation\"}'; p1_verdict returned ('unknown', 'the summary does not measure sector rotation'),\n  expected ('fail', 'unknown: the summary does not measure sector rotation'). judge_verdict.verdict\n  accepts only 'pass' or 'fail' (journal.py), so an unknown is stored as fail with 'unknown: '\n  before the explanation: an abstain kappa leaves out, not a not-met.\n  hint 1 unlocks after 2 failed runs; hint 2 unlocks after 5 failed runs; the solution unlocks after\n  10 failed runs or when the check is green\n",
+          "folder": "w3l1.2-unknown-is-an-abstain",
+          "folder_url": "https://github.com/karthik446/tradingresearch/tree/labs/labs/w3/exercises/w3l1.2-unknown-is-an-abstain",
+          "goal": "Store the judge's unknown the way ADR-003 says: the journal's verdict is binary, so unknown becomes fail with a reason that starts unknown:, which §7 leaves out of Cohen's kappa and counts instead.",
+          "id": "w3l1.2",
+          "pass": "PASS w3l1.2: Store unknown as an abstain: fail with unknown:\nobserve: python labs/w3/tools/observe.py verdicts\n  |   reply                   ex      ok  yours -> the rubric's reading\n  |   recorded                w3l1.1  1   ('pass', 'Both reported closes stayed above the 100.5\n  | congestion top …\n  |   pass                    w3l1.1  1   ('pass', 'the level held on every close')\n  |   last_json_wins          w3l1.1  1   ('fail', 'closes fell back below the level')\n  |   nested_object           w3l1.1  1   ('pass', 'both closes held above 100.5')\n  |   quoted_words            w3l1.1  1   ('pass', 'the \"break above 100.5\" held on 2 of 2 closes')\n  |   fenced_block            w3l1.1  1   ('fail', 'a close fell back below 100.5')\n  |   no_explanation          w3l1.1  1   ('fail', '')\n  |   null_explanation        w3l1.1  1   ('pass', '')\n  |   list_explanation        w3l1.1  1   ('pass', '')\n  |   fail_unknown_kept       w3l1.2  1   ('fail', 'unknown: short covering is not measured')\n  |   unknown_becomes_fail    w3l1.2  1   ('fail', 'unknown: the summary does not measure sector\n  | rotation')\n  |   unknown_prefixed        w3l1.2  1   ('fail', 'unknown: the summary does not measure the CPI\n  | reaction')\n  |   unknown_bare            w3l1.2  1   ('fail', 'unknown: ')\n  |   unknown_tight_prefix    w3l1.2  1   ('fail', 'unknown:the summary has no volume')\n  |   unknown_capital_prefix  w3l1.2  1   ('fail', 'unknown: Unknown: the summary does not measure\n  | the gap fill…\n  |   pass_mentions_unknown   w3l1.2  1   ('pass', 'both closes held above 100.5')\n  |   no_json                 w3l1.3  0   (None, '')\n  |                                        the rubric: 'CannotGrade'\n  |   no_verdict              w3l1.3  0   (None, '')\n  |                                        the rubric: 'CannotGrade'\n  |   maybe                   w3l1.3  0   ('maybe', 'one close held, one did not')\n  |                                        the rubric: 'CannotGrade'\n  |   capitalised             w3l1.3  0   ('Pass', 'the level held on every close')\n[... 17 more lines not shown]\n",
+          "start_code": [
+            {
+              "code": "    # TODO(w3l1.2) a verdict of unknown is an abstain: fail, with \"unknown: \" before its explanation (ADR-003).",
+              "lang": "python",
+              "lines": [
+                214,
+                214
+              ],
+              "path": "src/tradingresearch/evals.py",
+              "url": "https://github.com/karthik446/tradingresearch/blob/labs/src/tradingresearch/evals.py"
+            }
+          ],
+          "test_file": "test_w3l1_2.py",
+          "test_url": "https://github.com/karthik446/tradingresearch/blob/labs/labs/w3/exercises/w3l1.2-unknown-is-an-abstain/test_w3l1_2.py",
+          "tests": [
+            {
+              "code": "def test_the_prefix_is_never_doubled():\n    for rid in (\"unknown_prefixed\", \"unknown_tight_prefix\", \"fail_unknown_kept\"):\n        r = row(rid)\n        got = read(r[\"reply\"])\n        assert got == tuple(r[\"expect\"]), (\n            f\"{rid}: the judge answered {r['reply'].splitlines()[-1]!r}; p1_verdict returned {got!r}, expected \"\n            f\"{tuple(r['expect'])!r}. An explanation that already starts with 'unknown:' keeps one prefix, and a fail \"\n            f\"the judge wrote that way is already an abstain.\"\n        )",
+              "name": "test_the_prefix_is_never_doubled"
+            },
+            {
+              "code": "def test_every_abstain_is_one_journal_abstained_counts():\n    for rid in (\"unknown_becomes_fail\", \"unknown_prefixed\", \"unknown_tight_prefix\", \"unknown_capital_prefix\",\n                \"unknown_bare\", \"fail_unknown_kept\"):\n        got = read(row(rid)[\"reply\"])\n        stored = {\"verdict\": got[0], \"reason\": got[1]} if isinstance(got, tuple) else None\n        assert stored is not None and journal.abstained(stored), (\n            f\"{rid}: p1_verdict returned {got!r}; journal.abstained, which `tr label agree` uses to leave unknowns \"\n            f\"out of kappa, does not count it as an abstain (it wants verdict 'fail', reason starting 'unknown:' in \"\n            f\"lower case).\"\n        )",
+              "name": "test_every_abstain_is_one_journal_abstained_counts"
+            }
+          ],
+          "title": "Store unknown as an abstain: fail with unknown:",
+          "touches": [
+            {
+              "path": "src/tradingresearch/evals.py",
+              "url": "https://github.com/karthik446/tradingresearch/blob/labs/src/tradingresearch/evals.py"
+            }
+          ],
+          "what_tested": "p1_verdict on the unknown replies of labs/w3/data/replies.json: unknown reads ('fail', 'unknown: ' + explanation), a bare unknown reads ('fail', 'unknown: '), an explanation already starting with unknown: keeps one prefix, Unknown: is not the prefix, every abstain passes journal.abstained, and a pass or fail keeps its text even when it says unknown; replies built in the check follow the same rule.",
+          "writes": [
+            "In p1_verdict, a verdict of unknown returns fail, with unknown: and a space before the explanation.",
+            "An explanation that already starts with lower-case unknown: is kept as it is, so the prefix is never doubled.",
+            "pass and fail return unchanged: the verdict decides, not a word in the text."
+          ]
+        },
+        {
+          "concepts": [
+            "llm-judge",
+            "cannotgrade",
+            "verdict-format"
+          ],
+          "data": [],
+          "effect": "Observe's w3l1.3 matches go from 0 of 10 replies to 10 of 10: a reply with no JSON, no verdict, or a verdict that is not exactly pass, fail or unknown now reads CannotGrade instead of a verdict the journal would refuse.",
+          "fail": "FAIL w3l1.3 (try 1): Refuse a reply with no verdict: CannotGrade, not a fail\n  no_json: 'I cannot decide this one.' holds no verdict; p1_verdict returned (None, ''). That is not\n  a fail and not an abstain: storing it would count a reply nobody can read as the judge's answer.\n  Raise CannotGrade.\n  hint 1 unlocks after 2 failed runs; hint 2 unlocks after 5 failed runs; the solution unlocks after\n  10 failed runs or when the check is green\n",
+          "folder": "w3l1.3-no-verdict-cannot-be-graded",
+          "folder_url": "https://github.com/karthik446/tradingresearch/tree/labs/labs/w3/exercises/w3l1.3-no-verdict-cannot-be-graded",
+          "goal": "Refuse a reply the rubric does not define. A reply with no pass, fail or unknown verdict has nothing to store: calling it a fail counts a broken reply as a judgment, so p1_verdict raises CannotGrade and quotes the reply.",
+          "id": "w3l1.3",
+          "pass": "PASS w3l1.3: Refuse a reply with no verdict: CannotGrade, not a fail\nobserve: python labs/w3/tools/observe.py verdicts\n  |   reply                   ex      ok  yours -> the rubric's reading\n  |   recorded                w3l1.1  1   ('pass', 'Both reported closes stayed above the 100.5\n  | congestion top …\n  |   pass                    w3l1.1  1   ('pass', 'the level held on every close')\n  |   last_json_wins          w3l1.1  1   ('fail', 'closes fell back below the level')\n  |   nested_object           w3l1.1  1   ('pass', 'both closes held above 100.5')\n  |   quoted_words            w3l1.1  1   ('pass', 'the \"break above 100.5\" held on 2 of 2 closes')\n  |   fenced_block            w3l1.1  1   ('fail', 'a close fell back below 100.5')\n  |   no_explanation          w3l1.1  1   ('fail', '')\n  |   null_explanation        w3l1.1  1   ('pass', '')\n  |   list_explanation        w3l1.1  1   ('pass', '')\n  |   fail_unknown_kept       w3l1.2  1   ('fail', 'unknown: short covering is not measured')\n  |   unknown_becomes_fail    w3l1.2  1   ('fail', 'unknown: the summary does not measure sector\n  | rotation')\n  |   unknown_prefixed        w3l1.2  1   ('fail', 'unknown: the summary does not measure the CPI\n  | reaction')\n  |   unknown_bare            w3l1.2  1   ('fail', 'unknown: ')\n  |   unknown_tight_prefix    w3l1.2  1   ('fail', 'unknown:the summary has no volume')\n  |   unknown_capital_prefix  w3l1.2  1   ('fail', 'unknown: Unknown: the summary does not measure\n  | the gap fill…\n  |   pass_mentions_unknown   w3l1.2  1   ('pass', 'both closes held above 100.5')\n  |   no_json                 w3l1.3  1   CannotGrade\n  |   no_verdict              w3l1.3  1   CannotGrade\n  |   maybe                   w3l1.3  1   CannotGrade\n  |   capitalised             w3l1.3  1   CannotGrade\n  |   null_verdict            w3l1.3  1   CannotGrade\n  |   answer_then_notes       w3l1.3  1   CannotGrade\n  |   cut_off                 w3l1.3  1   CannotGrade\n[... 7 more lines not shown]\n",
+          "start_code": [
+            {
+              "code": "    # TODO(w3l1.3) a reply with no pass, fail or unknown verdict cannot be graded: raise CannotGrade, quoting the reply.",
+              "lang": "python",
+              "lines": [
+                211,
+                211
+              ],
+              "path": "src/tradingresearch/evals.py",
+              "url": "https://github.com/karthik446/tradingresearch/blob/labs/src/tradingresearch/evals.py"
+            }
+          ],
+          "test_file": "test_w3l1_3.py",
+          "test_url": "https://github.com/karthik446/tradingresearch/blob/labs/labs/w3/exercises/w3l1.3-no-verdict-cannot-be-graded/test_w3l1_3.py",
+          "tests": [
+            {
+              "code": "def test_only_the_three_lower_case_verdicts_count():\n    for rid in (\"maybe\", \"capitalised\", \"null_verdict\", \"padded_verdict\", \"hedged\", \"list_verdict\"):\n        r = row(rid)\n        got = read(r[\"reply\"])\n        assert isinstance(got, CannotGrade), (\n            f\"{rid}: {r['reply'].splitlines()[-1]!r}; p1_verdict returned {shown(got)}. The rubric asks for exactly \"\n            f\"the string pass or fail (or unknown), in lower case, nothing around it; anything else is a reply the \"\n            f\"rubric does not define, so CannotGrade, not a guess at what the judge meant.\"\n        )",
+              "name": "test_only_the_three_lower_case_verdicts_count"
+            },
+            {
+              "code": "def test_the_refusal_quotes_the_reply():\n    r = row(\"no_json\")\n    got = read(r[\"reply\"])\n    assert isinstance(got, CannotGrade) and r[\"reply\"] in str(got), (\n        f\"p1_verdict on {r['reply']!r} returned {shown(got)}. The CannotGrade message must quote the reply, so whoever \"\n        f\"reads `tr grade --judge`'s refusal sees what the judge sent.\"\n    )",
+              "name": "test_the_refusal_quotes_the_reply"
+            }
+          ],
+          "title": "Refuse a reply with no verdict: CannotGrade, not a fail",
+          "touches": [
+            {
+              "path": "src/tradingresearch/evals.py",
+              "url": "https://github.com/karthik446/tradingresearch/blob/labs/src/tradingresearch/evals.py"
+            }
+          ],
+          "what_tested": "p1_verdict on the CannotGrade replies of labs/w3/data/replies.json: no JSON, no verdict key, maybe, Pass, null, a padded or hedged verdict, a list, an answer followed by a later object, a reply cut off mid-JSON; the refusal quotes the reply, every readable reply still reads as before, and replies the check builds itself, in no data row, follow the same rule.",
+          "writes": [
+            "In p1_verdict, before the unknown rule: a verdict that is not exactly the string pass, fail or unknown raises gigai-core's CannotGrade.",
+            "The CannotGrade message quotes the start of the reply, so whoever reads the error sees what the judge sent."
+          ]
+        }
+      ],
+      "goal": "Write p1_verdict, which turns the P1 judge's reply into the verdict and reason the journal stores: the last JSON object is the answer, unknown is an abstain stored as fail with unknown:, and a reply with no verdict cannot be graded. A misread reply is a wrong grade.",
+      "id": "w3l1",
+      "page_url": "https://github.com/karthik446/tradingresearch/blob/labs/labs/w3/pages/w3l1.md",
+      "section": [
+        4
+      ],
+      "title": "Reading the verdict",
+      "unlock": {
+        "hints": [
+          2,
+          5
+        ],
+        "solution": 10
+      }
+    },
+    {
+      "base": "week-3-start",
+      "exercises": [
+        {
+          "concepts": [
+            "llm-judge",
+            "judge-prompt",
+            "replayed-reply"
+          ],
+          "data": [],
+          "effect": "Observe's judge run: the prompt grows from 1336 to 5158 of the recorded 5925 chars, the rubric's sections from 0/7 to 7/7 with no {rubric} placeholder left, and OUTPUT holds the thesis's 3 labelled lines, the same as the recording.",
+          "fail": "FAIL w3l2.1 (try 1): Fill the judge's frame: the rubric in, the thesis as the graded output\n  The judge's instructions are 967 chars, the recorded request's 4574; the {rubric} line is still in\n  the prompt, rubric sections missing: ['Question', 'Inputs', 'Met', 'Not met', 'Unknown',\n  'Hindsight', 'Verdict format']; first differing line 8: '{rubric}'. Without p1_thesis_quality.md\n  the judge never sees when a mechanism is met, not met or unknown, nor the Verdict format\n  p1_verdict reads.\n  hint 1 unlocks after 2 failed runs; hint 2 unlocks after 5 failed runs; the solution unlocks after\n  10 failed runs or when the check is green\n",
+          "folder": "w3l2.1-rubric-in-thesis-out",
+          "folder_url": "https://github.com/karthik446/tradingresearch/tree/labs/labs/w3/exercises/w3l2.1-rubric-in-thesis-out",
+          "goal": "Fill the judge's frame. p1_judge_prompt.txt says what the judge decides and holds a {rubric} line where the P1 rubric goes; the text being graded is the thesis itself, one labelled line each for prediction, reason and invalidation_text.",
+          "id": "w3l2.1",
+          "pass": "PASS w3l2.1: Fill the judge's frame: the rubric in, the thesis as the graded output\nobserve: python labs/w3/tools/observe.py judge\n  | p1_judge ended with: NotImplementedError: part B (lab w3l3): save run run_<id>, read its\n  | verdict, store it with its ScoreRecord, return the Score\n  | requests sent: 1 (recorded: 1)\n  | model: openai/gpt-6-sol (recorded: openai/gpt-6-sol)\n  | max_tokens: 1024 (recorded: 4000)\n  | prompt chars: 5158 (recorded: 5925)\n  | rubric sections: 7/7; {rubric} placeholder left: False\n  | INPUT: 0 lines (recorded: 12), same: False\n  | OUTPUT: 3 lines (recorded: 3), same: True\n  | raw bar values in the prompt: 0/5\n  | same body as the recording: False\n  |   first differing prompt line 94: yours ''\n  |                             recorded 'cited claims (claim_id | tag | text)'\n  | under max_usd=0.001: 1 request(s) sent, ended with NotImplementedError: part B (lab w3l3): save\n  | run run_<id>, read its verdict, store it with its ScoreRecord, r…\n  | p1_verdict on the recorded reply: ('pass', 'Both reported closes stayed above the 100.5\n  | congestion top and 20-day high, so the named break held.')\n  | The reply is the recording: it says pass whatever you send. It is evidence for your prompt only\n  | when the body is the recorded one.\nnext: `tr lab next` commits it and moves on; `tr lab solution` shows the reference to compare\n",
+          "start_code": [
+            {
+              "code": "def judged_sample(t: Thesis, shown: str) -> Sample:\n    \"\"\"What `llm_judge` renders: INPUT is the cited claims and the summary, OUTPUT the thesis text (prompt file).\"\"\"\n    return Sample(trace_id=f\"tr_{t.thesis_id}\", run_id=P1Judge.id, item_id=t.thesis_id, item_version=\"1\",\n                  cluster_id=t.ticker, repeat_index=0, input=(Turn(role=\"user\", content=shown),),\n                  # TODO(w3l2.1) OUTPUT is the text being graded: the thesis's prediction, reason and invalidation_text,\n                  #   one labelled line each (\"OUTPUT holds the thesis\" in evals/rubrics/p1_judge_prompt.txt).\n                  output_text=\"\",\n                  output_parsed=None, parse_status=\"not_parsed\", outcome=\"succeeded\", error=None,\n                  recorded_at=datetime.now(UTC))",
+              "lang": "python",
+              "lines": [
+                220,
+                228
+              ],
+              "path": "src/tradingresearch/evals.py",
+              "url": "https://github.com/karthik446/tradingresearch/blob/labs/src/tradingresearch/evals.py"
+            },
+            {
+              "code": "def p1_judge(conn: sqlite3.Connection, bars: BarSource, thesis_id: str, provider, *, prices: dict[str, Price],\n             data_dir: Path, max_usd: float) -> Score:\n    \"\"\"Judge one graded champion or challenger thesis with one call; store its verdict and ScoreRecord together.\n\n    Teacher theses and theses with no Grade (never entered, not closed) are CannotGrade before any call. A failed\n    call or a reply with no verdict is CannotGrade after it: the cost is in the run file, nothing is stored.\"\"\"\n    t, g = label.labelable(conn, thesis_id)\n    # TODO(w3l2.2) INPUT is what the judge may use as evidence: the claims the thesis cites (label.cited, from its\n    #   analysis) and the code-written post-trade summary (label.summary), each under its heading line, a blank line\n    #   between them. Never the bars themselves.\n    shown = \"\"\n    # TODO(w3l2.1) the rubric: p1_judge_prompt.txt keeps a {rubric} line where p1_thesis_quality.md belongs.\n    rubric = (RUBRICS / \"p1_judge_prompt.txt\").read_text()\n    # TODO(w3l2.3) bound the reply: ADR-003's JUDGE_MAX_TOKENS, not CallSettings' default.\n    settings = CallSettings(model=JUDGE_MODEL)\n    judge = llm_judge(provider, rubric=rubric, settings=settings, grader_id=P1Judge.id)\n    item = DatasetItem(id=t.thesis_id, cluster_id=t.ticker, prompt=judge.render(judged_sample(t, shown), None),\n                       expected=None)\n    # TODO(w3l2.3) cap the call at max_usd: a CallBudget prices the call from `prices` before it is sent.\n    run = run_eval(Dataset.of(P1Judge.id, [item]), provider, [], settings=settings, budget=CallBudget(prices=prices),\n                   trace_dir=data_dir / \"traces\", tag=P1Judge.id)\n    raise NotImplementedError(f\"part B (lab w3l3): save run {run.record.run_id}, read its verdict, store it with its \"\n                              \"ScoreRecord, return the Score\")",
+              "lang": "python",
+              "lines": [
+                231,
+                253
+              ],
+              "path": "src/tradingresearch/evals.py",
+              "url": "https://github.com/karthik446/tradingresearch/blob/labs/src/tradingresearch/evals.py"
+            }
+          ],
+          "test_file": "test_w3l2_1.py",
+          "test_url": "https://github.com/karthik446/tradingresearch/blob/labs/labs/w3/exercises/w3l2.1-rubric-in-thesis-out/test_w3l2_1.py",
+          "tests": [
+            {
+              "code": "def test_output_holds_the_thesis_one_labelled_line_each(prompt):\n    mine, recorded = fakea.block(prompt, \"OUTPUT\"), fakea.block(fakea.recorded_prompt(), \"OUTPUT\")\n    assert mine == recorded, (\n        f\"[BEGIN OUTPUT] holds {mine!r}; the recorded request held {recorded!r}. OUTPUT is the text being graded: \"\n        f\"the thesis's prediction, reason and invalidation_text, labelled as the prompt file names them, so the judge \"\n        f\"can list the mechanisms the reason names.\"\n    )",
+              "name": "test_output_holds_the_thesis_one_labelled_line_each"
+            },
+            {
+              "code": "def test_output_follows_the_thesis_it_judges(tmp_path):\n    got, sent, _ = fakea.judge(tmp_path, reworded=True)\n    assert sent, f\"p1_judge sent no request for a reworded thesis on the same trade: it stopped with {fakea.shown(got)}.\"\n    mine = fakea.block(fakea.prompt_of(sent[0]), \"OUTPUT\")\n    labels = [line.split(\": \", 1)[0] for line in fakea.block(fakea.recorded_prompt(), \"OUTPUT\")]\n    want = [f\"{name}: {fakea.REWORDED[name]}\" for name in labels]\n    assert mine == want, (\n        f\"For the same trade with its thesis reworded, [BEGIN OUTPUT] holds {mine!r}; that thesis says {want!r}. \"\n        f\"OUTPUT comes from the thesis being judged: a fixed text passes the recorded trade and grades the wrong \"\n        f\"thesis on every other.\"\n    )",
+              "name": "test_output_follows_the_thesis_it_judges"
+            }
+          ],
+          "title": "Fill the judge's frame: the rubric in, the thesis as the graded output",
+          "touches": [
+            {
+              "path": "src/tradingresearch/evals.py",
+              "url": "https://github.com/karthik446/tradingresearch/blob/labs/src/tradingresearch/evals.py"
+            }
+          ],
+          "what_tested": "p1_judge on the synthetic FAKEA trade, its reply replayed for $0: the judge's instructions equal the recorded request's (the frame with the rubric in place of {rubric}), OUTPUT is the thesis's three labelled lines exactly, with the thesis reworded OUTPUT follows the new text, and with a line added to the rubric file in RUBRICS the instructions hold it.",
+          "writes": [
+            "In judged_sample, the sample's output text: prediction:, reason: and invalidation_text: of the thesis being judged, one per line, in that order.",
+            "In p1_judge, the judge's instructions: the frame file with its {rubric} line replaced by the P1 rubric file's text."
+          ]
+        },
+        {
+          "concepts": [
+            "llm-judge",
+            "judge-prompt",
+            "evidence-not-bars",
+            "replayed-reply"
+          ],
+          "data": [],
+          "effect": "Observe's judge run: INPUT goes from 0 to the recorded 12 lines, the same as the recording, the prompt from 5158 to 5925 chars, and the raw bar values in the prompt stay at 0/5.",
+          "fail": "FAIL w3l2.2 (try 1): Show the judge the cited claims and the code-written summary, never the bars\n  [BEGIN INPUT] has 0 lines, the recorded request's 12; they differ at line 1: yours '(end of\n  block)', recorded 'cited claims (claim_id | tag | text)'. INPUT is the cited claims under their\n  heading, a blank line, then the post-trade summary under its heading, as label.cited and\n  label.summary write them.\n  hint 1 unlocks after 2 failed runs; hint 2 unlocks after 5 failed runs; the solution unlocks after\n  10 failed runs or when the check is green\n",
+          "folder": "w3l2.2-evidence-not-bars",
+          "folder_url": "https://github.com/karthik446/tradingresearch/tree/labs/labs/w3/exercises/w3l2.2-evidence-not-bars",
+          "goal": "Give the judge evidence, not the price path: the claims the thesis cited and the post-trade summary code wrote, under their headings, the same lines you read with tr label show. With the bars the judge could grade by hindsight.",
+          "id": "w3l2.2",
+          "pass": "PASS w3l2.2: Show the judge the cited claims and the code-written summary, never the bars\nobserve: python labs/w3/tools/observe.py judge\n  | p1_judge ended with: NotImplementedError: part B (lab w3l3): save run run_<id>, read its\n  | verdict, store it with its ScoreRecord, return the Score\n  | requests sent: 1 (recorded: 1)\n  | model: openai/gpt-6-sol (recorded: openai/gpt-6-sol)\n  | max_tokens: 1024 (recorded: 4000)\n  | prompt chars: 5925 (recorded: 5925)\n  | rubric sections: 7/7; {rubric} placeholder left: False\n  | INPUT: 12 lines (recorded: 12), same: True\n  | OUTPUT: 3 lines (recorded: 3), same: True\n  | raw bar values in the prompt: 0/5\n  | same body as the recording: False\n  |   the prompt is the recorded one; the body differs in: max_tokens\n  | under max_usd=0.001: 1 request(s) sent, ended with NotImplementedError: part B (lab w3l3): save\n  | run run_<id>, read its verdict, store it with its ScoreRecord, r…\n  | p1_verdict on the recorded reply: ('pass', 'Both reported closes stayed above the 100.5\n  | congestion top and 20-day high, so the named break held.')\n  | The reply is the recording: it says pass whatever you send. It is evidence for your prompt only\n  | when the body is the recorded one.\nnext: `tr lab next` commits it and moves on; `tr lab solution` shows the reference to compare\n",
+          "start_code": [
+            {
+              "code": "def p1_judge(conn: sqlite3.Connection, bars: BarSource, thesis_id: str, provider, *, prices: dict[str, Price],\n             data_dir: Path, max_usd: float) -> Score:\n    \"\"\"Judge one graded champion or challenger thesis with one call; store its verdict and ScoreRecord together.\n\n    Teacher theses and theses with no Grade (never entered, not closed) are CannotGrade before any call. A failed\n    call or a reply with no verdict is CannotGrade after it: the cost is in the run file, nothing is stored.\"\"\"\n    t, g = label.labelable(conn, thesis_id)\n    # TODO(w3l2.2) INPUT is what the judge may use as evidence: the claims the thesis cites (label.cited, from its\n    #   analysis) and the code-written post-trade summary (label.summary), each under its heading line, a blank line\n    #   between them. Never the bars themselves.\n    shown = \"\"",
+              "lang": "python",
+              "lines": [
+                229,
+                239
+              ],
+              "path": "src/tradingresearch/evals.py",
+              "url": "https://github.com/karthik446/tradingresearch/blob/labs/src/tradingresearch/evals.py"
+            }
+          ],
+          "test_file": "test_w3l2_2.py",
+          "test_url": "https://github.com/karthik446/tradingresearch/blob/labs/labs/w3/exercises/w3l2.2-evidence-not-bars/test_w3l2_2.py",
+          "tests": [
+            {
+              "code": "def test_input_is_the_cited_claims_then_the_summary(prompt):\n    mine, recorded = fakea.block(prompt, \"INPUT\"), fakea.block(fakea.recorded_prompt(), \"INPUT\")\n    first = next((i for i, (a, b) in enumerate(zip(mine, recorded)) if a != b), min(len(mine), len(recorded)))\n    yours = mine[first] if first < len(mine) else \"(end of block)\"\n    theirs = recorded[first] if first < len(recorded) else \"(end of block)\"\n    assert mine == recorded, (\n        f\"[BEGIN INPUT] has {len(mine)} lines, the recorded request's {len(recorded)}; they differ at line {first + 1}: \"\n        f\"yours {yours[:90]!r}, recorded {theirs[:90]!r}. INPUT is the cited claims under their heading, a blank line, \"\n        f\"then the post-trade summary under its heading, as label.cited and label.summary write them.\"\n    )",
+              "name": "test_input_is_the_cited_claims_then_the_summary"
+            },
+            {
+              "code": "def test_input_follows_the_thesis_it_judges(tmp_path):\n    got, sent, t = fakea.judge(tmp_path, reworded=True)\n    assert sent, f\"p1_judge sent no request for a reworded thesis on the same trade: it stopped with {fakea.shown(got)}.\"\n    mine, recorded = fakea.block(fakea.prompt_of(sent[0]), \"INPUT\"), fakea.block(fakea.recorded_prompt(), \"INPUT\")\n    claims = mine[1:mine.index(\"\")] if \"\" in mine else mine[1:]\n    want = [line for line in recorded[1:recorded.index(\"\")] if line.split(\" | \")[0] in t.evidence]\n    assert claims == want, (\n        f\"The same trade, its thesis citing only {list(t.evidence)} of its analysis's two claims: INPUT's claim lines \"\n        f\"are {claims!r}, the cited one is {want!r}. The judge checks the reason against what the thesis cited, so \"\n        f\"the claims shown are this thesis's evidence: not every claim of the analysis, not the recorded trade's lines.\"\n    )",
+              "name": "test_input_follows_the_thesis_it_judges"
+            }
+          ],
+          "title": "Show the judge the cited claims and the code-written summary, never the bars",
+          "touches": [
+            {
+              "path": "src/tradingresearch/evals.py",
+              "url": "https://github.com/karthik446/tradingresearch/blob/labs/src/tradingresearch/evals.py"
+            }
+          ],
+          "what_tested": "p1_judge on the FAKEA trade: no opening, high, low or post-exit close of the trade's bars appears in the prompt, INPUT equals the recorded 12 lines (cited claims, blank line, summary), and with a thesis that cites only one of its analysis's two claims INPUT shows only that claim and the summary label.summary writes for that thesis.",
+          "writes": [
+            "In p1_judge, the INPUT text: a heading line for the cited claims, then the claims the thesis cites from its own analysis, one per line.",
+            "Then a blank line, a heading for the post-trade summary, and the summary code writes from the bars.",
+            "No bar rows: the judge sees what the summary measured, never the price path."
+          ]
+        },
+        {
+          "concepts": [
+            "llm-judge",
+            "call-budget",
+            "replayed-reply"
+          ],
+          "data": [],
+          "effect": "Observe's judge run: max_tokens goes from 1024 to 4000, the body equals the recorded request, and under a $0.001 cap no request is sent: BudgetExceeded, $0.042964 does not fit.",
+          "fail": "FAIL w3l2.3 (try 1): One call, bounded in tokens and capped in dollars\n  The request asks for at most 1024 output tokens; the recorded request asked for 4000\n  (JUDGE_MAX_TOKENS, ADR-003: about 500 per trade expected, 4000 bounds a runaway reply). 1024 is\n  CallSettings' default, and a reply cut short there can end before its verdict (w3l1.3's cut_off\n  reply).\n  hint 1 unlocks after 2 failed runs; hint 2 unlocks after 5 failed runs; the solution unlocks after\n  10 failed runs or when the check is green\n",
+          "folder": "w3l2.3-one-bounded-call",
+          "folder_url": "https://github.com/karthik446/tradingresearch/tree/labs/labs/w3/exercises/w3l2.3-one-bounded-call",
+          "goal": "Bound the one judge call twice: in output tokens, with ADR-003's JUDGE_MAX_TOKENS instead of the 1024 default, and in dollars, with a budget that prices the call's worst case before sending and refuses when the caller's cap cannot cover it.",
+          "id": "w3l2.3",
+          "pass": "PASS w3l2.3: One call, bounded in tokens and capped in dollars\nobserve: python labs/w3/tools/observe.py judge\n  | p1_judge ended with: NotImplementedError: part B (lab w3l3): save run run_<id>, read its\n  | verdict, store it with its ScoreRecord, return the Score\n  | requests sent: 1 (recorded: 1)\n  | model: openai/gpt-6-sol (recorded: openai/gpt-6-sol)\n  | max_tokens: 4000 (recorded: 4000)\n  | prompt chars: 5925 (recorded: 5925)\n  | rubric sections: 7/7; {rubric} placeholder left: False\n  | INPUT: 12 lines (recorded: 12), same: True\n  | OUTPUT: 3 lines (recorded: 3), same: True\n  | raw bar values in the prompt: 0/5\n  | same body as the recording: True\n  | under max_usd=0.001: 0 request(s) sent, ended with BudgetExceeded: $0.042964 does not fit the\n  | remaining $0.001000 of max_usd=0.001\n  | p1_verdict on the recorded reply: ('pass', 'Both reported closes stayed above the 100.5\n  | congestion top and 20-day high, so the named break held.')\n  | The reply is the recording: it says pass whatever you send. It is evidence for your prompt only\n  | when the body is the recorded one.\nnext: `tr lab next` commits it and moves on; `tr lab solution` shows the reference to compare\n",
+          "start_code": [
+            {
+              "code": "    # TODO(w3l2.3) bound the reply: ADR-003's JUDGE_MAX_TOKENS, not CallSettings' default.\n    settings = CallSettings(model=JUDGE_MODEL)\n    judge = llm_judge(provider, rubric=rubric, settings=settings, grader_id=P1Judge.id)\n    item = DatasetItem(id=t.thesis_id, cluster_id=t.ticker, prompt=judge.render(judged_sample(t, shown), None),\n                       expected=None)\n    # TODO(w3l2.3) cap the call at max_usd: a CallBudget prices the call from `prices` before it is sent.\n    run = run_eval(Dataset.of(P1Judge.id, [item]), provider, [], settings=settings, budget=CallBudget(prices=prices),\n                   trace_dir=data_dir / \"traces\", tag=P1Judge.id)\n    raise NotImplementedError(f\"part B (lab w3l3): save run {run.record.run_id}, read its verdict, store it with its \"\n                              \"ScoreRecord, return the Score\")",
+              "lang": "python",
+              "lines": [
+                241,
+                250
+              ],
+              "path": "src/tradingresearch/evals.py",
+              "url": "https://github.com/karthik446/tradingresearch/blob/labs/src/tradingresearch/evals.py"
+            }
+          ],
+          "test_file": "test_w3l2_3.py",
+          "test_url": "https://github.com/karthik446/tradingresearch/blob/labs/labs/w3/exercises/w3l2.3-one-bounded-call/test_w3l2_3.py",
+          "tests": [
+            {
+              "code": "def test_a_cap_below_the_worst_case_refuses_before_sending(tmp_path):\n    got, sent, _ = fakea.judge(tmp_path, max_usd=0.001)\n    assert not sent and isinstance(got, BudgetExceeded), (\n        f\"With max_usd=0.001, below one call's worst case as the budget estimates it (about $0.043 at 4000 output \"\n        f\"tokens), p1_judge sent {len(sent)} request(s) and ended with {fakea.shown(got)}. The cap is checked before \"\n        f\"the call, from the price table: BudgetExceeded, nothing sent, nothing spent.\"\n    )",
+              "name": "test_a_cap_below_the_worst_case_refuses_before_sending"
+            },
+            {
+              "code": "@pytest.mark.parametrize(\"cap, sends\", [(0.0435, True), (0.0425, False), (0.04297, True), (0.04296, False)])\ndef test_the_cap_is_the_callers_to_a_thousandth_of_a_cent(cap, sends, tmp_path):\n    got, sent, _ = fakea.judge(tmp_path, max_usd=cap)\n    assert bool(sent) == sends, (\n        f\"With max_usd={cap}, just {'above' if sends else 'below'} one call's worst case as the budget estimates it \"\n        f\"(${WORST_CASE}), p1_judge sent {len(sent)} request(s) and ended with {fakea.shown(got)}; it should \"\n        f\"{'send its one call' if sends else 'refuse before sending'}. The cap is the money the caller allows, as \"\n        f\"given: tr grade passes what is left of its own budget, so a margin, a rounding or extra slack on top moves \"\n        f\"the line the caller drew.\"\n    )",
+              "name": "test_the_cap_is_the_callers_to_a_thousandth_of_a_cent"
+            }
+          ],
+          "title": "One call, bounded in tokens and capped in dollars",
+          "touches": [
+            {
+              "path": "src/tradingresearch/evals.py",
+              "url": "https://github.com/karthik446/tradingresearch/blob/labs/src/tradingresearch/evals.py"
+            }
+          ],
+          "what_tested": "p1_judge on the FAKEA trade: the request asks for at most 4000 tokens, a cap below the worst case sends nothing, the cap is the caller's to a thousandth of a cent ($0.0435 and $0.04297 send, $0.0425 and $0.04296 refuse, around the budget's estimate of one call's worst case, $0.042964), and with a $0.05 cap exactly one request goes out, byte for byte the recorded one.",
+          "writes": [
+            "In p1_judge, the call settings ask the judge model for at most JUDGE_MAX_TOKENS output tokens.",
+            "The call runs under a CallBudget of the caller's max_usd and the price table p1_judge is given, so a call that may cost more than the cap is refused before it is sent."
+          ]
+        }
+      ],
+      "goal": "Build the request the P1 judge gets: the rubric in its instructions, the thesis as the graded text, the cited claims and the code-written summary as evidence, never the bars, and one call bounded to 4000 output tokens and capped in dollars before it is sent.",
+      "id": "w3l2",
+      "page_url": "https://github.com/karthik446/tradingresearch/blob/labs/labs/w3/pages/w3l2.md",
+      "section": [
+        4
+      ],
+      "title": "The judge prompt and the one call",
+      "unlock": {
+        "hints": [
+          2,
+          5
+        ],
+        "solution": 10
+      }
+    },
+    {
+      "base": "week-3-start",
+      "exercises": [
+        {
+          "concepts": [
+            "run-file",
+            "cannotgrade",
+            "replayed-reply"
+          ],
+          "data": [],
+          "effect": "Observe's store table: the recorded reply goes from 0 run files to 1 holding $0.005163, and the HTTP 400 ends in CannotGrade naming http_400 and its run file instead of NotImplementedError.",
+          "fail": "FAIL w3l3.1 (try 1): Keep the run file, and say when the call failed\n  After the judge's one call, data_dir/runs holds no run file. The call cost $0.005163, and `tr\n  usage` and `tr grade --judge` read what a call cost from its run file only. Files under data_dir:\n  journal.db, traces/run_<id>.jsonl\n  hint 1 unlocks after 2 failed runs; hint 2 unlocks after 5 failed runs; the solution unlocks after\n  10 failed runs or when the check is green\n",
+          "folder": "w3l3.1-keep-the-run-file",
+          "folder_url": "https://github.com/karthik446/tradingresearch/tree/labs/labs/w3/exercises/w3l3.1-keep-the-run-file",
+          "goal": "Keep the judge's one call in a run file under data_dir/runs as soon as it returns, before anything can go wrong with the reply: the cost `tr usage` and the run's cap read lives there. A call that failed has no reply to read; say so with CannotGrade, naming the error and the run file.",
+          "id": "w3l3.1",
+          "pass": "PASS w3l3.1: Keep the run file, and say when the call failed\nobserve: python labs/w3/tools/observe.py store\n  |   case                 sent  run files      verdict row      p1 scores\n  |   recorded             1     1 $0.005163    none             none\n  |     p1_judge raised NotImplementedError: lab w3l3.2: read the verdict of run run_<id>, sto…\n  |   unknown              1     1 $0.005163    none             none\n  |     p1_judge raised NotImplementedError: lab w3l3.2: read the verdict of run run_<id>, sto…\n  |   no_verdict           1     1 $0.005163    none             none\n  |     p1_judge raised NotImplementedError: lab w3l3.2: read the verdict of run run_<id>, sto…\n  |   http_400             1     1 $0.000000    none             none\n  |     p1_judge raised CannotGrade: judge call failed: http_400 (run <data_dir>/runs/run_<id>…\n  |   teacher              0     0              none             none\n  |     p1_judge raised Refused: th_<id> is a teacher thesis: teacher theses are never judged …\n  |   never_entered        0     0              none             none\n  |     p1_judge raised Refused: th_<id> is PROPOSED with no grade: only a CLOSED thesis that …\n  |   verdict write fails  1     1 $0.005163    none             none\n  |     p1_judge raised NotImplementedError: lab w3l3.2: read the verdict of run run_<id>, sto…\n  |   score write fails    1     1 $0.005163    none             none\n  |     p1_judge raised NotImplementedError: lab w3l3.2: read the verdict of run run_<id>, sto…\n  | The replies are the recording or edits of it: verdicts and a paid call's cost cannot move.\n  | What moves is what p1_judge returns or raises, the run files it keeps and the rows it stores.\nnext: `tr lab next` commits it and moves on; `tr lab solution` shows the reference to compare\n",
+          "start_code": [
+            {
+              "code": "    # TODO(w3l3.1) keep the run in a run file under data_dir/runs (analyze's save), before anything can go wrong with\n    #   the reply: `tr usage` and `tr grade --judge` read what a call cost there. A call that failed has no reply to\n    #   read: say so with CannotGrade, naming the error code the run recorded and the run file.\n    sample = run.samples[0]\n    # TODO(w3l3.2) read the reply with your p1_verdict and return the Score it earns: 1.0 for pass, else 0.0, the\n    #   verdict as its answer, the reason as its explanation, a JudgeNote of the judge model, the prompt's sha256 and\n    #   the calls below. Store a ScoreRecord of it (P1Judge's id and version, kind \"model\", the judge's trace and span\n    #   ids) and the verdict that points at it (journal._insert_score, journal.add_judge_verdict) in one transaction:\n    #   a failure between the two writes leaves neither.\n    spans = sample.model_spans\n    calls = tuple(ModelExchange(**{name: getattr(span, name) for name in ModelExchange.model_fields}) for span in spans)\n    raise NotImplementedError(f\"lab w3l3.2: read the verdict of run {run.record.run_id}, store it with its \"\n                              \"ScoreRecord, return the Score\")",
+              "lang": "python",
+              "lines": [
+                250,
+                262
+              ],
+              "path": "src/tradingresearch/evals.py",
+              "url": "https://github.com/karthik446/tradingresearch/blob/labs/src/tradingresearch/evals.py"
+            }
+          ],
+          "test_file": "test_w3l3_1.py",
+          "test_url": "https://github.com/karthik446/tradingresearch/blob/labs/labs/w3/exercises/w3l3.1-keep-the-run-file/test_w3l3_1.py",
+          "tests": [
+            {
+              "code": "def test_the_call_lands_in_one_run_file_with_its_cost(recorded):\n    files = fakea.run_files(recorded.data_dir)\n    assert len(recorded.sent) == 1, (\n        f\"p1_judge sent {len(recorded.sent)} requests on the closed FAKEA trade, expected 1 (w3l2's one call); it \"\n        f\"ended with {fakea.shown(recorded.got)}\"\n    )\n    assert files, (\n        f\"After the judge's one call, data_dir/runs holds no run file. The call cost ${COST:.6f}, and `tr usage` and \"\n        f\"`tr grade --judge` read what a call cost from its run file only. Files under data_dir: \"\n        f\"{', '.join(files_under(recorded.data_dir))}\"\n    )\n    assert len(files) == 1, f\"One call left {len(files)} run files under data_dir/runs, expected 1\"\n    assert abs(fakea.spent(files[0]) - COST) < 1e-6, (\n        f\"The run file says the call spent ${fakea.spent(files[0]):.6f}; the reply cost ${COST:.6f}\"\n    )",
+              "name": "test_the_call_lands_in_one_run_file_with_its_cost"
+            },
+            {
+              "code": "def test_cannot_grade_names_the_code_this_run_recorded(tmp_path):\n    from tradingresearch.evals import CannotGrade\n\n    j = fakea.judging(tmp_path, replies=(\"credits\",))\n    files = fakea.run_files(j.data_dir)\n    assert isinstance(j.got, CannotGrade) and files, f\"On an HTTP 402 reply p1_judge ended with {fakea.shown(j.got)}\"\n    assert \"insufficient_credits\" in str(j.got), (\n        f\"On an HTTP 402 (out of credits) CannotGrade says {fakea.shown(j.got)!r}. It should name the error code this \"\n        f\"run recorded for the call (insufficient_credits, in its run file), not a code written into the message.\"\n    )",
+              "name": "test_cannot_grade_names_the_code_this_run_recorded"
+            }
+          ],
+          "title": "Keep the run file, and say when the call failed",
+          "touches": [
+            {
+              "path": "src/tradingresearch/evals.py",
+              "url": "https://github.com/karthik446/tradingresearch/blob/labs/src/tradingresearch/evals.py"
+            }
+          ],
+          "what_tested": "p1_judge on the closed FAKEA trade: the recorded reply leaves exactly one run file whose spent_usd is the reply's cost; an HTTP 400 is raised as CannotGrade holding http_400 and the run file's path, with nothing stored; an HTTP 402 names the code its run recorded, insufficient_credits.",
+          "writes": [
+            "In p1_judge, the run from run_eval is saved under data_dir/runs with analyze's save, right after the call, before its reply is read.",
+            "A sample whose outcome is not succeeded raises CannotGrade with the error code the run recorded and the path of the run file."
+          ]
+        },
+        {
+          "concepts": [
+            "score-record",
+            "abstain",
+            "cannotgrade"
+          ],
+          "data": [],
+          "effect": "Observe's store table: the recorded reply goes from NotImplementedError to Score 1.0 with verdict row pass and 1 p1 score, unknown to fail 0.0, and both injected write failures leave no row at all.",
+          "fail": "FAIL w3l3.2 (try 1): Store the verdict and its ScoreRecord together\n  On the recorded reply (verdict pass) p1_judge ended with NotImplementedError: lab w3l3.2: read the\n  verdict of run run_<id>, store it with its ScoreRecord, return the Score; it returns the Score the\n  reply earns.\n  hint 1 unlocks after 2 failed runs; hint 2 unlocks after 5 failed runs; the solution unlocks after\n  10 failed runs or when the check is green\n",
+          "folder": "w3l3.2-verdict-and-score-together",
+          "folder_url": "https://github.com/karthik446/tradingresearch/tree/labs/labs/w3/exercises/w3l3.2-verdict-and-score-together",
+          "goal": "Finish p1_judge: read the reply with your p1_verdict, return the Score it earns, and store the verdict and the ScoreRecord it points at in one transaction, so a failure between the two writes leaves neither. A reply with no verdict stores nothing.",
+          "id": "w3l3.2",
+          "pass": "PASS w3l3.2: Store the verdict and its ScoreRecord together\nobserve: python labs/w3/tools/observe.py store\n  |   case                 sent  run files      verdict row      p1 scores\n  |   recorded             1     1 $0.005163    pass             1.0\n  |     p1_judge returned Score 1.0 (pass)\n  |   unknown              1     1 $0.005163    fail unknown:    0.0\n  |     p1_judge returned Score 0.0 (fail)\n  |   no_verdict           1     1 $0.005163    none             none\n  |     p1_judge raised CannotGrade: the judge's reply has no pass/fail/unknown verdict: 'The …\n  |   http_400             1     1 $0.000000    none             none\n  |     p1_judge raised CannotGrade: judge call failed: http_400 (run <data_dir>/runs/run_<id>…\n  |   teacher              0     0              none             none\n  |     p1_judge raised Refused: th_<id> is a teacher thesis: teacher theses are never judged …\n  |   never_entered        0     0              none             none\n  |     p1_judge raised Refused: th_<id> is PROPOSED with no grade: only a CLOSED thesis that …\n  |   verdict write fails  1     1 $0.005163    none             none\n  |     p1_judge raised OperationalError: disk I/O error (injected into journal.add_judge_verd…\n  |   score write fails    1     1 $0.005163    none             none\n  |     p1_judge raised OperationalError: disk I/O error (injected into journal._insert_score)\n  | The replies are the recording or edits of it: verdicts and a paid call's cost cannot move.\n  | What moves is what p1_judge returns or raises, the run files it keeps and the rows it stores.\nnext: `tr lab next` commits it and moves on; `tr lab solution` shows the reference to compare\n",
+          "start_code": [
+            {
+              "code": "    # TODO(w3l3.2) read the reply with your p1_verdict and return the Score it earns: 1.0 for pass, else 0.0, the\n    #   verdict as its answer, the reason as its explanation, a JudgeNote of the judge model, the prompt's sha256 and\n    #   the calls below. Store a ScoreRecord of it (P1Judge's id and version, kind \"model\", the judge's trace and span\n    #   ids) and the verdict that points at it (journal._insert_score, journal.add_judge_verdict) in one transaction:\n    #   a failure between the two writes leaves neither.\n    spans = sample.model_spans\n    calls = tuple(ModelExchange(**{name: getattr(span, name) for name in ModelExchange.model_fields}) for span in spans)\n    raise NotImplementedError(f\"lab w3l3.2: read the verdict of run {run.record.run_id}, store it with its \"\n                              \"ScoreRecord, return the Score\")",
+              "lang": "python",
+              "lines": [
+                254,
+                262
+              ],
+              "path": "src/tradingresearch/evals.py",
+              "url": "https://github.com/karthik446/tradingresearch/blob/labs/src/tradingresearch/evals.py"
+            }
+          ],
+          "test_file": "test_w3l3_2.py",
+          "test_url": "https://github.com/karthik446/tradingresearch/blob/labs/labs/w3/exercises/w3l3.2-verdict-and-score-together/test_w3l3_2.py",
+          "tests": [
+            {
+              "code": "def test_unknown_is_stored_as_fail_with_value_zero(unknown):\n    from gigai_core.score import Score\n\n    got = unknown.got\n    assert isinstance(got, Score), f\"On a reply whose verdict is unknown, p1_judge ended with {fakea.shown(got)}\"\n    assert (got.value, got.answer) == (0.0, \"fail\") and got.explanation.startswith(\"unknown:\"), (\n        f\"On a reply whose verdict is unknown the Score has value {got.value}, answer {got.answer!r}, explanation \"\n        f\"{got.explanation[:30]!r}...; unknown is an abstain the rubric stores as fail: value 0.0, answer 'fail', the \"\n        f\"reason starting 'unknown:' (as your p1_verdict reads it).\"\n    )\n    row, scores = fakea.stored(unknown.conn, unknown.thesis.thesis_id)\n    stored_ok = row is not None and row[\"verdict\"] == \"fail\" and row[\"reason\"].startswith(\"unknown:\")\n    assert stored_ok and len(scores) == 1 and scores[0].value == 0.0, (\n        f\"After an unknown the journal holds {held(row, scores)}\"\n        f\"{'' if not scores else f', value {scores[0].value}'}; it should hold verdict 'fail' with an 'unknown:' \"\n        f\"reason and one ScoreRecord of value 0.0.\"\n    )",
+              "name": "test_unknown_is_stored_as_fail_with_value_zero"
+            },
+            {
+              "code": "@pytest.mark.parametrize(\"broken\", [\"add_judge_verdict\", \"_insert_score\"])\ndef test_a_failure_between_the_two_writes_leaves_neither(tmp_path, broken):\n    j = fakea.judging(tmp_path, broken=broken)\n    assert isinstance(j.got, sqlite3.OperationalError), (\n        f\"With journal.{broken} failing, p1_judge ended with {fakea.shown(j.got)}; the storage error should reach the \"\n        f\"caller.\"\n    )\n    row, scores = fakea.stored(j.conn, j.thesis.thesis_id)\n    assert row is None and not scores, (\n        f\"journal.{broken} failed (injected) and the journal still holds {held(row, scores)}. The verdict and the \"\n        f\"ScoreRecord it points at land in one transaction: a failure between the two writes leaves neither.\"\n    )",
+              "name": "test_a_failure_between_the_two_writes_leaves_neither"
+            }
+          ],
+          "title": "Store the verdict and its ScoreRecord together",
+          "touches": [
+            {
+              "path": "src/tradingresearch/evals.py",
+              "url": "https://github.com/karthik446/tradingresearch/blob/labs/src/tradingresearch/evals.py"
+            }
+          ],
+          "what_tested": "p1_judge on the closed FAKEA trade: the recorded pass returns Score 1.0 with a JudgeNote and stores a pass verdict linked to one ScoreRecord (same reason, the run file's model spans); fail and unknown are stored as fail 0.0; a reply with no verdict raises CannotGrade and stores nothing; a failure in either write leaves no row.",
+          "writes": [
+            "The verdict and reason come from p1_verdict on the sample's reply; the Score is 1.0 for pass, 0.0 otherwise, with the verdict as answer, the reason as explanation and a JudgeNote (model, prompt sha256, calls).",
+            "A ScoreRecord of kind model carries P1Judge's id and version, the judge model and prompt sha256, the sample's trace id and the ids of its model spans.",
+            "The ScoreRecord and the verdict row pointing at it are written inside one transaction on the journal connection."
+          ]
+        },
+        {
+          "concepts": [
+            "refusal",
+            "cannotgrade"
+          ],
+          "data": [],
+          "effect": "Observe's store table: the teacher and never-entered theses go from Refused to CannotGrade with the same reason, still with 0 requests sent and 0 run files.",
+          "fail": "FAIL w3l3.3 (try 1): Refuse before the call: CannotGrade, at no cost\n  On a teacher thesis (ADR-003: teacher theses are never judged) p1_judge ended with Refused:\n  th_<id> is a teacher thesis: teacher theses are never judged or labelled (ADR-003), after 0\n  request(s). A grader that will not grade raises CannotGrade: the one error `tr grade --judge`\n  keeps on a thesis before it goes on.\n  hint 1 unlocks after 2 failed runs; hint 2 unlocks after 5 failed runs; the solution unlocks after\n  10 failed runs or when the check is green\n",
+          "folder": "w3l3.3-refuse-before-the-call",
+          "folder_url": "https://github.com/karthik446/tradingresearch/tree/labs/labs/w3/exercises/w3l3.3-refuse-before-the-call",
+          "goal": "A thesis the judge may not take (a teacher thesis, or one with no Grade) is refused before any call, so it costs nothing, and the refusal is CannotGrade with the reason: the one error `tr grade --judge` keeps on a thesis before going on with the next.",
+          "id": "w3l3.3",
+          "pass": "PASS w3l3.3: Refuse before the call: CannotGrade, at no cost\nobserve: python labs/w3/tools/observe.py store\n  |   case                 sent  run files      verdict row      p1 scores\n  |   recorded             1     1 $0.005163    pass             1.0\n  |     p1_judge returned Score 1.0 (pass)\n  |   unknown              1     1 $0.005163    fail unknown:    0.0\n  |     p1_judge returned Score 0.0 (fail)\n  |   no_verdict           1     1 $0.005163    none             none\n  |     p1_judge raised CannotGrade: the judge's reply has no pass/fail/unknown verdict: 'The …\n  |   http_400             1     1 $0.000000    none             none\n  |     p1_judge raised CannotGrade: judge call failed: http_400 (run <data_dir>/runs/run_<id>…\n  |   teacher              0     0              none             none\n  |     p1_judge raised CannotGrade: th_<id> is a teacher thesis: teacher theses are never jud…\n  |   never_entered        0     0              none             none\n  |     p1_judge raised CannotGrade: th_<id> is PROPOSED with no grade: only a CLOSED thesis t…\n  |   verdict write fails  1     1 $0.005163    none             none\n  |     p1_judge raised OperationalError: disk I/O error (injected into journal.add_judge_verd…\n  |   score write fails    1     1 $0.005163    none             none\n  |     p1_judge raised OperationalError: disk I/O error (injected into journal._insert_score)\n  | The replies are the recording or edits of it: verdicts and a paid call's cost cannot move.\n  | What moves is what p1_judge returns or raises, the run files it keeps and the rows it stores.\nnext: `tr lab next` commits it and moves on; `tr lab solution` shows the reference to compare\n",
+          "start_code": [
+            {
+              "code": "def p1_judge(conn: sqlite3.Connection, bars: BarSource, thesis_id: str, provider, *, prices: dict[str, Price],\n             data_dir: Path, max_usd: float) -> Score:\n    \"\"\"Judge one graded champion or challenger thesis with one call; store its verdict and ScoreRecord together.\n\n    Teacher theses and theses with no Grade (never entered, not closed) are CannotGrade before any call. A failed\n    call or a reply with no verdict is CannotGrade after it: the cost is in the run file, nothing is stored.\"\"\"\n    # TODO(w3l3.3) refuse before any call. label.labelable raises label.Refused for a teacher thesis and for one that\n    #   `tr grade` has not graded (never entered, or not closed yet). A grader that will not grade raises CannotGrade,\n    #   the one error `tr grade --judge` reports on a thesis, and says why.\n    t, g = label.labelable(conn, thesis_id)",
+              "lang": "python",
+              "lines": [
+                229,
+                238
+              ],
+              "path": "src/tradingresearch/evals.py",
+              "url": "https://github.com/karthik446/tradingresearch/blob/labs/src/tradingresearch/evals.py"
+            }
+          ],
+          "test_file": "test_w3l3_3.py",
+          "test_url": "https://github.com/karthik446/tradingresearch/blob/labs/labs/w3/exercises/w3l3.3-refuse-before-the-call/test_w3l3_3.py",
+          "tests": [
+            {
+              "code": "@pytest.mark.parametrize((\"arm\", \"why\"), [(\"teacher\", \"teacher thesis\"), (\"never_entered\", \"no grade\")])\ndef test_a_thesis_the_judge_may_not_take_is_refused_before_any_call(tmp_path, arm, why):\n    from tradingresearch.evals import CannotGrade\n\n    j = fakea.judging(tmp_path, arm=arm)\n    assert isinstance(j.got, CannotGrade), (\n        f\"On {WHAT[arm]} p1_judge ended with {fakea.shown(j.got)}, after {len(j.sent)} request(s). A grader that \"\n        f\"will not grade raises CannotGrade: the one error `tr grade --judge` keeps on a thesis before it goes on.\"\n    )\n    assert j.raised, (\n        f\"p1_judge returned {fakea.shown(j.got)} instead of raising it. A returned CannotGrade is a value: the \"\n        f\"caller (`tr grade --judge`) never sees it as an error and reads it as the thesis's result.\"\n    )\n    assert why in str(j.got), (\n        f\"CannotGrade says {fakea.shown(j.got)!r}; it should say why, as label.labelable's refusal does \"\n        f\"({why!r} is in its reason).\"\n    )\n    files = fakea.run_files(j.data_dir)\n    row, scores = fakea.stored(j.conn, j.thesis.thesis_id)\n    assert not j.sent and not files, (\n        f\"On {WHAT[arm]} p1_judge sent {len(j.sent)} request(s) and left {len(files)} run file(s): the refusal comes \"\n        f\"before any call, so a thesis the judge may not take costs nothing.\"\n    )\n    assert row is None and not scores, (\n        f\"The refusal left a verdict row ({None if row is None else row['verdict']!r}) and {len(scores)} p1_judge \"\n        f\"ScoreRecord(s); a thesis that was not judged has no verdict.\"\n    )",
+              "name": "test_a_thesis_the_judge_may_not_take_is_refused_before_any_call"
+            }
+          ],
+          "title": "Refuse before the call: CannotGrade, at no cost",
+          "touches": [
+            {
+              "path": "src/tradingresearch/evals.py",
+              "url": "https://github.com/karthik446/tradingresearch/blob/labs/src/tradingresearch/evals.py"
+            }
+          ],
+          "what_tested": "p1_judge on a closed teacher thesis and a champion thesis that never entered, with a transport that would answer any request: each raises CannotGrade holding label.labelable's whole refusal, with no request, run file or row; a journal read that fails raises its own error, not CannotGrade.",
+          "writes": [
+            "In p1_judge, label.Refused from label.labelable becomes CannotGrade carrying the refusal's message.",
+            "The refusal comes before the call: no request is sent, no run file is written and no row is stored."
+          ]
+        }
+      ],
+      "goal": "Finish p1_judge: keep every call in a run file with what it cost, store the verdict and its ScoreRecord together or not at all, and refuse a thesis the judge may not take before any call. A verdict nobody can trace back to its call cannot be audited.",
+      "id": "w3l3",
+      "page_url": "https://github.com/karthik446/tradingresearch/blob/labs/labs/w3/pages/w3l3.md",
+      "section": [
+        4
+      ],
+      "title": "Keeping what the judge said",
+      "unlock": {
+        "hints": [
+          2,
+          5
+        ],
+        "solution": 10
+      }
+    },
+    {
+      "base": "week-3-start",
+      "exercises": [
+        {
+          "concepts": [
+            "judge-queue"
+          ],
+          "data": [],
+          "effect": "Observe's queue: on a journal of six theses, to_judge goes from all 6 to the 2 graded champion and challenger theses with no verdict, oldest first.",
+          "fail": "FAIL w3l4.1 (try 1): What waits for the judge\n  With a challenger, a champion and a teacher thesis written in that order and closed, to_judge\n  lists ['challenger (written 1st)', 'champion (written 2nd)', 'teacher (written 3rd)']; it should\n  list ['challenger (written 1st)', 'champion (written 2nd)']: graded champion and challenger\n  theses, oldest first (a capped run leaves the newest for the next one). A teacher thesis is never\n  judged.\n  hint 1 unlocks after 2 failed runs; hint 2 unlocks after 5 failed runs; the solution unlocks after\n  10 failed runs or when the check is green\n",
+          "folder": "w3l4.1-what-waits-for-the-judge",
+          "folder_url": "https://github.com/karthik446/tradingresearch/tree/labs/labs/w3/exercises/w3l4.1-what-waits-for-the-judge",
+          "goal": "Write grade.to_judge, the list `tr grade --judge` pays to judge: champion and challenger theses with a Grade and no stored verdict, oldest first, so a capped run leaves the newest for the next and a judged thesis is never paid for twice.",
+          "id": "w3l4.1",
+          "pass": "PASS w3l4.1: What waits for the judge\nobserve: python labs/w3/tools/observe.py grade\n  | queue: grade.to_judge on 6 FAKEA theses, written in this order:\n  |   1st challenger graded, 2nd champion graded, 3rd teacher closed, no grade\n  |   4th champion verdict stored, 5th challenger verdict stored, 6th champion never entered\n  |   lists 2: 1st challenger, 2nd champion\n  | grade.judge, $0.25 cap, replies recorded/no_verdict/failed/recorded: 0 sent, $0.000000 spent\n  |   1st champion   $0.000000  not judged: not judged yet (lab w3l4.2)\n  |   2nd challenger $0.000000  not judged: not judged yet (lab w3l4.2)\n  |   3rd champion   $0.000000  not judged: not judged yet (lab w3l4.2)\n  |   4th challenger $0.000000  not judged: not judged yet (lab w3l4.2)\n  | grade.judge, $0.05 cap, replies recorded: 0 sent, $0.000000 spent\n  |   1st champion   $0.000000  not judged: not judged yet (lab w3l4.2)\n  |   2nd challenger $0.000000  not judged: not judged yet (lab w3l4.2)\n  |   3rd champion   $0.000000  not judged: not judged yet (lab w3l4.2)\n  |   4th challenger $0.000000  not judged: not judged yet (lab w3l4.2)\n  | tr grade --session 2026-11-19 on 2 waiting theses (replies no_verdict, then recorded):\n  |   tr grade: 0 sent, 0 thesis line(s); no judge line\n  |   tr grade --judge --dry-run: 0 sent, 0 thesis line(s); no judge line\n  |   tr grade --judge: 0 sent\n  |     (no judge line)\n  |   tr grade --judge again: 0 sent, 0 thesis line(s); no judge line\n  | The replies are the recording or edits of it: verdicts and a paid call's cost cannot move.\n  | What moves is which theses wait, what each run sends under its cap, and what tr grade prints.\nnext: `tr lab next` commits it and moves on; `tr lab solution` shows the reference to compare\n",
+          "start_code": [
+            {
+              "code": "def to_judge(conn) -> list[Thesis]:\n    \"\"\"Graded champion and challenger theses with no judge verdict yet, oldest first.\"\"\"\n    # TODO(w3l4.1) only the theses the judge may take and has not: a champion or challenger thesis with a Grade (the\n    #   post-trade summary needs it) and no row in judge_verdict yet, oldest first, so a capped run leaves the newest.\n    rows = conn.execute(\"SELECT t.body FROM thesis t ORDER BY t.rowid\")\n    return [Thesis.model_validate_json(body) for (body,) in rows]",
+              "lang": "python",
+              "lines": [
+                378,
+                383
+              ],
+              "path": "src/tradingresearch/grade.py",
+              "url": "https://github.com/karthik446/tradingresearch/blob/week-3-start/src/tradingresearch/grade.py"
+            }
+          ],
+          "test_file": "test_w3l4_1.py",
+          "test_url": "https://github.com/karthik446/tradingresearch/blob/labs/labs/w3/exercises/w3l4.1-what-waits-for-the-judge/test_w3l4_1.py",
+          "tests": [
+            {
+              "code": "def test_graded_champion_and_challenger_theses_wait_oldest_first(tmp_path):\n    from tradingresearch import grade\n\n    for attempt in range(40):  # thesis ids are random: keep the journal whose newer thesis has the smaller id\n        conn, theses, _ = fakea.journal_of(tmp_path / str(attempt), (\"challenger\", \"champion\", \"teacher\"))\n        if theses[0].thesis_id > theses[1].thesis_id:\n            break\n        conn.close()\n    got = labels(grade.to_judge(conn), theses)\n    want = labels(theses[:2], theses)\n    assert got == want, (\n        f\"With a challenger, a champion and a teacher thesis written in that order and closed, to_judge lists {got}; \"\n        f\"it should list {want}: graded champion and challenger theses, oldest first (a capped run leaves the \"\n        f\"newest for the next one). A teacher thesis is never judged.\"\n    )",
+              "name": "test_graded_champion_and_challenger_theses_wait_oldest_first"
+            },
+            {
+              "code": "def test_a_thesis_with_a_verdict_is_not_judged_again(tmp_path):\n    from tradingresearch import grade, journal\n\n    conn, theses, _ = fakea.journal_of(tmp_path, (\"champion\", \"challenger\"))\n    journal.add_judge_verdict(conn, theses[0].thesis_id, \"fail\", \"unknown: the summary cannot tell (stored by hand)\")\n    got = labels(grade.to_judge(conn), theses)\n    want = labels(theses[1:], theses)\n    assert got == want, (\n        f\"With the champion's verdict stored (fail, an unknown) and the challenger's not, to_judge lists {got}; it \"\n        f\"should list {want}. Any stored verdict, pass or fail, means that thesis was judged and paid for once.\"\n    )\n    journal.add_judge_verdict(conn, theses[1].thesis_id, \"pass\", \"the break held (stored by hand)\")\n    got = labels(grade.to_judge(conn), theses)\n    assert got == [], f\"With both verdicts stored, to_judge lists {got}; it should list nothing.\"",
+              "name": "test_a_thesis_with_a_verdict_is_not_judged_again"
+            }
+          ],
+          "title": "What waits for the judge",
+          "touches": [
+            {
+              "path": "src/tradingresearch/grade.py",
+              "url": "https://github.com/karthik446/tradingresearch/blob/week-3-start/src/tradingresearch/grade.py"
+            }
+          ],
+          "what_tested": "to_judge on fresh journals: a challenger, a champion and a teacher thesis give the challenger then the champion; never-entered and closed, ungraded theses give nothing; a stored verdict, fail or pass, takes its thesis off; three theses graded in reverse come back all, in the order written.",
+          "writes": [
+            "The query joins each thesis to its Grade, keeps the champion and challenger arms, and drops a thesis that has any row in judge_verdict.",
+            "The rows come back in the order the theses were written."
+          ]
+        },
+        {
+          "concepts": [
+            "run-cap",
+            "run-file",
+            "call-budget"
+          ],
+          "data": [],
+          "effect": "Observe's judge runs: under $0.25 the four theses go from not judged yet with nothing sent to pass, no verdict and pass at $0.005163 each and the HTTP 400 at $0; under $0.05 two are judged, the third does not fit and the fourth waits for the next run.",
+          "fail": "FAIL w3l4.2 (try 1): One cap for the whole run\n  grade.judge sent no request for 3 waiting theses under a $0.045 cap: ['not judged (not judged yet\n  (lab w3l4.2)), cost $0.000000', 'not judged (not judged yet (lab w3l4.2)), cost $0.000000', 'not\n  judged (not judged yet (lab w3l4.2)), cost $0.000000']. The first call fits the cap (the budget's\n  worst-case estimate is about $0.043), so the first thesis gets judged.\n  hint 1 unlocks after 2 failed runs; hint 2 unlocks after 5 failed runs; the solution unlocks after\n  10 failed runs or when the check is green\n",
+          "folder": "w3l4.2-one-cap-per-run",
+          "folder_url": "https://github.com/karthik446/tradingresearch/tree/labs/labs/w3/exercises/w3l4.2-one-cap-per-run",
+          "goal": "Write the loop of grade.judge: judge each waiting thesis once under what is left of one dollar cap for the whole run, keep why a thesis was not judged without stopping the run, and charge each thesis what its run files say it spent.",
+          "id": "w3l4.2",
+          "pass": "PASS w3l4.2: One cap for the whole run\nobserve: python labs/w3/tools/observe.py grade\n  | queue: grade.to_judge on 6 FAKEA theses, written in this order:\n  |   1st challenger graded, 2nd champion graded, 3rd teacher closed, no grade\n  |   4th champion verdict stored, 5th challenger verdict stored, 6th champion never entered\n  |   lists 2: 1st challenger, 2nd champion\n  | grade.judge, $0.25 cap, replies recorded/no_verdict/failed/recorded: 4 sent, $0.015489 spent\n  |   1st champion   $0.005163  P1 pass\n  |   2nd challenger $0.005163  not judged: CannotGrade: the judge's reply has no pass/fail/unkno…\n  |   3rd champion   $0.000000  not judged: CannotGrade: judge call failed: http_400 (run <data_d…\n  |   4th challenger $0.005163  P1 pass\n  | grade.judge, $0.05 cap, replies recorded: 2 sent, $0.010326 spent\n  |   1st champion   $0.005163  P1 pass\n  |   2nd challenger $0.005163  P1 pass\n  |   3rd champion   $0.000000  not judged: the $0.05 cap cannot cover the call: $0.042966 does n…\n  |   4th challenger $0.000000  not judged: the $0.05 cap is spent; next run\n  | tr grade --session 2026-11-19 on 2 waiting theses (replies no_verdict, then recorded):\n  |   tr grade: 0 sent, 0 thesis line(s); no judge line\n  |   tr grade --judge --dry-run: 0 sent, 0 thesis line(s); no judge line\n  |   tr grade --judge: 0 sent\n  |     (no judge line)\n  |   tr grade --judge again: 0 sent, 0 thesis line(s); no judge line\n  | The replies are the recording or edits of it: verdicts and a paid call's cost cannot move.\n  | What moves is which theses wait, what each run sends under its cap, and what tr grade prints.\nnext: `tr lab next` commits it and moves on; `tr lab solution` shows the reference to compare\n",
+          "start_code": [
+            {
+              "code": "def judge(conn, bars: BarSource | None, provider, *, prices: dict, data_dir: Path, max_usd: float = JUDGE_MAX_USD,\n          dry_run: bool = False) -> list[Judged]:\n    \"\"\"P1 on every thesis `to_judge` lists, one call each, under one cap for the whole run. A thesis that cannot be\n    judged keeps its error and the run goes on; once the cap cannot cover a call, the rest wait for the next run.\n    Cost is each new run file's spent_usd, so a call whose reply held no verdict still counts against the cap.\"\"\"\n    from . import evals  # evals imports label, which imports this module\n\n    out: list[Judged] = []\n    spent, capped = 0.0, False\n    for t in to_judge(conn):\n        if dry_run or capped:\n            out.append(Judged(t, error=f\"the ${max_usd:.2f} cap is spent; next run\" if capped else None))\n            continue\n        before = run_files(data_dir)\n        # TODO(w3l4.2) judge t with evals.p1_judge under what this run's cap has left, and keep its outcome: the\n        #   verdict and reason, or why it was not judged. BudgetExceeded means the cap cannot cover the call: t and\n        #   every later thesis wait for the next run. Any other failure stays on t and the run goes on. The cost is\n        #   what the run files this call added say they spent (trace.header), so a reply with no verdict counts too.\n        out.append(Judged(t, error=\"not judged yet (lab w3l4.2)\"))\n    return out",
+              "lang": "python",
+              "lines": [
+                391,
+                410
+              ],
+              "path": "src/tradingresearch/grade.py",
+              "url": "https://github.com/karthik446/tradingresearch/blob/week-3-start/src/tradingresearch/grade.py"
+            }
+          ],
+          "test_file": "test_w3l4_2.py",
+          "test_url": "https://github.com/karthik446/tradingresearch/blob/labs/labs/w3/exercises/w3l4.2-one-cap-per-run/test_w3l4_2.py",
+          "tests": [
+            {
+              "code": "def test_one_cap_covers_the_whole_run(tmp_path):\n    out, sent, theses = run(tmp_path, (\"recorded\",), max_usd=0.045)\n    assert len(out) == 3 and [j.thesis.thesis_id for j in out] == [t.thesis_id for t in theses], (\n        f\"grade.judge returned {len(out)} outcome(s) for 3 waiting theses: every thesis to_judge lists gets one, \"\n        f\"judged or not, in its order, so `tr grade --judge` can say what happened to each.\"\n    )\n    assert sent, (\n        f\"grade.judge sent no request for 3 waiting theses under a $0.045 cap: {[outcome(j) for j in out]}. The \"\n        f\"first call fits the cap (the budget's worst-case estimate is about $0.043), so the first thesis gets judged.\"\n    )\n    assert len(sent) == 1, (\n        f\"Under a $0.045 cap for the run, grade.judge sent {len(sent)} requests: {[outcome(j) for j in out]}. After \"\n        f\"the first call spent ${PAID}, $0.039837 is left, which cannot cover the budget's estimate of another call's \"\n        f\"worst case (about $0.043): the cap is for the whole run, not for each call.\"\n    )\n    first, second, third = out\n    assert first.verdict == \"pass\" and abs(first.cost_usd - PAID) < 1e-6, (\n        f\"The first thesis: {outcome(first)}; expected P1 pass, cost ${PAID}\"\n    )\n    assert second.verdict is None and \"does not fit\" in str(second.error), (\n        f\"The second thesis: {outcome(second)}; the budget refused its call (BudgetExceeded: its worst-case estimate \"\n        f\"does not fit what is left), and its outcome should say so.\"\n    )\n    assert third.verdict is None and \"next run\" in str(third.error) and third.cost_usd == 0, (\n        f\"The third thesis: {outcome(third)}. Once the cap cannot cover a call, every later thesis waits for the next \"\n        f\"run without trying (the capped branch of the loop).\"\n    )",
+              "name": "test_one_cap_covers_the_whole_run"
+            }
+          ],
+          "title": "One cap for the whole run",
+          "touches": [
+            {
+              "path": "src/tradingresearch/grade.py",
+              "url": "https://github.com/karthik446/tradingresearch/blob/week-3-start/src/tradingresearch/grade.py"
+            }
+          ],
+          "what_tested": "grade.judge on closed theses: under $0.045 one request goes out, the second thesis keeps the budget's refusal at $0 and the third waits; under $0.05 two go out; a no-verdict reply, an HTTP 400 and bars that fail stay on their thesis while the rest are tried; costs are $0.005163, $0 and $0.005163.",
+          "writes": [
+            "Each thesis gets p1_judge with the cap minus what the run has spent so far, and its verdict and reason on success.",
+            "BudgetExceeded marks the run as capped and keeps the refusal on the thesis; any other exception is kept on the thesis and the loop goes on.",
+            "The cost of a thesis is the spent_usd of the run files its call added, and it adds to what the run has spent."
+          ]
+        },
+        {
+          "concepts": [
+            "off-by-default",
+            "run-cap"
+          ],
+          "data": [],
+          "effect": "Observe's tr grade runs: --judge goes from printing nothing to a line per thesis with its cost ($0.005163 each, the no-verdict reply included) and a total of $0.010326, the dry run says it would judge 2, and plain tr grade still sends nothing.",
+          "fail": "FAIL w3l4.3 (try 1): Judge only when asked, and print what it cost\n  `tr grade --judge --dry-run` sent 0 request(s) and printed: (no judge line). A dry run with\n  --judge says what the judge would take (2 theses here) and calls nothing.\n  hint 1 unlocks after 2 failed runs; hint 2 unlocks after 5 failed runs; the solution unlocks after\n  10 failed runs or when the check is green\n",
+          "folder": "w3l4.3-judge-only-when-asked",
+          "folder_url": "https://github.com/karthik446/tradingresearch/tree/labs/labs/w3/exercises/w3l4.3-judge-only-when-asked",
+          "goal": "Wire the judge into `tr grade`: off unless --judge is given (a dry run then lists what it would judge), and every judged or not-judged line shows what its call cost, with the run's total last, to the millionth of a dollar.",
+          "id": "w3l4.3",
+          "pass": "PASS w3l4.3: Judge only when asked, and print what it cost\nobserve: python labs/w3/tools/observe.py grade\n  | queue: grade.to_judge on 6 FAKEA theses, written in this order:\n  |   1st challenger graded, 2nd champion graded, 3rd teacher closed, no grade\n  |   4th champion verdict stored, 5th challenger verdict stored, 6th champion never entered\n  |   lists 2: 1st challenger, 2nd champion\n  | grade.judge, $0.25 cap, replies recorded/no_verdict/failed/recorded: 4 sent, $0.015489 spent\n  |   1st champion   $0.005163  P1 pass\n  |   2nd challenger $0.005163  not judged: CannotGrade: the judge's reply has no pass/fail/unkno…\n  |   3rd champion   $0.000000  not judged: CannotGrade: judge call failed: http_400 (run <data_d…\n  |   4th challenger $0.005163  P1 pass\n  | grade.judge, $0.05 cap, replies recorded: 2 sent, $0.010326 spent\n  |   1st champion   $0.005163  P1 pass\n  |   2nd challenger $0.005163  P1 pass\n  |   3rd champion   $0.000000  not judged: the $0.05 cap cannot cover the call: $0.042966 does n…\n  |   4th challenger $0.000000  not judged: the $0.05 cap is spent; next run\n  | tr grade --session 2026-11-19 on 2 waiting theses (replies no_verdict, then recorded):\n  |   tr grade: 0 sent, 0 thesis line(s); no judge line\n  |   tr grade --judge --dry-run: 0 sent, 2 thesis line(s); judge (dry run): would judge 2 (cap $…\n  |   tr grade --judge: 2 sent\n  |     FAKEA  short th_<id> champion    not judged $0.005163: CannotGrade: the judge's reply has n…\n  |     FAKEA  short th_<id> challenger  P1 pass $0.005163: Both reported closes stayed above the 1…\n  |     judge: 1 judged, 1 not judged, cost $0.010326 (cap $0.25)\n  |   tr grade --judge again: 1 sent, 1 thesis line(s); judge: 1 judged, 0 not judged, cost $0.00…\n  | The replies are the recording or edits of it: verdicts and a paid call's cost cannot move.\n  | What moves is which theses wait, what each run sends under its cap, and what tr grade prints.\nnext: `tr lab next` commits it and moves on; `tr lab solution` shows the reference to compare\n",
+          "start_code": [
+            {
+              "code": "def render_judged(judged: list[Judged], *, dry_run: bool, max_usd: float) -> list[str]:\n    \"\"\"One line per thesis (verdict and cost, or why not judged), then the count and the run's cost in dollars.\"\"\"\n    if not judged:\n        return [\"judge: nothing to judge (no graded champion or challenger thesis without a verdict)\"]\n    # TODO(w3l4.3) each judged or not-judged line shows what its call cost, a call that judged nothing included, and\n    #   the last line what the run cost in all: in dollars to the millionth, as the run files have it (one judge\n    #   call is about half a cent).\n    lines = []\n    for j in judged:\n        head = f\"{j.thesis.ticker:<6} {j.thesis.horizon:<5} {j.thesis.thesis_id} {j.thesis.arm:<10}\"\n        if dry_run:\n            lines.append(f\"{head}  would judge\")\n        elif j.verdict is not None:\n            lines.append(f\"{head}  P1 {j.verdict}: {j.reason}\")\n        else:\n            lines.append(f\"{head}  not judged: {j.error}\")\n    if dry_run:\n        return lines + [f\"judge (dry run): would judge {len(judged)} (cap ${max_usd:.2f}); nothing judged, no call\"]\n    done = sum(j.verdict is not None for j in judged)\n    return lines + [f\"judge: {done} judged, {len(judged) - done} not judged (cap ${max_usd:.2f})\"]",
+              "lang": "python",
+              "lines": [
+                419,
+                438
+              ],
+              "path": "src/tradingresearch/grade.py",
+              "url": "https://github.com/karthik446/tradingresearch/blob/week-3-start/src/tradingresearch/grade.py"
+            },
+            {
+              "code": "def cmd_grade(args, cfg) -> None:\n    day = completed_session(args.session, datetime.now(UTC))\n    conn = journal.connect(cfg.db_path)\n    if all(state == \"PROPOSED\" for _, state in journal.ungraded_theses(conn)):  # nothing filled: no bars to read\n        report = grade.run(conn, None, day, dry_run=args.dry_run)\n    else:\n        with alpaca_client(cfg) as http:\n            bars = reconcile_run.AlpacaBars(http, cfg.data_dir / \"bars_1m\", cfg.feed)\n            report = grade.run(conn, bars, day, dry_run=args.dry_run)\n    print(\"\\n\".join(grade.render(report)))\n    # TODO(w3l4.3) the judge is the one paid step of `tr grade`: it runs only when asked (--judge), a dry run included\n    #   (judge_lines then lists what it would judge and calls nothing).",
+              "lang": "python",
+              "lines": [
+                14,
+                25
+              ],
+              "path": "src/tradingresearch/commands/grade.py",
+              "url": "https://github.com/karthik446/tradingresearch/blob/week-3-start/src/tradingresearch/commands/grade.py"
+            }
+          ],
+          "test_file": "test_w3l4_3.py",
+          "test_url": "https://github.com/karthik446/tradingresearch/blob/labs/labs/w3/exercises/w3l4.3-judge-only-when-asked/test_w3l4_3.py",
+          "tests": [
+            {
+              "code": "def test_tr_grade_calls_the_judge_only_with_judge(tmp_path, monkeypatch):\n    grade, _ = journal(tmp_path)\n    (plain, n_plain), (dry, n_dry), (judge_dry, n_judge_dry) = fakea.cli(\n        monkeypatch, tmp_path, [grade, [*grade, \"--dry-run\"], [*grade, \"--judge\", \"--dry-run\"]])\n    for argv, out, sent in ((\"tr grade\", plain, n_plain), (\"tr grade --dry-run\", dry, n_dry)):\n        assert sent == 0 and not judge_part(out), (\n            f\"`{argv}` sent {sent} judge request(s) and printed: {shown(out)}. The judge is the one paid step of tr \"\n            f\"grade: it runs only with --judge (ADR-003: off by default), and without it there is nothing to show.\"\n        )\n    assert n_judge_dry == 0 and \"would judge 2\" in judge_dry, (\n        f\"`tr grade --judge --dry-run` sent {n_judge_dry} request(s) and printed: {shown(judge_dry)}. A dry run \"\n        f\"with --judge says what the judge would take (2 theses here) and calls nothing.\"\n    )",
+              "name": "test_tr_grade_calls_the_judge_only_with_judge"
+            }
+          ],
+          "title": "Judge only when asked, and print what it cost",
+          "touches": [
+            {
+              "path": "src/tradingresearch/grade.py",
+              "url": "https://github.com/karthik446/tradingresearch/blob/week-3-start/src/tradingresearch/grade.py"
+            },
+            {
+              "path": "src/tradingresearch/commands/grade.py",
+              "url": "https://github.com/karthik446/tradingresearch/blob/week-3-start/src/tradingresearch/commands/grade.py"
+            }
+          ],
+          "what_tested": "The tr CLI on two graded theses: plain tr grade sends nothing, prints no judge line; --judge --dry-run lists 2, sends nothing; --judge grades first, then prints $0.005163 on each line and cost $0.010326; a second run judges only the thesis left without a verdict, a third sends nothing. Made-up costs print as given.",
+          "writes": [
+            "cmd_grade prints judge_lines after the grade report only when the --judge flag is set.",
+            "In render_judged, the verdict line and the not-judged line each show the thesis's cost in dollars with six decimals, and the summary line adds the run's total cost in the same form."
+          ]
+        }
+      ],
+      "goal": "Put the judge into `tr grade`: list the graded theses still waiting for a verdict, judge them in one run under one dollar cap, and run it only when --judge is given, printing what each call and the whole run cost.",
+      "id": "w3l4",
+      "page_url": "https://github.com/karthik446/tradingresearch/blob/labs/labs/w3/pages/w3l4.md",
+      "section": [
+        4
+      ],
+      "title": "Judging in tr grade",
+      "unlock": {
+        "hints": [
+          2,
+          5
+        ],
+        "solution": 10
+      }
+    }
+  ],
+  "lessons_mapped": [
+    "llm-judge"
+  ],
+  "readme_url": "https://github.com/karthik446/tradingresearch/blob/labs/labs/README.md",
+  "session": {
+    "diagram": " tr lab start w3l1     first command of the week: commits the author's code at week-3-start\n         |             as `lab: week 3 base (week-3-start)`, then puts the w3l1.1 stub in place\n         v\n   edit the TODO  <------------------------------------------------+\n         |                                                         |\n         v                                                         |\n tr lab verify  --> FAIL (try N): what the check expected and got -+\n         |\n         v\n   PASS, then labs/w3/tools/observe.py: your reading of the replies, your request, what the judge keeps, or tr grade\n         |\n         v\n tr lab next    commits `lab <id>: green`, puts the next stub in place",
+    "parts": [
+      {
+        "id": "p1",
+        "intro": "A fresh clone of the labs repo, as in weeks 1 and 2. Every command below ran in a scratch clone when this page was built, and the text under it is what it printed; the clone's path shows as <repo> and commit hashes as <sha>. Where you would write the code, the capture applies the reference solution instead, so the steps after it have real output. Nothing in week 3's labs calls a model: the judge's one recorded reply is replayed, for $0.",
+        "steps": [
+          {
+            "explain": "Week 3 starts from the author's code at the tag week-3-start, not from your week-2 code: `start` makes the tree equal to that tag (labs/ and the runner's own files excepted) and commits it. Your week-2 commits stay in the history of `lab`, under the base commit. If the tag is missing, `git fetch --tags` gets it; if pyproject.toml or uv.lock change, `start` tells you to run `uv sync`.",
+            "output": "week 3 starts from the author's code at week-3-start: 155 files changed, committed as `lab: week 3 base (week-3-start)`\nyour earlier commits stay in the history of `lab`\nstarted lab w3l1 (Reading the verdict) on branch `lab`; read labs/w3/pages/w3l1.md\nexercise w3l1.1: Read the verdict from the last JSON object in the reply\nedit: src/tradingresearch/evals.py (look for TODO(w3l1.1))\nthen: tr lab verify\n",
+            "shown": ".venv/bin/tr lab start w3l1",
+            "title": "Start the week"
+          },
+          {
+            "explain": "The base is one commit on `lab`. The stub is not part of it: src/tradingresearch/evals.py exists at week-3-start with the draft P1 judge of week 2, so the w3l1.1 stub shows as a change to it. The stub brings in the week's evals.py with p1_verdict cut down to a `TODO(w3l1.1)` and a placeholder return.",
+            "output": "lab\n M src/tradingresearch/evals.py\n<sha> lab: week 3 base (week-3-start)\n<sha> the repo as you cloned it (capture scratch copy)\n",
+            "shown": "git branch --show-current; git status --short; git log --oneline -3",
+            "title": "Where you are: branch, changed files, commits"
+          },
+          {
+            "explain": "The stub's p1_verdict returns a fail with no reason for every reply, so the first check fails on the one judge reply recorded from a real model, which says pass. The message shows the reply's last line and what the rubric reads there.",
+            "output": "FAIL w3l1.1 (try 1): Read the verdict from the last JSON object in the reply\n  The one recorded judge reply (run_54953ec7ce484649) thinks aloud, then ends with\n  '{\"verdict\":\"pass\",\"explanation\":\"Both reported closes stayed above the 100.5 congestion to'...;\n  p1_verdict returned ('fail', ''). The verdict is that object's \"verdict\", the reason its\n  \"explanation\".\n  hint 1 unlocks after 2 failed runs; hint 2 unlocks after 5 failed runs; the solution unlocks after\n  10 failed runs or when the check is green\n",
+            "shown": ".venv/bin/tr lab verify",
+            "title": "Verify the stub: FAIL"
+          },
+          {
+            "explain": "Here you write the part of p1_verdict the `TODO(w3l1.1)` comment describes: the verdict and the explanation from the last JSON object in the reply. The capture applies the reference solution instead.",
+            "output": null,
+            "shown": null,
+            "title": "Write the reader"
+          },
+          {
+            "explain": "PASS, then the observe command of lab w3l1, `python labs/w3/tools/observe.py verdicts`. It runs your p1_verdict on every reply in labs/w3/data/replies.json: the one recorded reply and 25 shapes, each with the exercise whose rule decides it. The w3l1.1 rows now all read 1. The unknown and no-verdict rows still read 0, with the rubric's reading under each: they wait for w3l1.2 and w3l1.3.",
+            "output": "PASS w3l1.1: Read the verdict from the last JSON object in the reply\nobserve: python labs/w3/tools/observe.py verdicts\n  |   reply                   ex      ok  yours -> the rubric's reading\n  |   recorded                w3l1.1  1   ('pass', 'Both reported closes stayed above the 100.5\n  | congestion top …\n  |   pass                    w3l1.1  1   ('pass', 'the level held on every close')\n  |   last_json_wins          w3l1.1  1   ('fail', 'closes fell back below the level')\n  |   nested_object           w3l1.1  1   ('pass', 'both closes held above 100.5')\n  |   quoted_words            w3l1.1  1   ('pass', 'the \"break above 100.5\" held on 2 of 2 closes')\n  |   fenced_block            w3l1.1  1   ('fail', 'a close fell back below 100.5')\n  |   no_explanation          w3l1.1  1   ('fail', '')\n  |   null_explanation        w3l1.1  1   ('pass', '')\n  |   list_explanation        w3l1.1  1   ('pass', '')\n  |   fail_unknown_kept       w3l1.2  1   ('fail', 'unknown: short covering is not measured')\n  |   unknown_becomes_fail    w3l1.2  0   ('unknown', 'the summary does not measure sector\n  | rotation')\n  |                                        the rubric: ('fail', 'unknown: the summary does not\n  | measure sector rotation')\n  |   unknown_prefixed        w3l1.2  0   ('unknown', 'unknown: the summary does not measure the CPI\n  | reaction')\n  |                                        the rubric: ('fail', 'unknown: the summary does not\n  | measure the CPI reaction')\n  |   unknown_bare            w3l1.2  0   ('unknown', '')\n  |                                        the rubric: ('fail', 'unknown: ')\n  |   unknown_tight_prefix    w3l1.2  0   ('unknown', 'unknown:the summary has no volume')\n  |                                        the rubric: ('fail', 'unknown:the summary has no volume')\n  |   unknown_capital_prefix  w3l1.2  0   ('unknown', 'Unknown: the summary does not measure the gap\n  | fill')\n  |                                        the rubric: ('fail', 'unknown: Unknown: the summary does\n  | not measure the gap fill…\n  |   pass_mentions_unknown   w3l1.2  1   ('pass', 'both closes held above 100.5')\n  |   no_json                 w3l1.3  0   (None, '')\n  |                                        the rubric: 'CannotGrade'\n  |   no_verdict              w3l1.3  0   (None, '')\n  |                                        the rubric: 'CannotGrade'\n  |   maybe                   w3l1.3  0   ('maybe', 'one close held, one did not')\n  |                                        the rubric: 'CannotGrade'\n  |   capitalised             w3l1.3  0   ('Pass', 'the level held on every close')\n[... 17 more lines not shown]\n",
+            "shown": ".venv/bin/tr lab verify",
+            "title": "Verify again: PASS"
+          },
+          {
+            "explain": "`next` re-runs the check, commits your file as `lab w3l1.1: green` and puts the w3l1.2 stub in place: evals.py with the reference reader in it. Here that equals the file just committed, so nothing changes. Had you written the reader differently, the stub would replace your file and `next` would name the copy it kept in .tr-lab/backup/.",
+            "output": "committed `lab w3l1.1: green`: src/tradingresearch/evals.py\nexercise w3l1.2: Store unknown as an abstain: fail with unknown:\nedit: src/tradingresearch/evals.py (look for TODO(w3l1.2))\nthen: tr lab verify\n",
+            "shown": ".venv/bin/tr lab next",
+            "title": "Move on"
+          },
+          {
+            "explain": "Your green commit sits on the base commit, and the base on the repo you cloned. What week 3 adds to the loop of weeks 1 and 2 is the base commit and a data file of judge replies; the rest of the week's labs run the same way, and the w3l2 exercises compare the request your p1_judge sends with the recorded one.",
+            "output": "<sha> lab w3l1.1: green\n<sha> lab: week 3 base (week-3-start)\n<sha> the repo as you cloned it (capture scratch copy)\n",
+            "shown": "git log --oneline -3; git status --short",
+            "title": "The commit"
+          }
+        ],
+        "title": "The start of week 3: the base commit and exercise w3l1.1"
+      }
+    ]
+  },
+  "week": 3
+}

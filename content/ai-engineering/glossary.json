@@ -20,6 +20,20 @@
       ]
     },
     {
+      "id": "abstain",
+      "term": "Abstain",
+      "aliases": [
+        "abstains",
+        "abstained"
+      ],
+      "definition": "The judge's honest \"unknown\", for when the evidence cannot decide. The verdict type is binary, so in week 3 an abstain is stored as fail with an explanation that starts unknown:, and that prefix lets the agreement check leave abstains out of Cohen's kappa and count them instead.",
+      "see": [
+        "llm-judge",
+        "cohens-kappa",
+        "cannotgrade"
+      ]
+    },
+    {
       "id": "adr",
       "term": "ADR",
       "aliases": [],
@@ -176,6 +190,31 @@
       "see": [
         "prompt-caching"
       ]
+    },
+    {
+      "id": "call-budget",
+      "term": "Call budget",
+      "aliases": [
+        "call budgets"
+      ],
+      "definition": "The two limits on one judge call in week 3. Output tokens: ADR-003 sets 4000, about eight times what a trade is expected to take, so a runaway reply stops but a long reasoning still reaches its verdict. Dollars: before sending, the budget estimates the call's worst case from the model's price row and raises BudgetExceeded if it does not fit, so nothing is sent and nothing is spent.",
+      "see": [
+        "run-cap",
+        "llm-judge"
+      ]
+    },
+    {
+      "id": "cannotgrade",
+      "term": "CannotGrade",
+      "aliases": [],
+      "definition": "gigai-core's exception for \"there is no score to store\". A grader raises it instead of recording a fail: for output that did not parse (week 1), a judge reply with no usable verdict or a thesis the judge may not take (week 3), or a section no claim cites (week 5). Nothing is stored. It is not a fail and not an abstain, and a call that was made is still paid for.",
+      "example": "A judge reply with no JSON object raises CannotGrade naming what was missing, and the trade gets no verdict.",
+      "see": [
+        "abstain",
+        "refusal",
+        "grader"
+      ],
+      "case": true
     },
     {
       "id": "cascade",
@@ -535,6 +574,16 @@
       "everyday_word": true
     },
     {
+      "id": "evidence-not-bars",
+      "term": "Evidence, not bars",
+      "aliases": [],
+      "definition": "The week-3 rule for what the P1 judge sees: the claims the thesis cited and the post-trade summary that code wrote from the bars, the same lines tr label show gives you. The price bars themselves stay out, because with the whole price path the judge could grade by what happened afterwards, which the rubric forbids as hindsight.",
+      "see": [
+        "p1",
+        "judge-prompt"
+      ]
+    },
+    {
       "id": "failure-taxonomy",
       "term": "Failure taxonomy",
       "aliases": [
@@ -731,6 +780,29 @@
         "ticker"
       ],
       "case": true
+    },
+    {
+      "id": "judge-prompt",
+      "term": "Judge prompt",
+      "aliases": [
+        "judge prompts"
+      ],
+      "definition": "The frame file that wraps the P1 rubric (evals/rubrics/p1_judge_prompt.txt, written in week 2): what the judge decides, what its INPUT and OUTPUT blocks hold, and the place where the rubric goes. For P1, INPUT is the evidence and OUTPUT is the thesis, one labelled line each for prediction, reason and invalidation text.",
+      "see": [
+        "p1",
+        "verdict-format",
+        "evidence-not-bars"
+      ]
+    },
+    {
+      "id": "judge-queue",
+      "term": "Judge queue",
+      "aliases": [],
+      "definition": "The theses a tr grade --judge run takes: champion and challenger theses that have a Grade and no verdict yet, oldest first. Teacher theses never wait, a thesis is never judged twice, and when the run cap runs out the newest theses are the ones left for the next run.",
+      "see": [
+        "run-cap",
+        "champion-challenger"
+      ]
     },
     {
       "id": "judge-validation",
@@ -1001,6 +1073,16 @@
       "case": true
     },
     {
+      "id": "off-by-default",
+      "term": "Off by default",
+      "aliases": [],
+      "definition": "The week-3 rule that the one paid step of tr grade, the P1 judge, runs only when asked with --judge. Plain tr grade never calls a model; tr grade --judge prints what each call cost and the run's total, and --dry-run lists what it would judge and calls nothing.",
+      "see": [
+        "run-cap",
+        "llm-judge"
+      ]
+    },
+    {
       "id": "open-coding",
       "term": "Open coding",
       "aliases": [],
@@ -1265,6 +1347,19 @@
       ]
     },
     {
+      "id": "refusal",
+      "term": "Refusal",
+      "aliases": [
+        "refusals"
+      ],
+      "definition": "A deliberate no in place of an answer, a call or a result. A model can refuse a request; this repo records that as the answer and never sends it to a fallback model (weeks 7-8). A budget refuses a call it cannot afford with BudgetExceeded, so nothing is sent. A command refuses input it should not act on and says why. In the week-3 labs, p1_judge refuses a teacher thesis or one tr grade has not graded, raising CannotGrade before any request: no call, no run file, $0.",
+      "see": [
+        "cannotgrade",
+        "call-budget",
+        "fallback-model"
+      ]
+    },
+    {
       "id": "registry",
       "term": "Registry",
       "aliases": [
@@ -1286,6 +1381,17 @@
       "see": [
         "bar",
         "breakout"
+      ]
+    },
+    {
+      "id": "replayed-reply",
+      "term": "Replayed reply",
+      "aliases": [
+        "replayed replies"
+      ],
+      "definition": "A model reply recorded once and served back to every request by a swapped HTTP transport, so a lab runs offline at $0. It cannot react to what you send (it says pass to an empty prompt too), so it is evidence about your code only when your request equals the one that produced it.",
+      "see": [
+        "run-file"
       ]
     },
     {
@@ -1315,6 +1421,29 @@
       "example": "0 clean headlines flagged in 61: the true rate of false flags could still be up to about 3/61, about 5%."
     },
     {
+      "id": "run-cap",
+      "term": "Run cap",
+      "aliases": [],
+      "definition": "One dollar cap for a whole tr grade --judge run ($0.25), not one per call. Each thesis is charged what its call's run file says it spent, a reply with no verdict included. When the call budget refuses the next call, that thesis and every later one wait for the next run.",
+      "see": [
+        "call-budget",
+        "judge-queue",
+        "run-file"
+      ]
+    },
+    {
+      "id": "run-file",
+      "term": "Run file",
+      "aliases": [
+        "run files"
+      ],
+      "definition": "The file a run writes under data_dir/runs, holding each prompt and reply as sent and, in its header, what the calls cost. It is the only record of what a call cost: tr usage reads it, and a failed call gets one too, so a call with no run file was paid for and never counted.",
+      "see": [
+        "trace",
+        "replayed-reply"
+      ]
+    },
+    {
       "id": "scope",
       "term": "Scope",
       "aliases": [
@@ -1323,6 +1452,18 @@
       ],
       "definition": "A one-page statement of a system's user, job, what is out of scope, and its quality and cost bars.",
       "everyday_word": true
+    },
+    {
+      "id": "score-record",
+      "term": "Score record",
+      "aliases": [
+        "score records"
+      ],
+      "definition": "The stored form of a grader's Score: the grader's id and version, the judge model, the prompt's sha256, the sample's trace and the ids of its model spans, so a stored verdict leads back to the call that made it. In week 3 the record and its verdict row are written in one transaction, or neither is and the thesis is judged again next run.",
+      "see": [
+        "grader",
+        "trace"
+      ]
     },
     {
       "id": "sec",
@@ -1630,6 +1771,16 @@
       "case": true
     },
     {
+      "id": "verdict-format",
+      "term": "Verdict format",
+      "aliases": [],
+      "definition": "The last section of the P1 rubric: reason first, then end the reply with one JSON object on its own line, {\"verdict\": \"pass\", \"explanation\": \"one sentence\"}, with exactly those keys and the verdict in lower case. The reader takes the last JSON object in the reply, because the reasoning may quote the format example or try a draft verdict first.",
+      "see": [
+        "judge-prompt",
+        "llm-judge"
+      ]
+    },
+    {
       "id": "wilcoxon-signed-rank-test",
       "term": "Wilcoxon signed-rank test",
       "aliases": [
@@ -1844,6 +1995,10 @@
     {
       "token": "cluster_id",
       "why": "A field or column name in a stored record, config or API reply, quoted as written; the sentence around it says what it holds."
+    },
+    {
+      "token": "cmd_grade",
+      "why": "The name of a function a lab exercise asks you to write; the exercise's goal says what it does."
     },
     {
       "token": "CME295",
@@ -2070,6 +2225,10 @@
       "why": "A general computing abbreviation or program name used with its everyday meaning, not specific to this track."
     },
     {
+      "token": "http_400",
+      "why": "An error code, refusal reason or failure-class name a checker prints, quoted as written; the table or sentence where it appears defines it."
+    },
+    {
       "token": "in_flight_budget_exhausted",
       "why": "An error code, refusal reason or failure-class name a checker prints, quoted as written; the table or sentence where it appears defines it."
     },
@@ -2114,6 +2273,10 @@
       "why": "An error code, refusal reason or failure-class name a checker prints, quoted as written; the table or sentence where it appears defines it."
     },
     {
+      "token": "invalidation_text",
+      "why": "A field or column name in a stored record, config or API reply, quoted as written; the sentence around it says what it holds."
+    },
+    {
       "token": "item_for",
       "why": "A function, method, module or table name in the tradingresearch repo, in code font beside the file that holds it; the sentence around it says what it does."
     },
@@ -2130,8 +2293,24 @@
       "why": "A function, method, module or table name in the tradingresearch repo, in code font beside the file that holds it; the sentence around it says what it does."
     },
     {
+      "token": "judge_lines",
+      "why": "The name of a function a lab exercise asks you to write; the exercise's goal says what it does."
+    },
+    {
+      "token": "JUDGE_MAX_TOKENS",
+      "why": "ADR-003's constant for the judge reply's output-token bound (4000), quoted as written. Call budget explains it."
+    },
+    {
       "token": "judge_run",
       "why": "A function, method, module or table name in the tradingresearch repo, in code font beside the file that holds it; the sentence around it says what it does."
+    },
+    {
+      "token": "judge_verdict",
+      "why": "A function, method, module or table name in the tradingresearch repo, in code font beside the file that holds it; the sentence around it says what it does."
+    },
+    {
+      "token": "judged_sample",
+      "why": "The name of a function a lab exercise asks you to write; the exercise's goal says what it does."
     },
     {
       "token": "judgement_in_fact",
@@ -2184,6 +2363,10 @@
     {
       "token": "max_turns",
       "why": "A field or column name in a stored record, config or API reply, quoted as written; the sentence around it says what it holds."
+    },
+    {
+      "token": "max_usd",
+      "why": "A keyword argument of the week-3 judge functions: the most the call or run may spend, in dollars. Call budget and Run cap explain it."
     },
     {
       "token": "max_usd_per_arm",
@@ -2402,6 +2585,10 @@
       "why": "A field or column name in a stored record, config or API reply, quoted as written; the sentence around it says what it holds."
     },
     {
+      "token": "render_judged",
+      "why": "The name of a function a lab exercise asks you to write; the exercise's goal says what it does."
+    },
+    {
       "token": "repeated_call",
       "why": "An error code, refusal reason or failure-class name a checker prints, quoted as written; the table or sentence where it appears defines it."
     },
@@ -2452,6 +2639,10 @@
     {
       "token": "rule_targets",
       "why": "The name of a function a lab exercise asks you to write; the exercise's goal says what it does."
+    },
+    {
+      "token": "run_eval",
+      "why": "gigai-core's function that runs a dataset through a provider and traces each call; the lab text names it where p1_judge calls it."
     },
     {
       "token": "run_id",
@@ -2518,6 +2709,10 @@
       "why": "An organization, standard or model publisher named beside a link to its own page."
     },
     {
+      "token": "spent_usd",
+      "why": "A field or column name in a stored record, config or API reply, quoted as written; the sentence around it says what it holds."
+    },
+    {
       "token": "split_id",
       "why": "A field or column name in a stored record, config or API reply, quoted as written; the sentence around it says what it holds."
     },
@@ -2563,6 +2758,10 @@
     },
     {
       "token": "thesis_rules",
+      "why": "A function, method, module or table name in the tradingresearch repo, in code font beside the file that holds it; the sentence around it says what it does."
+    },
+    {
+      "token": "to_judge",
       "why": "A function, method, module or table name in the tradingresearch repo, in code font beside the file that holds it; the sentence around it says what it does."
     },
     {

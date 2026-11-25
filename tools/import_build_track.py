@@ -49,7 +49,7 @@ def main() -> int:
                 problems.append(f"missing copy: {d.relative_to(ROOT)}")
             elif s.read_bytes() != d.read_bytes():
                 problems.append(f"differs from source: {name}")
-        extra = sorted(p.name for p in DEST.glob("*") if p.name not in FILES and not (p.name == "labs" and p.is_dir())) if DEST.is_dir() else []
+        extra = sorted(p.name for p in DEST.glob("*") if p.name not in FILES and p.name != "glossary.json" and not (p.name == "labs" and p.is_dir())) if DEST.is_dir() else []
         problems += [f"unexpected file in {DEST.relative_to(ROOT)}: {n}" for n in extra]
     for p in problems:
         print(p, file=sys.stderr)
