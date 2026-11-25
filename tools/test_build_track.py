@@ -197,7 +197,7 @@ def test_labs_pages() -> None:
     gloss = build.load_glossary(content)
     doc = track["week-1.md"].labs
     check(doc is not None and [lab["id"] for lab in doc["labs"]] == ["w1l1", "w1l2", "w1l3", "w1l4"], "week 1 labs not loaded")
-    check(all(p.labs is None for n, p in track.items() if n not in ("week-1.md", "week-2.md", "week-3.md", "week-4.md")), "labs attached to a page other than weeks 1 to 4")
+    check(all(p.labs is None for n, p in track.items() if n not in ("week-1.md", "week-2.md", "week-3.md", "week-4.md", "week-5.md")), "labs attached to a page other than weeks 1 to 5")
     doc2 = track["week-2.md"].labs
     check(doc2 is not None and [lab["id"] for lab in doc2["labs"]] == ["w2l1", "w2l2", "w2l3", "w2l4"], "week 2 labs not loaded")
     all_pages = build.labs_pages(content, track)
@@ -217,6 +217,11 @@ def test_labs_pages() -> None:
     base4 = "/learn/ai-engineering/week-4/labs/"
     pages4 = [p for p in all_pages if "/week-4/" in p.url]
     check([p.url for p in pages4] == [base4] + [f"{base4}w4l{n}/" for n in range(1, 5)], f"week 4 labs urls {[p.url for p in pages4]}")
+    doc5 = track["week-5.md"].labs
+    check(doc5 is not None and [lab["id"] for lab in doc5["labs"]] == ["w5l1", "w5l2", "w5l3", "w5l4"], "week 5 labs not loaded")
+    base5 = "/learn/ai-engineering/week-5/labs/"
+    pages5 = [p for p in all_pages if "/week-5/" in p.url]
+    check([p.url for p in pages5] == [base5] + [f"{base5}w5l{n}/" for n in range(1, 5)], f"week 5 labs urls {[p.url for p in pages5]}")
     rendered = {}
     for p in pages:
         url, html_text = build.render_labs_page(track, p, site, gloss)
@@ -250,7 +255,9 @@ def test_labs_pages() -> None:
     check(week3.count("Labs for this week</h2>") == 1 and f'href="{base3}w3l4/"' in week3, "week 3 has no labs table with its links")
     week4 = build.render_build_track_page(content, track, track["week-4.md"], site, gloss)[1].split("<main", 1)[1]
     check(week4.count("Labs for this week</h2>") == 1 and f'href="{base4}w4l4/"' in week4, "week 4 has no labs table with its links")
-    check(f'<p><strong>Labs: optional, $0.</strong> <a href="{base}">Week 1</a>, <a href="{base2}">Week 2</a>, <a href="{base3}">Week 3</a>, <a href="{base4}">Week 4</a></p>' in overview, "overview lacks the labs line")
+    week5 = build.render_build_track_page(content, track, track["week-5.md"], site, gloss)[1].split("<main", 1)[1]
+    check(week5.count("Labs for this week</h2>") == 1 and f'href="{base5}w5l4/"' in week5, "week 5 has no labs table with its links")
+    check(f'<p><strong>Labs: optional, $0.</strong> <a href="{base}">Week 1</a>, <a href="{base2}">Week 2</a>, <a href="{base3}">Week 3</a>, <a href="{base4}">Week 4</a>, <a href="{base5}">Week 5</a></p>' in overview, "overview lacks the labs line")
     check(overview.find("Labs: optional") > overview.find('<blockquote class="disclaimer">'), "overview labs line before the disclaimer")
     w1l2 = rendered[f"{base}w1l2/"].split("<main data-pagefind-body", 1)[1]
     check('<h2 id="exercises">' not in w1l2 and "What you observe when green</th>" not in w1l2, "w1l2 still has the thin exercises table")
