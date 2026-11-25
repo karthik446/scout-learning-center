@@ -458,6 +458,9 @@ def main() -> int:
         DEST.mkdir(parents=True, exist_ok=True)
         dest.write_text(text, encoding="utf-8")
         print(f"wrote {dest.relative_to(ROOT)}")
+        label = f"{scan.BUILD_TRACK_DIR}/{scan.LABS_DIR}/{dest.name} ("
+        for p in (p for p in scan.glossary_checks(ROOT / "content") if p.startswith(label)):
+            print(f"glossary: {p}")   # each line ends "add it to content/ai-engineering/glossary.json terms, or to not_terms with a why"
         return 0
     if not dest.is_file():
         print(f"missing: {dest.relative_to(ROOT)}", file=sys.stderr)

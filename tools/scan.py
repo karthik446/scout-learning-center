@@ -724,6 +724,8 @@ def validate(docs: dict) -> list[str]:
     for rel, doc in docs.items():
         if rel.startswith(f"{BUILD_TRACK_DIR.as_posix()}/{LABS_DIR}/"):   # the track's labs JSON: labs_checks
             continue
+        if rel == f"{BUILD_TRACK_DIR.as_posix()}/{GLOSSARY_FILE}":   # the track's glossary: glossary_checks
+            continue
         kind = kind_of(rel)
         if kind is None:
             out.append(f"{rel}: not a known content file")
@@ -1264,8 +1266,10 @@ def build_track_checks(content: Path) -> list[str]:
     if not folder.is_dir():
         return [f"{BUILD_TRACK_DIR}: folder is missing"]
     problems: list[str] = []
-    # labs/ holds the generated labs JSON (labs_checks); everything else must be one of the 12 copies
-    present = sorted(p.name for p in folder.iterdir() if not p.name.startswith(".") and not (p.name == LABS_DIR and p.is_dir()))
+    # labs/ holds the generated labs JSON (labs_checks) and glossary.json the hand-written glossary (glossary_checks);
+    # everything else must be one of the 12 copies
+    present = sorted(p.name for p in folder.iterdir()
+                     if not p.name.startswith(".") and not (p.name == LABS_DIR and p.is_dir()) and p.name != GLOSSARY_FILE)
     problems += [f"{BUILD_TRACK_DIR}/{n}: missing" for n in BUILD_TRACK_FILES if n not in present]
     problems += [f"{BUILD_TRACK_DIR}/{n}: not one of the 12 AI engineering track files" for n in present if n not in BUILD_TRACK_FILES]
     pages: dict[str, mdlite.Rendered] = {}
@@ -1623,6 +1627,193 @@ def labs_doc_problems(label: str, week: int, doc, content: Path, mdlite) -> list
     return problems
 
 
+# --- the glossary of the track: content/ai-engineering/glossary.json (hand-written; build.py renders it at
+# /learn/ai-engineering/glossary/ and links each term's first use on a week page and on a labs page) ---------------------
+# Each entry: id (kebab), term, aliases, a one-to-three-sentence definition, optional example, see (other ids), case
+# (true: link only the exact case, for acronyms), everyday_word (true: the term is also a common English word, so a week
+# page links only its aliases; a lab page, where the trading sense dominates, links the word too) and not_in (phrases,
+# any case, inside which a use is another sense and is not linked: "can trace to"). Every term the chapters and labs use
+# is defined or set aside in not_terms with a reason. The candidates, from the prose of content/ai-engineering/*.md
+# (outside fenced code, link targets dropped) and the prose fields of labs/week-N.json: a code span that is one
+# identifier with an underscore or a digit suffix (`sma_200`, `p95`), a snake_case name written bare (sma_200), an
+# ALLCAPS word of 2-6 letters outside code (ATR), its plural (ATRs, checked as ATR), capitals with a number (ATR14, P5),
+# and every lab concept's term. One passes as a term or an alias (any case), a not_terms token (any case) or a full
+# match of a not_terms pattern; a not_terms entry that no candidate uses is stale and fails too.
+GLOSSARY_FILE = "glossary.json"
+GLOSSARY_FIX = "add it to content/ai-engineering/glossary.json terms, or to not_terms with a why"
+GLOSSARY_TERM = {"id": str, "term": str, "aliases": [str], "definition": str, "example?": str, "see?": [str],
+                 "case?": bool, "everyday_word?": bool, "not_in?": [str]}
+GLOSSARY_TERM_KEYS = {k.rstrip("?") for k in GLOSSARY_TERM}
+GLOSSARY_NOT_TERM = ({"token": str, "why": str}, {"pattern": str, "why": str})
+GLOSSARY_ID = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+GLOSSARY_PROSE_KEYS = frozenset({"title", "goal", "effect", "what_tested", "writes", "term", "meaning", "intro", "explain"})
+GLOSSARY_FENCE = re.compile(r"^\s*(?:```|~~~)")
+GLOSSARY_CODE_SPAN = re.compile(r"`([^`\n]+)`")
+GLOSSARY_LINK_DEST = re.compile(r"\]\([^)\s]*\)|<https://[^>\s]*>")
+GLOSSARY_CODE_IDENT = re.compile(r"[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+|[A-Za-z]+[0-9]+")
+GLOSSARY_BARE_IDENT = re.compile(r"(?<![\w/.<>@$\\-])[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+(?![\w/(<>-]|\.\w)")
+GLOSSARY_CAPS = re.compile(r"(?<!\w)[A-Z]{2,6}(?!\w|\.[A-Za-z])")
+GLOSSARY_CAPS_PLURAL = re.compile(r"(?<!\w)([A-Z]{2,6})s(?!\w|\.[A-Za-z])")
+GLOSSARY_CAPS_NUMBER = re.compile(r"(?<![\w/.<>@$\\-])[A-Z]{1,6}[0-9]+(?![\w-]|\.\w)")
+
+
+def glossary_prose_lines(text: str):
+    """(line number, line) of Markdown outside fenced code blocks, link targets dropped."""
+    fenced = False
+    for n, line in enumerate(text.split("\n"), 1):
+        if GLOSSARY_FENCE.match(line):
+            fenced = not fenced
+        elif not fenced:
+            yield n, GLOSSARY_LINK_DEST.sub("]", line)
+
+
+def glossary_candidates(content: Path) -> dict[str, dict[str, tuple[str, str, str]]]:
+    """{file label: {casefolded candidate: (the candidate, as first written, where)}} over the chapters and the labs
+    JSON. A plural ALLCAPS word is the candidate of its singular; where is `line N`, or the JSON path of a labs field
+    with the lab and exercise ids (`labs[w1l3].exercises[w1l3.5].goal`)."""
+    folder = content / BUILD_TRACK_DIR
+    out: dict[str, dict[str, tuple[str, str, str]]] = {}
+
+    def prose(label: str, text: str, where: str | None) -> None:
+        found = out.setdefault(label, {})
+        for n, line in glossary_prose_lines(text):
+            at = where or f"line {n}"
+            for m in GLOSSARY_CODE_SPAN.finditer(line):
+                if GLOSSARY_CODE_IDENT.fullmatch(m.group(1).strip()):
+                    found.setdefault(m.group(1).strip().casefold(), (m.group(1).strip(), m.group(1).strip(), at))
+            rest = LABS_MD_ESCAPE.sub(r"\1", GLOSSARY_CODE_SPAN.sub(" ", line))
+            for rx in (GLOSSARY_BARE_IDENT, GLOSSARY_CAPS, GLOSSARY_CAPS_NUMBER):
+                for m in rx.finditer(rest):
+                    found.setdefault(m.group(0).casefold(), (m.group(0), m.group(0), at))
+            for m in GLOSSARY_CAPS_PLURAL.finditer(rest):
+                found.setdefault(m.group(1).casefold(), (m.group(1), m.group(0), at))
+
+    def strings(obj, path: str, key=None):
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                yield from strings(v, f"{path}.{k}" if path else k, k)
+        elif isinstance(obj, list):
+            for i, v in enumerate(obj):
+                ident = v.get("id") if isinstance(v, dict) else None
+                yield from strings(v, f"{path}[{ident if isinstance(ident, str) else i}]", key)
+        elif isinstance(obj, str) and key in GLOSSARY_PROSE_KEYS:
+            yield key, path, obj
+
+    for path in sorted(folder.glob("*.md")):
+        prose(f"{BUILD_TRACK_DIR}/{path.name}", path.read_text(encoding="utf-8"), None)
+    for path in sorted((folder / LABS_DIR).glob("week-*.json")):
+        label = f"{BUILD_TRACK_DIR}/{LABS_DIR}/{path.name}"
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue   # labs_checks reports it
+        for key, where, text in strings(doc, ""):
+            prose(label, text, where)
+            if key == "term":
+                out[label].setdefault(text.strip().casefold(), (text.strip(), text.strip(), where))
+    return out
+
+
+GLOSSARY_ALIAS_GLYPHS = {0x3BA: None}   # kappa: an alias matches the chapters' spelling (Cohen's kappa as a Greek letter); mdlite.esc writes it as &#x3BA;
+
+
+def glossary_alias_text(where: str, text: str) -> str:
+    """The text the public-text rules see: an alias without the chapter letters it may hold."""
+    return text.translate(GLOSSARY_ALIAS_GLYPHS) if ".aliases[" in where else text
+
+
+def glossary_doc_problems(label: str, doc) -> list[str]:
+    """The glossary file itself: shape, ids, alphabetical order, one entry per phrase, reasons, public text."""
+    errs: list[str] = []
+    _t({"terms": [GLOSSARY_TERM], "not_terms": [GLOSSARY_NOT_TERM]}, doc, "$", errs)
+    if errs:
+        return [f"{label}: {e}" for e in errs]
+    problems = [f"{label}: unknown top-level key {k!r}" for k in sorted(set(doc) - {"terms", "not_terms"})]
+    problems += public_checks(label, doc)
+    problems += [p for where, _, v in walk(doc) if isinstance(v, str)
+                 for p in track_text_problems(f"{label}: {where}", glossary_alias_text(where, v))]
+    terms, ids, phrases = doc["terms"], set(), {}
+    for i, t in enumerate(terms):
+        where = f"{label}: terms[{i}] {t['term']!r}"
+        problems += [f"{where}: unknown key {k!r}" for k in sorted(set(t) - GLOSSARY_TERM_KEYS)]
+        if not GLOSSARY_ID.match(t["id"]):
+            problems.append(f"{where}: id {t['id']!r} is not kebab-case")
+        if t["id"] in ids:
+            problems.append(f"{where}: duplicate id {t['id']!r}")
+        ids.add(t["id"])
+        if not re.match(r"[A-Za-z]", t["term"]):
+            problems.append(f"{where}: a term starts with a letter (the A-Z list)")
+        if not t["definition"].strip() or not t.get("example", "x").strip():
+            problems.append(f"{where}: empty definition or example")
+        if t.get("everyday_word") and not t["aliases"]:
+            problems.append(f"{where}: an everyday word links only through its aliases, and it has none")
+        for ph in (t["term"], *t["aliases"]):
+            if not ph.strip() or ph != ph.strip():
+                problems.append(f"{where}: empty or padded phrase {ph!r}")
+            elif ph.casefold() in phrases:
+                problems.append(f"{where}: {ph!r} is already a phrase of {phrases[ph.casefold()]!r}")
+            phrases[ph.casefold()] = t["id"]
+        own = [ph.casefold() for ph in (t["term"], *t["aliases"])]
+        problems += [f"{where}: not_in {ctx!r} holds none of the term's phrases" for ctx in t.get("not_in", [])
+                     if not any(re.search(rf"(?<!\w){re.escape(ph)}(?!\w)", ctx.casefold()) for ph in own)]
+    problems += [f"{label}: terms are not in alphabetical order (first out of place: {b['term']!r})"
+                 for a_, b in zip(terms, terms[1:]) if a_["term"].casefold() > b["term"].casefold()][:1]
+    for t in terms:
+        problems += [f"{label}: {t['id']}: see {s!r} is not another term's id" for s in t.get("see", []) if s not in ids or s == t["id"]]
+    seen: set[str] = set()
+    for i, n in enumerate(doc["not_terms"]):
+        what = n.get("token", n.get("pattern"))
+        where = f"{label}: not_terms[{i}] {what!r}"
+        if set(n) not in ({"token", "why"}, {"pattern", "why"}):
+            problems.append(f"{where}: keys are token or pattern, and why")
+        if not n["why"].strip() or not what.strip():
+            problems.append(f"{where}: empty token, pattern or reason")
+        if what.casefold() in seen:
+            problems.append(f"{where}: listed twice")
+        seen.add(what.casefold())
+        if "token" in n and what.casefold() in phrases:
+            problems.append(f"{where}: is also a glossary phrase of {phrases[what.casefold()]!r}")
+        if "pattern" in n:
+            try:
+                re.compile(what)
+            except re.error as e:
+                problems.append(f"{where}: not a regular expression: {e}")
+    return problems
+
+
+def glossary_checks(content: Path) -> list[str]:
+    """content/ai-engineering/glossary.json, and every candidate term of the chapters and labs (see above) against it."""
+    if not (content / BUILD_TRACK_DIR).is_dir():
+        return []   # build_track_checks reports the folder
+    label = f"{BUILD_TRACK_DIR}/{GLOSSARY_FILE}"
+    try:
+        doc = json.loads((content / BUILD_TRACK_DIR / GLOSSARY_FILE).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return [f"{label}: missing"]
+    except (OSError, ValueError) as e:
+        return [f"{label}: unreadable: {e}"]
+    problems = glossary_doc_problems(label, doc)
+    if problems:
+        return problems
+    known = {ph.casefold() for t in doc["terms"] for ph in (t["term"], *t["aliases"])}
+    tokens = {n["token"].casefold(): n["token"] for n in doc["not_terms"] if "token" in n}
+    patterns = {n["pattern"]: re.compile(n["pattern"]) for n in doc["not_terms"] if "pattern" in n}
+    used: set[str] = set()
+    for file, found in glossary_candidates(content).items():
+        for fold, (token, written, where) in sorted(found.items()):
+            if fold in known:
+                continue
+            hit = fold if fold in tokens else next((p for p, rx in patterns.items() if rx.fullmatch(token)), None)
+            if hit is None:
+                shown = repr(token) if token == written else f"{token!r} (written {written!r})"
+                problems.append(f"{file} ({where}): {shown} is not in the glossary or not_terms; {GLOSSARY_FIX}")
+            else:
+                used.add(hit)
+    problems += [f"{label}: not_terms {tok!r} is used by no chapter or lab (remove it)" for fold, tok in tokens.items() if fold not in used]
+    problems += [f"{label}: not_terms pattern {p!r} matches no candidate (remove it)" for p in patterns if p not in used]
+    return problems
+
+
 def disclaimer_index(blocks) -> int | None:
     """The index of the disclaimer quote among a page's first three blocks (mdlite Block list), or None."""
     for i, b in enumerate(blocks[:3]):
@@ -1648,7 +1839,7 @@ def main() -> int:
     else:
         docs, problems = load_all(args.content)
         problems += validate(docs) if not problems else []
-        problems += build_track_checks(args.content) + labs_checks(args.content)
+        problems += build_track_checks(args.content) + labs_checks(args.content) + glossary_checks(args.content)
         label = f"content {args.content}: {len(docs)} files"
     for p in problems[:200]:
         print("  " + p)

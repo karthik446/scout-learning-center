@@ -2125,6 +2125,7 @@ def write(site: Path, url: str, text: str, written: dict[str, int]) -> None:
 # blocks before the quote (a week's "What you learn" paragraph), the quote, then for a week page the schedule's Readings
 # and its own body under "Build steps". A week with labs (content/ai-engineering/labs/week-N.json, tools/import_labs.py)
 # also gets a "Labs for this week" table, a labs index page and one page per lab (see "The labs of the track" below).
+# The glossary page and the first-use term links of the week and labs pages: see "The glossary of the track" below.
 # ---------------------------------------------------------------------------------------------------------------------
 BUILD_TRACK_BASE = "/learn/ai-engineering/"
 BUILD_TRACK_TITLE = "AI engineering track"
@@ -2175,7 +2176,8 @@ def load_build_track(content: Path) -> dict[str, BuildTrackPage]:
 
 
 def build_track_sidebar(pages: dict[str, BuildTrackPage], current: str) -> str:
-    """The track's sidebar: the same classes as the module sidebar (course.css, SIDEBAR_CSS), all twelve pages."""
+    """The track's sidebar: the same classes as the module sidebar (course.css, SIDEBAR_CSS), all twelve pages and the
+    glossary (last in the Guide group)."""
     overview = build_track_url("README.md")
     parts = ['<nav class="sidebar" aria-label="AI engineering track">',
              f'<div class="sidebar-title">{a(overview, esc(BUILD_TRACK_TITLE), "current" if current == overview else "")}</div>',
@@ -2202,6 +2204,10 @@ def build_track_sidebar(pages: dict[str, BuildTrackPage], current: str) -> str:
             else:   # the week's labs nested beneath it; the filter words cover them so a match keeps the week visible
                 nested, words = labs_sidebar(p.labs, current)
                 parts.append(f'<li data-lesson-title="{esc(p.label.lower() + " " + words)}">{link}\n{nested}</li>')
+        if gtitle == "Guide":
+            cls = " current" if current == GLOSSARY_URL else ""
+            parts.append(f'<li data-lesson-title="glossary"><a href="{GLOSSARY_URL}" class="lesson-link{cls}">'
+                         '<span class="lesson-dot"></span><span>Glossary</span></a></li>')
         parts.append("</ul>\n</details>")
     parts += ["</details>", "</nav>"]
     return "\n".join(parts)
@@ -2254,7 +2260,8 @@ def schedule_readings(schedule_text: str, week: int) -> str:
     raise BuildError(f"SCHEDULE.md: week {week} has no '### Readings' section")
 
 
-def render_build_track_page(content: Path, pages: dict[str, BuildTrackPage], page: BuildTrackPage, site: dict) -> tuple[str, str]:
+def render_build_track_page(content: Path, pages: dict[str, BuildTrackPage], page: BuildTrackPage, site: dict,
+                            gloss: Glossary) -> tuple[str, str]:
     names = list(pages)
     k = names.index(page.name)
     prev_page = pages[names[k - 1]] if k > 0 else None
@@ -2266,7 +2273,7 @@ def render_build_track_page(content: Path, pages: dict[str, BuildTrackPage], pag
     rest = blocks[d + 1:]
     body = [blocks[0].html, attribution({"generated_by": "Claude through GigAI", "generated_on": site["updated"], "reviewed_by": ""})]
     if page.name == "README.md":   # source order, the contents list at the end
-        body += lead + [styled] + labs_overview(pages) + [b.html for b in rest] + [build_track_pages_list(pages, page.url)]
+        body += lead + [styled] + labs_overview(pages) + [glossary_overview()] + [b.html for b in rest] + [build_track_pages_list(pages, page.url)]
     else:
         body += lead + [styled]
         if page.name == "SCHEDULE.md":
@@ -2287,9 +2294,11 @@ def render_build_track_page(content: Path, pages: dict[str, BuildTrackPage], pag
                 raise BuildError(f"SCHEDULE.md: week {week} readings: {e}") from None
             body.append('<h2 id="readings">Readings</h2>')
             body.append(f'<p class="muted">From the {a(schedule.url + "#" + week_id, "schedule")}, week {week}.</p>')
-            body.append(readings.html)
+            body.append(f'<div class="readings">\n{readings.html}\n</div>')   # titles of books and papers: never glossary-linked
             body.append('<h2 id="build-steps">Build steps</h2>')
         body += [b.html for b in rest]
+        if m:   # the week's text with its first use of each glossary term linked (gloss.link)
+            body = [gloss.link("\n".join(body))]
     prev_ = a(prev_page.url, "&larr; " + esc(prev_page.label)) if prev_page else "<span></span>"
     next_ = a(next_page.url, esc(next_page.label) + " &rarr;")
     body.append(f'<div class="prevnext">{prev_}{next_}</div>')
@@ -2328,7 +2337,8 @@ LABS_COMMANDS = (   # the command table of labs/README.md on the labs branch, in
 
 
 class LabsPage:
-    """A generated labs page (a week's labs index or one lab) with the attributes build_track_shell reads."""
+    """A generated page in the track shell with the attributes build_track_shell reads: a week's labs index, one lab, or
+    the glossary (render_glossary_page)."""
     def __init__(self, name: str, url: str, rendered: mdlite.Rendered, crumbs: list[str]) -> None:
         self.name, self.url, self.rendered, self.crumbs = name, url, rendered, crumbs
         self.title: str = rendered.title or ""
@@ -2630,7 +2640,7 @@ def labs_pages(content: Path, pages: dict[str, BuildTrackPage]) -> list[LabsPage
     return out
 
 
-def render_labs_page(pages: dict[str, BuildTrackPage], lp: LabsPage, site: dict) -> tuple[str, str]:
+def render_labs_page(pages: dict[str, BuildTrackPage], lp: LabsPage, site: dict, gloss: Glossary) -> tuple[str, str]:
     blocks = lp.rendered.blocks
     d = scan.disclaimer_index(blocks)
     if d is None or blocks[0].kind != "heading" or not glyphs_ok(lp.title):
@@ -2638,12 +2648,174 @@ def render_labs_page(pages: dict[str, BuildTrackPage], lp: LabsPage, site: dict)
     styled = blocks[d].html.replace("<blockquote>", '<blockquote class="disclaimer">', 1)
     body = [blocks[0].html, attribution({"generated_by": "Claude through GigAI", "generated_on": site["updated"], "reviewed_by": ""})]
     body += [b.html for b in blocks[1:d]] + [styled] + [b.html for b in blocks[d + 1:]]
+    body = [gloss.link("\n".join(body), everyday=True)]   # the first use of each glossary term linked; the prev/next links stay plain
     body.append(f'<div class="prevnext">{a(lp.prev.url, "&larr; " + esc(lp.prev.label))}{a(lp.next.url, esc(lp.next.label) + " &rarr;")}</div>')
     first_p = next((b.html for b in blocks[d + 1:] if b.kind == "p"), "")   # the goal, or what the labs are
     description = html.unescape(re.sub(r"<[^>]+>", "", first_p)).replace("\n", " ")[:200]
     if not description or not glyphs_ok(description):
         description = BUILD_TRACK_SUMMARY
     return lp.url, build_track_shell(pages, lp, "\n".join(body), description=description, crumbs=lp.crumbs)
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# The glossary of the track: content/ai-engineering/glossary.json (hand-written; checked by scan.glossary_checks, which
+# also proves every identifier, capitalised token and lab concept of the chapters and labs is a term or a not_term).
+# One page, /learn/ai-engineering/glossary/: an A-Z jump list and one <dl> per letter, every term at #term-<id>, with
+# the sidebar entry and the overview's one line. On every week page and labs page, Glossary.link turns the first use of
+# each term into a link to its #term-<id>: its name or an alias (an everyday_word term: on a week page only its aliases,
+# on a lab page, where the trading sense dominates, the word too), whole words, case-insensitive unless the term says
+# `case`, in prose, bold and table cells; an inline code span only when the whole span is a term. Never inside one of
+# the term's not_in phrases (another sense of the word), fenced code or captured output (<pre>), an existing link, a
+# heading, a table header, a week's readings (book and paper titles), the disclaimer or the attribution. The link is a
+# plain <a>, no script.
+# ---------------------------------------------------------------------------------------------------------------------
+GLOSSARY_URL = BUILD_TRACK_BASE + "glossary/"
+GLOSSARY_TAG = re.compile(r"(<[^>]*>)")
+GLOSSARY_TAG_NAME = re.compile(r"^</?([a-zA-Z][a-zA-Z0-9]*)")
+GLOSSARY_SKIP = re.compile(r'^<(?:(pre|a|h[1-6]|th|script|style)\b|(span) class="code-lang"|(blockquote) class="disclaimer"'
+                           r'|(p) class="attribution"|(div) class="readings")')
+GLOSSARY_INTRO = ("Plain definitions of the trading and AI engineering words the chapters and the labs use, with a worked "
+                  "example where a number helps. On every week page and lab page, the first use of each word links here.")
+
+
+class Glossary:
+    """The glossary's terms and the first-use linker of one page."""
+    def __init__(self, doc: dict) -> None:
+        self.terms: list[dict] = doc["terms"]
+        self.ids: dict[str, str] = {}   # casefolded phrase -> term id (scan.glossary_checks proved the phrases unique)
+        week: list[tuple[str, bool]] = []
+        labs: list[tuple[str, bool]] = []
+        for t in self.terms:
+            for ph in [t["term"]] + t["aliases"]:
+                self.ids[ph.casefold()] = t["id"]
+                labs.append((ph, bool(t.get("case"))))
+                if ph in t["aliases"] or not t.get("everyday_word"):
+                    week.append((ph, bool(t.get("case"))))
+        self.rx = self._rx(week)        # week pages: an everyday word only by its aliases
+        self.rx_labs = self._rx(labs)   # lab pages: every phrase
+        self.not_in = [(re.compile(re.escape(ctx), re.IGNORECASE), t["id"]) for t in self.terms for ctx in t.get("not_in", [])]
+
+    @staticmethod
+    def _rx(alts: list[tuple[str, bool]]) -> re.Pattern:
+        alts = sorted(alts, key=lambda x: -len(x[0]))   # the longest phrase wins where two start at the same place
+        return re.compile(r"(?<!\w)(?:" + "|".join(re.escape(ph) if case else f"(?i:{re.escape(ph)})" for ph, case in alts) + r")(?!\w)")
+
+    def href(self, term_id: str) -> str:
+        return f"{GLOSSARY_URL}#term-{term_id}"
+
+    def link(self, page_html: str, everyday: bool = False) -> str:
+        """`page_html` with the first use of each term linked (see the section comment); `everyday`: a lab page."""
+        rx = self.rx_labs if everyday else self.rx
+        used: set[str] = set()
+        parts = GLOSSARY_TAG.split(page_html)   # text, tag, text, tag, ...
+        texts = [html.unescape(p) for p in parts[::2]]
+        flat = "".join(texts)   # the page's text, tags dropped, where the not_in phrases are found
+        blocked = [(m.start(), m.end(), term_id) for ctx, term_id in self.not_in for m in ctx.finditer(flat)]
+        starts = [0]
+        for t in texts:
+            starts.append(starts[-1] + len(t))
+
+        def free(term_id: str, start: int, end: int) -> bool:
+            return term_id not in used and not any(t == term_id and s <= start and end <= e for s, e, t in blocked)
+
+        out: list[str] = []
+        skip, depth = "", 0   # the element being skipped and its nesting depth
+        i = 0
+        while i < len(parts):
+            part = parts[i]
+            if i % 2 == 0:
+                out.append(part if skip else self._link_text(part, rx, used, lambda term_id, s, e, at=starts[i // 2]: free(term_id, at + s, at + e)))
+            elif skip:
+                m = GLOSSARY_TAG_NAME.match(part)
+                if m and m.group(1).lower() == skip:
+                    depth += -1 if part.startswith("</") else 0 if part.endswith("/>") else 1
+                    if depth == 0:
+                        skip = ""
+                out.append(part)
+            elif m := GLOSSARY_SKIP.match(part):
+                skip, depth = next(g for g in m.groups() if g), 1
+                out.append(part)
+            elif part.startswith("<code"):   # inline code (fences are inside <pre>): linked only as a whole term
+                if i + 2 < len(parts) and parts[i + 2] == "</code>":
+                    text = texts[(i + 1) // 2]
+                    term_id = self.ids[text.casefold()] if rx.fullmatch(text) else None
+                    inner = part + parts[i + 1] + "</code>"
+                    at = starts[(i + 1) // 2]
+                    if term_id and free(term_id, at, at + len(text)):
+                        used.add(term_id)
+                        inner = f'<a href="{self.href(term_id)}">{inner}</a>'
+                    out.append(inner)
+                    i += 3
+                    continue
+                skip, depth = "code", 1
+                out.append(part)
+            else:
+                out.append(part)
+            i += 1
+        return "".join(out)
+
+    def _link_text(self, raw: str, rx: re.Pattern, used: set[str], free) -> str:
+        text = html.unescape(raw)
+        pieces: list[str] = []
+        last = 0
+        for m in rx.finditer(text):
+            term_id = self.ids[m.group(0).casefold()]
+            if not free(term_id, m.start(), m.end()):
+                continue
+            used.add(term_id)
+            pieces += [mdlite.esc(text[last:m.start()]), f'<a href="{self.href(term_id)}">{mdlite.esc(m.group(0))}</a>']
+            last = m.end()
+        if not pieces:
+            return raw
+        return "".join(pieces) + mdlite.esc(text[last:])
+
+
+def load_glossary(content: Path) -> Glossary:
+    problems = scan.glossary_checks(content)
+    if problems:
+        raise BuildError("AI engineering track glossary:\n  " + "\n  ".join(problems))
+    return Glossary(json.loads((content / scan.BUILD_TRACK_DIR / scan.GLOSSARY_FILE).read_text(encoding="utf-8")))
+
+
+def glossary_overview() -> str:
+    """The overview's one line under the labs line: the link to the glossary."""
+    return (f'<p><strong>Glossary.</strong> Every trading and AI engineering term of the track, defined in plain words: '
+            f'{a(GLOSSARY_URL, "Glossary")}.</p>')
+
+
+def render_glossary_page(pages: dict[str, BuildTrackPage], gloss: Glossary, site: dict) -> tuple[str, str]:
+    title = "Glossary: the words of the AI engineering track"
+    rendered = render_labs_md(f"{scan.BUILD_TRACK_DIR}/glossary", f"# {title}\n\n{scan.DISCLAIMER}\n\n{GLOSSARY_INTRO}\n", pages)
+    blocks = rendered.blocks
+    d = scan.disclaimer_index(blocks)
+    if d is None or not glyphs_ok(title):
+        raise BuildError("glossary: the page must start with its title (glyph policy) and the disclaimer")
+    by_id = {t["id"]: t for t in gloss.terms}
+    letters: dict[str, list[dict]] = {}
+    for t in gloss.terms:   # sorted by term, each starting with a letter (scan.glossary_checks)
+        letters.setdefault(t["term"][0].upper(), []).append(t)
+    jump = " ".join(f'<a href="#letter-{c.lower()}">{c}</a>' if c in letters else f'<span class="muted">{c}</span>'
+                    for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+    body = [blocks[0].html, attribution({"generated_by": "Claude through GigAI", "generated_on": site["updated"], "reviewed_by": ""}),
+            blocks[d].html.replace("<blockquote>", '<blockquote class="disclaimer">', 1)]
+    body += [b.html for b in blocks[d + 1:]]
+    body.append(f'<nav class="glossary-letters" aria-label="Glossary letters"><p>{jump}</p></nav>')
+    for c, terms in letters.items():
+        body.append(f'<h2 id="letter-{c.lower()}">{esc(c)}</h2>\n<dl class="glossary">')
+        for t in terms:
+            dd = [f"<p>{esc(t['definition'])}</p>"]
+            if t.get("example"):
+                dd.append(f"<p><strong>Example:</strong> {esc(t['example'])}</p>")
+            if t["aliases"]:
+                written = ", ".join(f"<code>{esc(x)}</code>" if re.search(r"[_<>]", x) else mdlite.esc(x) for x in t["aliases"])   # mdlite.esc: Cohen's kappa as &#x3BA;
+                dd.append(f'<p class="muted">Also written: {written}.</p>')
+            if t.get("see"):
+                see = ", ".join(a(gloss.href(s), esc(by_id[s]["term"])) for s in t["see"])
+                dd.append(f"<p>See also: {see}.</p>")
+            body.append(f'<dt id="term-{esc(t["id"])}">{esc(t["term"])}</dt>\n<dd>{"".join(dd)}</dd>')
+        body.append("</dl>")
+    page = LabsPage("glossary", GLOSSARY_URL, rendered, [a("/learn/", "Learning center"), a(build_track_url("README.md"), esc(BUILD_TRACK_TITLE)), "Glossary"])
+    return page.url, build_track_shell(pages, page, "\n".join(body), description=GLOSSARY_INTRO[:200])
 
 
 def glyphs_ok(s: str) -> bool:
@@ -2687,8 +2859,10 @@ def build(content: Path, out: Path) -> dict:
     pages += [render_practice(lib, p) for p in lib.practice.values()]
     pages += [render_key(lib, k) for k in lib.keys.values()]
     track = load_build_track(content)
-    pages += [render_build_track_page(content, track, p, lib.site) for p in track.values()]
-    pages += [render_labs_page(track, lp, lib.site) for lp in labs_pages(content, track)]
+    gloss = load_glossary(content)
+    pages += [render_build_track_page(content, track, p, lib.site, gloss) for p in track.values()]
+    pages += [render_labs_page(track, lp, lib.site, gloss) for lp in labs_pages(content, track)]
+    pages.append(render_glossary_page(track, gloss, lib.site))
     for url, text in pages:
         write(out, url, text, written)
     # assets, once, at the root (shared by / and /learn/)
